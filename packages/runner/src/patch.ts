@@ -78,7 +78,7 @@ export async function applyPatches(dir: string, patches: readonly ConfigPatch[],
   return { files: [...written], skipped, restore }
 }
 
-function editText(file: string, text: string, ops: ConfigPatch['set']): string {
+export function editText(file: string, text: string, ops: ConfigPatch['set']): string {
   const bom = text.startsWith('﻿') ? '﻿' : ''
   const body = bom === '' ? text : text.slice(1)
   if (/\.ya?ml$/i.test(file)) {

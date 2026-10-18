@@ -117,7 +117,7 @@ logs:
 test('runnable packs: tasks, patches, logs and resources validate', () => {
   const pack = parseManifest(RUNNABLE)
   assert.equal(pack.tasks[0]?.resources.input, 'adb')
-  assert.equal(pack.tasks[0]?.restore, true)
+  assert.equal(pack.tasks[0]?.success, 'exit-code')
   assert.equal(pack.launch?.stopGraceSeconds, 10)
   assert.equal(pack.logs.rules[0]?.level, 'done')
   assert.throws(() => parseManifest('id: x\nname: X\ntasks:\n  - { id: a, title: A }\n'), /tasks need a launch section/)

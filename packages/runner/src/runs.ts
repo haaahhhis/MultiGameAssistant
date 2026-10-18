@@ -15,7 +15,8 @@ import { join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
 import { ResourceLocks } from './locks.ts'
-import { applyPatches, backupDirFor, inside, type AppliedPatches } from './patch.ts'
+import { backupDirFor, inside } from './patch.ts'
+import { ConfigProfiles } from './profiles.ts'
 import { lineSplitter, LogTail } from './tail.ts'
 
 /** What the runner needs from the script library. */
@@ -50,6 +51,7 @@ export interface RunnerOptions {
 
 interface ActiveRun {
   info: RunInfo
+  mode: 'task' | 'settings'
   child?: ChildProcess
   stopRequested: boolean
   doneSeen: boolean
@@ -68,6 +70,8 @@ const KEEP_LINES = 2000
 
 export class Runner {
   readonly locks = new ResourceLocks()
+  /** The local config copies runs use (docs/PLAN.zh.md §5.7). */
+  readonly profiles: ConfigProfiles
   readonly #options: RunnerOptions
   readonly #runs = new Map<string, ActiveRun>()
   readonly #now: () => number
@@ -75,6 +79,7 @@ export class Runner {
   constructor(options: RunnerOptions) {
     this.#options = options
     this.#now = options.now ?? Date.now
+    this.profiles = new ConfigProfiles(options.dataDir)
   }
 
   /** Tasks of a library script, from its pack. */
@@ -118,12 +123,13 @@ export class Runner {
    * Start a task. Resolves once the program has started (or the run failed to start).
    * @throws Error before anything ran: unknown script or task, bad parameters, busy resources.
    */
-  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}): Promise<RunInfo> {
+  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings' } = {}): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) throw new Error(`${script.name} 没有脚本包，还不知道怎么运行它`)
     if (script.dir === undefined) throw new Error(`${script.name} 还没有安装`)
-    const manifest = pack.manifest
+    const manifest = options.manifest ?? pack.manifest
+    const mode = options.mode ?? 'task'
     const task = manifest.tasks.find(t => t.id === taskId)
     // Validate parameters early (with a placeholder address) so mistakes fail before any lock or emulator start.
     renderTask(manifest, taskId, params, { dir: script.dir, adb: '0.0.0.0:0' })
@@ -134,8 +140,9 @@ export class Runner {
     const run: ActiveRun = {
       info: {
         id: runId, scriptId, scriptName: script.name, taskId, taskTitle: task?.title ?? taskId, params: {}, state: 'starting',
-        startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [],
+        startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [], kind: mode,
       },
+      mode,
       stopRequested: false, doneSeen: false, controller: new AbortController(), lines: [], pendingLines: [], release: [], finished, resolveFinished,
     }
 
@@ -166,12 +173,23 @@ export class Runner {
       const rendered = renderTask(manifest, taskId, params, vars)
       run.info.params = { ...rendered.params }
 
-      if (rendered.patches.length > 0) {
-        const applied: AppliedPatches = await applyPatches(script.dir, rendered.patches, backupDirFor(this.#options.dataDir, runId))
-        if (rendered.task.restore) run.release.push(() => applied.restore())
-        for (const file of applied.skipped) run.info.warnings.push(`没有找到配置文件 ${file}，按脚本当前的设置运行`)
-        if (applied.files.length > 0) this.#line(run, 'adg', `已修改配置：${applied.files.join('、')}${rendered.task.restore ? '（运行结束后还原）' : ''}`)
+      // The local config copy (plus this task's temporary edits) goes in for the run; the original comes back after.
+      const injection = await this.profiles.inject(scriptId, script.dir, manifest, rendered.patches, backupDirFor(this.#options.dataDir, runId))
+      run.release.push(() => injection.restore())
+      if (mode === 'settings') {
+        // Runs before the restore above (releases run in reverse).
+        run.release.push(async () => {
+          if (run.stopRequested) {
+            this.#line(run, 'adg', '设置会话被停止：这次的修改没有保存到本地配置')
+            return
+          }
+          const saved = await injection.saveBack()
+          this.#line(run, 'adg', saved.length > 0 ? `已保存到本地配置：${saved.join('、')}` : '脚本没有写出配置文件，本地配置未变')
+        })
       }
+      for (const file of injection.skipped) run.info.warnings.push(`没有找到配置文件 ${file}，这项临时修改跳过`)
+      if (injection.drift.length > 0) run.info.warnings.push(`原项目的配置（${injection.drift.join('、')}）在导入本地配置后改过；本次按本地配置运行。需要的话在脚本页「导入原项目设置」`)
+      if (injection.files.length > 0) this.#line(run, 'adg', `已放入本地配置：${injection.files.join('、')}（结束后还原原项目配置）`)
 
       const exe = inside(script.dir, rendered.exe)
       const cwd = rendered.cwd === undefined ? script.dir : inside(script.dir, rendered.cwd)
@@ -193,6 +211,30 @@ export class Runner {
       await this.#finish(run, run.stopRequested ? 'cancelled' : 'failed', run.stopRequested ? '已停止' : error instanceof Error ? error.message : String(error))
       return run.info
     }
+  }
+
+  /**
+   * Open the script's own settings window with the local config in place.
+   * When the user closes it, what the script saved is kept in the local copy
+   * and the original project config is restored.
+   * @throws Error when the pack declares no settings window.
+   */
+  async settings(scriptId: string): Promise<RunInfo> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    if (pack === undefined) throw new Error(`${script.name} 没有脚本包，不知道它的设置界面`)
+    const settings = pack.manifest.launch?.settings
+    if (settings === undefined) throw new Error(`${pack.manifest.name} 的脚本包没有声明设置界面；可以让 agent 用 script_config_set 修改本地配置`)
+    const manifest: ScriptManifest = {
+      ...pack.manifest,
+      launch: { exe: settings.exe, args: [], stopAfterDone: false, stopGraceSeconds: 0 },
+      tasks: [{
+        id: '__settings', title: '修改设置', utterances: [], params: {}, args: settings.args, patches: [],
+        resources: { input: 'none' }, success: 'exit-code',
+      }],
+      logs: { sources: [{ stdout: true, encoding: 'utf-8' }], rules: [] },
+    }
+    return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings' })
   }
 
   /** Ask a run to stop: the program's process tree is ended and configs restored. */
@@ -243,7 +285,9 @@ export class Runner {
         stderr.end()
         for (const tail of tails) await tail.stop().catch(() => {})
         if (code !== null) run.info.exitCode = code
-        const outcome = judge(run, manifest.tasks.find(t => t.id === run.info.taskId)?.success ?? 'exit-code', code)
+        const outcome = run.mode === 'settings'
+          ? (run.stopRequested ? { state: 'cancelled' as const, reason: '设置会话已停止' } : { state: 'succeeded' as const, reason: '设置窗口已关闭' })
+          : judge(run, manifest.tasks.find(t => t.id === run.info.taskId)?.success ?? 'exit-code', code)
         await this.#finish(run, outcome.state, outcome.reason)
       })()
     })

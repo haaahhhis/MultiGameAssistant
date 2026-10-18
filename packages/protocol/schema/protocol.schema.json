@@ -126,6 +126,15 @@
     "runs/logs": {
       "capability": "runs"
     },
+    "configs/status": {
+      "capability": "runs"
+    },
+    "configs/import": {
+      "capability": "runs"
+    },
+    "configs/open": {
+      "capability": "runs"
+    },
     "guard/grants": {
       "capability": "guard"
     },
@@ -7021,6 +7030,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task",
+            "settings"
+          ]
         }
       },
       "required": [
@@ -7035,7 +7051,8 @@
         "command",
         "resources",
         "tags",
-        "warnings"
+        "warnings",
+        "kind"
       ],
       "additionalProperties": false
     },
@@ -7158,6 +7175,13 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "settings"
+                ]
               }
             },
             "required": [
@@ -7172,7 +7196,8 @@
               "command",
               "resources",
               "tags",
-              "warnings"
+              "warnings",
+              "kind"
             ],
             "additionalProperties": false
           }
@@ -7240,6 +7265,225 @@
       },
       "required": [
         "lines"
+      ],
+      "additionalProperties": false
+    },
+    "configs/status.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "configs/status.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "importedAt": {
+          "type": "number"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "local": {
+                "type": "boolean"
+              },
+              "original": {
+                "type": "boolean"
+              },
+              "changed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "file",
+              "local",
+              "original",
+              "changed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "drift": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "dir",
+        "files",
+        "drift"
+      ],
+      "additionalProperties": false
+    },
+    "configs/import.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "configs/import.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "imported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "imported"
+      ],
+      "additionalProperties": false
+    },
+    "configs/open.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "configs/open.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scriptId": {
+          "type": "string"
+        },
+        "scriptName": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "taskTitle": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task",
+            "settings"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "scriptId",
+        "scriptName",
+        "taskId",
+        "taskTitle",
+        "params",
+        "state",
+        "startedAt",
+        "command",
+        "resources",
+        "tags",
+        "warnings",
+        "kind"
       ],
       "additionalProperties": false
     },
@@ -9481,6 +9725,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task",
+            "settings"
+          ]
         }
       },
       "required": [
@@ -9495,7 +9746,8 @@
         "command",
         "resources",
         "tags",
-        "warnings"
+        "warnings",
+        "kind"
       ],
       "additionalProperties": false
     },

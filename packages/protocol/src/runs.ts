@@ -50,6 +50,8 @@ export const RunInfo = z.object({
   /** Tags of the log rules that matched. */
   tags: z.array(z.string()),
   warnings: z.array(z.string()),
+  /** A task run, or a settings session (the script's own window opened to change the local config). */
+  kind: z.enum(['task', 'settings']),
 })
 export type RunInfo = z.infer<typeof RunInfo>
 
@@ -95,6 +97,30 @@ export const RunRequests = {
     capability: RUNS_CAPABILITY,
     params: z.object({ runId: z.string(), limit: z.number().int().min(1).max(2000).optional() }),
     result: z.object({ lines: z.array(RunLogLine) }),
+  },
+  /** The script's local config copy and whether the original changed since it was imported. */
+  'configs/status': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId }),
+    result: z.object({
+      importedAt: z.number().optional(),
+      /** Where the local copy lives. */
+      dir: z.string(),
+      files: z.array(z.object({ file: z.string(), local: z.boolean(), original: z.boolean(), changed: z.boolean() })),
+      drift: z.array(z.string()),
+    }),
+  },
+  /** Replace the local copy with the original project's current config (the user's call). */
+  'configs/import': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId }),
+    result: z.object({ imported: z.array(z.string()) }),
+  },
+  /** Open the script's own settings window on the local copy; saved back when the user closes it. */
+  'configs/open': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId }),
+    result: RunInfo,
   },
 } as const
 

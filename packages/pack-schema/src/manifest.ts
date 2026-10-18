@@ -88,8 +88,6 @@ export const Task = z.object({
   args: z.array(z.string()).default([]),
   /** Config edits made before launch. */
   patches: z.array(ConfigPatch).default([]),
-  /** Put patched files back after the run (default true). */
-  restore: z.boolean().default(true),
   resources: Resources.default({ input: 'none' }),
   /**
    * How success is judged from the script's own output: `exit-code` (0 is
@@ -112,6 +110,15 @@ export const Launch = z.object({
   stopAfterDone: z.boolean().default(false),
   /** Seconds to wait after a `done` match before stopping. */
   stopGraceSeconds: z.number().int().min(0).max(600).default(10),
+  /**
+   * The script's own settings window, opened in a settings session: the
+   * local config is put in place, the user changes settings there, and what
+   * the script saves is kept in the local copy. Omit when the script has none.
+   */
+  settings: z.object({
+    exe: RelativePath,
+    args: z.array(z.string()).default([]),
+  }).optional(),
 })
 export type Launch = z.infer<typeof Launch>
 

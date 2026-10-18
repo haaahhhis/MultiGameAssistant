@@ -14,10 +14,14 @@ const CLI = fileURLToPath(new URL('../../test-kit/src/fake-script-cli.ts', impor
 const PACK = `
 id: tool
 name: Tool
+config:
+  files:
+    - { path: config/gui.json, format: json }
 launch:
   exe: tool.exe
   stopAfterDone: true
   stopGraceSeconds: 0
+  settings: { exe: tool.exe, args: ['settings.json'] }
 tasks:
   - id: cli
     title: 命令行任务
@@ -58,6 +62,8 @@ function scriptDir(): string {
   scenario('ok.json', [{ log: 'hello' }, { exit: 0 }])
   scenario('bad.json', [{ log: '任务出错: 刷理智' }, { exit: 0 }])
   scenario('crash.json', [{ log: 'boom' }, { exit: 3 }])
+  // The script's settings window: the user changes the stage, the script saves, the window closes.
+  scenario('settings.json', [{ writeFile: 'config/gui.json', content: '{"Configurations": {"Default": {"Stage": "H8-4"}}}' }, { exit: 0 }])
   scenario('slow.json', [{ log: 'working' }, { sleepMs: 30_000 }, { exit: 0 }])
   // A GUI that writes its log file, reports done, then stays open until stopped.
   scenario('gui.json', [
@@ -163,4 +169,24 @@ test('an adb task without the emulator plugin fails before touching anything', a
   assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
   const next = await runner.finished((await runner.start('tool', 'cli')).id)
   assert.equal(next.state, 'succeeded', 'the failed start released its locks')
+})
+
+test('a settings session keeps what the script saved in the local copy; the next run uses it; the original never changes', async () => {
+  const dir = scriptDir()
+  const original = readFileSync(join(dir, 'config', 'gui.json'), 'utf8')
+  const { runner } = setup({ tool: dir }, bridge)
+  const session = await runner.finished((await runner.settings('tool')).id)
+  assert.equal(session.kind, 'settings')
+  assert.equal(session.state, 'succeeded', session.outcome)
+  assert.ok(runner.logs(session.id).some(l => /已保存到本地配置：config\/gui\.json/.test(l.text)))
+  assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original, 'the original project config is back')
+  assert.match(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /H8-4/)
+
+  const started = await runner.start('tool', 'gui')
+  const during = JSON.parse(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'))
+  assert.equal(during.Configurations.Default.Stage, 'H8-4', 'the run sees the local copy')
+  assert.equal(during.Configurations.Default['Start.RunDirectly'], 'True', 'plus the task patch')
+  await runner.finished(started.id)
+  assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
+  assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /RunDirectly/, 'task patches never leak into the local copy')
 })

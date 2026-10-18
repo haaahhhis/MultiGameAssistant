@@ -74,7 +74,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
   return (
     <section className="card">
       <div className="card-head">
-        <div><h3>任务</h3><p className="muted small">按脚本包运行：运行前修改的配置会在结束后还原。</p></div>
+        <div><h3>任务</h3><p className="muted small">按脚本包运行，使用本地配置；原项目的配置在运行结束后会还原。</p></div>
       </div>
       {tasks === null && error === null && <div className="muted small">加载中…</div>}
       {tasks !== null && !tasks.runnable && <div className="notice info left small">{tasks.problem}</div>}

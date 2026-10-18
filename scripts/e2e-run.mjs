@@ -11,7 +11,8 @@
  *    config is patched during the run and restored after; the log file's
  *    `done` line ends it; the run succeeds.
  * 4. The agent tries to write into the script directory: the guard refuses.
- * 5. The agent changes a declared config value with `script_config_set`.
+ * 5. The agent changes a declared config value with `script_config_set`: the
+ *    local config copy changes, the original project config does not.
  *
  * Everything it creates is removed afterwards.
  *
@@ -28,6 +29,7 @@ import { connectGateway, FAKE_MODEL, FAKE_PROVIDER, removeFakeProvider, saveFake
 
 const here = dirname(fileURLToPath(import.meta.url))
 const ID = 'e2e-fake-tool'
+const dataDir = process.env.ADG_DATA_DIR ?? join(process.env.DSH_HOME ?? join(here, '..', '.dev-home'), 'adg', 'data')
 
 // ── a script directory: FakeTool.exe (node), its scenario, a config, a log dir ──
 const dir = mkdtempSync(join(tmpdir(), 'adg-e2e-tool-'))
@@ -177,9 +179,10 @@ try {
 
   const configured = await ask('把关卡改成 CE-6')
   if (configured.error) fail(`script_config_set failed: ${configured.text}`)
-  const settings = JSON.parse(readFileSync(join(dir, 'config', 'settings.json'), 'utf8'))
-  if (settings.Settings.Stage !== 'CE-6' || settings.Settings['Run.Directly'] !== false) fail(`config wrong: ${JSON.stringify(settings)}`)
-  step('script_config_set changed exactly one declared value', 'Settings.Stage = CE-6, backup kept')
+  if (readFileSync(join(dir, 'config', 'settings.json'), 'utf8') !== CONFIG) fail('script_config_set changed the original project config')
+  const local = JSON.parse(readFileSync(join(dataDir, 'configs', ID, 'files', 'config', 'settings.json'), 'utf8'))
+  if (local.Settings.Stage !== 'CE-6' || local.Settings['Run.Directly'] !== false) fail(`local config wrong: ${JSON.stringify(local)}`)
+  step('script_config_set changed one value in the local copy only', 'local Settings.Stage = CE-6; original untouched')
 
   console.log(`\nM2 end-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {
@@ -188,9 +191,9 @@ try {
 } finally {
   await rpc('scripts/remove', { id: ID }).catch(() => {})
   await rpc('packs/reject', { packId: ID }).catch(() => {})
-  // The accepted pack landed in the user pack directory; take it out again.
-  const dataDir = process.env.ADG_DATA_DIR ?? join(process.env.DSH_HOME ?? join(here, '..', '.dev-home'), 'adg', 'data')
+  // The accepted pack and the local config copy live in the data directory; take them out again.
   rmSync(join(dataDir, 'packs', ID), { recursive: true, force: true })
+  rmSync(join(dataDir, 'configs', ID), { recursive: true, force: true })
   await removeFakeProvider(rpc)
   gateway.close()
   await llm.close()

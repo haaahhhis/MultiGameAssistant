@@ -31,6 +31,9 @@ launch:
   # MAA's window stays open after the queue finishes; close it once it reports done.
   stopAfterDone: true
   stopGraceSeconds: 10
+  # Opening MAA without the run-directly flag shows its own settings window.
+  settings:
+    exe: MAA.exe
 tasks:
   - id: daily
     title: 日常（运行 MAA 里已勾选的任务）

@@ -7,7 +7,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ScriptId } from '@adg/protocol'
 import { z } from 'zod'
-import { readConfig, writeConfig } from './config.ts'
+import { configStatus, importConfig, readConfig, writeConfig } from './config.ts'
 import type { LibraryView, Runner } from './runs.ts'
 
 export const TOOL_NAMES = {
@@ -17,6 +17,9 @@ export const TOOL_NAMES = {
   runs: 'script_runs',
   configGet: 'script_config_get',
   configSet: 'script_config_set',
+  configStatus: 'script_config_status',
+  configImport: 'script_config_import',
+  settings: 'script_settings',
 } as const
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -66,7 +69,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
   return [
     tool({
       name: TOOL_NAMES.configGet,
-      description: '读取脚本的一个配置文件（只能是脚本包声明的配置文件）。改设置前先读，弄清楚键的位置。',
+      description: '读取脚本的一个配置文件——读的是 AutoDailyGamePlay 保存的本地配置副本（运行时用的就是它），不是原项目里的文件。只能是脚本包声明的配置文件。改设置前先读，弄清楚键的位置。',
       properties: { id, file: { type: 'string', description: '配置文件的相对路径，例如 config/gui.json。' } },
       required: ['id', 'file'],
       readOnly: true,
@@ -74,12 +77,12 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
       title: a => `读取配置：${String(a['id'] ?? '')} / ${String(a['file'] ?? '')}`,
       execute: async args => {
         const a = parse(z.object({ id: ScriptId, file: z.string().min(1).max(300) }), args)
-        return readConfig(config.library, a.id, a.file)
+        return readConfig(config.library, runner.profiles, a.id, a.file)
       },
     }),
     tool({
       name: TOOL_NAMES.configSet,
-      description: '修改脚本配置文件里的一个值（只能是脚本包声明的配置文件；JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]。修改前会自动备份。这是修改脚本设置的唯一方式，不要直接写脚本目录里的文件。',
+      description: '修改脚本配置里的一个值。改的是本地配置副本，原项目的配置不变（用户自己打开脚本时仍是它原来的设置）；下次通过 AutoDailyGamePlay 运行时生效。只能是脚本包声明的配置文件（JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]。修改前会自动备份。不要直接写脚本目录里的文件。',
       properties: {
         id,
         file: { type: 'string', description: '配置文件的相对路径。' },
@@ -92,9 +95,41 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
       execute: async args => {
         const a = parse(z.object({ id: ScriptId, file: z.string().min(1).max(300), path: z.array(z.union([z.string().min(1), z.number().int().min(0)])).min(1).max(20), value: z.unknown() }), args)
         const busy = runner.list(a.id).find(r => r.endedAt === undefined)
-        if (busy !== undefined) throw new Error(`${a.id} 正在运行（${busy.taskTitle}），运行结束后再改配置，否则会被运行结束时的还原覆盖`)
-        return { ok: true, ...(await writeConfig(config.library, config.dataDir, a.id, a.file, a.path, a.value)) }
+        if (busy?.kind === 'settings') throw new Error(`${a.id} 的设置界面正开着；用户关掉它时会把脚本里的设置存回本地配置并覆盖这次修改，请等它关闭后再改`)
+        const result = await writeConfig(config.library, runner.profiles, config.dataDir, a.id, a.file, a.path, a.value)
+        return { ok: true, ...result, takesEffect: busy === undefined ? '下次运行' : '当前运行结束后的下一次运行' }
       },
+    }),
+    tool({
+      name: TOOL_NAMES.configStatus,
+      description: '查看脚本的本地配置副本：有哪些文件、什么时候从原项目导入的、原项目的配置在那之后有没有被用户改过（drift）。',
+      properties: { id },
+      required: ['id'],
+      readOnly: true,
+      kind: 'read',
+      title: a => `查看本地配置：${String(a['id'] ?? '')}`,
+      execute: async args => configStatus(config.library, runner.profiles, parse(z.object({ id: ScriptId }), args).id),
+    }),
+    tool({
+      name: TOOL_NAMES.configImport,
+      description: '用原项目当前的配置覆盖本地配置副本（例如用户在脚本自己的界面里改了设置，想让 AutoDailyGamePlay 也用上）。会丢掉本地副本里的修改，先征得用户同意再调用。',
+      properties: { id },
+      required: ['id'],
+      kind: 'other',
+      title: a => `导入原项目设置：${String(a['id'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: ScriptId }), args)
+        return { ok: true, imported: await importConfig(config.library, runner.profiles, a.id) }
+      },
+    }),
+    tool({
+      name: TOOL_NAMES.settings,
+      description: '打开脚本自己的设置界面让用户修改设置：先放入本地配置，用户关掉窗口后，把脚本保存的设置存回本地配置，并还原原项目的配置。用户说「我要改 MAA 的设置」「打开三月七设置一下」时使用。立即返回 run_id，用户关窗后才算结束。',
+      properties: { id },
+      required: ['id'],
+      kind: 'execute',
+      title: a => `打开设置界面：${String(a['id'] ?? '')}`,
+      execute: async args => brief(runner, (await runner.settings(parse(z.object({ id: ScriptId }), args).id)).id),
     }),
     tool({
       name: TOOL_NAMES.tasks,

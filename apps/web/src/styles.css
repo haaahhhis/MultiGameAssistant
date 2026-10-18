@@ -995,3 +995,5 @@ button.run-row:active:not(:disabled) { transform: none; }
   button.run-row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .run-outcome { display: none; }
 }
+.notice.warn-box { color: var(--text-2); background: color-mix(in srgb, var(--warn) 9%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+.notice.warn-box .ui-icon { color: var(--warn); }

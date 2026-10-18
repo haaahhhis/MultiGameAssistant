@@ -12,11 +12,13 @@ import type {} from '@adg/gateway'
 import type {} from '@adg/script-registry'
 import { RUNS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
-import { Runner, type EmulatorBridge } from './runs.ts'
+import { Runner, type EmulatorBridge, type LibraryView } from './runs.ts'
+import { configStatus, importConfig } from './config.ts'
 import { runnerTools } from './tools.ts'
 
 export { Runner, killTree, type EmulatorBridge, type LibraryView, type RunnerOptions } from './runs.ts'
-export { applyPatches, setIn } from './patch.ts'
+export { applyPatches, editText, setIn } from './patch.ts'
+export { ConfigProfiles, declaredFiles, type Injection, type ProfileStatus } from './profiles.ts'
 export { ResourceLocks } from './locks.ts'
 export { LogTail } from './tail.ts'
 export { TOOL_NAMES } from './tools.ts'
@@ -53,10 +55,11 @@ export class AdgRunner extends Service {
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })
     const runner = this.runner
+    const library: LibraryView = { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) }
     ctx.effect(() => () => { void runner.dispose() }, 'adg-runner runs')
 
     ctx.inject(['tools'], scoped => {
-      for (const tool of runnerTools(runner, { library: { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) }, dataDir: spec.dataDir })) {
+      for (const tool of runnerTools(runner, { library, dataDir: spec.dataDir })) {
         scoped.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; return tool.execute(args, exec) } })
       }
     })
@@ -77,6 +80,18 @@ export class AdgRunner extends Service {
           'runs/logs': params => {
             const p = params as RequestParams<'runs/logs'>
             return { lines: runner.logs(p.runId, p.limit ?? 200) }
+          },
+          'configs/status': async params => {
+            await scripts.ready
+            return configStatus(library, runner.profiles, (params as RequestParams<'configs/status'>).scriptId)
+          },
+          'configs/import': async params => {
+            await scripts.ready
+            return { imported: await importConfig(library, runner.profiles, (params as RequestParams<'configs/import'>).scriptId) }
+          },
+          'configs/open': async params => {
+            await scripts.ready
+            return runner.settings((params as RequestParams<'configs/open'>).scriptId)
           },
         },
       })

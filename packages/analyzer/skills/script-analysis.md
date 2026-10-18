@@ -58,7 +58,7 @@ tasks:
     params:                     # 用 {name} 在 args / patches 里引用
       stage: { type: string, default: '1-7', description: 关卡 }
     args: ['{stage}']           # 追加到 launch.args
-    patches:                    # 运行前改配置，结束后还原（restore: false 则保留）
+    patches:                    # 这次运行的临时修改：叠加在本地配置上，结束后原项目配置会还原
       - file: config/gui.json
         set:
           - path: [Configurations, Default, Start.RunDirectly]   # 键里有点号就整体写成一个元素

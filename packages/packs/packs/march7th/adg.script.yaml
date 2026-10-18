@@ -19,6 +19,9 @@ detect:
   files: [March7th Assistant.exe]
 launch:
   exe: March7th Assistant.exe
+  # The task program runs a full job when started without arguments; settings live in the launcher.
+  settings:
+    exe: March7th Launcher.exe
 tasks:
   - id: main
     title: 完整运行

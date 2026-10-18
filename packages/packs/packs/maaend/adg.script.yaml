@@ -21,6 +21,8 @@ detect:
   files: [interface.json, resource_adb]
 launch:
   exe: MaaEnd.exe
+  settings:
+    exe: MaaEnd.exe
 tasks:
   # Whether a run holds the mouse depends on the instance's controller, hence two tasks.
   - id: run-pc
