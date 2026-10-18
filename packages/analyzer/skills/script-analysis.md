@@ -51,6 +51,8 @@ launch:
   exe: <相对路径的程序>
   args: []                      # 所有任务共用的参数
   stopAfterDone: false          # 看到完成日志后关闭程序
+  # settings: { exe: <设置程序> }  # 「打开脚本修改设置」打开的程序；省略时打开上面的主程序。
+  #                              # 主程序一启动就自动开跑（不显示设置界面）时才需要写，例如三月七的 Launcher
 tasks:
   - id: daily
     title: 日常

@@ -216,18 +216,21 @@ export class Runner {
   /**
    * Open the script's own settings window with the local config in place.
    * When the user closes it, what the script saved is kept in the local copy
-   * and the original project config is restored.
-   * @throws Error when the pack declares no settings window.
+   * and the original project config is restored. Without a declared
+   * `launch.settings` the main program is opened as it is (most GUIs are
+   * their own settings window).
+   * @throws Error when the pack declares no program at all.
    */
   async settings(scriptId: string): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
-    if (pack === undefined) throw new Error(`${script.name} 没有脚本包，不知道它的设置界面`)
-    const settings = pack.manifest.launch?.settings
-    if (settings === undefined) throw new Error(`${pack.manifest.name} 的脚本包没有声明设置界面；可以让 agent 用 script_config_set 修改本地配置`)
+    if (pack === undefined) throw new Error(`${script.name} 没有脚本包，不知道该打开哪个程序`)
+    const launch = pack.manifest.launch
+    if (launch === undefined) throw new Error(`${pack.manifest.name} 的脚本包没有声明启动程序；可以让 agent 用 script_config_set 修改本地配置`)
+    const settings = launch.settings ?? { exe: launch.exe, args: launch.args }
     const manifest: ScriptManifest = {
       ...pack.manifest,
-      launch: { exe: settings.exe, args: [], stopAfterDone: false, stopGraceSeconds: 0 },
+      launch: { exe: settings.exe, args: [], ...(launch.settings === undefined && launch.cwd !== undefined ? { cwd: launch.cwd } : {}), stopAfterDone: false, stopGraceSeconds: 0 },
       tasks: [{
         id: '__settings', title: '修改设置', utterances: [], params: {}, args: settings.args, patches: [],
         resources: { input: 'none' }, success: 'exit-code',

@@ -76,8 +76,8 @@ function scriptDir(): string {
   return dir
 }
 
-function setup(dirs: Record<string, string>, bridge?: EmulatorBridge) {
-  const manifest = parseManifest(PACK)
+function setup(dirs: Record<string, string>, bridge?: EmulatorBridge, pack = PACK) {
+  const manifest = parseManifest(pack)
   const states: RunInfo[] = []
   const runner = new Runner({
     library: {
@@ -189,4 +189,17 @@ test('a settings session keeps what the script saved in the local copy; the next
   await runner.finished(started.id)
   assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
   assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /RunDirectly/, 'task patches never leak into the local copy')
+})
+
+test('without a declared settings window, a settings session opens the main program with its base args', async () => {
+  const dir = scriptDir()
+  const original = readFileSync(join(dir, 'config', 'gui.json'), 'utf8')
+  // The main program's base args play the "user saves in the GUI" scenario here.
+  const pack = PACK.replace("  settings: { exe: tool.exe, args: ['settings.json'] }\n", '').replace('  exe: tool.exe\n', "  exe: tool.exe\n  args: ['settings.json']\n")
+  assert.equal(parseManifest(pack).launch?.settings, undefined)
+  const { runner } = setup({ tool: dir }, bridge, pack)
+  const session = await runner.finished((await runner.settings('tool')).id)
+  assert.equal(session.state, 'succeeded', session.outcome)
+  assert.match(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /H8-4/)
+  assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
 })

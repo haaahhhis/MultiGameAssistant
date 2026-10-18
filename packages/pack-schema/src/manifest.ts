@@ -113,7 +113,9 @@ export const Launch = z.object({
   /**
    * The script's own settings window, opened in a settings session: the
    * local config is put in place, the user changes settings there, and what
-   * the script saves is kept in the local copy. Omit when the script has none.
+   * the script saves is kept in the local copy. Omitted: the main program
+   * (`exe` + `args`) is opened instead, which suits GUIs that are their own
+   * settings window; declare it when the main program starts working on its own.
    */
   settings: z.object({
     exe: RelativePath,
