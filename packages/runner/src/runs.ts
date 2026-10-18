@@ -235,7 +235,7 @@ export class Runner {
         id: '__settings', title: '修改设置', utterances: [], params: {}, args: settings.args, patches: [],
         resources: { input: 'none' }, success: 'exit-code',
       }],
-      logs: { sources: [{ stdout: true, encoding: 'utf-8' }], rules: [] },
+      logs: { sources: [{ stdout: true, encoding: 'auto' }], rules: [] },
     }
     return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings' })
   }
@@ -262,7 +262,7 @@ export class Runner {
     const rules = manifest.logs.rules.map(rule => ({ rule, pattern: new RegExp(rule.match) }))
     const onLine = (source: string) => (text: string) => this.#scriptLine(run, source, text, rules, manifest)
     const tails: LogTail[] = []
-    let stdoutEncoding = 'utf-8'
+    let stdoutEncoding = 'auto'
     for (const source of manifest.logs.sources) {
       if ('stdout' in source) stdoutEncoding = source.encoding
       else {

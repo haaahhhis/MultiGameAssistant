@@ -124,9 +124,17 @@ export const Launch = z.object({
 })
 export type Launch = z.infer<typeof Launch>
 
+/**
+ * How a log's bytes are decoded. `auto`: each line as UTF-8 when valid,
+ * otherwise as GBK/GB18030 (what Windows programs print in the console code
+ * page on Chinese systems).
+ */
+export const LogEncoding = z.enum(['auto', 'utf-8', 'gbk', 'utf-16le'])
+export type LogEncoding = z.infer<typeof LogEncoding>
+
 export const LogSource = z.union([
-  z.object({ stdout: z.literal(true), encoding: z.enum(['utf-8', 'gbk', 'utf-16le']).default('utf-8') }),
-  z.object({ path: RelativePath, encoding: z.enum(['utf-8', 'gbk', 'utf-16le']).default('utf-8') }),
+  z.object({ stdout: z.literal(true), encoding: LogEncoding.default('auto') }),
+  z.object({ path: RelativePath, encoding: LogEncoding.default('auto') }),
 ])
 export type LogSource = z.infer<typeof LogSource>
 
@@ -144,7 +152,7 @@ export const LogRule = z.object({
 export type LogRule = z.infer<typeof LogRule>
 
 export const Logs = z.object({
-  sources: z.array(LogSource).min(1).default([{ stdout: true, encoding: 'utf-8' }]),
+  sources: z.array(LogSource).min(1).default([{ stdout: true, encoding: 'auto' }]),
   rules: z.array(LogRule).default([]),
 })
 export type Logs = z.infer<typeof Logs>
@@ -178,7 +186,7 @@ export const ScriptManifest = z.object({
   }).optional(),
   launch: Launch.optional(),
   tasks: z.array(Task).default([]),
-  logs: Logs.default({ sources: [{ stdout: true, encoding: 'utf-8' }], rules: [] }),
+  logs: Logs.default({ sources: [{ stdout: true, encoding: 'auto' }], rules: [] }),
   intervention: open.optional(),
   update: open.optional(),
 }).superRefine((manifest, issues) => {

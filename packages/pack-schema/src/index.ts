@@ -6,7 +6,7 @@
  * particular script.
  */
 export {
-  ConfigFile, ConfigPatch, Launch, LogRule, Logs, LogSource, Requirement, Resources, ScriptManifest, Task, TaskParam,
+  ConfigFile, ConfigPatch, Launch, LogEncoding, LogRule, Logs, LogSource, Requirement, Resources, ScriptManifest, Task, TaskParam,
   type ScriptManifestInput,
 } from './manifest.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'

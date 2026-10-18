@@ -70,7 +70,7 @@ tasks:
     expectedDuration: 40m
 logs:
   sources:
-    - stdout: true              # encoding: utf-8 | gbk
+    - stdout: true              # encoding 默认 auto（UTF-8，不是就按 GBK），一般不用写
     - path: debug/gui.log
   rules:
     - { match: '任务已全部完成', level: done }
