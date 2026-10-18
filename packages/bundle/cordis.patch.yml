@@ -58,5 +58,28 @@
     - id: adg-guard
       name: '@adg/guard'
 
+    # M3: incidents while scripts run (error rules, failures, stalls,
+    # overtime), L0 recovery from the pack, screenshots; the `monitor` capability.
+    - id: adg-monitor
+      name: '@adg/monitor'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
+    # M3: the chat layer — notices with buttons, replies, conversations with
+    # the agent, approval cards; the `notify` capability.
+    - id: adg-notify
+      name: '@adg/notify'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
+    # M3: the Feishu channel (long connection; App Secret in dsh credentials
+    # as ADG_FEISHU_APP_SECRET); the `feishu` capability.
+    #   ADG_FEISHU_BASE_URL   API base instead of open.feishu.cn (tests)
+    - id: adg-feishu
+      name: '@adg/feishu'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        baseUrl: !!js "process.env.ADG_FEISHU_BASE_URL || undefined"
+
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.

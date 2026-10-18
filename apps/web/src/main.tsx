@@ -5,6 +5,7 @@ import { gatewayUrl, readToken, saveToken } from './config.ts'
 import { registerPlugin } from './plugins.ts'
 import { chatPlugin } from './plugins/chat/index.ts'
 import { roadmapPlugins } from './plugins/roadmap/index.ts'
+import { feishuPlugin, monitorPlugin } from './plugins/monitor/index.ts'
 import { emulatorsPlugin, scriptsPlugin } from './plugins/scripts/index.ts'
 import { settingsPlugin } from './plugins/settings/index.ts'
 import { statusPlugin } from './plugins/status/index.ts'
@@ -26,6 +27,8 @@ registerPlugin(settingsPlugin)
 registerPlugin(statusPlugin)
 registerPlugin(scriptsPlugin)
 registerPlugin(emulatorsPlugin)
+registerPlugin(monitorPlugin)
+registerPlugin(feishuPlugin)
 for (const plugin of roadmapPlugins) registerPlugin(plugin)
 
 const root = createRoot(document.getElementById('root')!)

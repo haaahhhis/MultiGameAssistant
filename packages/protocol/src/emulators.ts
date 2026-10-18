@@ -38,6 +38,8 @@ export const EmulatorSettings = z.object({
    * device the user starts themselves).
    */
   manualAddress: z.string().regex(/^[\w.-]+:\d{1,5}$/).optional(),
+  /** adb.exe for reconnecting and screenshots; otherwise the one next to MuMuManager.exe, else `adb` on PATH. */
+  adbPath: z.string().optional(),
   /** Start the instance when a task needs it. */
   autoStart: z.boolean(),
   /** Seconds to wait for Android to finish booting. */
@@ -70,7 +72,7 @@ export const EmulatorRequests = {
   },
   'emulators/settings/set': {
     capability: EMULATORS_CAPABILITY,
-    params: EmulatorSettings.partial().extend({ mumuManager: z.string().nullable().optional(), manualAddress: z.string().regex(/^[\w.-]+:\d{1,5}$/).nullable().optional() }),
+    params: EmulatorSettings.partial().extend({ mumuManager: z.string().nullable().optional(), manualAddress: z.string().regex(/^[\w.-]+:\d{1,5}$/).nullable().optional(), adbPath: z.string().nullable().optional() }),
     result: EmulatorSettings,
   },
 } as const

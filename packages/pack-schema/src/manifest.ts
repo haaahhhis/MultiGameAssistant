@@ -143,19 +143,44 @@ export const LogRule = z.object({
   match: z.string().min(1).refine(value => { try { new RegExp(value); return true } catch { return false } }, 'invalid regular expression'),
   /**
    * `done`: the run's work finished successfully; `error`: something failed
-   * (the run fails unless a later `done` overrides it); `progress` / `info`
-   * are shown and kept for the monitor (M3).
+   * (the run fails unless a later `done` overrides it, and the monitor raises
+   * an incident); `warning`: worth recording (an incident, not pushed by
+   * default) without failing the run, e.g. errors the script retries itself;
+   * `progress` / `info` are shown only.
    */
-  level: z.enum(['info', 'progress', 'done', 'error']),
+  level: z.enum(['info', 'progress', 'done', 'warning', 'error']),
   tag: z.string().optional(),
 })
 export type LogRule = z.infer<typeof LogRule>
 
+const Duration = z.string().regex(/^\d+(s|m|h)$/, 'a duration like 90s, 8m or 2h')
+
 export const Logs = z.object({
   sources: z.array(LogSource).min(1).default([{ stdout: true, encoding: 'auto' }]),
   rules: z.array(LogRule).default([]),
+  /** No new script log line for this long counts as stalled (monitor incident, `recovery` on `stalled`). */
+  stallAfter: Duration.optional(),
 })
 export type Logs = z.infer<typeof Logs>
+
+/**
+ * L0 recovery (docs/PLAN.zh.md §5.4): what the monitor does by itself when a
+ * rule tag matches, the run stalls, or the run fails. Entries for the same
+ * event run in order; `max` limits how often per run chain (a run and its
+ * restarts). Anything not handled here is pushed to the user.
+ */
+export const Recovery = z.object({
+  /** A log rule tag, `stalled`, or `failed`. */
+  on: z.string().min(1),
+  /**
+   * `reconnect-adb`: reconnect the run's emulator over ADB (starting the
+   * instance again if it is down); `restart`: stop the run and start the same
+   * task again; `stop`: stop the run.
+   */
+  do: z.enum(['reconnect-adb', 'restart', 'stop']),
+  max: z.number().int().min(1).max(10).default(1),
+})
+export type Recovery = z.infer<typeof Recovery>
 
 export const ScriptManifest = z.object({
   id: ScriptId,
@@ -187,6 +212,7 @@ export const ScriptManifest = z.object({
   launch: Launch.optional(),
   tasks: z.array(Task).default([]),
   logs: Logs.default({ sources: [{ stdout: true, encoding: 'auto' }], rules: [] }),
+  recovery: z.array(Recovery).default([]),
   intervention: open.optional(),
   update: open.optional(),
 }).superRefine((manifest, issues) => {
@@ -195,6 +221,10 @@ export const ScriptManifest = z.object({
     if (ids.has(task.id)) issues.addIssue({ code: 'custom', path: ['tasks', index, 'id'], message: `duplicate task id ${task.id}` })
     ids.add(task.id)
     if (manifest.launch === undefined) issues.addIssue({ code: 'custom', path: ['launch'], message: 'tasks need a launch section' })
+  })
+  const tags = new Set(['stalled', 'failed', ...manifest.logs.rules.map(r => r.tag ?? r.level)])
+  manifest.recovery.forEach((entry, index) => {
+    if (!tags.has(entry.on)) issues.addIssue({ code: 'custom', path: ['recovery', index, 'on'], message: `no log rule has tag ${entry.on} (use a rule tag, stalled or failed)` })
   })
 })
 export type ScriptManifest = z.infer<typeof ScriptManifest>

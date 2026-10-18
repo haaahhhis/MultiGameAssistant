@@ -52,6 +52,8 @@ export const RunInfo = z.object({
   warnings: z.array(z.string()),
   /** A task run, or a settings session (the script's own window opened to change the local config). */
   kind: z.enum(['task', 'settings']),
+  /** This run restarts that one (L0 recovery or the user's retry). */
+  retryOf: z.string().optional(),
 })
 export type RunInfo = z.infer<typeof RunInfo>
 
@@ -61,7 +63,9 @@ export const RunLogLine = z.object({
   source: z.string(),
   text: z.string(),
   /** Level of the log rule that matched this line, if any. */
-  level: z.enum(['info', 'progress', 'done', 'error']).optional(),
+  level: z.enum(['info', 'progress', 'done', 'warning', 'error']).optional(),
+  /** Tag of that rule (its level when it has none). */
+  tag: z.string().optional(),
 })
 export type RunLogLine = z.infer<typeof RunLogLine>
 

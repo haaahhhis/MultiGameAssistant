@@ -10,6 +10,8 @@ import { LiveAttempt, LiveFrame, SessionEvent } from './events.ts'
 import { EmulatorNotifications, EmulatorRequests } from './emulators.ts'
 import { PackNotifications, PackRequests } from './packs.ts'
 import { GuardNotifications, GuardRequests } from './guard.ts'
+import { MonitorNotifications, MonitorRequests } from './monitor.ts'
+import { NotifyNotifications, NotifyRequests } from './notify.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -335,6 +337,8 @@ export const Requests = {
   ...GuardRequests,
   ...EmulatorRequests,
   ...PackRequests,
+  ...MonitorRequests,
+  ...NotifyRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -375,6 +379,8 @@ export const Notifications = {
   ...GuardNotifications,
   ...EmulatorNotifications,
   ...PackNotifications,
+  ...MonitorNotifications,
+  ...NotifyNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests

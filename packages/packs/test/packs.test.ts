@@ -34,3 +34,17 @@ test('MaaEnd runs a named MXU instance; March7th passes its task name', () => {
   assert.deepEqual(renderTask(m7a, 'power').args, ['power'])
   assert.equal(m7a.tasks.find(t => t.id === 'power')?.resources.input, 'desktop')
 })
+
+test('log rules classify the scripts\' real messages', () => {
+  const classify = (id: string, line: string) => {
+    const rule = load(id).logs.rules.find(r => new RegExp(r.match).test(line))
+    return rule === undefined ? undefined : `${rule.level}:${rule.tag ?? rule.level}`
+  }
+  assert.equal(classify('maa', '[2026-10-18 04:32:59][ERR] 重连失败，连接断开！'), 'error:adb-disconnected')
+  assert.equal(classify('maa', '模拟器断开，正在尝试重连'), 'warning:adb-reconnecting')
+  assert.equal(classify('maa', '任务已全部完成！\n(用时 8 分钟)'), 'done:done')
+  assert.equal(classify('maa', '开始任务: 理智作战'), undefined)
+  assert.equal(classify('march7th', '2026-10-18 05:00:09 | ERROR | 截图失败：没有找到游戏窗口'), 'warning:script-error')
+  assert.equal(classify('march7th', '2026-10-18 05:00:01 | INFO | 开始运行：清体力'), undefined, 'a plain pipe does not match')
+  assert.deepEqual(load('maa').recovery.map(r => `${r.on}→${r.do}`), ['adb-disconnected→reconnect-adb', 'adb-disconnected→restart', 'stalled→restart'])
+})

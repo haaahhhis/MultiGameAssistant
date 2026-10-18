@@ -6,7 +6,7 @@ import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
 
-const STATE: Readonly<Record<RunInfo['state'], [string, string]>> = {
+export const RUN_STATE: Readonly<Record<RunInfo['state'], [string, string]>> = {
   starting: ['', '启动中'], running: ['', '运行中'], stopping: ['warn', '停止中'],
   succeeded: ['ok', '成功'], failed: ['warn', '失败'], cancelled: ['', '已停止'],
 }
@@ -122,7 +122,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
         <div className="run-history">
           <div className="sidebar-label">最近运行</div>
           {runs.slice(0, 6).map(run => {
-            const [tone, label] = STATE[run.state]
+            const [tone, label] = RUN_STATE[run.state]
             return (
               <button key={run.id} className={`run-row ${run.id === viewing?.id ? 'active' : ''}`} onClick={() => setShown(run.id)}>
                 <span className={`badge ${tone}`}>{label}</span>
@@ -139,7 +139,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
   )
 }
 
-function RunLog({ client, run }: { client: AdgClient; run: RunInfo }) {
+export function RunLog({ client, run }: { client: AdgClient; run: RunInfo }) {
   const [lines, setLines] = useState<RunLogLine[]>([])
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {

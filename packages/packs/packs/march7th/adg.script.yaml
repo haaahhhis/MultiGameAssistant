@@ -83,4 +83,8 @@ tasks:
 logs:
   sources:
     - stdout: true
-  rules: []
+  # Console lines are "time | LEVEL | message" (its utils/logger). Its errors are
+  # often retried inside the task, so they are warnings; the exit code decides.
+  rules:
+    - { match: '\| (ERROR|CRITICAL) \|', level: warning, tag: script-error }
+  stallAfter: 20m

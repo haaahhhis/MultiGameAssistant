@@ -15,6 +15,7 @@ export function EmulatorSettingsPage({ client }: { client: AdgClient }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [manual, setManual] = useState('')
+  const [adbPath, setAdbPath] = useState('')
 
   useEffect(() => client.connection.on('emulators/changed', () => setRevision(r => r + 1)), [client])
   useEffect(() => {
@@ -24,6 +25,7 @@ export function EmulatorSettingsPage({ client }: { client: AdgClient }) {
       if (!live) return
       setData(s)
       setManual(s.settings.manualAddress ?? '')
+      setAdbPath(s.settings.adbPath ?? '')
     }).catch(e => { if (live) setError(errorText(e)) })
     return () => { live = false }
   }, [client, status.state, revision])
@@ -88,6 +90,11 @@ export function EmulatorSettingsPage({ client }: { client: AdgClient }) {
           <div className="key-input">
             <input id="manual-adb" className="text-input plain" value={manual} onChange={e => setManual(e.target.value)} placeholder="例如 127.0.0.1:5555；填写后不再管理 MuMu" spellCheck={false} />
             <button className="small-button" disabled={busy !== null} onClick={() => void set({ manualAddress: manual.trim() === '' ? null : manual.trim() })}>保存</button>
+          </div>
+          <label className="field-label" htmlFor="adb-path">adb.exe 位置（可选，出错时重连模拟器、截图用；默认用 MuMu 自带的）</label>
+          <div className="key-input">
+            <input id="adb-path" className="text-input plain" value={adbPath} onChange={e => setAdbPath(e.target.value)} placeholder="例如 D:\platform-tools\adb.exe" spellCheck={false} />
+            <button className="small-button" disabled={busy !== null} onClick={() => void set({ adbPath: adbPath.trim() === '' ? null : adbPath.trim() })}>保存</button>
           </div>
           <label className="field-label" htmlFor="boot-timeout">等待安卓启动的最长时间（秒）</label>
           <input id="boot-timeout" className="text-input plain" type="number" min={30} max={900} defaultValue={data.settings.bootTimeoutSeconds}

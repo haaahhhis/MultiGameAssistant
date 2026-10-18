@@ -32,6 +32,20 @@ export interface EmulatorBridge {
    * @returns its ADB address (`host:port`) and a label for people.
    */
   prepare(options: { prefer?: string | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string }>
+  /**
+   * Reconnect an ADB address (starting the emulator again if it went down).
+   * @returns what was done, for people. @throws Error when it is still unreachable.
+   */
+  reconnect?(address: string, signal: AbortSignal): Promise<string>
+  /** A PNG screenshot of the device at this address. */
+  screencap?(address: string, signal: AbortSignal): Promise<Buffer>
+}
+
+/** Live feed of runs for other plugins (the monitor). Listener errors are ignored. */
+export interface RunListener {
+  state?(run: RunInfo): void
+  /** Every line as it arrives (unbatched), with the matching rule's level and tag. */
+  line?(run: RunInfo, line: RunLogLine): void
 }
 
 export interface RunnerOptions {
@@ -54,6 +68,8 @@ interface ActiveRun {
   mode: 'task' | 'settings'
   child?: ChildProcess
   stopRequested: boolean
+  /** Why it was stopped, when not by a plain user request. */
+  stopReason?: string
   doneSeen: boolean
   errorLine?: string
   controller: AbortController
@@ -74,6 +90,7 @@ export class Runner {
   readonly profiles: ConfigProfiles
   readonly #options: RunnerOptions
   readonly #runs = new Map<string, ActiveRun>()
+  readonly #listeners = new Set<RunListener>()
   readonly #now: () => number
 
   constructor(options: RunnerOptions) {
@@ -102,6 +119,12 @@ export class Runner {
     return { tasks, runnable: true }
   }
 
+  /** Follow every run's state and lines. @returns a disposer. */
+  watch(listener: RunListener): () => void {
+    this.#listeners.add(listener)
+    return () => { this.#listeners.delete(listener) }
+  }
+
   list(scriptId?: string): RunInfo[] {
     return [...this.#runs.values()].map(r => r.info).filter(r => scriptId === undefined || r.scriptId === scriptId).sort((a, b) => b.startedAt - a.startedAt)
   }
@@ -123,7 +146,7 @@ export class Runner {
    * Start a task. Resolves once the program has started (or the run failed to start).
    * @throws Error before anything ran: unknown script or task, bad parameters, busy resources.
    */
-  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings' } = {}): Promise<RunInfo> {
+  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string } = {}): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) throw new Error(`${script.name} 没有脚本包，还不知道怎么运行它`)
@@ -141,6 +164,7 @@ export class Runner {
       info: {
         id: runId, scriptId, scriptName: script.name, taskId, taskTitle: task?.title ?? taskId, params: {}, state: 'starting',
         startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [], kind: mode,
+        ...(options.retryOf === undefined ? {} : { retryOf: options.retryOf }),
       },
       mode,
       stopRequested: false, doneSeen: false, controller: new AbortController(), lines: [], pendingLines: [], release: [], finished, resolveFinished,
@@ -208,7 +232,7 @@ export class Runner {
       void writeFile(join(runDir, 'run.json'), JSON.stringify(run.info, null, 2)).catch(() => {})
       return run.info
     } catch (error) {
-      await this.#finish(run, run.stopRequested ? 'cancelled' : 'failed', run.stopRequested ? '已停止' : error instanceof Error ? error.message : String(error))
+      await this.#finish(run, run.stopRequested ? 'cancelled' : 'failed', run.stopRequested ? run.stopReason ?? '已停止' : error instanceof Error ? error.message : String(error))
       return run.info
     }
   }
@@ -240,17 +264,45 @@ export class Runner {
     return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings' })
   }
 
-  /** Ask a run to stop: the program's process tree is ended and configs restored. */
-  async stop(runId: string): Promise<void> {
+  /**
+   * Ask a run to stop: the program's process tree is ended and configs restored.
+   * @param reason shown as the outcome instead of "stopped as requested".
+   */
+  async stop(runId: string, reason?: string): Promise<void> {
     const run = this.#run(runId)
     if (run.info.endedAt !== undefined) return
     run.stopRequested = true
+    if (reason !== undefined) run.stopReason ??= reason
     run.controller.abort(new Error('stopped by user'))
     if (run.child !== undefined && run.child.exitCode === null) {
       run.info.state = 'stopping'
       this.#publish(run)
       await killTree(run.child)
     }
+  }
+
+  /**
+   * Stop a run (if it is still going) and start its task again with the same
+   * parameters; the new run records `retryOf`.
+   * @throws Error when the task cannot start again (e.g. its resources are busy).
+   */
+  async restart(runId: string, reason: string): Promise<RunInfo> {
+    const run = this.#run(runId)
+    if (run.mode !== 'task') throw new Error('设置会话不能重启')
+    if (run.info.endedAt === undefined) {
+      this.#line(run, 'adg', `重启：${reason}`)
+      await this.stop(runId, `已重启：${reason}`)
+    }
+    await run.finished
+    return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId })
+  }
+
+  /** Add a warning to a run (shown with it), e.g. from the monitor. */
+  warn(runId: string, text: string): void {
+    const run = this.#run(runId)
+    if (run.info.warnings.includes(text)) return
+    run.info.warnings.push(text)
+    this.#publish(run)
   }
 
   /** Stop everything (plugin unload). */
@@ -276,13 +328,7 @@ export class Runner {
     const stderr = lineSplitter(stdoutEncoding, onLine('stderr'))
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
-    const expected = parseDuration(manifest.tasks.find(t => t.id === run.info.taskId)?.expectedDuration)
-    const overtime = expected === undefined ? undefined : setTimeout(() => {
-      run.info.warnings.push(`已运行超过预计时长的 2 倍（${manifest.tasks.find(t => t.id === run.info.taskId)?.expectedDuration}）`)
-      this.#publish(run)
-    }, expected * 2)
     child.once('exit', code => {
-      clearTimeout(overtime)
       void (async () => {
         stdout.end()
         stderr.end()
@@ -298,9 +344,9 @@ export class Runner {
 
   #scriptLine(run: ActiveRun, source: string, text: string, rules: readonly { rule: LogRule; pattern: RegExp }[], manifest: ScriptManifest): void {
     const hit = rules.find(r => r.pattern.test(text))
-    this.#push(run, { at: this.#now(), source, text, ...(hit === undefined ? {} : { level: hit.rule.level }) })
-    if (hit === undefined) return
-    const tag = hit.rule.tag ?? hit.rule.level
+    const tag = hit === undefined ? undefined : hit.rule.tag ?? hit.rule.level
+    this.#push(run, { at: this.#now(), source, text, ...(hit === undefined ? {} : { level: hit.rule.level, tag }) })
+    if (hit === undefined || tag === undefined) return
     if (!run.info.tags.includes(tag)) {
       run.info.tags.push(tag)
       this.#publish(run)
@@ -346,6 +392,9 @@ export class Runner {
     run.lines.push(line)
     if (run.lines.length > KEEP_LINES) run.lines.splice(0, run.lines.length - KEEP_LINES)
     run.pendingLines.push(line)
+    for (const listener of this.#listeners) {
+      try { listener.line?.(run.info, line) } catch { /* a listener's problem, not the run's */ }
+    }
     void appendFile(join(this.#options.dataDir, 'runs', run.info.id, 'log.txt'), `${new Date(line.at).toISOString()} [${line.source}] ${line.text}\n`).catch(() => {})
     if (run.flushTimer === undefined) run.flushTimer = setTimeout(() => this.#flush(run), 100)
   }
@@ -358,7 +407,11 @@ export class Runner {
   }
 
   #publish(run: ActiveRun): void {
-    this.#options.onState({ ...run.info, resources: [...run.info.resources], tags: [...run.info.tags], warnings: [...run.info.warnings] })
+    const snapshot = { ...run.info, resources: [...run.info.resources], tags: [...run.info.tags], warnings: [...run.info.warnings] }
+    this.#options.onState(snapshot)
+    for (const listener of this.#listeners) {
+      try { listener.state?.(snapshot) } catch { /* a listener's problem, not the run's */ }
+    }
   }
 
   #run(runId: string): ActiveRun {
@@ -375,14 +428,14 @@ export class Runner {
 
 /** Decide the outcome from the script's own signals. */
 function judge(run: ActiveRun, success: 'exit-code' | 'done-log', code: number | null): { state: 'succeeded' | 'failed' | 'cancelled'; reason: string } {
-  if (run.stopRequested) return { state: 'cancelled', reason: '已按要求停止' }
+  if (run.stopRequested) return { state: 'cancelled', reason: run.stopReason ?? '已按要求停止' }
   if (run.doneSeen) return { state: 'succeeded', reason: run.errorLine === undefined ? '脚本报告已完成' : `脚本报告已完成（期间出现过错误：${run.errorLine}）` }
   if (run.errorLine !== undefined) return { state: 'failed', reason: `脚本报告错误：${run.errorLine}` }
   if (success === 'done-log') return { state: 'failed', reason: `脚本已退出（代码 ${code ?? '无'}），但没有看到完成标志` }
   return code === 0 ? { state: 'succeeded', reason: '脚本正常退出' } : { state: 'failed', reason: `脚本退出代码 ${code ?? '无'}` }
 }
 
-function parseDuration(value: string | undefined): number | undefined {
+export function parseDuration(value: string | undefined): number | undefined {
   const match = /^(\d+)(s|m|h)$/.exec(value ?? '')
   if (match === null) return undefined
   return Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000 } as const)[match[2] as 's' | 'm' | 'h']

@@ -2,7 +2,7 @@
   "name": "@adg/test-kit",
   "version": "0.1.0",
   "private": true,
-  "description": "Local simulation environment for tests: scenario-driven fake scripts, a fake GitHub releases server, and a manual clock",
+  "description": "Local simulation environment for tests: scenario-driven fake scripts, fake GitHub releases, a fake LLM, a fake Feishu Open Platform (REST and long connection), and a manual clock",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -19,6 +19,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^24.13.3"
+    "@types/node": "^24.13.3",
+    "@types/ws": "^8.18.1"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
   }
 }

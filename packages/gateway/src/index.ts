@@ -22,13 +22,15 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { credentialsCapability } from './credentials.ts'
 import { providersCapability } from './providers.ts'
 import type { NotificationMethod, NotificationParams } from '@adg/protocol'
-import { ApprovalBroker } from './approvals.ts'
+import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
 import { startServer } from './server.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
+export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
+export { convertRecord } from './convert.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -86,11 +88,11 @@ export class AdgGateway extends Service {
       ctx.effect(() => this.registry.register(capability), `adg-gateway capability ${capability.id}`)
     }
 
-    // Claim approvals only while a protocol client can answer them. Prepended:
+    // Claim approvals only while a protocol client or a chat channel can answer them. Prepended:
     // dsh's own remote bridge (dsh-api-remotes) holds a request for its browser
     // client even when none is attached, so answerers after it never run.
     ctx.on('approval/request', (request, next) => {
-      if (!this.hasClients()) return next()
+      if (!this.hasClients() && !this.approvals.hasActiveAnswerer()) return next()
       return this.approvals.ask({
         sessionId: request.agent.session.id,
         toolName: request.toolName,
@@ -213,6 +215,24 @@ export class AdgGateway extends Service {
       return dispose
     }, `adg-gateway capability ${registration.id}`)
     return () => dispose()
+  }
+
+  /**
+   * Let another place answer approvals too (first answer wins). The
+   * registration belongs to the calling plugin's fiber.
+   */
+  addApprovalAnswerer(answerer: ApprovalAnswerer): () => void {
+    let dispose: () => void = () => {}
+    this.ctx.effect(() => {
+      dispose = this.approvals.addAnswerer(answerer)
+      return dispose
+    }, 'adg-gateway approval answerer')
+    return () => dispose()
+  }
+
+  /** Answer an approval from an answerer. @returns false when it is unknown or already answered. */
+  respondApproval(approvalId: string, decision: 'allow-once' | 'reject'): boolean {
+    return this.approvals.respond(approvalId, decision)
   }
 
   /** Send one notification to every initialized client. */

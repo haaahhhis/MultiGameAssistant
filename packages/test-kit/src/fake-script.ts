@@ -6,7 +6,7 @@
  * exit with a code. Runner, monitor and orchestrator tests spawn the CLI
  * wrapper (`fake-script-cli`) with a scenario file instead of a real game script.
  */
-import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 export type ScenarioStep =
@@ -20,6 +20,11 @@ export type ScenarioStep =
   | { readonly sleepMs: number }
   /** Stop here with this exit code. */
   | { readonly exit: number }
+  /**
+   * Play `steps` only the first time: the marker file is created then, and
+   * later runs skip them (a fault that a restart clears).
+   */
+  | { readonly once: string; readonly steps: readonly ScenarioStep[] }
 
 export interface Scenario {
   readonly name?: string
@@ -56,6 +61,7 @@ function isStep(step: unknown): step is ScenarioStep {
   if (typeof s['writeFile'] === 'string') return typeof s['content'] === 'string'
   if (typeof s['sleepMs'] === 'number') return Number.isFinite(s['sleepMs']) && s['sleepMs'] >= 0
   if (typeof s['exit'] === 'number') return Number.isInteger(s['exit'])
+  if (typeof s['once'] === 'string') return Array.isArray(s['steps']) && s['steps'].every(isStep)
   return false
 }
 
@@ -64,7 +70,12 @@ function isStep(step: unknown): step is ScenarioStep {
  * @returns the exit code: the first `exit` step's, else 0.
  */
 export async function runScenario(scenario: Scenario, io: ScenarioIo, signal?: AbortSignal): Promise<number> {
-  for (const step of scenario.steps) {
+  return (await runSteps(scenario.steps, io, signal)) ?? 0
+}
+
+/** @returns the exit code of an `exit` step, or undefined when the steps ran out. */
+async function runSteps(steps: readonly ScenarioStep[], io: ScenarioIo, signal: AbortSignal | undefined): Promise<number | undefined> {
+  for (const step of steps) {
     signal?.throwIfAborted()
     if ('log' in step) {
       if (step.stream === 'stderr') io.stderr(step.log)
@@ -77,9 +88,15 @@ export async function runScenario(scenario: Scenario, io: ScenarioIo, signal?: A
       await writeFile(step.writeFile, step.content)
     } else if ('sleepMs' in step) {
       await io.sleep(step.sleepMs, signal)
+    } else if ('once' in step) {
+      if (await access(step.once).then(() => true, () => false)) continue
+      await mkdir(dirname(step.once), { recursive: true })
+      await writeFile(step.once, '')
+      const code = await runSteps(step.steps, io, signal)
+      if (code !== undefined) return code
     } else {
       return step.exit
     }
   }
-  return 0
+  return undefined
 }

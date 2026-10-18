@@ -16,7 +16,7 @@ import { Runner, type EmulatorBridge, type LibraryView } from './runs.ts'
 import { configStatus, importConfig } from './config.ts'
 import { runnerTools } from './tools.ts'
 
-export { Runner, killTree, type EmulatorBridge, type LibraryView, type RunnerOptions } from './runs.ts'
+export { Runner, killTree, parseDuration, type EmulatorBridge, type LibraryView, type RunListener, type RunnerOptions } from './runs.ts'
 export { applyPatches, editText, setIn } from './patch.ts'
 export { ConfigProfiles, declaredFiles, type Injection, type ProfileStatus } from './profiles.ts'
 export { ResourceLocks } from './locks.ts'

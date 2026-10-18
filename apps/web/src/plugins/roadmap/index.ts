@@ -17,13 +17,6 @@ export const roadmapPlugins: readonly UiPlugin[] = [
     pages: [{ id: 'pipelines', title: '编排', icon: 'flow', order: 20, component: Placeholder }],
   },
   {
-    id: 'runs',
-    title: '运行监控',
-    milestone: 'M3',
-    requires: ['runs', 'monitor'],
-    pages: [{ id: 'runs', title: '运行', icon: 'monitor', order: 30, component: Placeholder }],
-  },
-  {
     id: 'games',
     title: '游戏看板',
     milestone: 'M6',

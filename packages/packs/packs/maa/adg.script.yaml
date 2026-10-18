@@ -68,7 +68,20 @@ logs:
   sources:
     - stdout: true
     - path: debug/gui.log
+  # Messages are MAA's own (MaaWpfGui zh-cn localization).
   rules:
     - { match: '任务已全部完成', level: done }
+    - { match: '重连失败，连接断开', level: error, tag: adb-disconnected }
     - { match: '任务出错', level: error, tag: task-error }
+    # MAA retries these itself; recorded, not pushed by default.
+    - { match: '模拟器断开，正在尝试重连', level: warning, tag: adb-reconnecting }
+    - { match: '截图失败', level: warning, tag: screencap-failed }
+    - { match: '连接失败', level: warning, tag: connect-failed }
     - { match: '完成任务', level: progress }
+  # MAA writes gui.log continuously while it works.
+  stallAfter: 15m
+# L0: an emulator that dropped is reconnected and the queue started again, once per run chain.
+recovery:
+  - { on: adb-disconnected, do: reconnect-adb }
+  - { on: adb-disconnected, do: restart }
+  - { on: stalled, do: restart }

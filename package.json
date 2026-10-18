@@ -21,7 +21,8 @@
     "e2e": "node scripts/e2e-chat.mjs",
     "dev:fake-model": "node scripts/dev-fake-model.mjs",
     "e2e:scripts": "node scripts/e2e-scripts.mjs",
-    "e2e:run": "node scripts/e2e-run.mjs"
+    "e2e:run": "node scripts/e2e-run.mjs",
+    "e2e:monitor": "node scripts/e2e-monitor.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

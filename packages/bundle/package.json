@@ -13,11 +13,14 @@
     }
   },
   "dependencies": {
-    "@adg/gateway": "workspace:*",
-    "@adg/script-registry": "workspace:*",
-    "@adg/runner": "workspace:*",
-    "@adg/emulator": "workspace:*",
     "@adg/analyzer": "workspace:*",
-    "@adg/guard": "workspace:*"
+    "@adg/emulator": "workspace:*",
+    "@adg/feishu": "workspace:*",
+    "@adg/gateway": "workspace:*",
+    "@adg/guard": "workspace:*",
+    "@adg/monitor": "workspace:*",
+    "@adg/notify": "workspace:*",
+    "@adg/runner": "workspace:*",
+    "@adg/script-registry": "workspace:*"
   }
 }

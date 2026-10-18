@@ -75,9 +75,16 @@ logs:
   rules:
     - { match: '任务已全部完成', level: done }
     - { match: '任务出错', level: error, tag: task-error }
+    - { match: '正在尝试重连', level: warning, tag: adb-reconnecting }   # 脚本自己会重试的错误用 warning，不算失败
+  stallAfter: 15m               # 这么久没有新日志算卡住（只给持续写日志的脚本写）
+recovery:                       # 出问题时平台自动做的事（每条最多 max 次），处理不了才通知用户
+  - { on: adb-disconnected, do: reconnect-adb }   # on：规则的 tag，或 stalled / failed
+  - { on: adb-disconnected, do: restart }          # do：reconnect-adb | restart | stop
 ```
 
 占位符：任务参数，以及 `{adb}`（模拟器地址）、`{dir}`（脚本目录）。
+
+日志规则只写在源码、文档或真实日志里确实出现过的原文；拿不准的错误先写成 `warning`。`recovery` 只给确定安全的情况写（重启任务会从头再跑一遍）。
 
 ## SKILL.md
 

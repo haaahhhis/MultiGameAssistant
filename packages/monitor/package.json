@@ -1,0 +1,38 @@
+{
+  "name": "@adg/monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cordis host plugin: incidents while scripts run (error rules, failures, stalls, overtime), L0 recovery from the Script Pack, screenshots, and the push to chat channels",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/pack-schema": "workspace:*",
+    "@adg/protocol": "workspace:*",
+    "@adg/runner": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@adg/gateway": "workspace:*",
+    "@adg/notify": "workspace:*",
+    "@adg/script-registry": "workspace:*",
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
+    "@types/node": "^24.13.3"
+  }
+}

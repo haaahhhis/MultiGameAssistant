@@ -10,7 +10,7 @@
  * `emulator_*` agent tools and the `emulators@1` capability.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -49,20 +49,34 @@ export const systemExec: Exec = (file, args, options = {}) => new Promise(resolv
   })
 })
 
+/** Like {@link Exec} for programs that print binary data (`adb exec-out screencap`). */
+export type ExecBuffer = (file: string, args: readonly string[], options?: { timeoutMs?: number }) => Promise<{ code: number; stdout: Buffer; stderr: string } | undefined>
+
+export const systemExecBuffer: ExecBuffer = (file, args, options = {}) => new Promise(resolve => {
+  execFile(file, [...args], { windowsHide: true, timeout: options.timeoutMs ?? 30_000, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return resolve(undefined)
+    resolve({ code: typeof error?.code === 'number' ? error.code : error === null ? 0 : 1, stdout, stderr: stderr.toString('utf8') })
+  })
+})
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+
 export class AdgEmulators extends Service {
   private readonly file: string
   private readonly sharedDir: string
   private readonly exec: Exec
+  private readonly execBuffer: ExecBuffer
   private settings: EmulatorSettings = DEFAULTS
   private found: Found[] | undefined
   readonly ready: Promise<void>
 
-  constructor(ctx: Context, config: Config, exec: Exec = systemExec) {
+  constructor(ctx: Context, config: Config, exec: Exec = systemExec, execBuffer: ExecBuffer = systemExecBuffer) {
     super(ctx, 'adgEmulators')
     const spec = ConfigSchema.parse(config)
     this.file = join(spec.dataDir, 'emulators.json')
     this.sharedDir = spec.sharedDir
     this.exec = exec
+    this.execBuffer = execBuffer
     this.ready = this.load()
     const log = ctx.logger('adg-emulators')
 
@@ -134,6 +148,44 @@ export class AdgEmulators extends Service {
     return { address: await mumu.adbAddress(index), label: `MuMu ${ready.index}（${ready.name}）` }
   }
 
+  /**
+   * Reconnect an ADB address for the monitor's L0 recovery: start the MuMu
+   * instance again if it went down, then `adb disconnect` / `adb connect` and
+   * check the device answers.
+   * @throws Error when adb is missing or the device still does not answer.
+   */
+  async reconnect(address: string, signal: AbortSignal): Promise<string> {
+    await this.ready
+    const done: string[] = []
+    if (this.settings.manualAddress === undefined) {
+      const mumu = await this.manager()
+      const current = mumu === undefined ? undefined : await mumu.instance(this.settings.instance)
+      if (mumu !== undefined && current?.adb === address && current.ready !== true) {
+        await mumu.ensureReady(this.settings.instance, { timeoutMs: this.settings.bootTimeoutSeconds * 1000, signal })
+        done.push(`MuMu 实例 ${this.settings.instance} 已重新启动`)
+      }
+    }
+    const adb = await this.adb()
+    await this.exec(adb, ['disconnect', address], { timeoutMs: 10_000 })
+    const connected = await this.exec(adb, ['connect', address], { timeoutMs: 20_000 })
+    if (connected === undefined) throw new Error(`找不到 adb（${adb}）。可以在「设置 → 模拟器」填写 adb.exe 的位置`)
+    if (!/connected to|already connected/i.test(connected.stdout)) throw new Error(`adb connect ${address} 没有成功：${(connected.stdout + connected.stderr).trim() || `退出代码 ${connected.code}`}`)
+    const echo = await this.exec(adb, ['-s', address, 'shell', 'echo', 'adg-ok'], { timeoutMs: 15_000 })
+    if (echo?.stdout.trim() !== 'adg-ok') throw new Error(`已连接 ${address}，但设备没有响应：${(echo?.stderr ?? '').trim() || '无输出'}`)
+    done.push(`已重新连接 ${address}`)
+    return done.join('；')
+  }
+
+  /** A PNG screenshot over ADB. @throws Error when adb fails or returns no image. */
+  async screencap(address: string, _signal: AbortSignal): Promise<Buffer> {
+    await this.ready
+    const adb = await this.adb()
+    const result = await this.execBuffer(adb, ['-s', address, 'exec-out', 'screencap', '-p'], { timeoutMs: 20_000 })
+    if (result === undefined) throw new Error(`找不到 adb（${adb}）`)
+    if (result.code !== 0 || !result.stdout.subarray(0, 4).equals(PNG)) throw new Error(`截图失败：${result.stderr.trim() || `退出代码 ${result.code}`}`)
+    return result.stdout
+  }
+
   async stop(index?: number): Promise<void> {
     const mumu = await this.manager()
     if (mumu === undefined) throw new Error('没有找到 MuMu 模拟器')
@@ -163,7 +215,7 @@ export class AdgEmulators extends Service {
     return { label: `MuMu 实例 ${this.settings.instance}（${mumu.path}）` }
   }
 
-  async configure(patch: { mumuManager?: string | null | undefined; instance?: number | undefined; manualAddress?: string | null | undefined; autoStart?: boolean | undefined; bootTimeoutSeconds?: number | undefined }): Promise<EmulatorSettings> {
+  async configure(patch: { mumuManager?: string | null | undefined; instance?: number | undefined; manualAddress?: string | null | undefined; adbPath?: string | null | undefined; autoStart?: boolean | undefined; bootTimeoutSeconds?: number | undefined }): Promise<EmulatorSettings> {
     await this.ready
     const next: Record<string, unknown> = { ...this.settings }
     for (const [key, value] of Object.entries(patch)) {
@@ -197,6 +249,17 @@ export class AdgEmulators extends Service {
   private async manager(): Promise<MuMuManager | undefined> {
     const path = this.settings.mumuManager ?? (await this.detected())[0]?.manager
     return path === undefined ? undefined : new MuMuManager(path, this.exec)
+  }
+
+  /** adb.exe: the configured one, else MuMu's own next to MuMuManager.exe, else `adb` on PATH. */
+  private async adb(): Promise<string> {
+    if (this.settings.adbPath !== undefined) return this.settings.adbPath
+    const manager = this.settings.mumuManager ?? (await this.detected())[0]?.manager
+    if (manager !== undefined) {
+      const sibling = join(dirname(manager), 'adb.exe')
+      if (await access(sibling).then(() => true, () => false)) return sibling
+    }
+    return 'adb'
   }
 
   private async detected(): Promise<Found[]> {

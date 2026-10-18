@@ -140,3 +140,21 @@ test('rendering fills defaults, coerces parameters and keeps types for whole pla
   assert.throws(() => renderTask(pack, 'daily', { fast: 'yes' }, { adb: 'x' }), /true 或 false/)
   assert.throws(() => renderTask(pack, 'daily', {}, {}), (e: unknown) => e instanceof TaskInputError && /\{adb\}/.test(e.message))
 })
+
+test('recovery entries name a rule tag, stalled or failed; stallAfter is a duration', () => {
+  const pack = parseManifest(`${MAA}logs:
+  stallAfter: 8m
+  rules:
+    - { match: '重连失败', level: error, tag: adb-disconnected }
+    - { match: '截图失败', level: warning }
+recovery:
+  - { on: adb-disconnected, do: reconnect-adb }
+  - { on: adb-disconnected, do: restart, max: 2 }
+  - { on: stalled, do: stop }
+  - { on: warning, do: restart }
+`)
+  assert.deepEqual(pack.recovery.map(r => [r.on, r.do, r.max]), [['adb-disconnected', 'reconnect-adb', 1], ['adb-disconnected', 'restart', 2], ['stalled', 'stop', 1], ['warning', 'restart', 1]])
+  assert.equal(pack.logs.stallAfter, '8m')
+  assert.throws(() => parseManifest(`${MAA}recovery:\n  - { on: nope, do: restart }\n`), /recovery\.0\.on: no log rule has tag nope/)
+  assert.throws(() => parseManifest(`${MAA}logs:\n  stallAfter: soon\n`), /stallAfter/)
+})

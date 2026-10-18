@@ -1,6 +1,6 @@
 /**
  * Approval broker: answers upstream `approval/request` waterfalls through
- * connected protocol clients.
+ * connected protocol clients and other answerers (chat channels).
  *
  * The broker claims a request only while at least one initialized client is
  * connected; otherwise the gateway delegates with `next()` so other answerers
@@ -21,6 +21,16 @@ export interface ApprovalAsk {
   readonly signal?: AbortSignal
 }
 
+/** Another place a person can answer approvals, e.g. a Feishu card (`@adg/notify`). */
+export interface ApprovalAnswerer {
+  /** Whether it can reach someone right now (a connected chat channel). */
+  active(): boolean
+  /** A new question; answer it with the gateway's `respondApproval`. */
+  asked(request: ApprovalRequested): void
+  /** Answered or withdrawn anywhere. */
+  resolved(approvalId: string, outcome: ApprovalOutcome): void
+}
+
 interface Pending {
   readonly request: ApprovalRequested
   readonly settle: (outcome: ApprovalOutcome) => void
@@ -33,13 +43,26 @@ export interface ApprovalBrokerOptions {
 
 export class ApprovalBroker {
   private readonly pending = new Map<string, Pending>()
+  private readonly answerers = new Set<ApprovalAnswerer>()
   private readonly options: ApprovalBrokerOptions
 
   constructor(options: ApprovalBrokerOptions) {
     this.options = options
   }
 
-  /** Put one question to the connected clients and wait for the first answer. */
+  /** @returns a disposer. */
+  addAnswerer(answerer: ApprovalAnswerer): () => void {
+    this.answerers.add(answerer)
+    return () => { this.answerers.delete(answerer) }
+  }
+
+  /** Whether some answerer besides protocol clients can take a question now. */
+  hasActiveAnswerer(): boolean {
+    for (const answerer of this.answerers) if (safely(() => answerer.active(), false)) return true
+    return false
+  }
+
+  /** Put one question to the connected clients and answerers, and wait for the first answer. */
   ask(ask: ApprovalAsk): Promise<ApprovalOutcome> {
     if (ask.signal?.aborted === true) return Promise.resolve('cancelled')
     const approvalId = crypto.randomUUID()
@@ -62,6 +85,7 @@ export class ApprovalBroker {
       })
       ask.signal?.addEventListener('abort', onAbort, { once: true })
       this.options.broadcastRequested(request)
+      for (const answerer of this.answerers) if (safely(() => answerer.active(), false)) safely(() => answerer.asked(request), undefined)
     })
   }
 
@@ -86,6 +110,11 @@ export class ApprovalBroker {
     this.pending.delete(approvalId)
     entry.settle(outcome)
     this.options.broadcastResolved(approvalId, outcome)
+    for (const answerer of this.answerers) safely(() => answerer.resolved(approvalId, outcome), undefined)
     return true
   }
+}
+
+function safely<T>(fn: () => T, fallback: T): T {
+  try { return fn() } catch { return fallback }
 }
