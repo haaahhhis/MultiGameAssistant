@@ -1,0 +1,33 @@
+{
+  "name": "@adg/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference UI shell (React) over @adg/client-core; replaceable",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/client-core": "workspace:*",
+    "@adg/protocol": "workspace:*",
+    "@adg/trajectory": "workspace:*",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@fontsource-variable/noto-sans-sc": "5.3.0",
+    "@fontsource/noto-serif-sc": "5.3.0",
+    "@tanstack/react-virtual": "3.14.10",
+    "dompurify": "^3.2.6",
+    "highlight.js": "11.12.0",
+    "marked": "16.4.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.31",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "vite": "6.4.3"
+  }
+}

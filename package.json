@@ -1,0 +1,29 @@
+{
+  "name": "@adg/root",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 run build",
+    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck",
+    "test": "node --test \"packages/*/test/*.test.ts\" \"scripts/test/*.test.mjs\"",
+    "schema": "pnpm --filter @adg/protocol run schema",
+    "dev:home": "node scripts/dev-home.mjs",
+    "dev:host": "node scripts/run-dsh.mjs",
+    "dev:web": "pnpm --filter @adg/web run dev",
+    "smoke": "node scripts/smoke.mjs",
+    "setup:electron": "node scripts/fetch-electron.mjs",
+    "desktop": "pnpm --filter @adg/desktop start",
+    "desktop:dev": "pnpm --filter @adg/web run build && pnpm --filter @adg/desktop start",
+    "e2e": "node scripts/e2e-chat.mjs",
+    "dev:fake-model": "node scripts/dev-fake-model.mjs"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.2.1-alpha.2",
+    "@types/node": "^24.13.3",
+    "typescript": "6.0.3"
+  }
+}

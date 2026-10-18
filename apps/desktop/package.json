@@ -1,0 +1,15 @@
+{
+  "name": "@adg/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell: boots dsh with the adg profile and opens the gateway-served UI",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "pnpm --filter @adg/web run build && electron ."
+  },
+  "devDependencies": {
+    "electron": "44.7.0"
+  }
+}

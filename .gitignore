@@ -1,0 +1,14 @@
+node_modules/
+packages/*/lib/
+apps/*/dist/
+*.tsbuildinfo
+.dev-home/
+# Scripts the agent installs, and runtime data. Script and game packs are versioned.
+tools/
+data/*
+!data/packs/
+!data/games/
+.env
+*.log
+# Machine-specific preview config (absolute Node path).
+.claude/launch.json

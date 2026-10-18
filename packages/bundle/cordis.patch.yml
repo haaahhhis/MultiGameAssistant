@@ -1,0 +1,25 @@
+# @adg/bundle — the profile layer above dsh-base and dsh-web-app.
+#
+# It mounts the AutoDailyGamePlay gateway next to the upstream host services it
+# calls (sessionController, approval). Upstream rows are never edited here;
+# anything unwanted is disabled by id, so a later reorder upstream cannot
+# resurrect it. Feature plugins (installer, runner, orchestrator, …) are added
+# below as they land, one row each, so any of them can be switched off with
+# `disabled: true`.
+#
+# Environment knobs (all optional):
+#   ADG_GATEWAY_PORT    listen port (default 3290; 0 = any free port)
+#   ADG_GATEWAY_TOKEN   fixed connection token (default: random per start)
+#   ADG_UI_DIR          built UI directory served at /
+
+- insert:
+    - id: adg-gateway
+      name: '@adg/gateway'
+      config:
+        port: !!js "Number(process.env.ADG_GATEWAY_PORT ?? 3290)"
+        token: !!js "process.env.ADG_GATEWAY_TOKEN || undefined"
+        staticDir: !!js "process.env.ADG_UI_DIR || undefined"
+        validateResults: true
+
+# M4 of the plan trims the official browser client here (ui-*, client-* rows).
+# Until then the official Web UI stays up for side-by-side comparison.

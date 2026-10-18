@@ -1,0 +1,13 @@
+packages:
+  - packages/*
+  - apps/*
+
+# Allow only the native/runtime install scripts dsh and Electron need.
+allowBuilds:
+  esbuild: true
+  node-pty: true
+  koffi: true
+  '@deepseek-ai/dsh-subprocess-local': true
+  electron: true
+  '@google/genai': false
+  protobufjs: false

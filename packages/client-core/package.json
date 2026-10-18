@@ -1,0 +1,21 @@
+{
+  "name": "@adg/client-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-free client core: JSON-RPC connection, session sync, stores and view models",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "@adg/protocol": "workspace:*", "@adg/trajectory": "workspace:*" }
+}
