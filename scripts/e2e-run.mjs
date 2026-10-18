@@ -10,6 +10,9 @@
  * 3. The agent runs the pack's config-driven task (`script_run`, wait): the
  *    config is patched during the run and restored after; the log file's
  *    `done` line ends it; the run succeeds.
+ * 3a. A task that needs the emulator (`adb`) runs through the real emulator
+ *    service with a manual ADB address: its address is patched into the
+ *    config during the run (M2 real-device step 6 failed exactly here).
  * 4. The agent tries to write into the script directory: the guard refuses.
  * 5. The agent changes a declared config value with `script_config_set`: the
  *    local config copy changes, the original project config does not.
@@ -76,6 +79,16 @@ tasks:
         set:
           - path: [Settings, Run.Directly]
             value: true
+    success: done-log
+  - id: android
+    title: 模拟器任务
+    args: ['daily.json']
+    patches:
+      - file: config/settings.json
+        set:
+          - path: [Settings, Connect.Address]
+            value: '{adb}'
+    resources: { input: adb, emulator: mumu }
     success: done-log
 logs:
   sources:
@@ -170,6 +183,31 @@ try {
   if (!(await configDuring)) fail('config was not patched during the run')
   if (readFileSync(join(dir, 'config', 'settings.json'), 'utf8') !== CONFIG) fail('config not restored after the run')
   step('agent ran the task', `${run.state} — ${run.outcome}; config patched during the run and restored`)
+
+  const before = (await rpc('emulators/status', {})).settings
+  await rpc('emulators/settings/set', { manualAddress: '127.0.0.1:5599' })
+  try {
+    const addressDuring = new Promise(resolve => {
+      const timer = setInterval(() => {
+        const text = readFileSync(join(dir, 'config', 'settings.json'), 'utf8')
+        if (text.includes('"Connect.Address": "127.0.0.1:5599"')) { clearInterval(timer); resolve(true) }
+      }, 100)
+      setTimeout(() => { clearInterval(timer); resolve(false) }, 20_000)
+    })
+    const started = await rpc('runs/start', { scriptId: ID, taskId: 'android' })
+    let info = started
+    for (let i = 0; info.endedAt === undefined && i < 120; i++) {
+      await delay(250)
+      info = (await rpc('runs/list', { scriptId: ID })).items.find(r => r.id === started.id) ?? info
+    }
+    if (info.state !== 'succeeded') fail(`adb run ${info.state}: ${info.outcome}`)
+    if (!info.resources.includes('adb:127.0.0.1:5599')) fail(`adb run did not lock the device: ${info.resources.join(', ')}`)
+    if (!(await addressDuring)) fail('the ADB address was not patched into the config during the run')
+    if (readFileSync(join(dir, 'config', 'settings.json'), 'utf8') !== CONFIG) fail('config not restored after the adb run')
+    step('adb task through the emulator service', `${info.state}; address 127.0.0.1:5599 patched in and restored`)
+  } finally {
+    await rpc('emulators/settings/set', { manualAddress: before.manualAddress ?? null })
+  }
 
   const wrote = await ask('写个文件试试')
   if (!wrote.error || !wrote.text.includes('已拦截')) fail(`write was not blocked: ${wrote.text}`)

@@ -27,8 +27,8 @@ const TOOLS = '_tools'
 
 export class AdgGuard extends Service {
   static inject = ['adgScripts']
-  readonly #grants = new Map<string, GuardGrant & { dirs: string[] }>()
-  #blocked = 0
+  private readonly grantMap = new Map<string, GuardGrant & { dirs: string[] }>()
+  private blocked = 0
 
   constructor(ctx: Context) {
     super(ctx, 'adgGuard')
@@ -52,7 +52,7 @@ export class AdgGuard extends Service {
       // dsh file tools take absolute paths; shells pass `workdir`, so no session cwd is needed here.
       const verdict = judgeCall({ toolName: exec.name, args: exec.arguments }, protectedDirs, allowed)
       if (verdict === undefined) return next()
-      this.#blocked += 1
+      this.blocked += 1
       const name = verdict.scriptId === TOOLS ? '工具目录' : nameOf(verdict.scriptId)
       log.info(`blocked ${exec.name} on ${verdict.target}`)
       ctx.get('adgGateway')?.broadcast('guard/blocked', { toolName: exec.name, target: verdict.target, at: Date.now(), ...(exec.agent === undefined ? {} : { sessionId: exec.agent.session.id }) })
@@ -68,20 +68,20 @@ export class AdgGuard extends Service {
         id: GUARD_CAPABILITY,
         version: 1,
         methods: {
-          'guard/grants': () => ({ items: this.grants().map(({ dirs: _dirs, ...grant }) => grant), blocked: this.#blocked }),
+          'guard/grants': () => ({ items: this.grants().map(({ dirs: _dirs, ...grant }) => grant), blocked: this.blocked }),
           'guard/grant': params => {
             const p = params as RequestParams<'guard/grant'>
             const script = scripts.library.get(p.scriptId)
             const now = Date.now()
             const grant = { scriptId: p.scriptId, dir: script.dir ?? '', grantedAt: now, expiresAt: now + p.minutes * 60_000, dirs: script.versions.map(v => v.dir) }
-            this.#grants.set(p.scriptId, grant)
+            this.grantMap.set(p.scriptId, grant)
             log.info(`user granted file changes on ${p.scriptId} for ${p.minutes} min`)
             scoped.adgGateway.broadcast('guard/changed', {})
             const { dirs: _dirs, ...shown } = grant
             return shown
           },
           'guard/revoke': params => {
-            this.#grants.delete((params as RequestParams<'guard/revoke'>).scriptId)
+            this.grantMap.delete((params as RequestParams<'guard/revoke'>).scriptId)
             scoped.adgGateway.broadcast('guard/changed', {})
             return {}
           },
@@ -93,8 +93,8 @@ export class AdgGuard extends Service {
   /** Grants still in force. */
   grants(): (GuardGrant & { dirs: string[] })[] {
     const now = Date.now()
-    for (const [id, grant] of this.#grants) if (grant.expiresAt <= now) this.#grants.delete(id)
-    return [...this.#grants.values()]
+    for (const [id, grant] of this.grantMap) if (grant.expiresAt <= now) this.grantMap.delete(id)
+    return [...this.grantMap.values()]
   }
 }
 

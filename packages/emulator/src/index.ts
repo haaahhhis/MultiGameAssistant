@@ -50,20 +50,20 @@ export const systemExec: Exec = (file, args, options = {}) => new Promise(resolv
 })
 
 export class AdgEmulators extends Service {
-  readonly #file: string
-  readonly #sharedDir: string
-  readonly #exec: Exec
-  #settings: EmulatorSettings = DEFAULTS
-  #found: Found[] | undefined
+  private readonly file: string
+  private readonly sharedDir: string
+  private readonly exec: Exec
+  private settings: EmulatorSettings = DEFAULTS
+  private found: Found[] | undefined
   readonly ready: Promise<void>
 
   constructor(ctx: Context, config: Config, exec: Exec = systemExec) {
     super(ctx, 'adgEmulators')
     const spec = ConfigSchema.parse(config)
-    this.#file = join(spec.dataDir, 'emulators.json')
-    this.#sharedDir = spec.sharedDir
-    this.#exec = exec
-    this.ready = this.#load()
+    this.file = join(spec.dataDir, 'emulators.json')
+    this.sharedDir = spec.sharedDir
+    this.exec = exec
+    this.ready = this.load()
     const log = ctx.logger('adg-emulators')
 
     ctx.inject(['adgScripts'], scoped => {
@@ -81,7 +81,7 @@ export class AdgEmulators extends Service {
     })
 
     ctx.inject(['tools'], scoped => {
-      for (const tool of this.#tools()) scoped.tools.register(tool)
+      for (const tool of this.tools()) scoped.tools.register(tool)
     })
 
     ctx.inject(['adgGateway'], scoped => {
@@ -120,61 +120,61 @@ export class AdgEmulators extends Service {
    */
   async prepare(options: { prefer?: string | undefined; index?: number | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string }> {
     await this.ready
-    if (this.#settings.manualAddress !== undefined && options.index === undefined) {
-      return { address: this.#settings.manualAddress, label: '手动配置的 ADB 地址' }
+    if (this.settings.manualAddress !== undefined && options.index === undefined) {
+      return { address: this.settings.manualAddress, label: '手动配置的 ADB 地址' }
     }
-    const mumu = await this.#manager()
+    const mumu = await this.manager()
     if (mumu === undefined) throw new Error('没有找到 MuMu 模拟器。可以让 agent 安装（emulator_install），或在「设置 → 模拟器」填写已有模拟器的 ADB 地址')
-    const index = options.index ?? this.#settings.instance
+    const index = options.index ?? this.settings.instance
     const current = await mumu.instance(index)
-    if (current?.ready !== true && !this.#settings.autoStart && options.index === undefined) {
+    if (current?.ready !== true && !this.settings.autoStart && options.index === undefined) {
       throw new Error(`MuMu 实例 ${index} 没有运行，且已关闭「任务需要时自动启动」`)
     }
-    const ready = await mumu.ensureReady(index, { timeoutMs: this.#settings.bootTimeoutSeconds * 1000, signal: options.signal, onStatus: options.onStatus })
+    const ready = await mumu.ensureReady(index, { timeoutMs: this.settings.bootTimeoutSeconds * 1000, signal: options.signal, onStatus: options.onStatus })
     return { address: await mumu.adbAddress(index), label: `MuMu ${ready.index}（${ready.name}）` }
   }
 
   async stop(index?: number): Promise<void> {
-    const mumu = await this.#manager()
+    const mumu = await this.manager()
     if (mumu === undefined) throw new Error('没有找到 MuMu 模拟器')
-    await mumu.shutdown(index ?? this.#settings.instance)
+    await mumu.shutdown(index ?? this.settings.instance)
   }
 
   async status(refresh = false) {
     await this.ready
-    if (refresh) this.#found = undefined
+    if (refresh) this.found = undefined
     const providers: EmulatorProvider[] = []
-    for (const found of await this.#detected()) {
-      const mumu = new MuMuManager(found.manager, this.#exec)
+    for (const found of await this.detected()) {
+      const mumu = new MuMuManager(found.manager, this.exec)
       try {
         providers.push({ kind: 'mumu', name: found.name, manager: found.manager, instances: await mumu.instances(), ...(found.version === undefined ? {} : { version: found.version }) })
       } catch (error) {
         providers.push({ kind: 'mumu', name: found.name, manager: found.manager, instances: [], error: error instanceof Error ? error.message : String(error), ...(found.version === undefined ? {} : { version: found.version }) })
       }
     }
-    return { providers, settings: this.#settings, selection: await this.selection() }
+    return { providers, settings: this.settings, selection: await this.selection() }
   }
 
   /** What a task would use right now. */
   async selection(): Promise<{ label: string; address?: string; problem?: string }> {
-    if (this.#settings.manualAddress !== undefined) return { label: `手动配置的 ADB 地址 ${this.#settings.manualAddress}`, address: this.#settings.manualAddress }
-    const mumu = await this.#manager()
+    if (this.settings.manualAddress !== undefined) return { label: `手动配置的 ADB 地址 ${this.settings.manualAddress}`, address: this.settings.manualAddress }
+    const mumu = await this.manager()
     if (mumu === undefined) return { label: '无', problem: '没有找到 MuMu 模拟器，也没有配置手动 ADB 地址' }
-    return { label: `MuMu 实例 ${this.#settings.instance}（${mumu.path}）` }
+    return { label: `MuMu 实例 ${this.settings.instance}（${mumu.path}）` }
   }
 
   async configure(patch: { mumuManager?: string | null | undefined; instance?: number | undefined; manualAddress?: string | null | undefined; autoStart?: boolean | undefined; bootTimeoutSeconds?: number | undefined }): Promise<EmulatorSettings> {
     await this.ready
-    const next: Record<string, unknown> = { ...this.#settings }
+    const next: Record<string, unknown> = { ...this.settings }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
       if (value === null || value === '') delete next[key]
       else next[key] = value
     }
-    this.#settings = EmulatorSettings.parse(next)
-    this.#found = undefined
-    await this.#save()
-    return this.#settings
+    this.settings = EmulatorSettings.parse(next)
+    this.found = undefined
+    await this.save()
+    return this.settings
   }
 
   /** Download an official installer from NetEase and run it; the user may see the setup wizard and a UAC prompt. */
@@ -185,40 +185,40 @@ export class AdgEmulators extends Service {
     }
     const name = basename(decodeURIComponent(parsed.pathname)) || 'mumu-installer.exe'
     if (!/\.exe$/i.test(name)) throw new Error(`下载地址不是安装程序（.exe）：${name}`)
-    const dest = join(this.#sharedDir, 'downloads', name)
+    const dest = join(this.sharedDir, 'downloads', name)
     onProgress(`下载 ${name}`)
     await download({ url, dest, signal, onProgress: (received, total) => onProgress(`下载中 ${Math.round(received / 1048576)} / ${total === undefined ? '?' : Math.round(total / 1048576)} MB`) })
     onProgress('运行安装程序（可能出现安装向导和管理员授权）')
     const exitCode = await runElevated(dest, [])
-    this.#found = undefined
-    return { found: await this.#detected(), exitCode }
+    this.found = undefined
+    return { found: await this.detected(), exitCode }
   }
 
-  async #manager(): Promise<MuMuManager | undefined> {
-    const path = this.#settings.mumuManager ?? (await this.#detected())[0]?.manager
-    return path === undefined ? undefined : new MuMuManager(path, this.#exec)
+  private async manager(): Promise<MuMuManager | undefined> {
+    const path = this.settings.mumuManager ?? (await this.detected())[0]?.manager
+    return path === undefined ? undefined : new MuMuManager(path, this.exec)
   }
 
-  async #detected(): Promise<Found[]> {
-    this.#found ??= await findMuMu(this.#exec)
-    return this.#found
+  private async detected(): Promise<Found[]> {
+    this.found ??= await findMuMu(this.exec)
+    return this.found
   }
 
-  async #load(): Promise<void> {
+  private async load(): Promise<void> {
     try {
-      this.#settings = EmulatorSettings.parse({ ...DEFAULTS, ...JSON.parse(await readFile(this.#file, 'utf8')) })
+      this.settings = EmulatorSettings.parse({ ...DEFAULTS, ...JSON.parse(await readFile(this.file, 'utf8')) })
     } catch {
-      this.#settings = DEFAULTS
+      this.settings = DEFAULTS
     }
   }
 
-  async #save(): Promise<void> {
-    await mkdir(dirname(this.#file), { recursive: true })
-    await writeFile(`${this.#file}.tmp`, `${JSON.stringify(this.#settings, null, 2)}\n`)
-    await rename(`${this.#file}.tmp`, this.#file)
+  private async save(): Promise<void> {
+    await mkdir(dirname(this.file), { recursive: true })
+    await writeFile(`${this.file}.tmp`, `${JSON.stringify(this.settings, null, 2)}\n`)
+    await rename(`${this.file}.tmp`, this.file)
   }
 
-  #tools(): ToolDefinition[] {
+  private tools(): ToolDefinition[] {
     const json = (value: unknown) => JSON.parse(JSON.stringify(value ?? null)) as never
     const tool = (spec: { name: string; description: string; properties: Record<string, JsonSchemaNode>; required?: string[]; timeoutMs?: number; title: string; execute(args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }): ToolDefinition => ({
       name: spec.name,
