@@ -9,7 +9,7 @@ import { ScriptDetail } from './ScriptDetail.tsx'
 type Panel = { kind: 'install'; repo?: string } | { kind: 'import' } | null
 
 /** The script library: what is installed or imported, what packs can be installed, and each script's details. */
-export function ScriptsPage({ client }: PageProps) {
+export function ScriptsPage({ client, openSession }: PageProps) {
   const { data, error } = useScriptList(client)
   const jobs = useScriptJobs(client)
   const [selected, setSelected] = useState<string | null>(null)
@@ -85,7 +85,7 @@ export function ScriptsPage({ client }: PageProps) {
             <ImportPanel client={client} onClose={() => setPanel(null)} onImported={id => { setSelected(id); setPanel(null) }} />
           )}
           {panel === null && current !== undefined && (
-            <ScriptDetail key={current.id} client={client} script={current} job={jobs.get(current.id)} onRemoved={() => setSelected(null)} />
+            <ScriptDetail key={current.id} client={client} script={current} job={jobs.get(current.id)} onRemoved={() => setSelected(null)} openSession={openSession} />
           )}
           {panel === null && current === undefined && data !== null && (
             <div className="empty">

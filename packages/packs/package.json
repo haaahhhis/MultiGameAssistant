@@ -6,12 +6,20 @@
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
-  "files": ["index.js", "index.d.ts", "packs"],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "packs"
+  ],
   "exports": {
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
     },
     "./package.json": "./package.json"
+  },
+  "devDependencies": {
+    "@adg/pack-schema": "workspace:*",
+    "@types/node": "^24.13.3"
   }
 }

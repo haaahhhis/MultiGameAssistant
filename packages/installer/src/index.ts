@@ -9,6 +9,6 @@
 export { GitHubClient, GitHubError, type GitHubOptions } from './github.ts'
 export { download, DownloadError, hashFile, mirrored, type DownloadOptions, type DownloadResult } from './download.ts'
 export { archiveKind, extract, type ArchiveKind, type ExtractResult } from './extract.ts'
-export { checkEnvironment, compareVersions, satisfies, systemHost, type EnvContext, type EnvHost, type ExecResult, type FixPlan } from './env.ts'
+export { checkEnvironment, compareVersions, satisfies, systemHost, type EnvChecked, type EnvChecker, type EnvContext, type EnvHost, type ExecResult, type FixPlan } from './env.ts'
 export { applyFix, ManualFixError, runElevated, type FixDeps } from './fix.ts'
 export { matchesDetect, probeProject } from './probe.ts'

@@ -1,0 +1,36 @@
+import { strict as assert } from 'node:assert'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { parseManifest, renderTask } from '@adg/pack-schema'
+
+const DIR = fileURLToPath(new URL('../packs/', import.meta.url))
+const load = (id: string) => parseManifest(readFileSync(join(DIR, id, 'adg.script.yaml'), 'utf8'), `${id}/adg.script.yaml`)
+
+test('every built-in pack is valid and has a SKILL.md with frontmatter', () => {
+  for (const id of readdirSync(DIR)) {
+    const pack = load(id)
+    assert.equal(pack.id, id)
+    assert.ok(pack.tasks.length > 0, `${id} has tasks`)
+    assert.match(readFileSync(join(DIR, id, 'SKILL.md'), 'utf8'), /^---\nname: [a-z0-9-]+\ndescription: .+\n---\n/, `${id}/SKILL.md frontmatter`)
+  }
+})
+
+test('MAA daily patches both config generations with the emulator address', () => {
+  const run = renderTask(load('maa'), 'daily', {}, { adb: '127.0.0.1:16384', dir: 'D:\\MAA' })
+  assert.equal(run.task.success, 'done-log')
+  assert.equal(run.task.resources.input, 'adb')
+  const values = Object.fromEntries(run.patches.flatMap(p => p.set.map(s => [`${p.file}:${s.path.join('/')}`, s.value])))
+  assert.equal(values['config/gui.json:Configurations/Default/Connect.Address'], '127.0.0.1:16384')
+  assert.equal(values['config/gui.new.json:Configurations/Default/Gui/ConnectSettings/Address'], '127.0.0.1:16384')
+  assert.equal(values['config/gui.new.json:Configurations/Default/Gui/StartUpSettings/RunDirectly'], true)
+})
+
+test('MaaEnd runs a named MXU instance; March7th passes its task name', () => {
+  assert.deepEqual(renderTask(load('maaend'), 'run-pc', { instance: '配置1' }).args, ['--autostart', '--instance', '配置1', '--quit-after-run'])
+  assert.throws(() => renderTask(load('maaend'), 'run-adb'), /需要参数 instance/)
+  const m7a = load('march7th')
+  assert.deepEqual(renderTask(m7a, 'power').args, ['power'])
+  assert.equal(m7a.tasks.find(t => t.id === 'power')?.resources.input, 'desktop')
+})

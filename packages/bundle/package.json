@@ -14,6 +14,10 @@
   },
   "dependencies": {
     "@adg/gateway": "workspace:*",
-    "@adg/script-registry": "workspace:*"
+    "@adg/script-registry": "workspace:*",
+    "@adg/runner": "workspace:*",
+    "@adg/emulator": "workspace:*",
+    "@adg/analyzer": "workspace:*",
+    "@adg/guard": "workspace:*"
   }
 }

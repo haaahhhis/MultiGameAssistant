@@ -110,6 +110,51 @@
     },
     "scripts/settings/set": {
       "capability": "scripts"
+    },
+    "runs/tasks": {
+      "capability": "runs"
+    },
+    "runs/start": {
+      "capability": "runs"
+    },
+    "runs/stop": {
+      "capability": "runs"
+    },
+    "runs/list": {
+      "capability": "runs"
+    },
+    "runs/logs": {
+      "capability": "runs"
+    },
+    "guard/grants": {
+      "capability": "guard"
+    },
+    "guard/grant": {
+      "capability": "guard"
+    },
+    "guard/revoke": {
+      "capability": "guard"
+    },
+    "emulators/status": {
+      "capability": "emulators"
+    },
+    "emulators/start": {
+      "capability": "emulators"
+    },
+    "emulators/stop": {
+      "capability": "emulators"
+    },
+    "emulators/settings/set": {
+      "capability": "emulators"
+    },
+    "packs/drafts": {
+      "capability": "packs"
+    },
+    "packs/accept": {
+      "capability": "packs"
+    },
+    "packs/reject": {
+      "capability": "packs"
     }
   },
   "notifications": [
@@ -125,7 +170,13 @@
     "providers/changed",
     "session/model",
     "scripts/changed",
-    "scripts/job"
+    "scripts/job",
+    "runs/state",
+    "runs/log",
+    "guard/changed",
+    "guard/blocked",
+    "emulators/changed",
+    "packs/changed"
   ],
   "$defs": {
     "SessionEvent": {
@@ -6717,6 +6768,998 @@
       ],
       "additionalProperties": false
     },
+    "runs/tasks.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "runs/tasks.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "utterances": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    },
+                    "default": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "enum": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "input": {
+                "type": "string",
+                "enum": [
+                  "desktop",
+                  "window",
+                  "adb",
+                  "none"
+                ]
+              },
+              "account": {
+                "type": "string"
+              },
+              "expectedDuration": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "utterances",
+              "params",
+              "input"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "runnable": {
+          "type": "boolean"
+        },
+        "problem": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tasks",
+        "runnable"
+      ],
+      "additionalProperties": false
+    },
+    "runs/start.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "scriptId",
+        "taskId"
+      ],
+      "additionalProperties": false
+    },
+    "runs/start.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scriptId": {
+          "type": "string"
+        },
+        "scriptName": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "taskTitle": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "scriptId",
+        "scriptName",
+        "taskId",
+        "taskTitle",
+        "params",
+        "state",
+        "startedAt",
+        "command",
+        "resources",
+        "tags",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "runs/stop.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    },
+    "runs/stop.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "runs/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runs/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "scriptId": {
+                "type": "string"
+              },
+              "scriptName": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "taskTitle": {
+                "type": "string"
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "starting",
+                  "running",
+                  "stopping",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "outcome": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "endedAt": {
+                "type": "number"
+              },
+              "exitCode": {
+                "type": "number"
+              },
+              "command": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "resources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "scriptId",
+              "scriptName",
+              "taskId",
+              "taskTitle",
+              "params",
+              "state",
+              "startedAt",
+              "command",
+              "resources",
+              "tags",
+              "warnings"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "runs/logs.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    },
+    "runs/logs.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "number"
+              },
+              "source": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "progress",
+                  "done",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "source",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "guard/grants.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "guard/grants.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scriptId": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "grantedAt": {
+                "type": "number"
+              },
+              "expiresAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "scriptId",
+              "dir",
+              "grantedAt",
+              "expiresAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "blocked": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "items",
+        "blocked"
+      ],
+      "additionalProperties": false
+    },
+    "guard/grant.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        }
+      },
+      "required": [
+        "scriptId",
+        "minutes"
+      ],
+      "additionalProperties": false
+    },
+    "guard/grant.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "grantedAt": {
+          "type": "number"
+        },
+        "expiresAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "scriptId",
+        "dir",
+        "grantedAt",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "guard/revoke.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "guard/revoke.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "emulators/status.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "emulators/status.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mumu"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "manager": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "instances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "ready": {
+                      "type": "boolean"
+                    },
+                    "adb": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "index",
+                    "name",
+                    "running",
+                    "ready"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "manager",
+              "instances"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "mumuManager": {
+              "type": "string"
+            },
+            "instance": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 63
+            },
+            "manualAddress": {
+              "type": "string",
+              "pattern": "^[\\w.-]+:\\d{1,5}$"
+            },
+            "autoStart": {
+              "type": "boolean"
+            },
+            "bootTimeoutSeconds": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 900
+            }
+          },
+          "required": [
+            "instance",
+            "autoStart",
+            "bootTimeoutSeconds"
+          ],
+          "additionalProperties": false
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "address": {
+              "type": "string"
+            },
+            "problem": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "providers",
+        "settings",
+        "selection"
+      ],
+      "additionalProperties": false
+    },
+    "emulators/start.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "emulators/start.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "emulators/stop.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "emulators/stop.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "emulators/settings/set.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "mumuManager": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "manualAddress": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[\\w.-]+:\\d{1,5}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "autoStart": {
+          "type": "boolean"
+        },
+        "bootTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 900
+        }
+      },
+      "additionalProperties": false
+    },
+    "emulators/settings/set.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "mumuManager": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "manualAddress": {
+          "type": "string",
+          "pattern": "^[\\w.-]+:\\d{1,5}$"
+        },
+        "autoStart": {
+          "type": "boolean"
+        },
+        "bootTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 900
+        }
+      },
+      "required": [
+        "instance",
+        "autoStart",
+        "bootTimeoutSeconds"
+      ],
+      "additionalProperties": false
+    },
+    "packs/drafts.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "packs/drafts.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "packId": {
+                "type": "string"
+              },
+              "scriptId": {
+                "type": "string"
+              },
+              "proposedAt": {
+                "type": "number"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "manifest": {
+                "type": "string"
+              },
+              "skill": {
+                "type": "string"
+              },
+              "current": {
+                "type": "object",
+                "properties": {
+                  "manifest": {
+                    "type": "string"
+                  },
+                  "skill": {
+                    "type": "string"
+                  },
+                  "builtin": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "manifest",
+                  "builtin"
+                ],
+                "additionalProperties": false
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "packId",
+              "scriptId",
+              "proposedAt",
+              "summary",
+              "manifest",
+              "skill",
+              "tasks"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "packs/accept.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "packId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "packId"
+      ],
+      "additionalProperties": false
+    },
+    "packs/accept.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "packId": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "packId",
+        "dir"
+      ],
+      "additionalProperties": false
+    },
+    "packs/reject.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "packId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "packId"
+      ],
+      "additionalProperties": false
+    },
+    "packs/reject.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
     "sessions/changed.notification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -8352,6 +9395,200 @@
         "phase",
         "startedAt"
       ],
+      "additionalProperties": false
+    },
+    "runs/state.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scriptId": {
+          "type": "string"
+        },
+        "scriptName": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "taskTitle": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "scriptId",
+        "scriptName",
+        "taskId",
+        "taskTitle",
+        "params",
+        "state",
+        "startedAt",
+        "command",
+        "resources",
+        "tags",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "runs/log.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "number"
+              },
+              "source": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "progress",
+                  "done",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "source",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "runId",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "guard/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "guard/blocked.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "toolName": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "at": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "toolName",
+        "target",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "emulators/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "packs/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "packId": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
     }
   }

@@ -79,11 +79,66 @@ importers:
         specifier: 6.4.3
         version: 6.4.3(@types/node@24.19.2)(yaml@2.9.1)
 
-  packages/bundle:
+  packages/analyzer:
     dependencies:
+      '@adg/installer':
+        specifier: workspace:*
+        version: link:../installer
+      '@adg/pack-schema':
+        specifier: workspace:*
+        version: link:../pack-schema
+      '@adg/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
       '@adg/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@adg/script-registry':
+        specifier: workspace:*
+        version: link:../script-registry
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/dsh-skill':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(7dae165423b610802c67ae1eb268e109)
+      '@deepseek-ai/dsh-user-approval':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-agent@0.2.1-alpha.2(3dc6930769662420cb44e109694f1822))(@deepseek-ai/dsh-brand@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-session@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)))(@deepseek-ai/dsh-system-prompt@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)))
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
+
+  packages/bundle:
+    dependencies:
+      '@adg/analyzer':
+        specifier: workspace:*
+        version: link:../analyzer
+      '@adg/emulator':
+        specifier: workspace:*
+        version: link:../emulator
+      '@adg/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@adg/guard':
+        specifier: workspace:*
+        version: link:../guard
+      '@adg/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@adg/script-registry':
         specifier: workspace:*
         version: link:../script-registry
@@ -96,6 +151,40 @@ importers:
       '@adg/trajectory':
         specifier: workspace:*
         version: link:../trajectory
+
+  packages/emulator:
+    dependencies:
+      '@adg/installer':
+        specifier: workspace:*
+        version: link:../installer
+      '@adg/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@adg/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@adg/runner':
+        specifier: workspace:*
+        version: link:../runner
+      '@adg/script-registry':
+        specifier: workspace:*
+        version: link:../script-registry
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(7dae165423b610802c67ae1eb268e109)
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
 
   packages/gateway:
     dependencies:
@@ -140,6 +229,28 @@ importers:
         specifier: ^8.18.1
         version: 8.18.2
 
+  packages/guard:
+    dependencies:
+      '@adg/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@adg/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@adg/script-registry':
+        specifier: workspace:*
+        version: link:../script-registry
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(7dae165423b610802c67ae1eb268e109)
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
+
   packages/installer:
     dependencies:
       '@adg/pack-schema':
@@ -171,13 +282,57 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
-  packages/packs: {}
+  packages/packs:
+    devDependencies:
+      '@adg/pack-schema':
+        specifier: workspace:*
+        version: link:../pack-schema
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
 
   packages/protocol:
     dependencies:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/runner:
+    dependencies:
+      '@adg/pack-schema':
+        specifier: workspace:*
+        version: link:../pack-schema
+      '@adg/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@adg/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@adg/script-registry':
+        specifier: workspace:*
+        version: link:../script-registry
+      '@adg/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(7dae165423b610802c67ae1eb268e109)
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
 
   packages/script-registry:
     dependencies:

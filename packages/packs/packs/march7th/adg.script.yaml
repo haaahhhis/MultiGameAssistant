@@ -1,4 +1,5 @@
-# March7thAssistant (崩坏：星穹铁道). The full package bundles Python and its
+# March7thAssistant (崩坏：星穹铁道), a command-line program (family cli):
+# `March7th Assistant.exe <task>`. The full package bundles Python and its
 # dependencies. The zip is preferred over the smaller 7z: Windows' built-in tar
 # may lack the LZMA2 decoder 7z archives usually use.
 id: march7th
@@ -16,3 +17,67 @@ config:
       format: yaml
 detect:
   files: [March7th Assistant.exe]
+launch:
+  exe: March7th Assistant.exe
+tasks:
+  - id: main
+    title: 完整运行
+    utterances: [完整运行, 星穹铁道全部, 三月七跑一遍, 星铁日常全套]
+    args: ['main']
+    resources: { input: desktop, account: starrail }
+    expectedDuration: 90m
+  - id: routine
+    title: 日常
+    utterances: [星铁日常, 星穹铁道日常]
+    args: ['routine']
+    resources: { input: desktop, account: starrail }
+    expectedDuration: 45m
+  - id: daily
+    title: 每日实训
+    utterances: [每日实训]
+    args: ['daily']
+    resources: { input: desktop, account: starrail }
+  - id: power
+    title: 清体力
+    utterances: [清体力, 刷开拓力, 用掉体力]
+    args: ['power']
+    resources: { input: desktop, account: starrail }
+  - id: universe
+    title: 模拟宇宙
+    args: ['universe']
+    resources: { input: desktop, account: starrail }
+  - id: divergent
+    title: 差分宇宙
+    args: ['divergent']
+    resources: { input: desktop, account: starrail }
+  - id: currencywars
+    title: 货币战争
+    args: ['currencywars']
+    resources: { input: desktop, account: starrail }
+  - id: fight
+    title: 锄大地
+    args: ['fight']
+    resources: { input: desktop, account: starrail }
+  - id: forgottenhall
+    title: 混沌回忆
+    args: ['forgottenhall']
+    resources: { input: desktop, account: starrail }
+  - id: purefiction
+    title: 虚构叙事
+    args: ['purefiction']
+    resources: { input: desktop, account: starrail }
+  - id: apocalyptic
+    title: 末日幻影
+    args: ['apocalyptic']
+    resources: { input: desktop, account: starrail }
+  - id: redemption
+    title: 兑换码
+    args: ['redemption']
+    resources: { input: desktop, account: starrail }
+  - id: game_update
+    title: 更新游戏
+    args: ['game_update']
+logs:
+  sources:
+    - stdout: true
+  rules: []

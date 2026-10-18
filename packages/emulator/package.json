@@ -1,0 +1,37 @@
+{
+  "name": "@adg/emulator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cordis host plugin: Android emulators for ADB scripts — MuMu detection and instance control, a manual ADB address for others, the emulator environment check, installer download",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/installer": "workspace:*",
+    "@adg/protocol": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@adg/gateway": "workspace:*",
+    "@adg/runner": "workspace:*",
+    "@adg/script-registry": "workspace:*",
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
+    "@types/node": "^24.13.3"
+  }
+}

@@ -5,7 +5,11 @@
  * `SKILL.md` for the agent. Core code only reads packs; nothing here names a
  * particular script.
  */
-export { ConfigFile, Requirement, ScriptManifest, type ScriptManifestInput } from './manifest.ts'
+export {
+  ConfigFile, ConfigPatch, Launch, LogRule, Logs, LogSource, Requirement, Resources, ScriptManifest, Task, TaskParam,
+  type ScriptManifestInput,
+} from './manifest.ts'
+export { renderTask, TaskInputError, type RenderedTask } from './render.ts'
 export { PackError, parseManifest } from './parse.ts'
 export { chooseAsset, expand, globToRegExp, versionOfTag, type AssetChoice } from './match.ts'
 

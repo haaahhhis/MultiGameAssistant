@@ -2,10 +2,12 @@ import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { EnvItem, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
-import { useNow } from '../../hooks.ts'
+import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText, FAMILY_LABEL, isActive } from './data.ts'
 import { JobProgress } from './JobProgress.tsx'
+import { GuardCard, PackCard } from './PackCards.tsx'
+import { RunsCard } from './RunsCard.tsx'
 
 const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   ok: ['ok', '满足'],
@@ -15,11 +17,12 @@ const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   unsupported: ['', '暂不检测'],
 }
 
-export function ScriptDetail({ client, script, job, onRemoved }: {
+export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
   client: AdgClient
   script: ScriptInfo
   job: ScriptJob | undefined
   onRemoved: () => void
+  openSession: (sessionId: string) => void
 }) {
   const now = useNow(60_000)
   const [busy, setBusy] = useState<string | null>(null)
@@ -30,6 +33,7 @@ export function ScriptDetail({ client, script, job, onRemoved }: {
   // A finished job from before this entry existed belonged to an earlier script with the same id.
   const shown = job !== undefined && (job.endedAt === undefined || job.startedAt >= script.addedAt - 1000) ? job : undefined
   const running = isActive(shown)
+  const capabilities = useStore(client.capabilities)
   const github = script.source.kind === 'github'
 
   const act = async (name: string, fn: () => Promise<string | void>) => {
@@ -149,9 +153,12 @@ export function ScriptDetail({ client, script, job, onRemoved }: {
         )}
       </section>
 
+      {capabilities.has('runs') && script.dir !== undefined && <RunsCard client={client} scriptId={script.id} packId={script.packId} />}
+      {capabilities.has('packs') && <PackCard client={client} script={script} openSession={openSession} />}
+
       {script.probe !== undefined && (
         <section className="card">
-          <div className="card-head"><div><h3>目录概况</h3><p className="muted small">启动方式、任务和配置的完整分析在 M2 由分析器完成。</p></div></div>
+          <div className="card-head"><div><h3>目录概况</h3><p className="muted small">只是快速查看；启动方式、任务和配置的完整分析请用上面的「让 agent 分析」。</p></div></div>
           <div className="probe-grid">
             <span className="field-label">可执行文件</span>
             <div className="chip-row">{script.probe.executables.length === 0 ? <span className="muted small">未发现</span> : script.probe.executables.map(e => <span key={e} className="chip">{e}</span>)}</div>
@@ -160,6 +167,8 @@ export function ScriptDetail({ client, script, job, onRemoved }: {
           </div>
         </section>
       )}
+
+      {capabilities.has('guard') && <GuardCard client={client} script={script} />}
 
       <section className="card danger-zone">
         {!confirmRemove ? (

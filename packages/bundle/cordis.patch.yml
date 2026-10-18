@@ -34,5 +34,29 @@
         defaults:
           downloadMirror: !!js "process.env.ADG_GITHUB_MIRROR || ''"
 
+    # M2: running pack tasks (config patches restored afterwards, log rules,
+    # resource locks); `script_run` and friends, the `runs` capability.
+    - id: adg-runner
+      name: '@adg/runner'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
+    # M2: emulators for ADB tasks (MuMu via MuMuManager.exe, or a manual ADB
+    # address); the `emulator` requirement check; the `emulators` capability.
+    - id: adg-emulator
+      name: '@adg/emulator'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        sharedDir: !!js "(process.env.ADG_TOOLS_DIR || dshHomePath('adg/tools')) + '/_shared'"
+
+    # M2: script analysis, pack drafts for the user to accept, and every pack's
+    # SKILL.md as an agent skill; the `packs` capability.
+    - id: adg-analyzer
+      name: '@adg/analyzer'
+
+    # M2: the agent may not change script files without the user's grant.
+    - id: adg-guard
+      name: '@adg/guard'
+
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.

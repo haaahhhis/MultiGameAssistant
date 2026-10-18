@@ -14,7 +14,7 @@ import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   applyFix, checkEnvironment, compareVersions, download, extract, GitHubClient, matchesDetect, probeProject, systemHost,
-  type EnvHost, type FixPlan,
+  type EnvChecker, type EnvHost, type FixPlan,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
 import type { EnvReport, InstallSettings, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
@@ -58,6 +58,8 @@ export class ScriptLibrary {
   #state: LibraryState = { settings: DEFAULT_SETTINGS, scripts: [] }
   #packs = new Map<string, LoadedPack>()
   #packErrors: PackLoadError[] = []
+  readonly #checkers = new Map<string, EnvChecker>()
+  readonly #packListeners = new Set<() => void>()
 
   constructor(options: LibraryOptions) {
     this.#options = options
@@ -89,6 +91,35 @@ export class ScriptLibrary {
     this.#packs = packs
     this.#packErrors = errors
     for (const error of errors) this.#options.log.warn(`script pack skipped: ${error.error}`)
+    for (const listener of this.#packListeners) listener()
+  }
+
+  /** Let another plugin check a requirement kind (e.g. `emulator`). @returns the disposer. */
+  registerEnvChecker(kind: string, checker: EnvChecker): () => void {
+    this.#checkers.set(kind, checker)
+    return () => { if (this.#checkers.get(kind) === checker) this.#checkers.delete(kind) }
+  }
+
+  /** Run `listener` after packs are (re)loaded. @returns the disposer. */
+  onPacksChanged(listener: () => void): () => void {
+    this.#packListeners.add(listener)
+    return () => { this.#packListeners.delete(listener) }
+  }
+
+  /** Every loaded pack. */
+  packs(): LoadedPack[] {
+    return [...this.#packs.values()]
+  }
+
+  /** The pack describing a library script, if any. */
+  packOf(id: string): LoadedPack | undefined {
+    const packId = this.#script(id).packId
+    return packId === undefined ? undefined : this.#packs.get(packId)
+  }
+
+  /** Directories AutoDailyGamePlay must not let the agent rewrite: the tools directory and every imported directory. */
+  protectedDirs(): string[] {
+    return [this.toolsDir, ...this.#state.scripts.filter(s => s.source.kind === 'local').map(s => (s.source as { path: string }).path)]
   }
 
   pack(id: string): LoadedPack | undefined {
@@ -313,6 +344,29 @@ export class ScriptLibrary {
 
   // ── local import ──────────────────────────────────────────────────────
 
+  /** Where library state lives; plugins keep their own files beside it. */
+  get dataDir(): string {
+    return this.#options.dataDir
+  }
+
+  /** The user's pack directory: packs here override built-in ones by id. */
+  get userPackDir(): string {
+    return join(this.#options.dataDir, 'packs')
+  }
+
+  /** Describe a script with a (reloaded) pack, e.g. after the user accepted a draft. */
+  async attachPack(scriptId: string, packId: string): Promise<ScriptInfo> {
+    const script = this.#script(scriptId)
+    const pack = this.#packs.get(packId)
+    if (pack === undefined) throw new Error(`没有脚本包 ${packId}`)
+    script.packId = packId
+    if (pack.manifest.family !== undefined) script.family = pack.manifest.family
+    await this.#save()
+    this.#options.onChanged(scriptId)
+    if (pack.manifest.install.requires.length > 0) await this.envCheck(scriptId)
+    return this.#info(script)
+  }
+
   async import(request: { path: string; id?: string | undefined; name?: string | undefined; packId?: string | undefined }): Promise<ScriptInfo> {
     const path = resolve(request.path)
     if (!(await stat(path).then(s => s.isDirectory(), () => false))) throw new Error(`不是一个存在的目录：${path}`)
@@ -320,6 +374,8 @@ export class ScriptLibrary {
     const same = this.#state.scripts.find(s => s.source.kind === 'local' && samePath(s.source.path, path))
     if (same !== undefined) return this.#info(same)
 
+    // Packs may have been added or removed on disk since the last load.
+    await this.reloadPacks()
     let pack: LoadedPack | undefined
     if (request.packId !== undefined) {
       pack = this.#packs.get(request.packId)
@@ -412,7 +468,7 @@ export class ScriptLibrary {
 
   async #check(script: StoredScript) {
     const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
-    const result = await checkEnvironment(pack?.manifest.install.requires ?? [], { host: this.#options.envHost ?? systemHost, sharedDir: this.sharedDir }, this.#now())
+    const result = await checkEnvironment(pack?.manifest.install.requires ?? [], { host: this.#options.envHost ?? systemHost, sharedDir: this.sharedDir, checkers: Object.fromEntries(this.#checkers) }, this.#now())
     script.env = result.report
     await this.#save()
     this.#options.onChanged(script.id)

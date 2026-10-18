@@ -45,6 +45,8 @@ export interface EnvContext {
   readonly host: EnvHost
   /** Shared tools directory (`tools/_shared`): where auto-fixes such as platform-tools go. */
   readonly sharedDir: string
+  /** Checkers contributed by plugins (e.g. the emulator plugin for `emulator`); they win over built-ins. */
+  readonly checkers?: Readonly<Record<string, EnvChecker>>
 }
 
 /** What fixing one requirement would do. */
@@ -56,12 +58,15 @@ export type FixPlan =
   /** Nothing to run; the user follows the text. */
   | { readonly kind: 'manual'; readonly description: string }
 
-interface Checked {
+/** One requirement checked, and how to fix it if it is not ok. */
+export interface EnvChecked {
   readonly item: Omit<EnvItem, 'fix'>
   readonly plan?: FixPlan
 }
 
-type Checker = (req: Requirement, ctx: EnvContext) => Promise<Checked>
+export type EnvChecker = (req: Requirement, ctx: EnvContext) => Promise<EnvChecked>
+type Checked = EnvChecked
+type Checker = EnvChecker
 
 const CHECKERS: Readonly<Record<string, Checker>> = {
   'dotnet-desktop-runtime': checkDotnetDesktop,
@@ -79,7 +84,7 @@ export async function checkEnvironment(requirements: readonly Requirement[], ctx
   const plans = new Map<string, FixPlan>()
   const items: EnvItem[] = []
   for (const req of requirements) {
-    const checker = CHECKERS[req.kind]
+    const checker = ctx.checkers?.[req.kind] ?? CHECKERS[req.kind]
     let checked: Checked
     try {
       checked = checker === undefined

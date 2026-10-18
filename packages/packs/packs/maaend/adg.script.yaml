@@ -1,5 +1,6 @@
 # MaaEnd (明日方舟：终末地), a MaaFramework project: its interface.json declares
 # tasks, options and controllers (Win32-Front seizes the mouse; ADB does not).
+# Runs go through its MXU client, which runs one configured instance and exits.
 id: maaend
 name: MaaEnd（终末地）
 description: 明日方舟：终末地自动化（MaaFramework）；PC 版前台操作或模拟器 ADB
@@ -12,5 +13,35 @@ install:
   requires:
     - kind: vcredist
       arch: x64
+config:
+  files:
+    - path: config/mxu-MaaEnd.json
+      format: json
 detect:
   files: [interface.json, resource_adb]
+launch:
+  exe: MaaEnd.exe
+tasks:
+  # Whether a run holds the mouse depends on the instance's controller, hence two tasks.
+  - id: run-pc
+    title: 运行一个实例（PC 版，占用鼠标键盘）
+    description: 运行 MXU 实例里已配置的任务；实例的控制器是 Win32-Front（直接操作 PC 版游戏）
+    utterances: [终末地日常, 跑 MaaEnd, 终末地]
+    params:
+      instance: { type: string, description: 'MXU 实例名称，见 config/mxu-MaaEnd.json 的 instances[].name' }
+    args: ['--autostart', '--instance', '{instance}', '--quit-after-run']
+    resources: { input: desktop, account: endfield }
+    expectedDuration: 60m
+  - id: run-adb
+    title: 运行一个实例（模拟器）
+    description: 运行 MXU 实例里已配置的任务；实例的控制器是 ADB（通过模拟器操作，不占用鼠标）
+    params:
+      instance: { type: string, description: 'MXU 实例名称，见 config/mxu-MaaEnd.json 的 instances[].name' }
+    args: ['--autostart', '--instance', '{instance}', '--quit-after-run']
+    resources: { input: adb, emulator: mumu, account: endfield }
+    expectedDuration: 60m
+logs:
+  sources:
+    - stdout: true
+    - path: debug/maa.log
+  rules: []

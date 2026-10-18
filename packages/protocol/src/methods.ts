@@ -7,6 +7,10 @@
  */
 import { z } from 'zod'
 import { LiveAttempt, LiveFrame, SessionEvent } from './events.ts'
+import { EmulatorNotifications, EmulatorRequests } from './emulators.ts'
+import { PackNotifications, PackRequests } from './packs.ts'
+import { GuardNotifications, GuardRequests } from './guard.ts'
+import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
 export const PROTOCOL_VERSION = 1
@@ -327,6 +331,10 @@ export const Requests = {
     }),
   },
   ...ScriptRequests,
+  ...RunRequests,
+  ...GuardRequests,
+  ...EmulatorRequests,
+  ...PackRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -363,6 +371,10 @@ export const Notifications = {
   /** A session's model selection changed. */
   'session/model': SessionModel.extend({ sessionId: z.string() }),
   ...ScriptNotifications,
+  ...RunNotifications,
+  ...GuardNotifications,
+  ...EmulatorNotifications,
+  ...PackNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests

@@ -21,6 +21,8 @@ config:
       format: json
 detect:
   files: [MAA.exe, MaaCore.dll]
+launch:
+  exe: MAA.exe
 tasks:
   - id: daily
     title: 日常
@@ -33,7 +35,8 @@ test('a manifest parses with defaults filled in', () => {
   assert.equal(pack.source.release?.channel, 'stable')
   assert.deepEqual(pack.install.requires.map(r => r.kind), ['dotnet-desktop-runtime'])
   assert.equal(pack.config.files[0]?.format, 'json')
-  assert.equal(pack.tasks?.length, 1, 'later-milestone sections are kept as open objects')
+  assert.equal(pack.tasks.length, 1)
+  assert.equal(pack.tasks[0]?.resources.input, 'none')
 })
 
 test('the smallest manifest is an id and a name', () => {
@@ -79,4 +82,61 @@ test('without globs the heuristic prefers this platform and architecture', () =>
   assert.equal(pick('tool-update-patch.zip', 'tool-portable.zip'), 'tool-portable.zip')
   assert.equal(pick('app.AppImage', 'app.deb'), undefined, 'nothing for Windows')
   assert.equal(chooseAsset([]).asset, undefined)
+})
+
+const RUNNABLE = `
+id: tool
+name: Tool
+launch:
+  exe: tool.exe
+  args: ['--quiet']
+  stopAfterDone: true
+tasks:
+  - id: daily
+    title: 日常
+    params:
+      stage: { type: string, default: '1-7' }
+      medicine: { type: integer, default: 0, enum: [0, 1, 2, 3] }
+      fast: { type: boolean, default: false }
+    args: ['run', '--stage={stage}']
+    patches:
+      - file: config/gui.json
+        set:
+          - path: [Configurations, Default, Connect.Address]
+            value: '{adb}'
+          - path: [Configurations, Default, Medicine]
+            value: '{medicine}'
+    resources: { input: adb, emulator: mumu }
+logs:
+  sources:
+    - path: debug/gui.log
+  rules:
+    - { match: '任务已全部完成', level: done }
+`
+
+test('runnable packs: tasks, patches, logs and resources validate', () => {
+  const pack = parseManifest(RUNNABLE)
+  assert.equal(pack.tasks[0]?.resources.input, 'adb')
+  assert.equal(pack.tasks[0]?.restore, true)
+  assert.equal(pack.launch?.stopGraceSeconds, 10)
+  assert.equal(pack.logs.rules[0]?.level, 'done')
+  assert.throws(() => parseManifest('id: x\nname: X\ntasks:\n  - { id: a, title: A }\n'), /tasks need a launch section/)
+  assert.throws(() => parseManifest('id: x\nname: X\nlaunch: { exe: x.exe }\ntasks:\n  - { id: a, title: A }\n  - { id: a, title: B }\n'), /duplicate task id a/)
+  assert.throws(() => parseManifest('id: x\nname: X\nlogs:\n  rules:\n    - { match: "(", level: done }\n'), /invalid regular expression/)
+  assert.throws(() => parseManifest('id: x\nname: X\nlaunch: { exe: ../evil.exe }\n'), /inside the script directory/)
+})
+
+test('rendering fills defaults, coerces parameters and keeps types for whole placeholders', async () => {
+  const { renderTask, TaskInputError } = await import('../src/render.ts')
+  const pack = parseManifest(RUNNABLE)
+  const run = renderTask(pack, 'daily', { stage: 'CE-6', medicine: '2' }, { adb: '127.0.0.1:16384' })
+  assert.deepEqual(run.args, ['--quiet', 'run', '--stage=CE-6'])
+  assert.deepEqual(run.params, { stage: 'CE-6', medicine: 2, fast: false })
+  assert.deepEqual(run.patches[0]?.set.map(s => s.value), ['127.0.0.1:16384', 2])
+
+  assert.throws(() => renderTask(pack, 'weekly'), /没有任务 weekly；可用任务：daily（日常）/)
+  assert.throws(() => renderTask(pack, 'daily', { medicine: 9 }, { adb: 'x' }), /只能是：0、1、2、3/)
+  assert.throws(() => renderTask(pack, 'daily', { colour: 'red' }, { adb: 'x' }), /没有参数 colour/)
+  assert.throws(() => renderTask(pack, 'daily', { fast: 'yes' }, { adb: 'x' }), /true 或 false/)
+  assert.throws(() => renderTask(pack, 'daily', {}, {}), (e: unknown) => e instanceof TaskInputError && /\{adb\}/.test(e.message))
 })

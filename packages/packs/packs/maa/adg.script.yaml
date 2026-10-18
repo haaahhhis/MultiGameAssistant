@@ -1,6 +1,6 @@
-# MaaAssistantArknights (明日方舟). Install-level pack (M1): source, asset,
-# requirements, config files and detection. Launch, tasks and log rules are
-# filled in by the analyzer in M2 and checked on a real machine.
+# MaaAssistantArknights (明日方舟), driven through its GUI config (family
+# gui-config): set "run directly" and the emulator's ADB address, start MAA,
+# close it once it logs that the queue finished, restore the config.
 id: maa
 name: MAA（明日方舟）
 description: 明日方舟小助手：基建、刷理智、公招、集成战略等日常；通过模拟器 ADB 操作，不占用鼠标
@@ -26,3 +26,46 @@ config:
       format: json
 detect:
   files: [MAA.exe, MaaCore.dll]
+launch:
+  exe: MAA.exe
+  # MAA's window stays open after the queue finishes; close it once it reports done.
+  stopAfterDone: true
+  stopGraceSeconds: 10
+tasks:
+  - id: daily
+    title: 日常（运行 MAA 里已勾选的任务）
+    description: 按 MAA 当前配置里勾选的任务队列跑一遍，例如开始唤醒、基建换班、刷理智、领取奖励
+    utterances: [清日常, 明日方舟日常, 方舟日常, 跑一遍 MAA, 刷理智, 基建换班]
+    patches:
+      # Both config generations: older MAA reads gui.json, newer gui.new.json.
+      - file: config/gui.json
+        set:
+          - path: [Configurations, Default, Start.RunDirectly]
+            value: 'True'
+          - path: [Configurations, Default, Start.StartGame]
+            value: 'True'
+          - path: [Configurations, Default, Start.OpenEmulatorAfterLaunch]
+            value: 'False'
+          - path: [Configurations, Default, Connect.Address]
+            value: '{adb}'
+      - file: config/gui.new.json
+        set:
+          - path: [Configurations, Default, Gui, StartUpSettings, RunDirectly]
+            value: true
+          - path: [Configurations, Default, Gui, StartUpSettings, StartEmulator]
+            value: false
+          - path: [Configurations, Default, Gui, RuntimeSettings, StartGame]
+            value: true
+          - path: [Configurations, Default, Gui, ConnectSettings, Address]
+            value: '{adb}'
+    resources: { input: adb, emulator: mumu, account: arknights }
+    success: done-log
+    expectedDuration: 60m
+logs:
+  sources:
+    - stdout: true
+    - path: debug/gui.log
+  rules:
+    - { match: '任务已全部完成', level: done }
+    - { match: '任务出错', level: error, tag: task-error }
+    - { match: '完成任务', level: progress }
