@@ -1,0 +1,16 @@
+# MaaEnd (明日方舟：终末地), a MaaFramework project: its interface.json declares
+# tasks, options and controllers (Win32-Front seizes the mouse; ADB does not).
+id: maaend
+name: MaaEnd（终末地）
+description: 明日方舟：终末地自动化（MaaFramework）；PC 版前台操作或模拟器 ADB
+family: maafw-pi
+source:
+  github: MaaEnd/MaaEnd
+  release:
+    asset: 'MaaEnd-win-x86_64-v{version}.zip'
+install:
+  requires:
+    - kind: vcredist
+      arch: x64
+detect:
+  files: [interface.json, resource_adb]

@@ -11,6 +11,9 @@
 #   ADG_GATEWAY_PORT    listen port (default 3290; 0 = any free port)
 #   ADG_GATEWAY_TOKEN   fixed connection token (default: random per start)
 #   ADG_UI_DIR          built UI directory served at /
+#   ADG_TOOLS_DIR       where scripts are installed (default <dsh home>/adg/tools)
+#   ADG_DATA_DIR        script library state and user packs (default <dsh home>/adg/data)
+#   ADG_GITHUB_MIRROR   initial download mirror prefix, e.g. https://ghfast.top/ (changeable in the UI)
 
 - insert:
     - id: adg-gateway
@@ -20,6 +23,16 @@
         token: !!js "process.env.ADG_GATEWAY_TOKEN || undefined"
         staticDir: !!js "process.env.ADG_UI_DIR || undefined"
         validateResults: true
+
+    # M1: script library — packs, GitHub installs, local imports, versions,
+    # environment checks; `script_*` agent tools and the `scripts` capability.
+    - id: adg-script-registry
+      name: '@adg/script-registry'
+      config:
+        toolsDir: !!js "process.env.ADG_TOOLS_DIR || dshHomePath('adg/tools')"
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        defaults:
+          downloadMirror: !!js "process.env.ADG_GITHUB_MIRROR || ''"
 
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.

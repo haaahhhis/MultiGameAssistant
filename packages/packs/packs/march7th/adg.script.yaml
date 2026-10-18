@@ -1,0 +1,18 @@
+# March7thAssistant (崩坏：星穹铁道). The full package bundles Python and its
+# dependencies. The zip is preferred over the smaller 7z: Windows' built-in tar
+# may lack the LZMA2 decoder 7z archives usually use.
+id: march7th
+name: 三月七小助手（星穹铁道）
+description: 崩坏：星穹铁道自动化：清体力、每日实训、模拟宇宙等；操作 PC 版游戏，占用鼠标键盘
+family: cli
+source:
+  github: moesnow/March7thAssistant
+  homepage: https://m7a.top
+  release:
+    asset: ['March7thAssistant_full.zip', 'March7thAssistant_full.7z']
+config:
+  files:
+    - path: config.yaml
+      format: yaml
+detect:
+  files: [March7th Assistant.exe]

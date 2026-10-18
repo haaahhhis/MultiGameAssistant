@@ -62,6 +62,54 @@
     },
     "providers/remove": {
       "capability": "providers"
+    },
+    "scripts/list": {
+      "capability": "scripts"
+    },
+    "scripts/get": {
+      "capability": "scripts"
+    },
+    "scripts/search": {
+      "capability": "scripts"
+    },
+    "scripts/releases": {
+      "capability": "scripts"
+    },
+    "scripts/install": {
+      "capability": "scripts"
+    },
+    "scripts/checkUpdate": {
+      "capability": "scripts"
+    },
+    "scripts/update": {
+      "capability": "scripts"
+    },
+    "scripts/rollback": {
+      "capability": "scripts"
+    },
+    "scripts/import": {
+      "capability": "scripts"
+    },
+    "scripts/remove": {
+      "capability": "scripts"
+    },
+    "scripts/envCheck": {
+      "capability": "scripts"
+    },
+    "scripts/envFix": {
+      "capability": "scripts"
+    },
+    "scripts/jobs": {
+      "capability": "scripts"
+    },
+    "scripts/jobs/cancel": {
+      "capability": "scripts"
+    },
+    "scripts/settings": {
+      "capability": "scripts"
+    },
+    "scripts/settings/set": {
+      "capability": "scripts"
     }
   },
   "notifications": [
@@ -75,7 +123,9 @@
     "approval/resolved",
     "credentials/changed",
     "providers/changed",
-    "session/model"
+    "session/model",
+    "scripts/changed",
+    "scripts/job"
   ],
   "$defs": {
     "SessionEvent": {
@@ -4880,6 +4930,1793 @@
       ],
       "additionalProperties": false
     },
+    "scripts/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "github"
+                      },
+                      "repo": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "repo"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "local"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "packId": {
+                "type": "string"
+              },
+              "family": {
+                "type": "string",
+                "enum": [
+                  "maafw-pi",
+                  "cli",
+                  "gui-config",
+                  "generic-process",
+                  "visual"
+                ]
+              },
+              "current": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "versions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "dir": {
+                      "type": "string"
+                    },
+                    "installedAt": {
+                      "type": "number"
+                    },
+                    "asset": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "size"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "current": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "dir",
+                    "installedAt",
+                    "current"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "env": {
+                "type": "object",
+                "properties": {
+                  "checkedAt": {
+                    "type": "number"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "required": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ok",
+                            "missing",
+                            "outdated",
+                            "unknown",
+                            "unsupported"
+                          ]
+                        },
+                        "found": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "fix": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "auto",
+                                "installer",
+                                "manual"
+                              ]
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "needsAdmin": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "description",
+                            "needsAdmin"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "checkedAt",
+                  "ok",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              "probe": {
+                "type": "object",
+                "properties": {
+                  "executables": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "markers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "family": {
+                    "type": "string",
+                    "enum": [
+                      "maafw-pi",
+                      "cli",
+                      "gui-config",
+                      "generic-process",
+                      "visual"
+                    ]
+                  }
+                },
+                "required": [
+                  "executables",
+                  "markers"
+                ],
+                "additionalProperties": false
+              },
+              "update": {
+                "type": "object",
+                "properties": {
+                  "latest": {
+                    "type": "string"
+                  },
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "checkedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "latest",
+                  "available",
+                  "checkedAt"
+                ],
+                "additionalProperties": false
+              },
+              "jobId": {
+                "type": "string"
+              },
+              "addedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "source",
+              "versions",
+              "addedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "family": {
+                "type": "string",
+                "enum": [
+                  "maafw-pi",
+                  "cli",
+                  "gui-config",
+                  "generic-process",
+                  "visual"
+                ]
+              },
+              "builtin": {
+                "type": "boolean"
+              },
+              "installed": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "builtin",
+              "installed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "toolsDir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scripts",
+        "packs",
+        "toolsDir"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/get.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/get.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "github"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "repo"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "local"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "packId": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "maafw-pi",
+            "cli",
+            "gui-config",
+            "generic-process",
+            "visual"
+          ]
+        },
+        "current": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "installedAt": {
+                "type": "number"
+              },
+              "asset": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "size"
+                ],
+                "additionalProperties": false
+              },
+              "current": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "dir",
+              "installedAt",
+              "current"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "checkedAt": {
+              "type": "number"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "missing",
+                      "outdated",
+                      "unknown",
+                      "unsupported"
+                    ]
+                  },
+                  "found": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "installer",
+                          "manual"
+                        ]
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "needsAdmin": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "description",
+                      "needsAdmin"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "label",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "checkedAt",
+            "ok",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        "probe": {
+          "type": "object",
+          "properties": {
+            "executables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "markers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "family": {
+              "type": "string",
+              "enum": [
+                "maafw-pi",
+                "cli",
+                "gui-config",
+                "generic-process",
+                "visual"
+              ]
+            }
+          },
+          "required": [
+            "executables",
+            "markers"
+          ],
+          "additionalProperties": false
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "latest": {
+              "type": "string"
+            },
+            "available": {
+              "type": "boolean"
+            },
+            "checkedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "latest",
+            "available",
+            "checkedAt"
+          ],
+          "additionalProperties": false
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "addedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "versions",
+        "addedAt"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/search.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/search.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "stars": {
+                "type": "number"
+              },
+              "packId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "stars"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/releases.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/releases.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "packId": {
+          "type": "string"
+        },
+        "releases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prerelease": {
+                "type": "boolean"
+              },
+              "publishedAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "downloadUrl": {
+                      "type": "string"
+                    },
+                    "digest": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "size",
+                    "downloadUrl"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "suggestedAsset": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "name",
+              "prerelease",
+              "assets"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "repo",
+        "releases"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/install.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "asset": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/install.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "scriptId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/checkUpdate.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/checkUpdate.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": "string"
+        },
+        "latest": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "latest",
+        "available"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/update.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/update.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "upToDate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "upToDate"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/rollback.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/rollback.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "github"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "repo"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "local"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "packId": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "maafw-pi",
+            "cli",
+            "gui-config",
+            "generic-process",
+            "visual"
+          ]
+        },
+        "current": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "installedAt": {
+                "type": "number"
+              },
+              "asset": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "size"
+                ],
+                "additionalProperties": false
+              },
+              "current": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "dir",
+              "installedAt",
+              "current"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "checkedAt": {
+              "type": "number"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "missing",
+                      "outdated",
+                      "unknown",
+                      "unsupported"
+                    ]
+                  },
+                  "found": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "installer",
+                          "manual"
+                        ]
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "needsAdmin": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "description",
+                      "needsAdmin"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "label",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "checkedAt",
+            "ok",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        "probe": {
+          "type": "object",
+          "properties": {
+            "executables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "markers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "family": {
+              "type": "string",
+              "enum": [
+                "maafw-pi",
+                "cli",
+                "gui-config",
+                "generic-process",
+                "visual"
+              ]
+            }
+          },
+          "required": [
+            "executables",
+            "markers"
+          ],
+          "additionalProperties": false
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "latest": {
+              "type": "string"
+            },
+            "available": {
+              "type": "boolean"
+            },
+            "checkedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "latest",
+            "available",
+            "checkedAt"
+          ],
+          "additionalProperties": false
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "addedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "versions",
+        "addedAt"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/import.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "packId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/import.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "github"
+                },
+                "repo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "repo"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "local"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "packId": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "maafw-pi",
+            "cli",
+            "gui-config",
+            "generic-process",
+            "visual"
+          ]
+        },
+        "current": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string"
+              },
+              "installedAt": {
+                "type": "number"
+              },
+              "asset": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "size"
+                ],
+                "additionalProperties": false
+              },
+              "current": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "dir",
+              "installedAt",
+              "current"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "checkedAt": {
+              "type": "number"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "missing",
+                      "outdated",
+                      "unknown",
+                      "unsupported"
+                    ]
+                  },
+                  "found": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "fix": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "installer",
+                          "manual"
+                        ]
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "needsAdmin": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "description",
+                      "needsAdmin"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "label",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "checkedAt",
+            "ok",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        "probe": {
+          "type": "object",
+          "properties": {
+            "executables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "markers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "family": {
+              "type": "string",
+              "enum": [
+                "maafw-pi",
+                "cli",
+                "gui-config",
+                "generic-process",
+                "visual"
+              ]
+            }
+          },
+          "required": [
+            "executables",
+            "markers"
+          ],
+          "additionalProperties": false
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "latest": {
+              "type": "string"
+            },
+            "available": {
+              "type": "boolean"
+            },
+            "checkedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "latest",
+            "available",
+            "checkedAt"
+          ],
+          "additionalProperties": false
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "addedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "versions",
+        "addedAt"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "deleteFiles": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/envCheck.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/envCheck.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "checkedAt": {
+          "type": "number"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "required": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "missing",
+                  "outdated",
+                  "unknown",
+                  "unsupported"
+                ]
+              },
+              "found": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "fix": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "installer",
+                      "manual"
+                    ]
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "needsAdmin": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "description",
+                  "needsAdmin"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "checkedAt",
+        "ok",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/envFix.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/envFix.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/jobs.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/jobs.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "install",
+                  "update",
+                  "env-fix"
+                ]
+              },
+              "scriptId": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "resolving",
+                  "downloading",
+                  "verifying",
+                  "extracting",
+                  "checking",
+                  "running",
+                  "done",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "received": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              },
+              "version": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "endedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "scriptId",
+              "phase",
+              "startedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/jobs/cancel.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/jobs/cancel.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/settings.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/settings.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "apiBase": {
+          "type": "string",
+          "format": "uri"
+        },
+        "downloadMirror": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "mirrorFallback": {
+          "type": "boolean"
+        },
+        "tokenRef": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "keepVersions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "includePrereleases": {
+          "type": "boolean"
+        },
+        "tokenConfigured": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiBase",
+        "downloadMirror",
+        "mirrorFallback",
+        "tokenRef",
+        "keepVersions",
+        "includePrereleases",
+        "tokenConfigured"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/settings/set.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "apiBase": {
+          "type": "string",
+          "format": "uri"
+        },
+        "downloadMirror": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "mirrorFallback": {
+          "type": "boolean"
+        },
+        "tokenRef": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "keepVersions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "includePrereleases": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scripts/settings/set.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "apiBase": {
+          "type": "string",
+          "format": "uri"
+        },
+        "downloadMirror": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "mirrorFallback": {
+          "type": "boolean"
+        },
+        "tokenRef": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "keepVersions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "includePrereleases": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiBase",
+        "downloadMirror",
+        "mirrorFallback",
+        "tokenRef",
+        "keepVersions",
+        "includePrereleases"
+      ],
+      "additionalProperties": false
+    },
     "sessions/changed.notification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -6440,6 +8277,80 @@
         "lastUsed",
         "next",
         "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scripts/job.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "install",
+            "update",
+            "env-fix"
+          ]
+        },
+        "scriptId": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "resolving",
+            "downloading",
+            "verifying",
+            "extracting",
+            "checking",
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "received": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "version": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "scriptId",
+        "phase",
+        "startedAt"
       ],
       "additionalProperties": false
     }

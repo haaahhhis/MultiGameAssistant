@@ -1,0 +1,28 @@
+# MaaAssistantArknights (明日方舟). Install-level pack (M1): source, asset,
+# requirements, config files and detection. Launch, tasks and log rules are
+# filled in by the analyzer in M2 and checked on a real machine.
+id: maa
+name: MAA（明日方舟）
+description: 明日方舟小助手：基建、刷理智、公招、集成战略等日常；通过模拟器 ADB 操作，不占用鼠标
+family: gui-config
+source:
+  github: MaaAssistantArknights/MaaAssistantArknights
+  homepage: https://maa.plus
+  release:
+    asset: 'MAA-v{version}-win-x64.zip'
+install:
+  requires:
+    # The release bundles its own .NET (runtimeconfig "includedFrameworks"); only the VC++ runtime is needed.
+    - kind: vcredist
+      arch: x64
+    - kind: emulator
+      prefer: mumu
+      note: 需要 16:9 分辨率的安卓模拟器
+config:
+  files:
+    - path: config/gui.json
+      format: json
+    - path: config/gui.new.json
+      format: json
+detect:
+  files: [MAA.exe, MaaCore.dll]

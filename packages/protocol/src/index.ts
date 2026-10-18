@@ -8,3 +8,4 @@
 export * from './events.ts'
 export * from './methods.ts'
 export * from './jsonrpc.ts'
+export * from './scripts.ts'

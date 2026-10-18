@@ -1,0 +1,29 @@
+{
+  "name": "@adg/installer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Script installation library: GitHub releases, resumable verified downloads, safe extraction, environment checks and fixes, directory probing",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/pack-schema": "workspace:*",
+    "@adg/protocol": "workspace:*",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "@adg/test-kit": "workspace:*",
+    "@types/node": "^24.13.3"
+  }
+}

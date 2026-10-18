@@ -5,6 +5,7 @@ import { gatewayUrl, readToken, saveToken } from './config.ts'
 import { registerPlugin } from './plugins.ts'
 import { chatPlugin } from './plugins/chat/index.ts'
 import { roadmapPlugins } from './plugins/roadmap/index.ts'
+import { scriptsPlugin } from './plugins/scripts/index.ts'
 import { settingsPlugin } from './plugins/settings/index.ts'
 import { statusPlugin } from './plugins/status/index.ts'
 import { trajectoryPlugin } from './plugins/trajectory/index.ts'
@@ -23,6 +24,7 @@ registerPlugin(chatPlugin)
 registerPlugin(trajectoryPlugin)
 registerPlugin(settingsPlugin)
 registerPlugin(statusPlugin)
+registerPlugin(scriptsPlugin)
 for (const plugin of roadmapPlugins) registerPlugin(plugin)
 
 const root = createRoot(document.getElementById('root')!)

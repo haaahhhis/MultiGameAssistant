@@ -19,7 +19,8 @@
     "desktop": "pnpm --filter @adg/desktop start",
     "desktop:dev": "pnpm --filter @adg/web run build && pnpm --filter @adg/desktop start",
     "e2e": "node scripts/e2e-chat.mjs",
-    "dev:fake-model": "node scripts/dev-fake-model.mjs"
+    "dev:fake-model": "node scripts/dev-fake-model.mjs",
+    "e2e:scripts": "node scripts/e2e-scripts.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

@@ -6,6 +6,7 @@
  * (rate limiting, server errors, dropped connections) can be switched on per
  * test, so failure paths are exercised without the network.
  */
+import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -13,6 +14,12 @@ export interface FakeAsset {
   readonly name: string
   readonly content: Uint8Array | string
   readonly contentType?: string
+  /** Published digest; default: the real SHA-256; `null` publishes none. */
+  readonly digest?: string | null
+}
+
+function bytesOf(asset: FakeAsset): Buffer {
+  return typeof asset.content === 'string' ? Buffer.from(asset.content) : Buffer.from(asset.content)
 }
 
 export interface FakeRelease {
@@ -74,10 +81,28 @@ export async function startFakeGitHub(options: FakeGitHubOptions): Promise<FakeG
       const [, repo, tag, name] = download.map(decodeURIComponent) as [string, string, string, string]
       const asset = options.repos[repo]?.find(r => r.tag === tag)?.assets.find(a => a.name === name)
       if (asset === undefined) return json(res, 404, { message: 'Not Found' })
-      const body = typeof asset.content === 'string' ? Buffer.from(asset.content) : Buffer.from(asset.content)
+      const body = bytesOf(asset)
+      const range = /^bytes=(\d+)-$/.exec(req.headers.range ?? '')
+      if (range !== null) {
+        const start = Number(range[1])
+        if (start >= body.length) {
+          res.writeHead(416, { 'content-range': `bytes */${body.length}` })
+          res.end()
+          return
+        }
+        res.writeHead(206, { 'content-type': asset.contentType ?? 'application/octet-stream', 'content-length': body.length - start, 'content-range': `bytes ${start}-${body.length - 1}/${body.length}` })
+        res.end(body.subarray(start))
+        return
+      }
       res.writeHead(200, { 'content-type': asset.contentType ?? 'application/octet-stream', 'content-length': body.length })
       res.end(body)
       return
+    }
+    if (path === '/search/repositories') {
+      const q = (new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '').toLowerCase()
+      const items = Object.keys(options.repos).filter(repo => repo.toLowerCase().includes(q))
+        .map(repo => ({ full_name: repo, description: `fake ${repo}`, stargazers_count: 1 }))
+      return json(res, 200, { total_count: items.length, items })
     }
     const api = /^\/repos\/([^/]+\/[^/]+)\/releases(?:\/(latest|tags\/(.+)))?$/.exec(path)
     if (api === null) return json(res, 404, { message: 'Not Found' })
@@ -106,7 +131,8 @@ export async function startFakeGitHub(options: FakeGitHubOptions): Promise<FakeG
       assets: release.assets.map((asset, index) => ({
         id: index + 1,
         name: asset.name,
-        size: typeof asset.content === 'string' ? Buffer.byteLength(asset.content) : asset.content.byteLength,
+        size: bytesOf(asset).length,
+        digest: asset.digest === null ? null : asset.digest ?? `sha256:${createHash('sha256').update(bytesOf(asset)).digest('hex')}`,
         content_type: asset.contentType ?? 'application/octet-stream',
         browser_download_url: `${base}/download/${repo}/${encodeURIComponent(release.tag)}/${encodeURIComponent(asset.name)}`,
       })),

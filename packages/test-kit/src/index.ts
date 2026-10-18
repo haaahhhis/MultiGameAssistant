@@ -9,3 +9,4 @@ export { parseScenario, runScenario, type Scenario, type ScenarioStep, type Scen
 export { startFakeGitHub, type FakeAsset, type FakeFault, type FakeGitHub, type FakeGitHubOptions, type FakeRelease } from './fake-github.ts'
 export { startFakeLlm, type FakeLlm, type FakeLlmOptions, type FakeReply } from './fake-llm.ts'
 export { ManualClock, type Clock } from './clock.ts'
+export { makeZip, type ZipEntries } from './zip.ts'

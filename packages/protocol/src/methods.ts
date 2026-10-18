@@ -7,6 +7,7 @@
  */
 import { z } from 'zod'
 import { LiveAttempt, LiveFrame, SessionEvent } from './events.ts'
+import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
 export const PROTOCOL_VERSION = 1
 
@@ -325,6 +326,7 @@ export const Requests = {
       defaultReset: z.boolean(),
     }),
   },
+  ...ScriptRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -360,6 +362,7 @@ export const Notifications = {
   'providers/changed': z.object({}),
   /** A session's model selection changed. */
   'session/model': SessionModel.extend({ sessionId: z.string() }),
+  ...ScriptNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests
