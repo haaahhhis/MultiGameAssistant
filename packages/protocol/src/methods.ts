@@ -232,6 +232,8 @@ export const Requests = {
       requestId: z.string(),
       text: z.string().min(1),
       mode: z.enum(['queue', 'steer']),
+      /** Images with the text (the model must accept images). */
+      images: z.array(PromptImage).max(4).optional(),
     }),
     result: Accepted,
   },
@@ -239,6 +241,12 @@ export const Requests = {
     capability: 'chat',
     params: z.object({ sessionId: z.string() }),
     result: Accepted,
+  },
+  /** The bytes of an image in a session (a screenshot a tool took, an image the user sent). */
+  'attachments/image': {
+    capability: 'attachments',
+    params: z.object({ attachmentId: z.string(), mediaType: z.string(), bytes: z.number(), width: z.number(), height: z.number() }),
+    result: z.object({ mediaType: z.string(), data: z.string() }),
   },
   /** Model for new sessions (and new chat-channel conversations). */
   'models/setDefault': {

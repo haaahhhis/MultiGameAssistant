@@ -108,6 +108,10 @@ export class AdgRunner extends Service {
             await runner.launch.set(scriptId, patch)
             return runner.launchView(scriptId)
           },
+          'configs/launch/locate': async params => {
+            await scripts.ready
+            return runner.locateGame((params as RequestParams<'configs/launch/locate'>).scriptId)
+          },
         },
       })
     })

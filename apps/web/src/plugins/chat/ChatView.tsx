@@ -3,6 +3,7 @@ import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { Markdown } from '../../components/Markdown.tsx'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
+import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
@@ -16,7 +17,7 @@ type Row =
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
-export function ChatView({ session, state }: SessionViewProps) {
+export function ChatView({ client, session, state }: SessionViewProps) {
   const items = useMemo(
     () => buildChat(state.events, state.live, state.pending),
     // `version` covers in-place live delta appends.
@@ -50,6 +51,7 @@ export function ChatView({ session, state }: SessionViewProps) {
   }, [firstSeq])
 
   return (
+    <ImageClient.Provider value={client}>
     <div className="chat" ref={scroller} onScroll={onScroll}>
       <div className="chat-inner">
         {state.hasMore && (
@@ -71,6 +73,7 @@ export function ChatView({ session, state }: SessionViewProps) {
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
       </div>
     </div>
+    </ImageClient.Provider>
   )
 }
 
@@ -126,9 +129,10 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
         <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
           <div className="bubble">
             {item.text}
-            {(item.images > 0 || item.files > 0) && (
+            {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
+            {(item.images > item.imageRefs.length || item.files > 0) && (
               <div className="attachments">
-                {item.images > 0 && <span><Icon name="image" />{item.images} 张图片</span>}
+                {item.images > item.imageRefs.length && <span><Icon name="image" />{item.images - item.imageRefs.length} 张图片</span>}
                 {item.files > 0 && <span><Icon name="paperclip" />{item.files} 个文件</span>}
               </div>
             )}
@@ -208,6 +212,7 @@ function ToolRow({ item }: { item: ToolItem }) {
         {item.approval !== undefined && <span className={`badge approval-${item.approval}`}>{approvalLabel(item.approval)}</span>}
         <span className="tool-status">{STATUS_LABEL[item.status]}</span>
       </button>
+      {item.images !== undefined && <div className="chat-images tool-images">{item.images.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
       {open && (
         <div className="tool-body">
           <div className="label">参数</div>

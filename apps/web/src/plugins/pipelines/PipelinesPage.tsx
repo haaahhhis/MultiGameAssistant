@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { isMarker, withStartEnd } from '@adg/protocol'
 import type { Pipeline, PipelineCheck, PipelineRun, PipelineSummary } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
@@ -14,7 +15,7 @@ const RUN_STATE: Readonly<Record<PipelineRun['state'], [string, string]>> = {
 const blank = (): Pipeline => ({
   id: `pipeline-${Date.now().toString(36)}`,
   name: '新流水线',
-  nodes: [],
+  nodes: [{ id: 'start', kind: 'start', position: { x: 40, y: 120 } }, { id: 'end', kind: 'end', position: { x: 360, y: 120 } }],
   edges: [],
   onFailure: { retries: 0, then: 'continue' },
   schedule: { enabled: false, times: [], days: [], catchUpMinutes: 10 },
@@ -53,8 +54,10 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
     if (selected === null || status.state !== 'open') return
     if (pipeline?.id === selected && list?.every(p => p.id !== selected)) return
     let live = true
-    client.connection.call('pipelines/get', { id: selected }).then(p => {
+    client.connection.call('pipelines/get', { id: selected }).then(got => {
       if (!live) return
+      // Older pipelines get 开始 and 结束 on the canvas; they are saved with the next change.
+      const p = withStartEnd(got)
       setPipeline(p)
       setSaved(JSON.stringify(p))
       setCheck(null)
@@ -76,7 +79,7 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
 
   // A changed pipeline is checked again shortly after the change.
   useEffect(() => {
-    if (pipeline === null || pipeline.nodes.length === 0) { setCheck(null); return }
+    if (pipeline === null || !pipeline.nodes.some(n => !isMarker(n))) { setCheck(null); return }
     const timer = setTimeout(() => {
       client.connection.call('pipelines/check', { pipeline }).then(setCheck).catch(() => {})
     }, 400)
@@ -163,7 +166,7 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
                 <span className="spacer" />
                 {activeRun !== undefined
                   ? <button className="danger-outline small-button" disabled={busy !== null} onClick={() => void act('cancel', () => client.connection.call('pipelines/cancel', { runId: activeRun.id }))}>取消运行</button>
-                  : <button className="small-button" disabled={busy !== null || pipeline.nodes.length === 0 || check?.ok === false} onClick={() => void runNow()}><Icon name="arrow" />运行</button>}
+                  : <button className="small-button" disabled={busy !== null || !pipeline.nodes.some(n => !isMarker(n)) || check?.ok === false} onClick={() => void runNow()}><Icon name="arrow" />运行</button>}
                 <button className="primary small-button" disabled={busy !== null || (!dirty && !isNew && pipeline.draft !== true)} onClick={() => void save()}>{busy === 'save' ? '保存中…' : pipeline.draft === true && !dirty ? '确认并保存' : '保存'}</button>
                 <button className="small-button" disabled={busy !== null || activeRun !== undefined} onClick={() => { if (confirm(`删除流水线「${pipeline.name}」？`)) void remove() }}>删除</button>
               </div>

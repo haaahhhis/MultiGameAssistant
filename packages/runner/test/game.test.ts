@@ -8,6 +8,7 @@ import { parseManifest } from '@adg/pack-schema'
 import type { ScriptInfo } from '@adg/protocol'
 import { listWithNew, readChoices } from '../src/choices.ts'
 import { ensureGame, scriptLaunchesGame } from '../src/game.ts'
+import { gameKeywords, locateGame } from '../src/locate.ts'
 import { editText } from '../src/patch.ts'
 import { Runner, type EmulatorBridge } from '../src/runs.ts'
 
@@ -175,4 +176,34 @@ tasks:
   const manual = make(false)
   await manual.finished((await manual.start('tool', 't', { instance: '模拟器日常' })).id)
   assert.equal(JSON.parse(seen[0]!).OpenEmulator, true, 'a manual address: the script keeps starting its emulator')
+})
+
+test('finding the PC game: running, installed programs, shortcuts, then matching folders on disk', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-locate-'))
+  const make = (...parts: string[]) => { const file = join(root, ...parts); mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, ''); return file }
+  const running = make('Running', 'StarRail.exe')
+  const icon = make('Installed', 'StarRail.exe')
+  const viaLauncher = make('HoYoPlay', 'games', 'Star Rail Game', 'StarRail.exe')
+  make('HoYoPlay', 'launcher.exe')
+  const onDisk = make('D', 'Games', '星穹铁道', 'Game', 'StarRail.exe')
+  make('D', 'Other', 'deep', 'StarRail.exe') // not under a matching or game folder: not searched
+  const keywords = gameKeywords({ name: '崩坏：星穹铁道', pc: { process: 'StarRail.exe', keywords: ['HoYoPlay'] } })
+  assert.deepEqual(keywords, ['HoYoPlay', 'StarRail', '崩坏：星穹铁道', '星穹铁道'])
+
+  const all = await locateGame({
+    exe: 'StarRail.exe', keywords, roots: [join(root, 'D')],
+    probe: async () => ({
+      running: [running, join(root, 'Running', 'other.exe')],
+      entries: [{ name: '崩坏：星穹铁道', icon: `"${icon}",0` }, { name: '无关的程序', location: join(root, 'D') }],
+      shortcuts: [{ name: 'HoYoPlay', target: join(root, 'HoYoPlay', 'launcher.exe') }],
+    }),
+  })
+  assert.deepEqual(all.map(c => [c.path, c.source]), [
+    [running, '游戏正在运行'],
+    [icon, '已安装程序：崩坏：星穹铁道'],
+    [viaLauncher, '快捷方式「HoYoPlay」所在的目录'],
+  ], 'the disk is only walked when nothing better was found')
+
+  const disk = await locateGame({ exe: 'starrail', keywords, roots: [join(root, 'D')], probe: async () => ({ running: [], entries: [], shortcuts: [] }) })
+  assert.deepEqual(disk.map(c => c.path), [onDisk], 'Games → a folder named after the game → its program; unrelated folders are not searched')
 })

@@ -80,7 +80,7 @@ const LEGACY = 'gb18030'
  */
 export function lineSplitter(encoding: string, onLine: (line: string) => void): LineSplitter {
   const emitLine = (line: string) => {
-    const clean = line.replace(/\r$/, '')
+    const clean = stripTerminal(line.replace(/\r$/, ''))
     if (clean.trim() !== '') onLine(clean)
   }
   if (encoding === 'utf-16le') return textSplitter(new TextDecoder('utf-16le'), emitLine)
@@ -116,6 +116,16 @@ export function lineSplitter(encoding: string, onLine: (line: string) => void): 
       pending = Buffer.alloc(0)
     },
   }
+}
+
+/**
+ * Drop terminal control sequences (colours, cursor moves, window titles) and
+ * other control characters: scripts and the libraries they load (onnxruntime,
+ * for one) colour their console output even when it goes to a file or pipe.
+ */
+export function stripTerminal(line: string): string {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|[\x00-\x08\x0b-\x1f\x7f]/g, '')
 }
 
 function textSplitter(decoder: TextDecoder, emitLine: (line: string) => void): LineSplitter {

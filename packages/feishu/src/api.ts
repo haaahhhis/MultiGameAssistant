@@ -4,6 +4,7 @@
  * SDK: REST through `Client`, events and card callbacks through the long
  * connection (`WSClient`), so no public address is needed.
  */
+import { Readable } from 'node:stream'
 import * as lark from '@larksuiteoapi/node-sdk'
 
 /** Where a message goes: a person (p2p) or a group chat. */
@@ -166,7 +167,9 @@ export function sdkApi(options: SdkOptions): FeishuApi {
     },
     async uploadImage(png) {
       return call('上传图片', async () => {
-        const result = await client.im.image.create({ data: { image_type: 'message', image: png } }) as { image_key?: string; code?: number; msg?: string; data?: { image_key?: string } } | null
+        // A plain Buffer goes up without a filename, and Feishu then does not see a file; a named stream does.
+        const image = Object.assign(Readable.from([png]), { path: 'screenshot.png' }) as unknown as import('node:fs').ReadStream
+        const result = await client.im.image.create({ data: { image_type: 'message', image } }) as { image_key?: string; code?: number; msg?: string; data?: { image_key?: string } } | null
         const key = result?.image_key ?? result?.data?.image_key
         if (key === undefined) throw new FeishuError(`上传图片没有返回 image_key${result?.code === undefined ? '' : `（${result.code}：${result.msg ?? ''}）`}`, result?.code)
         return key

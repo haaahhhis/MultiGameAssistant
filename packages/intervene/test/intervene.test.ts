@@ -180,6 +180,7 @@ test('screen tools: strict schemas; acting needs the lock, an intervention may a
   const asked: string[] = []
   const shell: string[] = []
   const env = interventions({})
+  let failSend = false
   const tools = screenTools({
     screens: new Screens({ adb: () => ({ screencap: async () => picture(1280, 720), shell: async (_a, args) => { shell.push(args.join(' ')); return '' }, expectedAddress: async () => '127.0.0.1:16384' }), win: fakeWin().win, maxEdge: () => 1280 }),
     interventions: env.iv(),
@@ -190,14 +191,18 @@ test('screen tools: strict schemas; acting needs the lock, an intervention may a
     saveImage: async () => ({ attachmentId: 'att-1', mediaType: 'image/png', bytes: 1, width: 1280, height: 720 }),
     checkVision: async () => {},
     approve: async (_exec, reason) => { asked.push(reason); return true },
-    sendToSession: async () => true,
+    sendToSession: async () => { if (failSend) throw new Error('上传图片失败：应用缺少权限'); return true },
   })
   for (const t of tools) assert.deepEqual(schemaProblems(t.parameters), [], t.name)
   const byName = (n: string) => tools.find(t => t.name === n)!
   const exec = (session: string) => ({ agent: { session: { id: session } }, signal: AbortSignal.timeout(5000), name: 'screen_tap' }) as unknown as ToolRunContext
 
-  const shot = await byName('screen_capture').execute({ target: 'emulator', send_to_user: true }, exec('chat')) as { width: number; sent_to_user: boolean }
-  assert.deepEqual([shot.width, shot.sent_to_user], [1280, true])
+  const shot = await byName('screen_capture').execute({ target: 'emulator', send_to_user: true }, exec('chat')) as { width: number; sent_to_user: string }
+  assert.deepEqual([shot.width, shot.sent_to_user], [1280, '已发给用户'])
+  failSend = true
+  const unsent = await byName('screen_capture').execute({ target: 'emulator', send_to_user: true }, exec('chat')) as { sent_to_user: string }
+  assert.equal(unsent.sent_to_user, '没能发给用户：上传图片失败：应用缺少权限', 'the agent is told why, not that it was sent')
+  failSend = false
   const rendered = byName('screen_capture').output.render({}, shot as never)
   assert.equal((rendered[1] as { type: string }).type, 'image')
 

@@ -223,7 +223,11 @@ export const Game = z.object({
   /** Started in the emulator before `adb` tasks. */
   android: z.object({ package: z.string().regex(/^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/, 'an Android package name like com.example.game') }).optional(),
   /** The PC game for `desktop` tasks: its process name; the program's path is a per-user setting. */
-  pc: z.object({ process: z.string().min(1).optional() }).optional(),
+  pc: z.object({
+    process: z.string().min(1).optional(),
+    /** Names to look for when finding the program (installed programs, shortcuts, folders): the game's, its launcher's. */
+    keywords: z.array(z.string().min(2)).optional(),
+  }).optional(),
   /**
    * When the script starts the game itself: `always`, `never`, or when any
    * of these config values (the effective config of the run) is set.

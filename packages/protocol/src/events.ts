@@ -18,6 +18,9 @@ export const ContentPart = z.discriminatedUnion('type', [
     mediaType: z.string().optional(),
     width: z.number().optional(),
     height: z.number().optional(),
+    /** Stored image (with `bytes`): fetch it with `attachments/image`. */
+    attachmentId: z.string().optional(),
+    bytes: z.number().optional(),
   }),
   z.object({
     type: z.literal('file'),

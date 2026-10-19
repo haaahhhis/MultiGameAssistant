@@ -113,17 +113,20 @@ export function screenTools(deps: ScreenToolDeps): ToolDefinition[] {
         byTarget.set(a.target, shot.frame)
         deps.interventions.rememberShot(sessionId, shot.png)
         const image = await deps.saveImage(shot.png)
-        const sent = a.send_to_user === true ? await deps.sendToSession(sessionId, shot.frame.label, shot.png).catch(() => false) : false
+        const sent = a.send_to_user !== true ? undefined : await deps.sendToSession(sessionId, shot.frame.label, shot.png).then(
+          ok => ok ? '已发给用户' : '没能发给用户：这个对话不在聊天渠道（如飞书）里，截图只在界面里显示',
+          error => `没能发给用户：${error instanceof Error ? error.message : String(error)}`)
         return {
           target: a.target, label: shot.frame.label, width: shot.frame.width, height: shot.frame.height, image,
           note: `坐标以这张 ${shot.frame.width}×${shot.frame.height} 的图为准（左上角是 0,0）`,
-          ...(a.send_to_user === true ? { sent_to_user: sent } : {}),
+          ...(sent === undefined ? {} : { sent_to_user: sent }),
         }
       },
       render: (_args, value): ContentBlock[] => {
-        const v = value as { label: string; width: number; height: number; note: string; image: Record<string, unknown>; sent_to_user?: boolean }
+        const v = value as { label: string; width: number; height: number; note: string; image: Record<string, unknown>; sent_to_user?: string }
         return [
-          { type: 'text', text: `${v.label}：${v.note}${v.sent_to_user === true ? '；已发给用户' : v.sent_to_user === false ? '；没能发给用户（不是聊天渠道里的对话）' : ''}` },
+          // The UI shows this image under the tool call; a Markdown image in the reply would point nowhere.
+          { type: 'text', text: `${v.label}：${v.note}${v.sent_to_user === undefined ? '' : `；${v.sent_to_user}`}。截图已显示在界面上，回复里不要用 Markdown 插入图片。` },
           { type: 'image', attachment: v.image } as unknown as ContentBlock,
         ]
       },

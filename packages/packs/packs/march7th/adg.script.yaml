@@ -27,6 +27,7 @@ game:
   name: 崩坏：星穹铁道
   pc:
     process: StarRail.exe
+    keywords: [StarRail, Star Rail, 星穹铁道, HoYoPlay, miHoYo, 米哈游]
   selfLaunch: always
 tasks:
   - id: main

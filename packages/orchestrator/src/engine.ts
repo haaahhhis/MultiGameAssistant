@@ -11,7 +11,7 @@
  * Pure apart from the injected runner, chat and agent ports; tests drive it
  * with fake scripts.
  */
-import type { Pipeline, PipelineNode, PipelineRun, PipelineTrigger, NodeRun, RunInfo } from '@adg/protocol'
+import { isMarker, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
 import type { Conversations } from '@adg/notify'
 import { BusyError, type Runner } from '@adg/runner'
 import { checkPipeline, nodeLabel, type CheckLibrary } from './check.ts'
@@ -181,8 +181,10 @@ export class Engine {
         continue
       }
       const incoming = pipeline.edges.filter(e => e.to === node.id)
+      // 结束 waits for everything else, whatever its edges say; it is never skipped.
+      if (node.kind === 'end' && pipeline.nodes.some(n => n.id !== node.id && !final(run.nodes[n.id]!.state))) continue
       if (incoming.some(e => !final(run.nodes[e.from]!.state))) continue
-      const blocked = incoming.find(e => !satisfied(e.when, run.nodes[e.from]!.state))
+      const blocked = node.kind === 'end' ? undefined : incoming.find(e => !satisfied(e.when, run.nodes[e.from]!.state))
       if (blocked !== undefined) {
         const from = pipeline.nodes.find(n => n.id === blocked.from)!
         this.#set(active, node.id, { state: 'skipped', detail: `「${nodeLabel(from, this.#deps.library)}」${STATE_WORD[run.nodes[blocked.from]!.state]}，按连线条件跳过` })
@@ -277,6 +279,12 @@ export class Engine {
         const reached = sink === undefined ? [] : await sink.send({ id: `pipeline:${active.run.id}:${node.id}`, scope: 'pipeline', title: active.pipeline.name, text: node.text, severity: 'info' })
         return { ok: true, detail: reached.length > 0 ? `已发送（${reached.join('、')}）` : '没有可用的消息渠道，未发送' }
       }
+      case 'start':
+        return { ok: true }
+      case 'end': {
+        const failed = active.pipeline.nodes.filter(n => active.run.nodes[n.id]!.state === 'failed').length
+        return { ok: true, detail: failed > 0 ? `结束（${failed} 个失败）` : '全部完成' }
+      }
       case 'gate': {
         const noticeId = `pipeline:${active.run.id}:${node.id}`
         const decision = new Promise<'continue' | 'stop'>(resolve => active.gates.set(node.id, resolve))
@@ -318,7 +326,7 @@ export class Engine {
   async #finish(active: Active): Promise<void> {
     const { run, pipeline } = active
     if (run.state !== 'running') return
-    const states = Object.values(run.nodes).map(n => n.state)
+    const states = pipeline.nodes.filter(n => !isMarker(n)).map(n => run.nodes[n.id]!.state)
     const count = (s: NodeRun['state']) => states.filter(x => x === s).length
     run.state = active.cancelKind === 'user' ? 'cancelled' : count('failed') > 0 ? 'failed' : 'succeeded'
     run.outcome = [

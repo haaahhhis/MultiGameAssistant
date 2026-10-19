@@ -195,7 +195,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
           requestId: params.requestId as SessionRequestId,
           sessionId: sid(params.sessionId),
           mode: params.mode,
-          content: [{ type: 'text', text: params.text }],
+          content: [{ type: 'text', text: params.text }, ...(params.images ?? []).map(i => ({ type: 'image' as const, mediaType: i.mediaType, data: i.data, ...(i.name === undefined ? {} : { name: i.name }) }))],
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }, call.signal)
         return { accepted: true as const }

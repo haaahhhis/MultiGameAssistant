@@ -5,7 +5,7 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { ClockTime, Pipeline, PipelineId, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { ClockTime, Pipeline, PipelineId, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
 import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
 import type { CheckLibrary } from './check.ts'
@@ -127,7 +127,7 @@ const given = <T>(v: T | null | undefined): v is T => v !== null && v !== undefi
 
 /** The flat tool arguments → a pipeline (parameter strings converted to each task's types). */
 export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckLibrary): PipelineInput {
-  return {
+  return withStartEnd({
     id: args.id,
     name: args.name,
     ...(given(args.description) ? { description: args.description } : {}),
@@ -153,7 +153,7 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
     edges: (args.edges ?? []).map(e => ({ from: e.from, to: e.to, when: e.when ?? 'success' })),
     ...(given(args.retries) || given(args.then) ? { onFailure: { retries: args.retries ?? 0, then: args.then ?? 'continue' } } : {}),
     ...(given(args.stop_emulator_after) ? { stopEmulatorAfter: args.stop_emulator_after } : {}),
-  }
+  })
 }
 
 export function pipelineTools(pipelines: Pipelines, engine: Engine, library: CheckLibrary): ToolDefinition[] {

@@ -235,3 +235,30 @@ test('the check finds cycles, unknown scripts and tasks, and bad parameters; a b
   assert.throws(() => Pipeline.parse({ id: 'w', name: 'w', nodes: [{ id: 'w', kind: 'wait' }] }), /写分钟数或时间其中一个/)
   engine.dispose()
 })
+
+test('开始 and 结束: 结束 waits for every step, is never skipped, and neither is counted', async () => {
+  const bad = script('bad', 'none', { t: fail() })
+  const slow = script('slow', 'none', { t: ok(600) })
+  const { engine, library } = setup([bad, slow])
+  const p = pipeline({
+    nodes: [
+      { id: 'start', kind: 'start' },
+      { id: 'bad', kind: 'script-task', scriptId: 'bad', taskId: 't' },
+      { id: 'loose', kind: 'script-task', scriptId: 'slow', taskId: 't' }, // drawn without edges: still waited for
+      { id: 'end', kind: 'end' },
+    ],
+    edges: [{ from: 'start', to: 'bad' }, { from: 'bad', to: 'end' }],
+  })
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+  assert.equal(run.nodes['start']!.state, 'succeeded')
+  assert.equal(run.nodes['end']!.state, 'succeeded', 'a success edge from a failed step does not skip 结束')
+  assert.equal(run.nodes['end']!.detail, '结束（1 个失败）')
+  assert.ok(run.nodes['end']!.startedAt! >= run.nodes['loose']!.endedAt!, '结束 came after the unconnected step')
+  assert.match(run.outcome ?? '', /^1 个成功，1 个失败$/)
+
+  const twice = checkPipeline(pipeline({ nodes: [{ id: 'a', kind: 'start' }, { id: 'b', kind: 'start' }, { id: 'e', kind: 'end' }], edges: [{ from: 'e', to: 'a' }] }), library)
+  assert.deepEqual(twice.issues.filter(i => i.level === 'error').map(i => i.message).sort(), [
+    '「开始」前面不能再连别的节点', '「结束」后面不能再连别的节点', '只能有一个「开始」节点', '流水线里还没有步骤',
+  ])
+  engine.dispose()
+})

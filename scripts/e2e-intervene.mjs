@@ -10,6 +10,8 @@
  *    incident is settled by the agent.
  * 2. Another error the agent cannot handle: it looks (screen_capture) and
  *    gives up; the script stays paused (really suspended) until 继续.
+ * 3. An image in a session (here: sent with a prompt) can be fetched back
+ *    for display, as the chat does for screenshots.
  *
  *   ADG_GATEWAY_TOKEN=dev-token pnpm dev:host
  *   ADG_GATEWAY_TOKEN=dev-token pnpm e2e:intervene
@@ -19,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { decodePng, encodePng } from '../packages/intervene/lib/png.js'
 import { startFakeLlm } from '../packages/test-kit/lib/index.js'
 import { connectGateway, FAKE_MODEL, FAKE_PROVIDER, removeFakeProvider, saveFakeProvider } from './lib/gateway.mjs'
 
@@ -132,6 +135,21 @@ try {
   if (ticks() <= frozen + 3) fail('the script did not continue after 继续')
   step('the agent gave up; the script stayed paused until 继续', `${iv2.summary}`)
   await rpc('runs/stop', { runId: second.id })
+
+  // 3. images in sessions come back to the UI (screenshots under tool calls, images sent with a prompt)
+  if (!gateway.capabilities.includes('attachments')) fail('capability attachments missing')
+  const red = encodePng({ width: 64, height: 40, data: Buffer.alloc(64 * 40 * 4, Buffer.from([220, 40, 40, 255])) })
+  const { sessionId } = await rpc('sessions/create', {})
+  await rpc('session/prompt', { sessionId, requestId: `e2e-iv-img-${Date.now()}`, text: '看看这张图', mode: 'queue', images: [{ mediaType: 'image/png', data: red.toString('base64'), name: 'red.png' }] })
+  const image = await until('the image in the session', async () => {
+    const opened = await rpc('session/open', { sessionId })
+    await rpc('session/close', { subscriptionId: opened.subscriptionId }).catch(() => {})
+    return opened.events.flatMap(e => e.type === 'user/message' ? e.content : []).find(p => p.type === 'image' && p.attachmentId !== undefined)
+  })
+  const fetched = await rpc('attachments/image', { attachmentId: image.attachmentId, mediaType: image.mediaType, bytes: image.bytes, width: image.width, height: image.height })
+  const back = decodePng(Buffer.from(fetched.data, 'base64'))
+  if (back.width !== 64 || back.height !== 40 || back.data[0] !== 220) fail(`the image came back as ${back.width}×${back.height}`)
+  step('an image in a session can be fetched for display', `${image.attachmentId.slice(0, 12)}… ${fetched.mediaType} ${back.width}×${back.height}`)
 
   console.log(`\nM5 end-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {

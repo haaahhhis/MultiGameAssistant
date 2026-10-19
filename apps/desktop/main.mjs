@@ -12,7 +12,7 @@
  * scheduler registers) starts hidden in the tray; dsh is restarted when it
  * dies, and the scheduler picks up where it left off.
  */
-import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
@@ -75,7 +75,20 @@ async function start() {
     backgroundColor: '#f4f5f9',
     show: !autoStarted,
     icon: nativeImage.createFromBuffer(trayIconPng(64)),
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(here, 'preload.cjs') },
+  })
+  // The one thing the page cannot do itself: let the user pick a file and learn its path.
+  ipcMain.handle('adg:pick-file', async (event, options) => {
+    if (win === null || event.sender !== win.webContents) return null
+    const o = typeof options === 'object' && options !== null ? options : {}
+    const extensions = Array.isArray(o.extensions) ? o.extensions.filter(e => typeof e === 'string' && /^\w+$/.test(e)) : []
+    const result = await dialog.showOpenDialog(win, {
+      title: typeof o.title === 'string' ? o.title : '选择文件',
+      ...(typeof o.defaultPath === 'string' && o.defaultPath !== '' ? { defaultPath: o.defaultPath } : {}),
+      filters: extensions.length > 0 ? [{ name: typeof o.filterName === 'string' ? o.filterName : '文件', extensions }, { name: '所有文件', extensions: ['*'] }] : [],
+      properties: ['openFile'],
+    })
+    return result.canceled ? null : result.filePaths[0] ?? null
   })
   win.on('close', event => {
     if (quitting) return

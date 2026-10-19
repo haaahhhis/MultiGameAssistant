@@ -157,7 +157,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
 
       {capabilities.has('runs') && script.dir !== undefined && <RunsCard client={client} scriptId={script.id} packId={script.packId} />}
       {capabilities.has('runs') && script.packId !== undefined && script.dir !== undefined && <ConfigCard client={client} script={script} />}
-      {capabilities.has('runs') && script.packId !== undefined && script.dir !== undefined && <GameCard key={script.id} client={client} scriptId={script.id} />}
+      {capabilities.has('runs') && script.packId !== undefined && script.dir !== undefined && <GameCard key={script.id} client={client} scriptId={script.id} scriptName={script.name} openSession={openSession} />}
       {capabilities.has('packs') && <PackCard client={client} script={script} openSession={openSession} />}
 
       {script.probe !== undefined && (

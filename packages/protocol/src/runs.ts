@@ -179,6 +179,16 @@ export const RunRequests = {
     }),
     result: LaunchView,
   },
+  /** Look for the PC game's program (running process, installed programs, shortcuts, the usual folders). */
+  'configs/launch/locate': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId }),
+    result: z.object({
+      /** The program looked for, e.g. Endfield.exe; absent when the pack does not name one. */
+      exe: z.string().optional(),
+      candidates: z.array(z.object({ path: z.string(), source: z.string() })),
+    }),
+  },
 } as const
 
 export const RunNotifications = {

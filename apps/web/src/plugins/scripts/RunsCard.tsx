@@ -150,7 +150,7 @@ export function RunLog({ client, run }: { client: AdgClient; run: RunInfo }) {
       <div className="run-log" ref={box} role="log" aria-label="运行日志">
         {lines.length === 0 && <div className="muted small">还没有日志</div>}
         {lines.map((line, index) => (
-          <div key={index} className={`log-line ${line.level ?? ''} ${line.source === 'adg' ? 'adg' : ''}`}>
+          <div key={index} className={`log-line ${line.level === undefined ? '' : `lv-${line.level}`} ${line.source === 'adg' ? 'adg' : ''}`}>
             <span className="log-time">{new Date(line.at).toLocaleTimeString()}</span>
             <span className="log-source">{line.source === 'adg' ? '平台' : line.source}</span>
             <span className="log-text">{line.text}</span>

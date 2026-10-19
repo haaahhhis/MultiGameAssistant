@@ -20,6 +20,7 @@ import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
 import { ConfigProfiles } from './profiles.ts'
 import { lineSplitter, LogTail } from './tail.ts'
+import { gameKeywords, locateGame, type GameCandidate } from './locate.ts'
 
 /** What the runner needs from the script library. */
 export interface LibraryView {
@@ -185,6 +186,16 @@ export class Runner {
         desktop: manifest?.tasks.some(t => t.resources.input === 'desktop' || t.resources.input === 'window') ?? false,
       },
     }
+  }
+
+  /** Look for this script's PC game. */
+  async locateGame(scriptId: string, signal?: AbortSignal): Promise<{ exe?: string; candidates: GameCandidate[] }> {
+    const game = this.#options.library.packOf(scriptId)?.manifest.game
+    const settings = await this.launch.get(scriptId)
+    const exe = settings.pcProcess ?? game?.pc?.process
+    if (exe === undefined) return { candidates: [] }
+    const name = exe.toLowerCase().endsWith('.exe') ? exe : `${exe}.exe`
+    return { exe: name, candidates: await locateGame({ exe: name, keywords: gameKeywords(game ?? {}), ...(signal === undefined ? {} : { signal }) }) }
   }
 
   /** Follow every run's state and lines. @returns a disposer. */

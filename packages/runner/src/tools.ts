@@ -5,6 +5,8 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { existsSync, statSync } from 'node:fs'
+import { basename, isAbsolute } from 'node:path'
 import { ScriptId } from '@adg/protocol'
 import { z } from 'zod'
 import { configStatus, importConfig, readConfig, writeConfig } from './config.ts'
@@ -21,6 +23,8 @@ export const TOOL_NAMES = {
   configImport: 'script_config_import',
   settings: 'script_settings',
   choiceCreate: 'script_choice_create',
+  gameLocate: 'game_locate',
+  gamePathSet: 'game_path_set',
 } as const
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -244,6 +248,38 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
         const a = parse(z.object({ id: ScriptId.nullish(), run_id: z.string().nullish() }), args)
         if (a.run_id !== undefined && a.run_id !== null) return brief(runner, a.run_id, 80)
         return { runs: runner.list(a.id ?? undefined).slice(0, 10).map(r => brief(runner, r.id, 5)) }
+      },
+    }),
+    tool({
+      name: TOOL_NAMES.gameLocate,
+      description: '找某个脚本要玩的 PC 游戏装在哪里：查正在运行的游戏、已安装程序（注册表）、开始菜单和桌面快捷方式、常见游戏目录。找不到时可以用文件搜索工具在用户说的位置或其他磁盘上找同名程序，再用 game_path_set 保存。',
+      properties: { id },
+      required: ['id'],
+      readOnly: true,
+      timeoutMs: 90_000,
+      kind: 'read',
+      title: a => `查找游戏位置：${String(a['id'] ?? '')}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({ id: ScriptId }), args)
+        const found = await runner.locateGame(a.id, exec.signal)
+        if (found.exe === undefined) return { error: '这个脚本包没有写游戏的进程名，先问用户游戏程序叫什么（或用 game_path_set 直接保存用户给的位置）' }
+        return { looking_for: found.exe, candidates: found.candidates, current: (await runner.launch.get(a.id)).pcExe ?? null }
+      },
+    }),
+    tool({
+      name: TOOL_NAMES.gamePathSet,
+      description: '保存某个脚本的 PC 游戏程序位置（运行前由本应用启动游戏时用）。只在找到并确认了程序后调用；路径必须是存在的 .exe。',
+      properties: { id, path: { type: 'string', description: '游戏程序的完整路径，例如 D:\\Games\\Endfield\\Endfield.exe。' } },
+      required: ['id', 'path'],
+      kind: 'other',
+      title: a => `保存游戏位置：${String(a['path'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: ScriptId, path: z.string().trim().min(1) }), args)
+        const path = a.path.replace(/^"|"$/g, '')
+        if (!isAbsolute(path) || !/\.exe$/i.test(path)) throw new Error('要填 .exe 程序的完整路径')
+        if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`找不到 ${path}`)
+        const settings = await runner.launch.set(a.id, { pcExe: path })
+        return { saved: settings.pcExe, process: settings.pcProcess ?? basename(path), note: '已保存，下次运行生效' }
       },
     }),
   ]

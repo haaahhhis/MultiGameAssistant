@@ -45,6 +45,8 @@ export function convertContent(blocks: unknown): ContentPart[] {
           ...opt('mediaType', str(a.mediaType)),
           ...opt('width', num(a.width)),
           ...opt('height', num(a.height)),
+          ...opt('attachmentId', str(a.attachmentId)),
+          ...opt('bytes', num(a.bytes)),
         }
       }
       case 'file': {

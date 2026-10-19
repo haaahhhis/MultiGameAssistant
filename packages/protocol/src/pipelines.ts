@@ -42,8 +42,48 @@ export const PipelineNode = z.discriminatedUnion('kind', [
   z.object({ ...NodeBase, kind: z.literal('notify'), text: z.string().min(1).max(2000) }),
   /** Ask the user to continue or stop (UI or a Feishu card). */
   z.object({ ...NodeBase, kind: z.literal('gate'), text: z.string().min(1).max(2000) }),
+  /** Where the pipeline begins: done at once. */
+  z.object({ ...NodeBase, kind: z.literal('start') }),
+  /** Where it ends: reached once every other node has finished, whatever the edges into it say. */
+  z.object({ ...NodeBase, kind: z.literal('end') }),
 ])
 export type PipelineNode = z.infer<typeof PipelineNode>
+
+/** Start and end are markers, not steps: they are not counted in results. */
+export function isMarker<N extends { kind: string }>(node: N): node is Extract<N, { kind: 'start' | 'end' }> {
+  return node.kind === 'start' || node.kind === 'end'
+}
+
+/**
+ * Give a pipeline its 开始 and 结束 nodes when it lacks them (older ones, agent
+ * drafts): 开始 leads to every step nothing else leads to, and every step that
+ * leads nowhere leads to 结束.
+ */
+export function withStartEnd<P extends { nodes: readonly PipelineNode[]; edges: readonly PipelineEdge[] }>(pipeline: P): P {
+  const hasStart = pipeline.nodes.some(n => n.kind === 'start')
+  const hasEnd = pipeline.nodes.some(n => n.kind === 'end')
+  if (hasStart && hasEnd) return pipeline
+  const steps = pipeline.nodes.filter(n => !isMarker(n))
+  const ids = new Set(pipeline.nodes.map(n => n.id))
+  const fresh = (base: string) => { let id = base; for (let i = 2; ids.has(id); i++) id = `${base}${i}`; ids.add(id); return id }
+  const placed = steps.filter(n => n.position !== undefined).map(n => n.position!)
+  const minX = Math.min(...placed.map(p => p.x))
+  const maxX = Math.max(...placed.map(p => p.x))
+  const midY = placed.length === 0 ? 40 : Math.round(placed.reduce((sum, p) => sum + p.y, 0) / placed.length)
+  const nodes: PipelineNode[] = [...pipeline.nodes]
+  const edges: PipelineEdge[] = [...pipeline.edges]
+  if (!hasStart) {
+    const id = fresh('start')
+    nodes.unshift({ id, kind: 'start', ...(placed.length === 0 ? {} : { position: { x: minX - 240, y: midY } }) })
+    for (const step of steps) if (!pipeline.edges.some(e => e.to === step.id)) edges.push({ from: id, to: step.id, when: 'success' })
+  }
+  if (!hasEnd) {
+    const id = fresh('end')
+    nodes.push({ id, kind: 'end', ...(placed.length === 0 ? {} : { position: { x: maxX + 300, y: midY } }) })
+    for (const step of steps) if (!pipeline.edges.some(e => e.from === step.id)) edges.push({ from: step.id, to: id, when: 'always' })
+  }
+  return { ...pipeline, nodes, edges }
+}
 
 export const PipelineEdge = z.object({
   from: NodeId,

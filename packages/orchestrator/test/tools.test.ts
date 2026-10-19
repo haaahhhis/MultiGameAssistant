@@ -44,11 +44,13 @@ test('pipeline_draft arguments become a pipeline, parameter strings typed by the
     edges: [{ from: 'maa', to: 'n', when: 'always' }, { from: 'w', to: 'n' }],
     then: 'stop',
   }, library))
-  const maa = pipeline.nodes[0]!
+  assert.deepEqual(pipeline.nodes.map(n => n.kind), ['start', 'script-task', 'wait', 'notify', 'end'], 'with 开始 and 结束 added')
+  const maa = pipeline.nodes[1]!
   assert.equal(maa.kind, 'script-task')
   assert.deepEqual(maa.kind === 'script-task' ? maa.params : {}, { stage: 'CE-6', medicine: 2, stone: true })
   assert.deepEqual(maa.onFailure, { retries: 1, then: 'continue' })
-  assert.deepEqual(pipeline.nodes[1], { id: 'w', kind: 'wait', until: '05:00' })
-  assert.deepEqual(pipeline.edges.map(e => e.when), ['always', 'success'])
+  assert.deepEqual(pipeline.nodes[2], { id: 'w', kind: 'wait', until: '05:00' })
+  assert.deepEqual(pipeline.edges.map(e => `${e.from}>${e.to}:${e.when}`), ['maa>n:always', 'w>n:success', 'start>maa:success', 'start>w:success', 'n>end:always'],
+    '开始 leads to the steps nothing leads to; the steps that lead nowhere lead to 结束')
   assert.deepEqual(pipeline.onFailure, { retries: 0, then: 'stop' })
 })

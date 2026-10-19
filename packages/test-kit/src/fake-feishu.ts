@@ -104,6 +104,8 @@ export async function startFakeFeishu(options: { appId?: string; appSecret?: str
         record({ kind: 'patch', id: patch[1]!, content: safeJson(b.content ?? ''), text: textOf(safeJson(b.content ?? '')) })
         return send(200, { code: 0, msg: 'success' })
       }
+      // Like Feishu: the image part must be a file (with a filename), not a plain field.
+      if (path === '/open-apis/im/v1/images' && !/name="image"; filename=/.test(raw.toString('latin1'))) return send(400, { code: 234001, msg: 'image is required' })
       if (path === '/open-apis/im/v1/images') return send(200, { code: 0, msg: 'success', data: { image_key: `img_${++seq}` } })
       send(404, { code: 404, msg: `fake feishu: no route ${req.method} ${path}` })
     })()

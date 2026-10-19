@@ -2,14 +2,14 @@ import { useCallback, useMemo, useState } from 'react'
 import { Background, Controls, Handle, Position, ReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { AdgClient } from '@adg/client-core'
-import type { NodeRun, Pipeline, PipelineCheck, PipelineEdge, PipelineNode, PipelineRun } from '@adg/protocol'
+import { isMarker, type NodeRun, type Pipeline, type PipelineCheck, type PipelineEdge, type PipelineNode, type PipelineRun } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useTheme } from '../../theme.ts'
 import { errorText } from '../scripts/data.ts'
 import { ParamInput } from '../scripts/ParamInput.tsx'
 import { useScriptTasks } from './data.ts'
 
-const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认' }
+const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }
 const NODE_STATE: Readonly<Record<NodeRun['state'], string>> = {
   pending: '待运行', waiting: '等待中', running: '运行中', succeeded: '成功', failed: '失败', skipped: '跳过', cancelled: '取消',
 }
@@ -21,6 +21,16 @@ type StepNode = Node<StepData, 'step'>
 
 function StepCard({ data, selected }: NodeProps<StepNode>) {
   const state = data.state?.state
+  if (isMarker(data.node)) {
+    return (
+      <div className={`step-node marker ${data.node.kind} ${state ?? ''} ${selected ? 'selected' : ''}`}>
+        {data.node.kind === 'end' && <Handle type="target" position={Position.Left} />}
+        <span>{KIND[data.node.kind]}</span>
+        {data.node.kind === 'end' && state !== undefined && state !== 'pending' && <span className={`step-state ${state}`}>{data.state?.detail ?? NODE_STATE[state]}</span>}
+        {data.node.kind === 'start' && <Handle type="source" position={Position.Right} />}
+      </div>
+    )
+  }
   return (
     <div className={`step-node ${state ?? ''} ${selected ? 'selected' : ''} ${data.issue !== undefined ? 'has-issue' : ''}`}>
       <Handle type="target" position={Position.Left} />
@@ -91,6 +101,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
     }
     if (node.kind === 'wait') return { label: node.title ?? (node.minutes !== undefined ? `等 ${node.minutes} 分钟` : `等到 ${node.until}`), sub: '', input: '' }
     if (node.kind === 'agent') return { label: node.title ?? 'agent 步骤', sub: node.prompt.slice(0, 40), input: '' }
+    if (isMarker(node)) return { label: KIND[node.kind], sub: '', input: '' }
     return { label: node.title ?? KIND[node.kind], sub: node.text.slice(0, 40), input: '' }
   }, [scripts])
 
@@ -122,6 +133,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
       } else if (change.type === 'position' && change.position !== undefined) {
         next = { ...next, nodes: next.nodes.map(n => (n.id === change.id ? { ...n, position: { x: Math.round(change.position!.x), y: Math.round(change.position!.y) } } : n)) }
       } else if (change.type === 'remove') {
+        if (next.nodes.some(n => n.id === change.id && isMarker(n))) continue // 开始 and 结束 stay
         next = { ...next, nodes: next.nodes.filter(n => n.id !== change.id), edges: next.edges.filter(e => e.from !== change.id && e.to !== change.id) }
         setSelectedNode(null)
       }
@@ -132,13 +144,34 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
 
   const onConnect = useCallback((c: Connection) => {
     if (c.source === c.target || pipeline.edges.some(e => e.from === c.source && e.to === c.target)) return
-    onChange({ ...pipeline, edges: [...pipeline.edges, { from: c.source, to: c.target, when: 'success' }] })
+    const target = pipeline.nodes.find(n => n.id === c.target)
+    if (target?.kind === 'start' || pipeline.nodes.find(n => n.id === c.source)?.kind === 'end') return
+    onChange({ ...pipeline, edges: [...pipeline.edges, { from: c.source, to: c.target, when: target?.kind === 'end' ? 'always' : 'success' }] })
   }, [pipeline, onChange])
 
+  // A new step follows the selected one (or 开始) and takes over its link to 结束, so clicking tasks in turn builds a chain.
   const add = (node: PipelineNode) => {
-    // New nodes go to the right of everything.
-    const x = Math.max(0, ...[...positions.values()].map(p => p.x)) + (pipeline.nodes.length === 0 ? 40 : 280)
-    onChange({ ...pipeline, nodes: [...pipeline.nodes, { ...node, position: { x: pipeline.nodes.length === 0 ? 40 : x, y: 40 } }] })
+    const start = pipeline.nodes.find(n => n.kind === 'start')
+    const end = pipeline.nodes.find(n => n.kind === 'end')
+    const from = pipeline.nodes.find(n => n.id === selectedNode && n.kind !== 'end') ?? start
+    const at = from === undefined ? undefined : positions.get(from.id)
+    const taken = [...positions.entries()].filter(([id]) => id !== end?.id).map(([, p]) => p)
+    const x = at === undefined ? Math.max(0, ...taken.map(p => p.x)) + 280 : at.x + 280
+    let y = at?.y ?? 40
+    while (taken.some(p => Math.abs(p.x - x) < 200 && Math.abs(p.y - y) < 100)) y += 130
+    let edges = pipeline.edges
+    if (from !== undefined) {
+      edges = [...edges, { from: from.id, to: node.id, when: 'success' as const }]
+      if (end !== undefined && (from.kind === 'start' || edges.some(e => e.from === from.id && e.to === end.id))) {
+        edges = [...edges.filter(e => !(e.from === from.id && e.to === end.id)), { from: node.id, to: end.id, when: 'always' as const }]
+      }
+    }
+    // Keep 结束 to the right of every step.
+    const nodes = [
+      ...pipeline.nodes.map(n => (n.kind === 'end' ? { ...n, position: { x: Math.max(positions.get(n.id)?.x ?? 0, x + 300), y: positions.get(n.id)?.y ?? y } } : n)),
+      { ...node, position: { x, y } },
+    ]
+    onChange({ ...pipeline, nodes, edges })
     setSelectedNode(node.id)
     setSelectedEdge(null)
   }
@@ -190,7 +223,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
           <Background gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
-        {pipeline.nodes.length === 0 && <div className="canvas-hint">从左边点一个任务加到画布上</div>}
+        {!pipeline.nodes.some(n => !isMarker(n)) && <div className="canvas-hint">从左边点一个任务加到画布上：它会接在选中的节点（没选时是「开始」）后面</div>}
       </div>
 
       <aside className="pipeline-inspector">
@@ -224,6 +257,17 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
   const state = run?.nodes[node.id]
   const task = node.kind === 'script-task' ? scripts.find(s => s.scriptId === node.scriptId)?.tasks.find(t => t.id === node.taskId) : undefined
   const policy = node.onFailure
+  if (isMarker(node)) {
+    return (
+      <section className="inspector-section">
+        <h4>{KIND[node.kind]}</h4>
+        <p className="muted small">{node.kind === 'start'
+          ? '流水线从这里开始。从它连出去的步骤最先运行（没有连线的步骤也会一开始就运行）。'
+          : '所有步骤都结束后到这里，不管成败；连到它的线只是为了看得清楚。'}</p>
+        {state?.detail !== undefined && <div className="muted small">{state.detail}</div>}
+      </section>
+    )
+  }
   return (
     <section className="inspector-section">
       <h4>{KIND[node.kind]}</h4>

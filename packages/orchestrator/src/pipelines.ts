@@ -2,7 +2,7 @@
  * The pipeline library and its runs, without Cordis: what the capability,
  * the agent tools and the scheduler all use.
  */
-import { Pipeline, type PipelineCheck, type PipelineRun, type PipelineSummary, type PipelineTrigger } from '@adg/protocol'
+import { isMarker, Pipeline, type PipelineCheck, type PipelineRun, type PipelineSummary, type PipelineTrigger } from '@adg/protocol'
 import { checkPipeline, type CheckLibrary } from './check.ts'
 import type { Engine } from './engine.ts'
 import type { PipelineStore } from './store.ts'
@@ -42,7 +42,7 @@ export class Pipelines {
     return [...this.#pipelines.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')).map(p => {
       const last = this.runs(p.id, 1)[0]
       return {
-        id: p.id, name: p.name, nodes: p.nodes.length, draft: p.draft === true, schedule: p.schedule,
+        id: p.id, name: p.name, nodes: p.nodes.filter(n => !isMarker(n)).length, draft: p.draft === true, schedule: p.schedule,
         ...(p.description === undefined ? {} : { description: p.description }),
         ...(p.updatedAt === undefined ? {} : { updatedAt: p.updatedAt }),
         ...(last === undefined ? {} : { lastRun: { id: last.id, state: last.state, startedAt: last.startedAt, ...(last.endedAt === undefined ? {} : { endedAt: last.endedAt }) } }),

@@ -32,6 +32,7 @@ game:
     package: com.hypergryph.endfield
   pc:
     process: Endfield.exe
+    keywords: [Endfield, 终末地, Hypergryph, 鹰角]
   selfLaunch: never
   startupSeconds: 40
 tasks:

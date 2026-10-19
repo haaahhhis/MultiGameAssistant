@@ -244,7 +244,8 @@ export class FeishuBot implements Channel {
   async sendTo(openId: string, notice: Notice): Promise<void> {
     const api = this.#ready()
     if (!this.#allowed(openId)) throw new Error('这个飞书用户没有被允许')
-    const imageKey = notice.image === undefined ? undefined : await api.uploadImage(notice.image).catch(() => undefined)
+    // Sent on request (a screenshot the person asked for): without the picture there is nothing to send.
+    const imageKey = notice.image === undefined ? undefined : await api.uploadImage(notice.image)
     const messageId = await api.sendCard({ openId }, noticeCard(notice, { imageKey }))
     this.#byMessage.set(messageId, notice.id)
   }

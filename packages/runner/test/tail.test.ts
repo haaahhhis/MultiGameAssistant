@@ -30,6 +30,14 @@ test('auto keeps UTF-8 as UTF-8, and explicit encodings still win', () => {
   assert.deepEqual(collect('utf-16le', [Buffer.from('第一行\r\n第二行', 'utf16le')]), ['第一行', '第二行'])
 })
 
+test('terminal colours and other control sequences are dropped', () => {
+  const onnx = '\x1b[1;31m2026-10-19 21:40:30 [W:onnxruntime:, session_state.cc:1316 VerifyEachNodeIsAssignedToAnEp] Rerunning with verbose output\x1b[m'
+  assert.deepEqual(collect('auto', [Buffer.from(`${onnx}\n\x1b]0;MAA\x07进度 50%\x1b[K\n\x1b[2J\n`)]), [
+    '2026-10-19 21:40:30 [W:onnxruntime:, session_state.cc:1316 VerifyEachNodeIsAssignedToAnEp] Rerunning with verbose output',
+    '进度 50%',
+  ], 'a line that was only control sequences is gone')
+})
+
 test('auto sticks to GBK once a line needed it', () => {
   // 0xC3 0xA9 is "é" in UTF-8 but "茅" in GBK; after a GBK line it is read as GBK.
   const ambiguous = Buffer.from([0xc3, 0xa9])

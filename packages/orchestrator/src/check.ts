@@ -5,7 +5,7 @@
  * take turns because they need the same resource, and a rough duration.
  */
 import { renderTask, TaskInputError, type ScriptManifest } from '@adg/pack-schema'
-import type { Pipeline, PipelineCheck, PipelineIssue, PipelineNode, ScriptInfo } from '@adg/protocol'
+import { isMarker, type Pipeline, type PipelineCheck, type PipelineIssue, type PipelineNode, type ScriptInfo } from '@adg/protocol'
 import { parseDuration } from '@adg/runner'
 
 export interface CheckLibrary {
@@ -67,7 +67,7 @@ export function nodeLabel(node: PipelineNode, library?: CheckLibrary): string {
       return `${node.scriptId} · ${node.taskId}`
     }
   }
-  return { agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认' }[node.kind]
+  return { agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }[node.kind]
 }
 
 /** Resources a script task holds, as lock-like keys (an emulator task counts as `adb`). */
@@ -106,7 +106,17 @@ export function checkPipeline(pipeline: Pipeline, library: CheckLibrary): Pipeli
     if (!ids.has(edge.from) || !ids.has(edge.to)) issues.push({ level: 'error', message: `连线指向不存在的节点：${edge.from} → ${edge.to}` })
     if (edge.from === edge.to) issues.push({ level: 'error', nodeId: edge.from, message: '节点不能连到自己' })
   }
-  if (pipeline.nodes.length === 0) issues.push({ level: 'error', message: '流水线里还没有节点' })
+  if (!pipeline.nodes.some(n => !isMarker(n))) issues.push({ level: 'error', message: '流水线里还没有步骤' })
+  for (const kind of ['start', 'end'] as const) {
+    const marks = pipeline.nodes.filter(n => n.kind === kind)
+    if (marks.length > 1) issues.push({ level: 'error', nodeId: marks[1]!.id, message: `只能有一个「${kind === 'start' ? '开始' : '结束'}」节点` })
+  }
+  for (const edge of pipeline.edges) {
+    const from = pipeline.nodes.find(n => n.id === edge.from)
+    const to = pipeline.nodes.find(n => n.id === edge.to)
+    if (to?.kind === 'start') issues.push({ level: 'error', nodeId: to.id, message: '「开始」前面不能再连别的节点' })
+    if (from?.kind === 'end') issues.push({ level: 'error', nodeId: from.id, message: '「结束」后面不能再连别的节点' })
+  }
   const order = issues.some(i => i.level === 'error') ? undefined : topoOrder(pipeline)
   if (order === undefined && !issues.some(i => i.level === 'error')) issues.push({ level: 'error', message: '连线成环了：节点之间不能互相等待' })
 

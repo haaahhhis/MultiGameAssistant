@@ -19,6 +19,7 @@ import type {} from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-attachment'
 import { credentialsCapability } from './credentials.ts'
 import { providersCapability } from './providers.ts'
 import type { NotificationMethod, NotificationParams, RequestParams } from '@adg/protocol'
@@ -154,6 +155,21 @@ export class AdgGateway extends Service {
           },
         },
       }), 'adg-gateway capability model-default')
+    })
+
+    // Images in sessions, for the UI to show (dsh keeps them by reference only).
+    ctx.inject(['attachments'], scoped => {
+      scoped.effect(() => this.registry.register({
+        id: 'attachments',
+        version: 1,
+        methods: {
+          'attachments/image': async params => {
+            const p = params as RequestParams<'attachments/image'>
+            const stored = await scoped.attachments.readImage({ attachmentId: p.attachmentId, mediaType: p.mediaType, bytes: p.bytes, width: p.width, height: p.height } as never)
+            return { mediaType: stored.ref.mediaType, data: Buffer.from(stored.data).toString('base64') }
+          },
+        },
+      }), 'adg-gateway capability attachments')
     })
 
     // Session list deltas come from the controller's own lifecycle events.

@@ -982,9 +982,9 @@ button.run-row:active:not(:disabled) { transform: none; }
 .log-time, .log-source { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .log-line.adg .log-text { color: var(--accent); }
-.log-line.done .log-text { color: var(--ok); font-weight: 600; }
-.log-line.error .log-text { color: var(--error); }
-.log-line.progress .log-text { color: var(--text-2); font-weight: 500; }
+.log-line.lv-done .log-text { color: var(--ok); font-weight: 600; }
+.log-line.lv-error .log-text { color: var(--error); }
+.log-line.lv-progress .log-text { color: var(--text-2); font-weight: 500; }
 .draft { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px dashed color-mix(in srgb, var(--warn) 45%, var(--border)); border-radius: var(--r-md); background: color-mix(in srgb, var(--warn) 4%, transparent); }
 .draft-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .draft-summary { margin: 0; font-size: 13.5px; white-space: pre-wrap; }
@@ -999,7 +999,7 @@ button.run-row:active:not(:disabled) { transform: none; }
 .notice.warn-box .ui-icon { color: var(--warn); }
 
 /* M3: run monitor and Feishu */
-.log-line.warning .log-text { color: var(--warn); }
+.log-line.lv-warning .log-text { color: var(--warn); }
 .incident-list { display: flex; flex-direction: column; gap: 10px; }
 .incident { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); }
 .incident.error.open { border-color: color-mix(in srgb, var(--error) 35%, var(--border)); }
@@ -1073,3 +1073,24 @@ button.preset-option:hover:not(:disabled) { border-color: var(--accent-line); bo
 .agent-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 8px; border-radius: var(--r-md); background: var(--sunken); }
 .agent-line.running .badge:first-child { color: var(--accent); }
 .agent-line.resolved .badge:first-child, .agent-line.retried .badge:first-child { color: var(--ok); }
+
+/* Stored images in chat (screenshots from tools, images the user sent) */
+.chat-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.tool-images { padding: 0 10px 8px 34px; }
+.stored-image { display: inline-block; padding: 0; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); overflow: hidden; cursor: zoom-in; max-width: min(100%, 480px); }
+.stored-image img { display: block; width: 100%; height: auto; }
+.stored-image.loading { width: 240px; max-width: 100%; cursor: default; }
+.stored-image.missing { padding: 6px 10px; cursor: default; color: var(--muted); font-size: 12px; }
+.image-zoom { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(0 0 0 / 0.75); cursor: zoom-out; }
+.image-zoom img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-md); }
+.param-new { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.param-new .text-input { flex: 1 1 180px; min-width: 0; }
+.candidate-list { display: flex; flex-direction: column; gap: 4px; }
+button.candidate { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 6px 10px; }
+button.candidate.chosen { border-color: var(--accent); background: var(--accent-soft); }
+button.candidate .mono { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Pipeline start / end markers */
+.step-node.marker { display: flex; align-items: center; gap: 8px; width: auto; min-width: 0; padding: 8px 18px; border-radius: 999px; font-weight: 600; }
+.step-node.marker.start { background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
+.step-node.marker.end { background: var(--sunken); }

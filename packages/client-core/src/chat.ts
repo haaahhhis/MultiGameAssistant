@@ -8,12 +8,24 @@ import type { PendingPrompt } from './session.ts'
 
 export type ToolStatus = 'running' | 'ok' | 'error' | 'interrupted'
 
+/** A stored image the UI can fetch with `attachments/image`. */
+export interface ChatImage {
+  readonly attachmentId: string
+  readonly mediaType: string
+  readonly bytes: number
+  readonly width: number
+  readonly height: number
+  readonly name?: string
+}
+
 export type ChatItem =
   | {
     readonly kind: 'user'
     readonly id: string
     readonly text: string
     readonly images: number
+    /** The images that can be shown (stored ones). */
+    readonly imageRefs: readonly ChatImage[]
     readonly files: number
     readonly time: number
     /** Local echo not yet in the log; `failed` carries the send error. */
@@ -43,6 +55,8 @@ export type ChatItem =
     readonly name: string
     readonly arguments: string
     readonly result?: string
+    /** Images in the result (a screenshot). */
+    readonly images?: readonly ChatImage[]
     readonly status: ToolStatus
     readonly error?: string
     readonly approval?: string
@@ -55,6 +69,11 @@ type ToolItem = Mutable<Extract<ChatItem, { kind: 'tool' }>>
 
 const joinText = (content: readonly ContentPart[], type: 'text' | 'reasoning'): string =>
   content.map(p => (p.type === type ? p.text : '')).join('')
+
+const imagesOf = (content: readonly ContentPart[]): ChatImage[] =>
+  content.flatMap(p => p.type === 'image' && p.attachmentId !== undefined && p.mediaType !== undefined && p.bytes !== undefined && p.width !== undefined && p.height !== undefined
+    ? [{ attachmentId: p.attachmentId, mediaType: p.mediaType, bytes: p.bytes, width: p.width, height: p.height, ...(p.name === undefined ? {} : { name: p.name }) }]
+    : [])
 
 const resultText = (content: readonly ContentPart[]): string =>
   content.map(p => (p.type === 'text' ? p.text : p.type === 'image' ? '[image]' : p.type === 'file' ? `[file ${p.name ?? ''}]` : '')).join('')
@@ -85,6 +104,7 @@ export function buildChat(
           items.push({
             kind: 'user', id: `u:${event.seq}`, text, time: event.time,
             images: event.content.filter(p => p.type === 'image').length,
+            imageRefs: imagesOf(event.content),
             files: event.content.filter(p => p.type === 'file').length,
           })
         } else if (event.replacesHistory === true) {
@@ -122,6 +142,8 @@ export function buildChat(
         const item = tools.get(event.callId)
         if (item === undefined) break
         item.result = resultText(event.content)
+        const images = imagesOf(event.content)
+        if (images.length > 0) item.images = images
         item.status = event.isError ? 'error' : 'ok'
         if (event.error !== undefined) item.error = event.error.message
         break
@@ -180,7 +202,7 @@ export function buildChat(
 
   for (const echo of pending) {
     items.push({
-      kind: 'user', id: `p:${echo.requestId}`, text: echo.text, images: 0, files: 0, time: echo.sentAt,
+      kind: 'user', id: `p:${echo.requestId}`, text: echo.text, images: 0, imageRefs: [], files: 0, time: echo.sentAt,
       pending: { requestId: echo.requestId, ...(echo.failed === undefined ? {} : { failed: echo.failed }) },
     })
   }
