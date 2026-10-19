@@ -23,6 +23,7 @@ export { checkPipeline, graph, nodeLabel, topoOrder, type CheckLibrary } from '.
 export { Engine, untilMs, type EngineDeps, type EngineNotice } from './engine.ts'
 export { Pipelines, localDay } from './pipelines.ts'
 export { PipelineStore } from './store.ts'
+export { draftToPipeline, pipelineTools } from './tools.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -84,7 +85,7 @@ export class AdgOrchestrator extends Service {
     })
 
     ctx.inject(['tools'], scoped => {
-      for (const tool of pipelineTools(pipelines, engine)) {
+      for (const tool of pipelineTools(pipelines, engine, library)) {
         scoped.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; return tool.execute(args, exec) } })
       }
     })

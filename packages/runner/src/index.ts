@@ -21,7 +21,7 @@ export { applyPatches, editText, setIn } from './patch.ts'
 export { ConfigProfiles, declaredFiles, type Injection, type ProfileStatus } from './profiles.ts'
 export { BusyError, ResourceLocks, describe as describeResource, type Holder } from './locks.ts'
 export { LogTail } from './tail.ts'
-export { TOOL_NAMES } from './tools.ts'
+export { PARAMS_SCHEMA, parseValue, runnerTools, taskParams, TOOL_NAMES } from './tools.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -92,6 +92,21 @@ export class AdgRunner extends Service {
           'configs/open': async params => {
             await scripts.ready
             return runner.settings((params as RequestParams<'configs/open'>).scriptId)
+          },
+          'runs/choices/create': async params => {
+            await scripts.ready
+            const p = params as RequestParams<'runs/choices/create'>
+            return { value: await runner.createChoice(p.scriptId, p.taskId, p.param, p.name) }
+          },
+          'configs/launch': async params => {
+            await scripts.ready
+            return runner.launchView((params as RequestParams<'configs/launch'>).scriptId)
+          },
+          'configs/launch/set': async params => {
+            await scripts.ready
+            const { scriptId, ...patch } = params as RequestParams<'configs/launch/set'>
+            await runner.launch.set(scriptId, patch)
+            return runner.launchView(scriptId)
           },
         },
       })

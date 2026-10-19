@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
+import { ParamInput } from './ParamInput.tsx'
 
 export const RUN_STATE: Readonly<Record<RunInfo['state'], [string, string]>> = {
   starting: ['', '启动中'], running: ['', '运行中'], stopping: ['warn', '停止中'],
@@ -23,6 +24,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shown, setShown] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
 
   useEffect(() => {
     if (status.state !== 'open') return
@@ -34,7 +36,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
     }).catch(e => { if (live) setError(errorText(e)) })
     client.connection.call('runs/list', { scriptId }).then(r => { if (live) setRuns(r.items) }).catch(() => {})
     return () => { live = false }
-  }, [client, scriptId, packId, status.state])
+  }, [client, scriptId, packId, status.state, revision])
 
   useEffect(() => client.connection.on('runs/state', run => {
     if (run.scriptId !== scriptId) return
@@ -44,7 +46,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
   const task = tasks?.tasks.find(t => t.id === taskId)
   useEffect(() => {
     if (task === undefined) return
-    setValues(Object.fromEntries(Object.entries(task.params).map(([k, p]) => [k, p.default === undefined ? '' : String(p.default)])))
+    setValues(Object.fromEntries(Object.entries(task.params).map(([k, p]) => [k, p.default !== undefined ? String(p.default) : p.choices?.length === 1 ? p.choices[0]!.value : ''])))
   }, [task?.id])
 
   const active = runs.find(r => r.endedAt === undefined)
@@ -93,21 +95,8 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
             </div>
           )}
           {task !== undefined && Object.entries(task.params).map(([name, spec]) => (
-            <label key={name} className="param-row">
-              <span className="field-label">{name}{spec.description === undefined ? '' : ` · ${spec.description}`}</span>
-              {spec.type === 'boolean' ? (
-                <select className="text-input plain" value={values[name] ?? ''} onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))}>
-                  <option value="true">是</option><option value="false">否</option>
-                </select>
-              ) : spec.enum !== undefined ? (
-                <select className="text-input plain" value={values[name] ?? ''} onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))}>
-                  {spec.enum.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
-                </select>
-              ) : (
-                <input className="text-input plain" value={values[name] ?? ''} placeholder={spec.default === undefined ? '必填' : String(spec.default)}
-                  inputMode={spec.type === 'string' ? 'text' : 'numeric'} onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))} />
-              )}
-            </label>
+            <ParamInput key={name} client={client} scriptId={scriptId} taskId={task.id} name={name} spec={spec}
+              value={values[name] ?? ''} onChange={value => setValues(v => ({ ...v, [name]: value }))} onCreated={() => setRevision(r => r + 1)} />
           ))}
           <div className="key-actions">
             <span className="spacer" />

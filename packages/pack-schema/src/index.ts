@@ -6,7 +6,7 @@
  * particular script.
  */
 export {
-  ConfigFile, ConfigPatch, Launch, LogEncoding, LogRule, Logs, LogSource, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
+  ConfigFile, ConfigPatch, Game, Launch, LogEncoding, LogRule, Logs, LogSource, ParamChoices, PathSegment, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
   type ScriptManifestInput,
 } from './manifest.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'

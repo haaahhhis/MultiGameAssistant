@@ -20,10 +20,45 @@ export const TOOL_NAMES = {
   configStatus: 'script_config_status',
   configImport: 'script_config_import',
   settings: 'script_settings',
+  choiceCreate: 'script_choice_create',
 } as const
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value ?? null)) as Json
+
+/**
+ * Task parameters arrive as name / value strings (a typed array, not a free
+ * object: loose schemas make some models stall on whitespace); convert each
+ * to the type the task declares.
+ */
+export function taskParams(pairs: readonly { name: string; value: string }[] | null | undefined, spec: Readonly<Record<string, { type: string }>>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const { name, value } of pairs ?? []) {
+    const type = spec[name]?.type
+    out[name] = type === 'integer' || type === 'number' ? Number(value) : type === 'boolean' ? /^(true|1|是|yes)$/i.test(value.trim()) : value
+  }
+  return out
+}
+
+/** `value_json` is JSON text; text that is not JSON is taken as a string. */
+export function parseValue(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+/** Shared schema for name / value parameter lists. */
+export const PARAMS_SCHEMA: JsonSchemaNode = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: { name: { type: 'string', description: '参数名。' }, value: { type: 'string', description: '参数值（写成文字，数字和是否也一样，例如 "3"、"true"）。' } },
+    required: ['name', 'value'],
+    additionalProperties: false,
+  },
+} as JsonSchemaNode
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   const parsed = schema.safeParse(args)
@@ -65,7 +100,6 @@ const brief = (runner: Runner, runId: string, lines = 15) => {
 
 export function runnerTools(runner: Runner, config: { library: LibraryView; dataDir: string }): ToolDefinition[] {
   const id = { type: 'string', description: '脚本库里的脚本 id（script_list 可查）。' } as const
-  const pathItem = { anyOf: [{ type: 'string' }, { type: 'integer' }] } as unknown as JsonSchemaNode
   return [
     tool({
       name: TOOL_NAMES.configGet,
@@ -82,21 +116,21 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.configSet,
-      description: '修改脚本配置里的一个值。改的是本地配置副本，原项目的配置不变（用户自己打开脚本时仍是它原来的设置）；下次通过 AutoDailyGamePlay 运行时生效。只能是脚本包声明的配置文件（JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]。修改前会自动备份。不要直接写脚本目录里的文件。',
+      description: '修改脚本配置里的一个值。改的是本地配置副本，原项目的配置不变（用户自己打开脚本时仍是它原来的设置）；下次通过 AutoDailyGamePlay 运行时生效。只能是脚本包声明的配置文件（JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]；数组下标也写成文字，例如 "0"。value_json 是新值的 JSON 写法：字符串要带引号 "\"CE-6\""，数字 3，是否 true，对象 {"a":1}。修改前会自动备份。不要直接写脚本目录里的文件。',
       properties: {
         id,
         file: { type: 'string', description: '配置文件的相对路径。' },
-        path: { type: 'array', items: pathItem, description: '键路径。' },
-        value: { description: '新的值（任意 JSON）。' },
+        path: { type: 'array', items: { type: 'string' }, description: '键路径。' },
+        value_json: { type: 'string', description: '新的值，JSON 写法。' },
       },
-      required: ['id', 'file', 'path', 'value'],
+      required: ['id', 'file', 'path', 'value_json'],
       kind: 'other',
       title: a => `修改配置：${String(a['id'] ?? '')} / ${String(a['file'] ?? '')}`,
       execute: async args => {
-        const a = parse(z.object({ id: ScriptId, file: z.string().min(1).max(300), path: z.array(z.union([z.string().min(1), z.number().int().min(0)])).min(1).max(20), value: z.unknown() }), args)
+        const a = parse(z.object({ id: ScriptId, file: z.string().min(1).max(300), path: z.array(z.string().min(1)).min(1).max(20), value_json: z.string().max(100_000) }), args)
         const busy = runner.list(a.id).find(r => r.endedAt === undefined)
         if (busy?.kind === 'settings') throw new Error(`${a.id} 的设置界面正开着；用户关掉它时会把脚本里的设置存回本地配置并覆盖这次修改，请等它关闭后再改`)
-        const result = await writeConfig(config.library, runner.profiles, config.dataDir, a.id, a.file, a.path, a.value)
+        const result = await writeConfig(config.library, runner.profiles, config.dataDir, a.id, a.file, a.path, parseValue(a.value_json))
         return { ok: true, ...result, takesEffect: busy === undefined ? '下次运行' : '当前运行结束后的下一次运行' }
       },
     }),
@@ -133,7 +167,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.tasks,
-      description: '列出一个脚本能运行的任务：任务 id、名称、用户可能的说法、参数（类型、默认值、可选值）、占用的资源（desktop 抢占鼠标键盘、adb 使用模拟器）。运行前先调用它把用户的话对应到任务和参数。',
+      description: '列出一个脚本能运行的任务：任务 id、名称、用户可能的说法、参数（类型、默认值、可选值；choices 是从脚本配置里读出的可选项，例如 MaaEnd 的实例名，canCreate 表示可以用 script_choice_create 新建）、占用的资源（desktop 抢占鼠标键盘、adb 使用模拟器）。运行前先调用它把用户的话对应到任务和参数。',
       properties: { id },
       required: ['id'],
       readOnly: true,
@@ -142,12 +176,29 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
       execute: async args => runner.tasks(parse(z.object({ id: ScriptId }), args).id),
     }),
     tool({
+      name: TOOL_NAMES.choiceCreate,
+      description: '为任务参数新建一个选项，例如给 MaaEnd 新建一个 MXU 实例：复制一个现有的实例（结构和脚本自己写的一样），起一个新名字，保存在本地配置里。只在 script_tasks 里该参数带 canCreate 时可用。建好后用 script_config_set 改它的任务、或让用户「打开脚本修改设置」调整。',
+      properties: {
+        id,
+        task: { type: 'string', description: '任务 id。' },
+        param: { type: 'string', description: '参数名，例如 instance。' },
+        name: { type: 'string', description: '新选项的名字，例如「AutoDailyGamePlay 模拟器」。' },
+      },
+      required: ['id', 'task', 'param', 'name'],
+      kind: 'other',
+      title: a => `新建选项：${String(a['id'] ?? '')} / ${String(a['name'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: ScriptId, task: z.string().min(1), param: z.string().min(1), name: z.string().trim().min(1).max(40) }), args)
+        return { ok: true, value: await runner.createChoice(a.id, a.task, a.param, a.name) }
+      },
+    }),
+    tool({
       name: TOOL_NAMES.run,
       description: '运行脚本的一个任务。会按脚本包修改它的配置（结束后还原）、需要时先启动模拟器、启动脚本并跟踪日志。默认启动后立即返回 run_id；wait 为 true 时等到结束再返回结果。同一个脚本、同一台模拟器或桌面鼠标键盘被占用时会拒绝运行。',
       properties: {
         id,
         task: { type: 'string', description: '任务 id（script_tasks 可查）。' },
-        params: { type: 'object', description: '任务参数，例如 {"stage": "1-7"}；省略的参数用默认值。' },
+        params: { ...PARAMS_SCHEMA, description: '任务参数，例如 [{"name":"stage","value":"1-7"}]；省略的参数用默认值。' },
         wait: { type: 'boolean', description: '等运行结束再返回（最长 3 小时）。' },
       },
       required: ['id', 'task'],
@@ -155,8 +206,9 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
       kind: 'execute',
       title: a => `运行：${String(a['id'] ?? '')} / ${String(a['task'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ id: ScriptId, task: z.string().min(1).max(64), params: z.record(z.string(), z.unknown()).nullish(), wait: z.boolean().nullish() }), args)
-        const started = await runner.start(a.id, a.task, a.params ?? {})
+        const a = parse(z.object({ id: ScriptId, task: z.string().min(1).max(64), params: z.array(z.object({ name: z.string().min(1), value: z.string() })).max(40).nullish(), wait: z.boolean().nullish() }), args)
+        const spec = config.library.packOf(a.id)?.manifest.tasks.find(t => t.id === a.task)?.params ?? {}
+        const started = await runner.start(a.id, a.task, taskParams(a.params, spec))
         if (a.wait !== true || started.endedAt !== undefined) return brief(runner, started.id)
         const onAbort = () => void runner.stop(started.id)
         exec.signal.addEventListener('abort', onAbort, { once: true })

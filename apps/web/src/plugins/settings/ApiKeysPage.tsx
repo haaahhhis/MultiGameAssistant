@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { DEEPSEEK_API_KEY, type CredentialInfo } from '@adg/protocol'
+import type { CredentialInfo } from '@adg/protocol'
 import { useCredentials, useModelCatalog, useStore } from '../../hooks.ts'
 import { ProvidersSection } from '../providers/ProvidersPage.tsx'
 
@@ -22,34 +22,24 @@ export function apiKeyProblem(draft: string): string | null {
   return null
 }
 
-/** Models and their keys in one place: the DeepSeek key, custom API routes, the resolved catalog, other credentials. */
+/** Models in one place: the default model, every model service with its key and models, other credentials. */
 export function ApiKeysPage({ client }: { client: AdgClient }) {
-  const { items, error } = useCredentials(client, [DEEPSEEK_API_KEY])
   const capabilities = useStore(client.capabilities)
   return (
     <div className="settings-page">
-      <h2>模型与 API</h2>
+      <h2>模型</h2>
       <p className="muted">
-        DeepSeek 官方模型和自定义 API 都在这里配置。Key 由 dsh 的凭据服务保存在本机 dsh 主目录的私有文件中，保存后立即生效，重启后仍然有效；界面只显示 Key 是否已配置，不会读出内容。
+        agent 用哪个模型、接哪些模型服务都在这里。保存后立即生效；新对话和飞书对话默认用下面选的模型，每个对话也可以在输入框旁边单独换。
       </p>
-      {error !== null && <div className="banner error">{error}</div>}
-      <CredentialCard
-        client={client}
-        refName={DEEPSEEK_API_KEY}
-        title="DeepSeek API Key"
-        description="官方 DeepSeek 模型（deepseek-official）使用的密钥。"
-        helpUrl="https://platform.deepseek.com/api_keys"
-        info={items?.[DEEPSEEK_API_KEY] ?? null}
-      />
+      <DefaultModel client={client} />
       {capabilities.has('providers') && <ProvidersSection client={client} />}
-      <ModelStatus client={client} />
       <OtherCredential client={client} />
     </div>
   )
 }
 
 /** Set, replace or remove one credential; never shows a stored value. */
-export function CredentialCard({ client, refName, title, description, helpUrl, info, placeholder }: {
+export function CredentialCard({ client, refName, title, description, helpUrl, info, placeholder, bare = false }: {
   client: AdgClient
   refName: string
   title: string
@@ -58,6 +48,8 @@ export function CredentialCard({ client, refName, title, description, helpUrl, i
   info: CredentialInfo | null
   /** Input hint while nothing is configured. */
   placeholder?: string
+  /** Just the form, inside another card. */
+  bare?: boolean
 }) {
   const [draft, setDraft] = useState('')
   const [reveal, setReveal] = useState(false)
@@ -96,15 +88,18 @@ export function CredentialCard({ client, refName, title, description, helpUrl, i
     }
   }
 
+  const Wrapper = bare ? 'div' : 'section'
   return (
-    <section className="card">
-      <div className="card-head">
-        <div>
-          <h3>{title}</h3>
-          <div className="muted small">{description} <code>{refName}</code></div>
+    <Wrapper className={bare ? 'credential-inline' : 'card'}>
+      {!bare && (
+        <div className="card-head">
+          <div>
+            <h3>{title}</h3>
+            <div className="muted small">{description} <code>{refName}</code></div>
+          </div>
+          <CredentialBadge info={info} />
         </div>
-        <CredentialBadge info={info} />
-      </div>
+      )}
       {readOnly
         ? (
           <div className="notice info left">
@@ -143,7 +138,7 @@ export function CredentialCard({ client, refName, title, description, helpUrl, i
           </form>
         )}
       {message !== null && <div className={message.tone === 'ok' ? 'success small' : 'error small'}>{message.text}</div>}
-    </section>
+    </Wrapper>
   )
 }
 
@@ -153,29 +148,44 @@ function CredentialBadge({ info }: { info: CredentialInfo | null }) {
   return <span className="badge ok">已配置 · {SOURCE_LABEL[info.source ?? ''] ?? info.source ?? '未知来源'}</span>
 }
 
-/** Model catalog as the host resolves it now; refreshed after every credential or provider change. */
-function ModelStatus({ client }: { client: AdgClient }) {
+/** The model new sessions use, chosen from every service's models; refreshed after every key or service change. */
+function DefaultModel({ client }: { client: AdgClient }) {
   const { catalog, error } = useModelCatalog(client)
-
+  const capabilities = useStore(client.capabilities)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const current = catalog === null ? '' : `${catalog.default.provider}/${catalog.default.model}`
+  const choose = async (value: string) => {
+    const [provider, ...rest] = value.split('/')
+    setBusy(true)
+    setMessage(null)
+    try {
+      await client.connection.call('models/setDefault', { provider: provider!, model: rest.join('/') })
+      setMessage('已设为默认，新对话会用它。')
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const known = catalog?.groups.some(g => g.models.some(m => `${g.id}/${m.id}` === current)) ?? false
   return (
     <section className="card">
-      <div className="card-head"><h3>可用模型</h3></div>
+      <div className="card-head"><div><h3>默认模型</h3><p className="muted small">先在下面的模型服务里填好 Key，这里就能选它的模型。</p></div></div>
       {error !== null && <div className="error small">{error}</div>}
       {catalog === null && error === null && <div className="muted small">读取中…</div>}
       {catalog !== null && (
-        <>
-          <div className="small">默认模型：<code>{catalog.default.provider} / {catalog.default.model}</code></div>
+        <select className="text-input plain" aria-label="默认模型" value={current} disabled={busy || !capabilities.has('model-default')} onChange={e => void choose(e.target.value)}>
+          {!known && <option value={current}>{catalog.default.provider} / {catalog.default.model}（不可用）</option>}
           {catalog.groups.map(group => (
-            <div key={group.id} className="model-group">
-              <div className="small strong">{group.name}</div>
-              <div className="model-chips">
-                {group.models.map(model => <span key={model.id} className="chip" title={model.description}>{model.name}</span>)}
-              </div>
-            </div>
+            <optgroup key={group.id} label={group.name}>
+              {group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}</option>)}
+            </optgroup>
           ))}
-          {catalog.failures.map(f => <div key={f.id} className="error small">{f.name}：{f.message}</div>)}
-        </>
+        </select>
       )}
+      {catalog?.failures.map(f => <div key={f.id} className="error small">{f.name}：{f.message}</div>)}
+      {message !== null && <div className="muted small">{message}</div>}
     </section>
   )
 }

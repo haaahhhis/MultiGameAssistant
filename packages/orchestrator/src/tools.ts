@@ -5,8 +5,10 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { ClockTime, Pipeline, PipelineId, type PipelineRun } from '@adg/protocol'
+import { ClockTime, Pipeline, PipelineId, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
+import type { CheckLibrary } from './check.ts'
 import type { Engine } from './engine.ts'
 import type { Pipelines } from './pipelines.ts'
 
@@ -49,19 +51,112 @@ const brief = (run: PipelineRun, pipelines: Pipelines) => {
 }
 
 const DRAFT_HELP = `流水线是一个 DAG：nodes 是步骤，edges 是先后关系（from 完成后才运行 to；同一个节点的多个下游并行）。
-节点（id 用字母数字，title 给人看）：
-- {"id":"maa","kind":"script-task","scriptId":"maa","taskId":"daily","params":{}}  脚本任务（script_tasks 查任务和参数）
-- {"id":"ask","kind":"agent","prompt":"检查活动还剩几天"}  交给 agent 的一步
-- {"id":"w","kind":"wait","minutes":10} 或 {"kind":"wait","until":"05:00"}
-- {"id":"n","kind":"notify","text":"日常跑完了"}  发飞书
-- {"id":"g","kind":"gate","text":"确认要继续吗"}  等用户确认
-连线 {"from":"maa","to":"n","when":"success"}，when 可为 success（默认）/ failure / always。
-失败策略 onFailure：{"retries":1,"then":"continue"|"stop"}，写在节点上或整条流水线上（默认不重试、继续其他分支）。
+节点 kind：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
+连线 when：success（默认）/ failure / always。失败处理：节点或整条流水线的 retries（重试次数）和 then（continue 继续其他分支 / stop 停止流水线），默认不重试、继续。
 需要同一资源（桌面鼠标键盘、同一台模拟器、同一账号）的并行节点会自动排队，不用自己串起来；只在有真正的先后依赖时才连线。
-例：MAA（模拟器）和三月七（桌面）并行，都完成后发飞书：
-{"id":"daily","name":"每日日常","nodes":[{"id":"maa","kind":"script-task","scriptId":"maa","taskId":"daily"},{"id":"m7","kind":"script-task","scriptId":"march7th","taskId":"main"},{"id":"done","kind":"notify","text":"日常都跑完了"}],"edges":[{"from":"maa","to":"done","when":"always"},{"from":"m7","to":"done","when":"always"}]}`
+例：MAA（模拟器）和三月七（桌面）并行，都完成后发飞书——nodes：maa（script-task，script_id maa，task_id daily）、m7（script-task，script_id march7th，task_id main）、done（notify，text「日常都跑完了」）；edges：maa→done（always）、m7→done（always）。`
 
-export function pipelineTools(pipelines: Pipelines, engine: Engine): ToolDefinition[] {
+/** Every field typed: a free-form object here makes some models stall emitting whitespace. */
+const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
+  id: { type: 'string', description: '流水线 id：小写字母、数字、短横线，例如 daily-routine。' },
+  name: { type: 'string', description: '给人看的名字。' },
+  description: { type: 'string', description: '一句话说明（可选）。' },
+  nodes: {
+    type: 'array',
+    description: '步骤。',
+    items: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '节点 id（字母数字）。' },
+        kind: { type: 'string', enum: ['script-task', 'agent', 'wait', 'notify', 'gate'] },
+        title: { type: 'string', description: '名称（可选）。' },
+        script_id: { type: 'string', description: 'script-task：脚本 id。' },
+        task_id: { type: 'string', description: 'script-task：任务 id。' },
+        params: { ...PARAMS_SCHEMA, description: 'script-task：任务参数。' },
+        prompt: { type: 'string', description: 'agent：要 agent 做的事。' },
+        minutes: { type: 'integer', description: 'wait：等几分钟。' },
+        until: { type: 'string', description: 'wait：等到 HH:MM。' },
+        text: { type: 'string', description: 'notify / gate：文字。' },
+        retries: { type: 'integer', description: '失败后重试几次（可选）。' },
+        then: { type: 'string', enum: ['continue', 'stop'], description: '仍失败时（可选）。' },
+      },
+      required: ['id', 'kind'],
+      additionalProperties: false,
+    },
+  } as JsonSchemaNode,
+  edges: {
+    type: 'array',
+    description: '先后关系。',
+    items: {
+      type: 'object',
+      properties: { from: { type: 'string' }, to: { type: 'string' }, when: { type: 'string', enum: ['success', 'failure', 'always'] } },
+      required: ['from', 'to'],
+      additionalProperties: false,
+    },
+  } as JsonSchemaNode,
+  retries: { type: 'integer', description: '整条流水线的默认重试次数（可选）。' },
+  then: { type: 'string', enum: ['continue', 'stop'], description: '整条流水线的默认失败处理（可选）。' },
+  stop_emulator_after: { type: 'boolean', description: '结束后关闭模拟器（可选）。' },
+}
+
+const DraftArgs = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullish(),
+  nodes: z.array(z.object({
+    id: z.string(),
+    kind: z.enum(['script-task', 'agent', 'wait', 'notify', 'gate']),
+    title: z.string().nullish(),
+    script_id: z.string().nullish(),
+    task_id: z.string().nullish(),
+    params: z.array(z.object({ name: z.string(), value: z.string() })).nullish(),
+    prompt: z.string().nullish(),
+    minutes: z.number().int().nullish(),
+    until: z.string().nullish(),
+    text: z.string().nullish(),
+    retries: z.number().int().nullish(),
+    then: z.enum(['continue', 'stop']).nullish(),
+  })).max(60),
+  edges: z.array(z.object({ from: z.string(), to: z.string(), when: z.enum(['success', 'failure', 'always']).nullish() })).max(200).nullish(),
+  retries: z.number().int().nullish(),
+  then: z.enum(['continue', 'stop']).nullish(),
+  stop_emulator_after: z.boolean().nullish(),
+})
+
+const given = <T>(v: T | null | undefined): v is T => v !== null && v !== undefined
+
+/** The flat tool arguments → a pipeline (parameter strings converted to each task's types). */
+export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckLibrary): PipelineInput {
+  return {
+    id: args.id,
+    name: args.name,
+    ...(given(args.description) ? { description: args.description } : {}),
+    nodes: args.nodes.map(n => {
+      const base = {
+        id: n.id,
+        ...(given(n.title) ? { title: n.title } : {}),
+        ...(given(n.retries) || given(n.then) ? { onFailure: { retries: n.retries ?? 0, then: n.then ?? 'continue' } } : {}),
+      }
+      switch (n.kind) {
+        case 'script-task': {
+          const scriptId = n.script_id ?? ''
+          const taskId = n.task_id ?? ''
+          const spec = library.packOf(scriptId)?.manifest.tasks.find(t => t.id === taskId)?.params ?? {}
+          return { ...base, kind: 'script-task' as const, scriptId, taskId, params: taskParams(n.params, spec) as Record<string, string | number | boolean> }
+        }
+        case 'agent': return { ...base, kind: 'agent' as const, prompt: n.prompt ?? '' }
+        case 'wait': return { ...base, kind: 'wait' as const, ...(given(n.until) ? { until: n.until } : { minutes: n.minutes ?? 1 }) }
+        case 'notify': return { ...base, kind: 'notify' as const, text: n.text ?? '' }
+        case 'gate': return { ...base, kind: 'gate' as const, text: n.text ?? '' }
+      }
+    }),
+    edges: (args.edges ?? []).map(e => ({ from: e.from, to: e.to, when: e.when ?? 'success' })),
+    ...(given(args.retries) || given(args.then) ? { onFailure: { retries: args.retries ?? 0, then: args.then ?? 'continue' } } : {}),
+    ...(given(args.stop_emulator_after) ? { stopEmulatorAfter: args.stop_emulator_after } : {}),
+  }
+}
+
+export function pipelineTools(pipelines: Pipelines, engine: Engine, library: CheckLibrary): ToolDefinition[] {
   const id = { type: 'string', description: '流水线 id（pipeline_list 可查）。' } as const
   return [
     tool({
@@ -89,13 +184,13 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine): ToolDefinit
     tool({
       name: 'pipeline_draft',
       description: `按用户的描述生成一条流水线草稿并保存，用户会在「编排」页看到、可以拖拽修改；草稿可以立即用 pipeline_run 运行，但用户在界面里保存之前不会按定时运行。不能覆盖用户保存过的流水线（换个 id）。返回运行前检查的结果，有 error 要修正后重新提交。\n${DRAFT_HELP}`,
-      properties: { pipeline: { type: 'object', description: '流水线定义：{id, name, description?, nodes, edges, onFailure?, stopEmulatorAfter?}。' } },
-      required: ['pipeline'],
+      properties: DRAFT_SCHEMA,
+      required: ['id', 'name', 'nodes'],
       kind: 'other',
-      title: a => `生成流水线草稿：${String((a['pipeline'] as { name?: unknown } | undefined)?.name ?? '')}`,
+      title: a => `生成流水线草稿：${String(a['name'] ?? '')}`,
       execute: async args => {
-        const a = parse(z.object({ pipeline: Pipeline }), args)
-        const { pipeline, check } = await pipelines.save(a.pipeline, 'agent')
+        const draft = parse(Pipeline, draftToPipeline(parse(DraftArgs, args), library))
+        const { pipeline, check } = await pipelines.save(draft, 'agent')
         return { ok: check.ok, id: pipeline.id, check, next: check.ok ? '告诉用户草稿已保存在「编排」页，可以直接运行或先看看' : '修正 check.issues 里的 error 后重新提交' }
       },
     }),

@@ -55,7 +55,13 @@ export function renderTask(manifest: ScriptManifest, taskId: string, input: Read
     exe: manifest.launch.exe,
     args: [...manifest.launch.args, ...task.args].map(a => String(fill(a))),
     cwd: manifest.launch.cwd,
-    patches: task.patches.map(patch => ({ ...patch, set: patch.set.map(op => ({ path: op.path, value: fillDeep(op.value, fill) })) })),
+    patches: task.patches.map(patch => ({
+      ...patch,
+      set: patch.set.map(op => ({
+        path: op.path.map(seg => (typeof seg === 'object' ? { where: { field: seg.where.field, equals: String(fill(seg.where.equals)) } } : seg)),
+        value: fillDeep(op.value, fill),
+      })),
+    })),
     params,
   }
 }

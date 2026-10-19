@@ -10,14 +10,15 @@ description: MaaEnd（明日方舟：终末地自动化）的安装与运行。�
 
 ## 运行
 
-- MaaEnd 按「实例」运行：每个实例有自己的控制器和任务列表，保存在 `config/mxu-MaaEnd.json` 的 `instances` 里。
+- MaaEnd 按「实例」运行：每个实例有自己的控制器（PC 版 `Win32-Front` 或模拟器 `ADB`）和任务列表，保存在 `config/mxu-MaaEnd.json` 的 `instances` 里。
 - 配置分两份：原项目里的配置（用户自己打开脚本时用）和 AutoDailyGamePlay 的**本地副本**（通过 agent 运行时用）。agent 只改本地副本，原项目配置不变。
-- 先用 `script_config_get` 读本地副本里的 `config/mxu-MaaEnd.json`，找到用户要跑的实例名（`name`），并看它的控制器：
-  - `Win32-Front`：直接操作 PC 版游戏，会抢占鼠标键盘 → 任务 `run-pc`；
-  - `ADB`：通过模拟器 → 任务 `run-adb`（会自动启动模拟器）。
+- 先 `script_tasks`：参数 `instance` 的 `choices` 就是本地配置里现有的实例名，已经按控制器分好——`run-pc` 只列 PC 版实例（会抢占鼠标键盘），`run-adb` 只列模拟器实例（会自动启动模拟器，并让这个实例连到它）。用户没说用哪个时，只有一个就用它；有多个就问用户。
+- 没有合适的实例时，用 `script_choice_create` 新建一个（复制一个同类实例，任务列表也一起复制过来），再按用户要求用 `script_config_set` 调整它的任务，或让用户「打开脚本修改设置」在 MaaEnd 里改；新实例只在本地副本里，原项目不受影响。一个实例都没有时，先让用户打开一次 MaaEnd 建一个。
 - `script_run` 时传参数 `instance`。命令是 `MaaEnd.exe --autostart --instance <名称> --quit-after-run`，跑完会自己退出。
-- 想知道有哪些任务：`script_analyze` 会列出 interface.json 里的全部任务（中文名）。修改实例的任务列表：用 `script_settings` 打开 MaaEnd 让用户在界面里改（最稳妥），或用 `script_config_set` 改本地副本，改之前先读懂结构并告诉用户。
+- 游戏：运行前如果终末地还没打开，AutoDailyGamePlay 会先启动它（模拟器里是 `com.hypergryph.endfield`，PC 版用用户在脚本页「启动游戏」里设置的程序位置）。实例里 MaaEnd 自己的「打开游戏」任务会发现游戏已经开着，不会冲突。B 服或国际服的包名不同，可以在脚本页改。
+- 想知道有哪些任务：`script_analyze` 会列出 interface.json 里的全部任务（中文名）。
 
 ## 待确认（真机测试后补充）
 
 - 退出码是否能区分成功和失败；`debug/maa.log` 里的完成和错误标志，用来补充日志规则。
+- PC 版游戏的进程名（目前按 `Endfield.exe`）。

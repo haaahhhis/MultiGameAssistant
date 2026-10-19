@@ -13,7 +13,9 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
-import type { RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
+import type { LaunchSettings, RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
+import { listWithNew, readChoices } from './choices.ts'
+import { describeSelfLaunch, ensureGame, LaunchStore, type GameStart } from './game.ts'
 import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
 import { ConfigProfiles } from './profiles.ts'
@@ -31,7 +33,11 @@ export interface EmulatorBridge {
    * Make sure an emulator instance is running and reachable over ADB.
    * @returns its ADB address (`host:port`) and a label for people.
    */
-  prepare(options: { prefer?: string | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string }>
+  prepare(options: { prefer?: string | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string; managed?: boolean }>
+  /** Whether an Android app is running on the device. */
+  appRunning?(address: string, pkg: string): Promise<boolean>
+  /** Start an Android app's launcher activity. */
+  launchApp?(address: string, pkg: string): Promise<void>
   /**
    * Reconnect an ADB address (starting the emulator again if it went down).
    * @returns what was done, for people. @throws Error when it is still unreachable.
@@ -63,6 +69,8 @@ export interface RunnerOptions {
   readonly log: { info(message: string): void; warn(message: string): void }
   /** Log file poll interval. @default 500 */
   readonly pollMs?: number
+  /** Game start hooks, injected in tests. */
+  readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'sleep'>
 }
 
 interface ActiveRun {
@@ -90,6 +98,8 @@ export class Runner {
   readonly locks = new ResourceLocks()
   /** The local config copies runs use (docs/PLAN.zh.md §5.7). */
   readonly profiles: ConfigProfiles
+  /** Who starts the game before runs, per script. */
+  readonly launch: LaunchStore
   readonly #options: RunnerOptions
   readonly #runs = new Map<string, ActiveRun>()
   readonly #listeners = new Set<RunListener>()
@@ -101,26 +111,78 @@ export class Runner {
     this.#options = options
     this.#now = options.now ?? Date.now
     this.profiles = new ConfigProfiles(options.dataDir)
+    this.launch = new LaunchStore(options.dataDir)
   }
 
   /** Tasks of a library script, from its pack. */
-  tasks(scriptId: string): { tasks: TaskInfo[]; runnable: boolean; problem?: string } {
+  /** Tasks of a library script, from its pack; parameter choices are read from the local config copy. */
+  async tasks(scriptId: string): Promise<{ tasks: TaskInfo[]; runnable: boolean; problem?: string }> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) return { tasks: [], runnable: false, problem: `${script.name} 没有脚本包，还不知道怎么运行它；可以让 agent 分析这个脚本生成脚本包` }
-    const tasks = pack.manifest.tasks.map(t => ({
-      id: t.id,
-      title: t.title,
-      utterances: t.utterances,
-      params: t.params,
-      input: t.resources.input,
-      ...(t.description === undefined ? {} : { description: t.description }),
-      ...(t.resources.account === undefined ? {} : { account: t.resources.account }),
-      ...(t.expectedDuration === undefined ? {} : { expectedDuration: t.expectedDuration }),
-    }))
+    const tasks: TaskInfo[] = []
+    for (const t of pack.manifest.tasks) {
+      const params: TaskInfo['params'] = {}
+      for (const [name, spec] of Object.entries(t.params)) {
+        const { choices: from, ...rest } = spec
+        params[name] = from === undefined ? rest : { ...rest, choices: readChoices(from, await this.#localText(scriptId, pack.manifest, from.file)), ...(from.create === undefined ? {} : { canCreate: true }) }
+      }
+      tasks.push({
+        id: t.id,
+        title: t.title,
+        utterances: t.utterances,
+        params,
+        input: t.resources.input,
+        ...(t.description === undefined ? {} : { description: t.description }),
+        ...(t.resources.account === undefined ? {} : { account: t.resources.account }),
+        ...(t.expectedDuration === undefined ? {} : { expectedDuration: t.expectedDuration }),
+      })
+    }
     if (tasks.length === 0) return { tasks, runnable: false, problem: `${pack.manifest.name} 的脚本包还没有任务` }
     if (script.dir === undefined) return { tasks, runnable: false, problem: `${script.name} 还没有安装` }
     return { tasks, runnable: true }
+  }
+
+  /**
+   * Add a choice to a parameter's list in the local config copy (a copy of an existing item).
+   * @returns the new value. @throws Error when the parameter has no creatable choices or the name is taken.
+   */
+  async createChoice(scriptId: string, taskId: string, param: string, name: string): Promise<string> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    const spec = pack?.manifest.tasks.find(t => t.id === taskId)?.params[param]?.choices
+    if (pack === undefined || script.dir === undefined || spec?.create === undefined) throw new Error(`任务 ${taskId} 的参数 ${param} 不能新建`)
+    const text = await this.#localText(scriptId, pack.manifest, spec.file)
+    if (text === undefined) throw new Error(`本地配置里还没有 ${spec.file}：先「打开脚本修改设置」，在脚本里建一个，之后就可以在这里复制`)
+    const { list, value } = listWithNew(spec, text, name.trim())
+    const historyDir = join(this.#options.dataDir, 'config-history', scriptId, new Date(this.#now()).toISOString().replace(/[:.]/g, '-'))
+    await this.profiles.write(scriptId, script.dir, pack.manifest, spec.file, spec.list, list, historyDir)
+    return value
+  }
+
+  async #localText(scriptId: string, manifest: ScriptManifest, file: string): Promise<string | undefined> {
+    const dir = this.#options.library.get(scriptId).dir
+    if (dir === undefined) return undefined
+    return this.profiles.read(scriptId, dir, manifest, file).catch(() => undefined)
+  }
+
+  /** Who starts the game before this script's runs, and what its pack says. */
+  async launchView(scriptId: string): Promise<{ settings: LaunchSettings; game: { name?: string; androidPackage?: string; pcProcess?: string; selfLaunch: string }; uses: { adb: boolean; desktop: boolean } }> {
+    const manifest = this.#options.library.packOf(scriptId)?.manifest
+    const game = manifest?.game
+    return {
+      settings: await this.launch.get(scriptId),
+      game: {
+        ...(game?.name === undefined ? {} : { name: game.name }),
+        ...(game?.android?.package === undefined ? {} : { androidPackage: game.android.package }),
+        ...(game?.pc?.process === undefined ? {} : { pcProcess: game.pc.process }),
+        selfLaunch: describeSelfLaunch(game),
+      },
+      uses: {
+        adb: manifest?.tasks.some(t => t.resources.input === 'adb') ?? false,
+        desktop: manifest?.tasks.some(t => t.resources.input === 'desktop' || t.resources.input === 'window') ?? false,
+      },
+    }
   }
 
   /** Follow every run's state and lines. @returns a disposer. */
@@ -214,6 +276,7 @@ export class Runner {
 
     try {
       const vars: Record<string, string> = { dir: script.dir }
+      let emulatorManaged = false
       if (resources.input === 'adb') {
         const bridge = this.#options.emulators?.()
         if (bridge === undefined) throw new Error('这个任务需要安卓模拟器，但模拟器插件没有加载')
@@ -225,6 +288,7 @@ export class Runner {
           run.info.resources.push(key)
         }
         vars['adb'] = emulator.address
+        emulatorManaged = emulator.managed === true
         this.#line(run, 'adg', `使用模拟器 ${emulator.label}（${emulator.address}）`)
       }
       run.controller.signal.throwIfAborted()
@@ -232,7 +296,9 @@ export class Runner {
       run.info.params = { ...rendered.params }
 
       // The local config copy (plus this task's temporary edits) goes in for the run; the original comes back after.
-      const injection = await this.profiles.inject(scriptId, script.dir, manifest, rendered.patches, backupDirFor(this.#options.dataDir, runId))
+      // Patches for a managed emulator only (e.g. turn the script's own emulator start off) apply when we started it.
+      const patches = rendered.patches.filter(p => p.when !== 'emulator-managed' || emulatorManaged)
+      const injection = await this.profiles.inject(scriptId, script.dir, manifest, patches, backupDirFor(this.#options.dataDir, runId))
       run.release.push(() => injection.restore())
       if (mode === 'settings') {
         // Runs before the restore above (releases run in reverse).
@@ -248,6 +314,16 @@ export class Runner {
       for (const file of injection.skipped) run.info.warnings.push(`没有找到配置文件 ${file}，这项临时修改跳过`)
       if (injection.drift.length > 0) run.info.warnings.push(`原项目的配置（${injection.drift.join('、')}）在导入本地配置后改过；本次按本地配置运行。需要的话在脚本页「导入原项目设置」`)
       if (injection.files.length > 0) this.#line(run, 'adg', `已放入本地配置：${injection.files.join('、')}（结束后还原原项目配置）`)
+
+      // The game, for scripts that do not start it themselves (judged on the config now in place).
+      if (mode === 'task') {
+        await ensureGame({
+          manifest, settings: await this.launch.get(scriptId), input: resources.input, scriptDir: script.dir, address: vars['adb'],
+          android: this.#options.emulators?.(), signal: run.controller.signal, line: text => this.#line(run, 'adg', text),
+          ...this.#options.game,
+        })
+        run.controller.signal.throwIfAborted()
+      }
 
       const exe = inside(script.dir, rendered.exe)
       const cwd = rendered.cwd === undefined ? script.dir : inside(script.dir, rendered.cwd)

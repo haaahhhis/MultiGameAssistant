@@ -63,12 +63,12 @@ const desk = fakeScript(DESK, 'E2E 前台脚本', 'desktop', { a: 1200, b: 1200 
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
 const draft = {
   id: DRAFT, name: 'agent 编的流水线',
-  nodes: [{ id: 'a', kind: 'script-task', scriptId: DESK, taskId: 'a' }, { id: 'n', kind: 'notify', text: '前台任务跑完了' }],
+  nodes: [{ id: 'a', kind: 'script-task', script_id: DESK, task_id: 'a' }, { id: 'n', kind: 'notify', text: '前台任务跑完了' }],
   edges: [{ from: 'a', to: 'n' }],
 }
 const llm = await startFakeLlm({
   models: [FAKE_MODEL],
-  replies: [call('pipeline_draft', { pipeline: draft }), call('pipeline_run', { id: DRAFT, wait: true }), { text: '流水线跑完了。' }],
+  replies: [call('pipeline_draft', draft), call('pipeline_run', { id: DRAFT, wait: true }), { text: '流水线跑完了。' }],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
 })

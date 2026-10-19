@@ -239,6 +239,12 @@ export const Requests = {
     params: z.object({ sessionId: z.string() }),
     result: Accepted,
   },
+  /** Model for new sessions (and new chat-channel conversations). */
+  'models/setDefault': {
+    capability: 'model-default',
+    params: ModelSelection,
+    result: Empty,
+  },
   'models/catalog': {
     capability: 'models',
     params: Empty,

@@ -26,7 +26,7 @@ test('the service works when called through ctx.get, as the runner does', async 
 
   const emulators = ctx.get('adgEmulators') as unknown as AdgEmulators
   assert.equal((await emulators.configure({ manualAddress: '127.0.0.1:5555' })).manualAddress, '127.0.0.1:5555')
-  assert.deepEqual(await service.prepare({ signal: AbortSignal.timeout(5000), onStatus: () => {} }), { address: '127.0.0.1:5555', label: '手动配置的 ADB 地址' })
+  assert.deepEqual(await service.prepare({ signal: AbortSignal.timeout(5000), onStatus: () => {} }), { address: '127.0.0.1:5555', label: '手动配置的 ADB 地址', managed: false })
   assert.equal((await emulators.status()).selection.address, '127.0.0.1:5555')
 })
 

@@ -34,6 +34,10 @@ launch:
   # Opening MAA without the run-directly flag shows its own settings window.
   settings:
     exe: MAA.exe
+# MAA starts the game itself (the daily task turns 开始唤醒's 启动客户端 on).
+game:
+  name: 明日方舟
+  selfLaunch: always
 tasks:
   - id: daily
     title: 日常（运行 MAA 里已勾选的任务）
@@ -47,20 +51,28 @@ tasks:
             value: 'True'
           - path: [Configurations, Default, Start.StartGame]
             value: 'True'
-          - path: [Configurations, Default, Start.OpenEmulatorAfterLaunch]
-            value: 'False'
           - path: [Configurations, Default, Connect.Address]
             value: '{adb}'
       - file: config/gui.new.json
         set:
           - path: [Configurations, Default, Gui, StartUpSettings, RunDirectly]
             value: true
-          - path: [Configurations, Default, Gui, StartUpSettings, StartEmulator]
-            value: false
           - path: [Configurations, Default, Gui, RuntimeSettings, StartGame]
             value: true
           - path: [Configurations, Default, Gui, ConnectSettings, Address]
             value: '{adb}'
+      # AutoDailyGamePlay started MuMu already: MAA must not start an emulator too.
+      # With a manual ADB address MAA keeps starting its emulator itself.
+      - file: config/gui.json
+        when: emulator-managed
+        set:
+          - path: [Configurations, Default, Start.OpenEmulatorAfterLaunch]
+            value: 'False'
+      - file: config/gui.new.json
+        when: emulator-managed
+        set:
+          - path: [Configurations, Default, Gui, StartUpSettings, StartEmulator]
+            value: false
     resources: { input: adb, emulator: mumu, account: arknights }
     success: done-log
     expectedDuration: 60m

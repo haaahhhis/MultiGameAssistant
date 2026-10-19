@@ -132,10 +132,10 @@ export class AdgEmulators extends Service {
    * Make sure the configured emulator is reachable and return its ADB address.
    * @throws Error saying what to do when there is no emulator to use.
    */
-  async prepare(options: { prefer?: string | undefined; index?: number | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string }> {
+  async prepare(options: { prefer?: string | undefined; index?: number | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string; managed: boolean }> {
     await this.ready
     if (this.settings.manualAddress !== undefined && options.index === undefined) {
-      return { address: this.settings.manualAddress, label: '手动配置的 ADB 地址' }
+      return { address: this.settings.manualAddress, label: '手动配置的 ADB 地址', managed: false }
     }
     const mumu = await this.manager()
     if (mumu === undefined) throw new Error('没有找到 MuMu 模拟器。可以让 agent 安装（emulator_install），或在「设置 → 模拟器」填写已有模拟器的 ADB 地址')
@@ -145,7 +145,7 @@ export class AdgEmulators extends Service {
       throw new Error(`MuMu 实例 ${index} 没有运行，且已关闭「任务需要时自动启动」`)
     }
     const ready = await mumu.ensureReady(index, { timeoutMs: this.settings.bootTimeoutSeconds * 1000, signal: options.signal, onStatus: options.onStatus })
-    return { address: await mumu.adbAddress(index), label: `MuMu ${ready.index}（${ready.name}）` }
+    return { address: await mumu.adbAddress(index), label: `MuMu ${ready.index}（${ready.name}）`, managed: true }
   }
 
   /** The address `prepare` would return, without starting anything (the runner locks it first). */
@@ -182,6 +182,27 @@ export class AdgEmulators extends Service {
     if (echo?.stdout.trim() !== 'adg-ok') throw new Error(`已连接 ${address}，但设备没有响应：${(echo?.stderr ?? '').trim() || '无输出'}`)
     done.push(`已重新连接 ${address}`)
     return done.join('；')
+  }
+
+  /** Whether an Android app is running on the device (`pidof`). */
+  async appRunning(address: string, pkg: string): Promise<boolean> {
+    await this.ready
+    const result = await this.exec(await this.adb(), ['-s', address, 'shell', 'pidof', pkg], { timeoutMs: 15_000 })
+    return result !== undefined && result.code === 0 && result.stdout.trim() !== ''
+  }
+
+  /**
+   * Start an Android app's launcher activity (`monkey`, which needs no activity name).
+   * @throws Error when adb fails or the app is not installed.
+   */
+  async launchApp(address: string, pkg: string): Promise<void> {
+    await this.ready
+    const result = await this.exec(await this.adb(), ['-s', address, 'shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { timeoutMs: 30_000 })
+    if (result === undefined) throw new Error('找不到 adb，无法启动游戏')
+    const output = `${result.stdout}${result.stderr}`
+    if (/No activities found|monkey aborted|not found/i.test(output) || !/Events injected/i.test(output)) {
+      throw new Error(`启动 ${pkg} 失败：模拟器里可能没有装这个游戏（${output.trim().split('\n').pop() ?? ''}）`)
+    }
   }
 
   /** A PNG screenshot over ADB. @throws Error when adb fails or returns no image. */

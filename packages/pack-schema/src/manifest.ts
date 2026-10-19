@@ -42,14 +42,53 @@ const open = z.record(z.string(), z.unknown())
 const RelativePath = z.string().min(1).refine(p => !p.split(/[\\/]/).includes('..') && !/^([A-Za-z]:|[\\/])/.test(p), 'must stay inside the script directory')
 
 /** One task parameter; values are substituted as `{name}` in args and patch values. */
+const Regex = z.string().min(1).refine(value => { try { new RegExp(value); return true } catch { return false } }, 'invalid regular expression')
+
+/**
+ * The parameter's values come from a list in one of the script's config
+ * files (read from the local copy), e.g. MXU instances:
+ * `{ file: config/mxu-MaaEnd.json, list: [instances], value: name, detail: controllerName }`.
+ */
+export const ParamChoices = z.object({
+  /** One of `config.files`. */
+  file: z.string().min(1),
+  /** Keys leading to the array. */
+  list: z.array(z.string().min(1)).min(1),
+  /** Field of each item that is the parameter's value. */
+  value: z.string().min(1),
+  /** Field shown to people (default: `value`). */
+  label: z.string().optional(),
+  /** Field shown beside it, e.g. the controller. */
+  detail: z.string().optional(),
+  /** Only items whose `field` matches (a regular expression, case-insensitive). */
+  where: z.object({ field: z.string().min(1), match: Regex }).optional(),
+  /**
+   * New items may be made by copying an existing one (the first that
+   * matches `where`), so the structure stays the script's own; `set` fields
+   * are templates over `{name}` and `{uuid}`.
+   */
+  create: z.object({ set: z.record(z.string(), z.string()) }).optional(),
+})
+export type ParamChoices = z.infer<typeof ParamChoices>
+
 export const TaskParam = z.object({
   type: z.enum(['string', 'integer', 'number', 'boolean']),
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),
   /** Allowed values (for `string` / `integer`). */
   enum: z.array(z.union([z.string(), z.number()])).min(1).optional(),
+  /** Allowed values read from the script's config. */
+  choices: ParamChoices.optional(),
   description: z.string().optional(),
 })
 export type TaskParam = z.infer<typeof TaskParam>
+
+/** A key, an array index, or the array item whose `field` equals `equals` (a template). */
+export const PathSegment = z.union([
+  z.string().min(1),
+  z.number().int().min(0),
+  z.object({ where: z.object({ field: z.string().min(1), equals: z.string() }) }),
+])
+export type PathSegment = z.infer<typeof PathSegment>
 
 /**
  * One config edit made for a run: set `value` at `path` (an array, so keys
@@ -59,8 +98,14 @@ export const ConfigPatch = z.object({
   file: RelativePath,
   /** A missing file is skipped with a warning unless required. */
   required: z.boolean().default(false),
+  /**
+   * Apply only then. `emulator-managed`: AutoDailyGamePlay started the
+   * emulator (MuMu), so the script's own "start the emulator" goes off; with a
+   * manual ADB address the script keeps starting its emulator itself.
+   */
+  when: z.enum(['emulator-managed']).optional(),
   set: z.array(z.object({
-    path: z.array(z.union([z.string().min(1), z.number().int().min(0)])).min(1),
+    path: z.array(PathSegment).min(1),
     value: z.unknown(),
   })).min(1),
 })
@@ -169,6 +214,29 @@ export type Logs = z.infer<typeof Logs>
  * event run in order; `max` limits how often per run chain (a run and its
  * restarts). Anything not handled here is pushed to the user.
  */
+/**
+ * The game a script plays, so AutoDailyGamePlay can start it for scripts that
+ * do not, and leave it alone for those that do.
+ */
+export const Game = z.object({
+  name: z.string().optional(),
+  /** Started in the emulator before `adb` tasks. */
+  android: z.object({ package: z.string().regex(/^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/, 'an Android package name like com.example.game') }).optional(),
+  /** The PC game for `desktop` tasks: its process name; the program's path is a per-user setting. */
+  pc: z.object({ process: z.string().min(1).optional() }).optional(),
+  /**
+   * When the script starts the game itself: `always`, `never`, or when any
+   * of these config values (the effective config of the run) is set.
+   */
+  selfLaunch: z.union([
+    z.enum(['always', 'never']),
+    z.array(z.object({ file: z.string().min(1), path: z.array(z.string().min(1)).min(1), equals: z.union([z.string(), z.number(), z.boolean()]) })).min(1),
+  ]).default('never'),
+  /** Seconds to give the game after starting it, before the script starts. */
+  startupSeconds: z.number().int().min(0).max(600).default(30),
+})
+export type Game = z.infer<typeof Game>
+
 export const Recovery = z.object({
   /** A log rule tag, `stalled`, or `failed`. */
   on: z.string().min(1),
@@ -213,6 +281,7 @@ export const ScriptManifest = z.object({
   tasks: z.array(Task).default([]),
   logs: Logs.default({ sources: [{ stdout: true, encoding: 'auto' }], rules: [] }),
   recovery: z.array(Recovery).default([]),
+  game: Game.optional(),
   intervention: open.optional(),
   update: open.optional(),
 }).superRefine((manifest, issues) => {

@@ -23,14 +23,36 @@ launch:
   exe: MaaEnd.exe
   settings:
     exe: MaaEnd.exe
+# The game: started before a run when it is not running yet. MaaEnd's own
+# AndroidOpenGame / OpenGame tasks, when an instance has them, then find it
+# already open, so the two never fight.
+game:
+  name: 终末地
+  android:
+    package: com.hypergryph.endfield
+  pc:
+    process: Endfield.exe
+  selfLaunch: never
+  startupSeconds: 40
 tasks:
-  # Whether a run holds the mouse depends on the instance's controller, hence two tasks.
+  # Whether a run holds the mouse depends on the instance's controller, hence two tasks;
+  # each offers only the MXU instances with its kind of controller.
   - id: run-pc
     title: 运行一个实例（PC 版，占用鼠标键盘）
     description: 运行 MXU 实例里已配置的任务；实例的控制器是 Win32-Front（直接操作 PC 版游戏）
     utterances: [终末地日常, 跑 MaaEnd, 终末地]
     params:
-      instance: { type: string, description: 'MXU 实例名称，见 config/mxu-MaaEnd.json 的 instances[].name' }
+      instance:
+        type: string
+        description: MXU 实例
+        choices:
+          file: config/mxu-MaaEnd.json
+          list: [instances]
+          value: name
+          detail: controllerName
+          where: { field: controllerName, match: 'win32|front' }
+          create:
+            set: { id: '{uuid}', name: '{name}' }
     args: ['--autostart', '--instance', '{instance}', '--quit-after-run']
     resources: { input: desktop, account: endfield }
     expectedDuration: 60m
@@ -38,8 +60,24 @@ tasks:
     title: 运行一个实例（模拟器）
     description: 运行 MXU 实例里已配置的任务；实例的控制器是 ADB（通过模拟器操作，不占用鼠标）
     params:
-      instance: { type: string, description: 'MXU 实例名称，见 config/mxu-MaaEnd.json 的 instances[].name' }
+      instance:
+        type: string
+        description: MXU 实例
+        choices:
+          file: config/mxu-MaaEnd.json
+          list: [instances]
+          value: name
+          detail: controllerName
+          where: { field: controllerName, match: 'adb' }
+          create:
+            set: { id: '{uuid}', name: '{name}' }
     args: ['--autostart', '--instance', '{instance}', '--quit-after-run']
+    # The instance connects to the emulator AutoDailyGamePlay prepared.
+    patches:
+      - file: config/mxu-MaaEnd.json
+        set:
+          - path: [instances, { where: { field: name, equals: '{instance}' } }, savedDevice, adbDeviceAddress]
+            value: '{adb}'
     resources: { input: adb, emulator: mumu, account: endfield }
     expectedDuration: 60m
 logs:

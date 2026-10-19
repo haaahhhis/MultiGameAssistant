@@ -22,6 +22,12 @@ launch:
   # The task program runs a full job when started without arguments; settings live in the launcher.
   settings:
     exe: March7th Launcher.exe
+# March7th starts the game itself (game_path in its config.yaml).
+game:
+  name: 崩坏：星穹铁道
+  pc:
+    process: StarRail.exe
+  selfLaunch: always
 tasks:
   - id: main
     title: 完整运行

@@ -4,7 +4,7 @@ import type { TaskInfo } from '@adg/protocol'
 import { useStore } from '../../hooks.ts'
 
 /** Every library script that has tasks, with them: the canvas palette. */
-export function useScriptTasks(client: AdgClient) {
+export function useScriptTasks(client: AdgClient, revision = 0) {
   const status = useStore(client.connection.status)
   const [tasks, setTasks] = useState<{ scriptId: string; scriptName: string; tasks: TaskInfo[] }[]>([])
   useEffect(() => {
@@ -21,6 +21,6 @@ export function useScriptTasks(client: AdgClient) {
       if (live) setTasks(out)
     })().catch(() => {})
     return () => { live = false }
-  }, [client, status.state])
+  }, [client, status.state, revision])
   return tasks
 }

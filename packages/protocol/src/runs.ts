@@ -15,6 +15,37 @@ export const TaskParamInfo = z.object({
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),
   enum: z.array(z.union([z.string(), z.number()])).optional(),
   description: z.string().optional(),
+  /** Values read from the script's local config (e.g. MXU instances). */
+  choices: z.array(z.object({ value: z.string(), label: z.string(), detail: z.string().optional() })).optional(),
+  /** A new choice can be made with `runs/choices/create`. */
+  canCreate: z.boolean().optional(),
+})
+
+/** Who starts the game before a run (docs: 脚本不会自己启动游戏时由本应用启动). */
+export const LaunchSettings = z.object({
+  /** `auto`: only when the script will not and the game is not running; `platform`: always unless running; `off`: never. */
+  mode: z.enum(['auto', 'platform', 'off']),
+  /** PC game program (for tasks that use the desktop). */
+  pcExe: z.string().optional(),
+  /** Its process name, when it differs from the program's file name. */
+  pcProcess: z.string().optional(),
+  /** Android package started in the emulator (for emulator tasks). */
+  androidPackage: z.string().optional(),
+})
+export type LaunchSettings = z.infer<typeof LaunchSettings>
+
+const LaunchView = z.object({
+  settings: LaunchSettings,
+  /** What the script pack says. */
+  game: z.object({
+    name: z.string().optional(),
+    androidPackage: z.string().optional(),
+    pcProcess: z.string().optional(),
+    /** How the script starts the game itself, for people. */
+    selfLaunch: z.string(),
+  }),
+  /** The script has tasks that use the emulator / the desktop. */
+  uses: z.object({ adb: z.boolean(), desktop: z.boolean() }),
 })
 
 export const TaskInfo = z.object({
@@ -125,6 +156,28 @@ export const RunRequests = {
     capability: RUNS_CAPABILITY,
     params: z.object({ scriptId: ScriptId }),
     result: RunInfo,
+  },
+  /** Make a new choice for a parameter (e.g. an MXU instance copied from an existing one) in the local config. */
+  'runs/choices/create': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId, taskId: z.string().min(1), param: z.string().min(1), name: z.string().trim().min(1).max(40) }),
+    result: z.object({ value: z.string() }),
+  },
+  'configs/launch': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId }),
+    result: LaunchView,
+  },
+  'configs/launch/set': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({
+      scriptId: ScriptId,
+      mode: z.enum(['auto', 'platform', 'off']).optional(),
+      pcExe: z.string().trim().nullable().optional(),
+      pcProcess: z.string().trim().nullable().optional(),
+      androidPackage: z.string().trim().regex(/^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/, '安卓包名像 com.example.game').nullable().optional(),
+    }),
+    result: LaunchView,
   },
 } as const
 

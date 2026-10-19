@@ -80,9 +80,25 @@ logs:
 recovery:                       # 出问题时平台自动做的事（每条最多 max 次），处理不了才通知用户
   - { on: adb-disconnected, do: reconnect-adb }   # on：规则的 tag，或 stalled / failed
   - { on: adb-disconnected, do: restart }          # do：reconnect-adb | restart | stop
+game:                           # 脚本玩的游戏：脚本自己不启动游戏时，平台在运行前启动它
+  name: 明日方舟
+  android: { package: com.example.game }          # 模拟器任务：运行前在模拟器里启动
+  pc: { process: Game.exe }                       # PC 任务：进程名（程序位置由用户在界面里设置）
+  selfLaunch: never             # 脚本自己会启动游戏时写 always，或写配置条件：
+                                # [{ file: config/gui.json, path: [Start, StartGame], equals: 'True' }]
+  startupSeconds: 30
 ```
 
 占位符：任务参数，以及 `{adb}`（模拟器地址）、`{dir}`（脚本目录）。
+
+另外几种写法：
+
+- 参数的可选值来自脚本配置（例如实例名、账号名），用户就能从列表里选：
+  `instance: { type: string, choices: { file: config/x.json, list: [instances], value: name, detail: controller, where: { field: controller, match: 'adb' }, create: { set: { id: '{uuid}', name: '{name}' } } } }`。
+  `create` 表示可以复制一个现有项新建（结构和脚本自己写的一样）。
+- 临时修改的路径里可以按字段找列表项：`path: [instances, { where: { field: name, equals: '{instance}' } }, address]`。
+- 脚本自己也会启动模拟器时（例如它有「启动后打开模拟器」），平台已经启动了模拟器，就用 `when: emulator-managed` 的临时修改把它关掉；用户填的是手动 ADB 地址时这条不生效，脚本照常自己启动模拟器。
+- 脚本会自己启动游戏，就在 `game.selfLaunch` 里写明，平台不再重复启动；平台也会先看游戏是否已经在运行。
 
 日志规则只写在源码、文档或真实日志里确实出现过的原文；拿不准的错误先写成 `warning`。`recovery` 只给确定安全的情况写（重启任务会从头再跑一遍）。
 

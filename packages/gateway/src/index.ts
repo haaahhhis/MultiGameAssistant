@@ -21,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { credentialsCapability } from './credentials.ts'
 import { providersCapability } from './providers.ts'
-import type { NotificationMethod, NotificationParams } from '@adg/protocol'
+import type { NotificationMethod, NotificationParams, RequestParams } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
@@ -138,6 +138,22 @@ export class AdgGateway extends Service {
       })), 'adg-gateway capability providers')
       // Routes registered or dropped from anywhere: this UI, dsh's own page, or a hand-edited profile.
       scoped.on('llm/adapters-updated', providersChanged)
+    })
+
+    // Optional capability: choosing the default model needs the default-model service.
+    ctx.inject(['agentDefaultModel'], scoped => {
+      scoped.effect(() => this.registry.register({
+        id: 'model-default',
+        version: 1,
+        methods: {
+          'models/setDefault': async params => {
+            const p = params as RequestParams<'models/setDefault'>
+            await scoped.agentDefaultModel.saveSelection({ provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) } as never)
+            this.broadcast('providers/changed', {})
+            return {}
+          },
+        },
+      }), 'adg-gateway capability model-default')
     })
 
     // Session list deltas come from the controller's own lifecycle events.

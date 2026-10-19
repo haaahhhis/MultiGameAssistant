@@ -7,7 +7,7 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { ConfigPatch } from '@adg/pack-schema'
+import type { ConfigPatch, PathSegment } from '@adg/pack-schema'
 import { parseDocument } from 'yaml'
 
 export interface AppliedPatches {
@@ -84,7 +84,7 @@ export function editText(file: string, text: string, ops: ConfigPatch['set']): s
   if (/\.ya?ml$/i.test(file)) {
     const doc = parseDocument(body)
     if (doc.errors.length > 0) throw new Error(`无法解析 ${file}：${doc.errors[0]!.message}`)
-    for (const op of ops) doc.setIn(op.path, op.value)
+    for (const op of ops) doc.setIn(resolvePath(doc.toJS(), op.path, file), op.value)
     return bom + String(doc)
   }
   let data: unknown
@@ -93,7 +93,7 @@ export function editText(file: string, text: string, ops: ConfigPatch['set']): s
   } catch (error) {
     throw new Error(`无法解析 ${file}：${error instanceof Error ? error.message : String(error)}`)
   }
-  for (const op of ops) data = setIn(data, op.path, op.value, file)
+  for (const op of ops) data = setIn(data, resolvePath(data, op.path, file), op.value, file)
   // Keep the file's own indentation: that of its first indented key.
   const indent = /^([ \t]+)"/m.exec(body)?.[1] ?? '    '
   const eol = body.includes('\r\n') ? '\r\n' : '\n'
@@ -101,13 +101,38 @@ export function editText(file: string, text: string, ops: ConfigPatch['set']): s
 }
 
 /** Set `value` at `path`, creating objects along the way; arrays are indexed by number. */
+/**
+ * Turn `{ where: { field, equals } }` segments into the index of the array
+ * item whose `field` equals `equals`.
+ * @throws Error when there is no such item.
+ */
+export function resolvePath(data: unknown, path: readonly PathSegment[], file = 'config'): (string | number)[] {
+  const out: (string | number)[] = []
+  let node: unknown = data
+  for (const seg of path) {
+    if (typeof seg === 'object') {
+      if (!Array.isArray(node)) throw new Error(`${file}：${out.join('.') || '根'} 不是列表，找不到 ${seg.where.field} 为「${seg.where.equals}」的项`)
+      const index = node.findIndex(item => typeof item === 'object' && item !== null && String((item as Record<string, unknown>)[seg.where.field]) === seg.where.equals)
+      if (index === -1) throw new Error(`${file}：没有 ${seg.where.field} 为「${seg.where.equals}」的项`)
+      out.push(index)
+      node = node[index]
+      continue
+    }
+    out.push(seg)
+    node = node === null || typeof node !== 'object' ? undefined : (node as Record<string | number, unknown>)[seg]
+  }
+  return out
+}
+
 export function setIn(root: unknown, path: readonly (string | number)[], value: unknown, file = 'config'): unknown {
   const [head, ...rest] = path
   if (head === undefined) return value
-  if (typeof head === 'number') {
+  // A digit string indexes an array where there is one (paths from agent tools are all strings).
+  if (typeof head === 'number' || (Array.isArray(root) && /^\d+$/.test(head))) {
+    const index = Number(head)
     const array = Array.isArray(root) ? [...root] : []
     if (!Array.isArray(root) && root !== undefined && root !== null) throw new Error(`${file}：${head} 处不是数组`)
-    array[head] = setIn(array[head], rest, value, file)
+    array[index] = setIn(array[index], rest, value, file)
     return array
   }
   if (root !== undefined && root !== null && (typeof root !== 'object' || Array.isArray(root))) throw new Error(`${file}：${head} 的上一级不是对象`)

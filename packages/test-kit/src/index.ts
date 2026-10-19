@@ -11,3 +11,4 @@ export { startFakeLlm, type FakeLlm, type FakeLlmOptions, type FakeReply } from 
 export { ManualClock, type Clock } from './clock.ts'
 export { makeZip, type ZipEntries } from './zip.ts'
 export { startFakeFeishu, type FakeFeishu, type FakeFeishuMessage, type FakeFeishuRequest } from './fake-feishu.ts'
+export { schemaProblems } from './schema-lint.ts'

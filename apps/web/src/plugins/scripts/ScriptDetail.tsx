@@ -8,6 +8,7 @@ import { errorText, FAMILY_LABEL, isActive } from './data.ts'
 import { JobProgress } from './JobProgress.tsx'
 import { GuardCard, PackCard } from './PackCards.tsx'
 import { ConfigCard } from './ConfigCard.tsx'
+import { GameCard } from './GameCard.tsx'
 import { RunsCard } from './RunsCard.tsx'
 
 const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
@@ -156,6 +157,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
 
       {capabilities.has('runs') && script.dir !== undefined && <RunsCard client={client} scriptId={script.id} packId={script.packId} />}
       {capabilities.has('runs') && script.packId !== undefined && script.dir !== undefined && <ConfigCard client={client} script={script} />}
+      {capabilities.has('runs') && script.packId !== undefined && script.dir !== undefined && <GameCard key={script.id} client={client} scriptId={script.id} />}
       {capabilities.has('packs') && <PackCard client={client} script={script} openSession={openSession} />}
 
       {script.probe !== undefined && (

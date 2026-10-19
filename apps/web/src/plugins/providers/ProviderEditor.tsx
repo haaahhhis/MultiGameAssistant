@@ -2,23 +2,27 @@ import { useMemo, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { ProviderApi, ProviderModel, ProviderProfile } from '@adg/protocol'
 import { apiKeyProblem } from '../settings/ApiKeysPage.tsx'
+import type { ProviderPreset } from './presets.ts'
 import { ID_PATTERN, PROTOCOLS, formatContext, isHttpUrl, keyRefFor, protocolInfo, slugify } from './protocols.ts'
 
-export function ProviderEditor({ client, profile, taken, revision, readOnly, onDone }: {
+export function ProviderEditor({ client, profile, preset, taken, revision, readOnly, onDone }: {
   client: AdgClient
   /** Absent when creating. */
   profile: ProviderProfile | undefined
+  /** A known service picked when adding: fills the fields. */
+  preset?: ProviderPreset | undefined
   taken: readonly string[]
   revision: number
   readOnly: boolean
   onDone: () => void
 }) {
   const creating = profile === undefined
-  const [api, setApi] = useState<ProviderApi>(() => protocolInfo(profile?.api)?.id ?? 'openai-completions')
-  const [displayName, setDisplayName] = useState(profile?.displayName ?? '')
-  const [id, setId] = useState(profile?.id ?? '')
-  const [idTouched, setIdTouched] = useState(!creating)
-  const [baseURL, setBaseURL] = useState(profile?.baseURL ?? '')
+  const presetId = preset === undefined || preset.id === '' ? '' : taken.includes(preset.id) ? `${preset.id}-2` : preset.id
+  const [api, setApi] = useState<ProviderApi>(() => protocolInfo(profile?.api ?? preset?.api)?.id ?? 'openai-completions')
+  const [displayName, setDisplayName] = useState(profile?.displayName ?? (preset?.baseURL === '' ? '' : preset?.name ?? ''))
+  const [id, setId] = useState(profile?.id ?? presetId)
+  const [idTouched, setIdTouched] = useState(!creating || presetId !== '')
+  const [baseURL, setBaseURL] = useState(profile?.baseURL ?? preset?.baseURL ?? '')
   const [key, setKey] = useState('')
   const [models, setModels] = useState<readonly ProviderModel[]>(profile?.models ?? [])
   const [busy, setBusy] = useState(false)
@@ -76,7 +80,7 @@ export function ProviderEditor({ client, profile, taken, revision, readOnly, onD
   return (
     <form className="provider-editor" onSubmit={e => { e.preventDefault(); void save() }}>
       <div className="page-head">
-        <h3>{creating ? '添加自定义 API' : `编辑「${profile.displayName}」`}</h3>
+        <h3>{creating ? (preset !== undefined && preset.baseURL !== '' ? `添加 ${preset.name}` : '添加模型服务') : `编辑「${profile.displayName}」`}</h3>
         <button type="button" className="ghost" onClick={onDone} disabled={busy}>返回</button>
       </div>
 
@@ -154,7 +158,8 @@ export function ProviderEditor({ client, profile, taken, revision, readOnly, onD
         </label>
         {keyProblem !== null
           ? <div className="error small">{keyProblem}</div>
-          : keyRef !== null && <div className="muted small">保存在 dsh 凭据 <code>{keyRef}</code> 中，界面不会再显示 Key 的内容。</div>}
+          : keyRef !== null && <div className="muted small">保存在 dsh 凭据 <code>{keyRef}</code> 中，界面不会再显示 Key 的内容。{preset?.keyUrl !== undefined && <> <a href={preset.keyUrl} target="_blank" rel="noopener noreferrer">获取 Key ↗</a></>}</div>}
+        {preset?.vision !== undefined && <div className="muted small">截图诊断、读游戏信息需要能看图的模型：{preset.vision}。</div>}
       </section>
 
       <ModelsSection

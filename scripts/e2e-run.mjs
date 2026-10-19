@@ -109,7 +109,7 @@ const llm = await startFakeLlm({
     call('script_run', { id: ID, task: 'daily', wait: true }), { text: '运行结束。' },
     call('write', { file_path: join(dir, 'config', 'hacked.txt'), content: 'x' }), { text: '被拦截了。' },
     call(SHELL, { description: 'try', command: `Set-Content "${join(dir, 'app', 'evil.txt')}" x` }), { text: '也被拦截了。' },
-    call('script_config_set', { id: ID, file: 'config/settings.json', path: ['Settings', 'Stage'], value: 'CE-6' }), { text: '已修改。' },
+    call('script_config_set', { id: ID, file: 'config/settings.json', path: ['Settings', 'Stage'], value_json: '"CE-6"' }), { text: '已修改。' },
   ],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,

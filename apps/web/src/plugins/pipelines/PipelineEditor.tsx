@@ -6,6 +6,7 @@ import type { NodeRun, Pipeline, PipelineCheck, PipelineEdge, PipelineNode, Pipe
 import { Icon } from '../../components/Icons.tsx'
 import { useTheme } from '../../theme.ts'
 import { errorText } from '../scripts/data.ts'
+import { ParamInput } from '../scripts/ParamInput.tsx'
 import { useScriptTasks } from './data.ts'
 
 const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认' }
@@ -74,7 +75,8 @@ const newId = (prefix: string, pipeline: Pipeline) => {
 
 export function PipelineEditor({ client, pipeline, onChange, run, check }: { client: AdgClient; pipeline: Pipeline; onChange: (p: Pipeline) => void; run: PipelineRun | undefined; check: PipelineCheck | null }) {
   const theme = useTheme()
-  const scripts = useScriptTasks(client)
+  const [tasksRevision, setTasksRevision] = useState(0)
+  const scripts = useScriptTasks(client, tasksRevision)
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null)
   // React Flow reports each node's rendered size; a controlled flow must hand it back, or nodes stay hidden and edges undrawn.
@@ -192,7 +194,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
       </div>
 
       <aside className="pipeline-inspector">
-        {node !== undefined && <NodeInspector client={client} node={node} pipeline={pipeline} run={run} scripts={scripts} onChange={replaceNode}
+        {node !== undefined && <NodeInspector client={client} node={node} pipeline={pipeline} run={run} scripts={scripts} onChange={replaceNode} onTasksChanged={() => setTasksRevision(r => r + 1)}
           onRemove={() => { onChange({ ...pipeline, nodes: pipeline.nodes.filter(n => n.id !== node.id), edges: pipeline.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelectedNode(null) }} />}
         {edge !== undefined && (
           <section className="inspector-section">
@@ -214,9 +216,9 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
   )
 }
 
-function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemove }: {
+function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemove, onTasksChanged }: {
   client: AdgClient; node: PipelineNode; pipeline: Pipeline; run: PipelineRun | undefined
-  scripts: ReturnType<typeof useScriptTasks>; onChange: (n: PipelineNode) => void; onRemove: () => void
+  scripts: ReturnType<typeof useScriptTasks>; onChange: (n: PipelineNode) => void; onRemove: () => void; onTasksChanged: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
   const state = run?.nodes[node.id]
@@ -230,25 +232,14 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
         onChange={e => { const { title: _t, ...rest } = node; onChange((e.target.value === '' ? rest : { ...rest, title: e.target.value }) as PipelineNode) }} />
 
       {node.kind === 'script-task' && task !== undefined && Object.entries(task.params).map(([name, spec]) => (
-        <label key={name} className="param-row">
-          <span className="field-label">{name}{spec.description === undefined ? '' : ` · ${spec.description}`}</span>
-          {spec.enum !== undefined ? (
-            <select className="text-input plain" value={String(node.params[name] ?? spec.default ?? '')} onChange={e => onChange({ ...node, params: { ...node.params, [name]: spec.type === 'string' ? e.target.value : Number(e.target.value) } })}>
-              {spec.enum.map(o => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
-            </select>
-          ) : spec.type === 'boolean' ? (
-            <select className="text-input plain" value={String(node.params[name] ?? spec.default ?? false)} onChange={e => onChange({ ...node, params: { ...node.params, [name]: e.target.value === 'true' } })}>
-              <option value="true">是</option><option value="false">否</option>
-            </select>
-          ) : (
-            <input className="text-input plain" value={String(node.params[name] ?? '')} placeholder={spec.default === undefined ? '必填' : `默认 ${String(spec.default)}`}
-              onChange={e => {
-                const { [name]: _old, ...rest } = node.params
-                const raw = e.target.value
-                onChange({ ...node, params: raw === '' ? rest : { ...rest, [name]: spec.type === 'string' ? raw : Number(raw) } })
-              }} />
-          )}
-        </label>
+        <ParamInput key={name} client={client} scriptId={node.scriptId} taskId={node.taskId} name={name} spec={spec}
+          value={String(node.params[name] ?? (spec.type === 'boolean' ? spec.default ?? false : ''))}
+          onCreated={onTasksChanged}
+          onChange={raw => {
+            const { [name]: _old, ...rest } = node.params
+            const typed = spec.type === 'boolean' ? raw === 'true' : spec.type === 'integer' || spec.type === 'number' ? Number(raw) : raw
+            onChange({ ...node, params: raw === '' ? rest : { ...rest, [name]: typed } })
+          }} />
       ))}
       {node.kind === 'agent' && (
         <><label className="field-label" htmlFor="node-prompt">让 agent 做什么</label>
