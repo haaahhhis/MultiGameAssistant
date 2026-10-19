@@ -23,7 +23,7 @@ export type IncidentKind = z.infer<typeof IncidentKind>
 
 export const IncidentStep = z.object({
   at: z.number(),
-  action: z.enum(['reconnect-adb', 'restart', 'stop', 'screenshot', 'notify', 'resolve']),
+  action: z.enum(['reconnect-adb', 'restart', 'stop', 'screenshot', 'notify', 'resolve', 'intervene']),
   /** `rule`: L0 recovery from the pack; `user`: the UI or a chat channel. */
   by: z.enum(['rule', 'user', 'agent']),
   ok: z.boolean(),
@@ -69,6 +69,14 @@ export const MonitorSettings = z.object({
   notifyWarnings: z.boolean(),
   /** Take a screenshot (emulator or desktop) when an incident is raised. */
   screenshot: z.boolean(),
+  /**
+   * What L0 does not settle goes to the agent first: `off`, `diagnose` (it
+   * looks and explains, then you decide), or `act` (it may also click and type
+   * to fix it, with the script paused). Needs an image-capable model.
+   */
+  intervene: z.enum(['off', 'diagnose', 'act']),
+  /** At most this many agent interventions a day (model cost). */
+  interventionsPerDay: z.number().int().min(0).max(200),
 })
 export type MonitorSettings = z.infer<typeof MonitorSettings>
 
@@ -78,10 +86,10 @@ export const MonitorRequests = {
     params: z.object({ status: z.enum(['open', 'all']).optional(), runId: z.string().optional(), limit: z.number().int().min(1).max(500).optional() }),
     result: z.object({ items: z.array(Incident) }),
   },
-  /** Stop the incident's run, run its task again, or mark the incident handled. */
+  /** Stop the incident's run, run its task again, mark the incident handled, or let the paused script carry on. */
   'monitor/act': {
     capability: MONITOR_CAPABILITY,
-    params: z.object({ incidentId: z.string(), action: z.enum(['stop', 'retry', 'resolve']) }),
+    params: z.object({ incidentId: z.string(), action: z.enum(['stop', 'retry', 'resolve', 'resume']) }),
     result: Incident,
   },
   'monitor/screenshot': {

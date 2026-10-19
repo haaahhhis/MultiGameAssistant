@@ -14,8 +14,8 @@ type SessionId = SessionSummary['sessionId']
 
 export function sessionConversations(sessions: Sessions): Conversations {
   return {
-    async create(title) {
-      const model = await recentModel(sessions).catch(() => undefined)
+    async create(title, options = {}) {
+      const model = options.defaultModel === true ? undefined : await recentModel(sessions).catch(() => undefined)
       const created = await sessions.create({})
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
@@ -28,7 +28,7 @@ export function sessionConversations(sessions: Sessions): Conversations {
         return false
       }
     },
-    async ask(sessionId, text, signal) {
+    async ask(sessionId, text, signal, images = []) {
       const controller = new AbortController()
       const abort = () => controller.abort(signal.reason)
       signal.addEventListener('abort', abort, { once: true })
@@ -41,7 +41,7 @@ export function sessionConversations(sessions: Sessions): Conversations {
           requestId: requestId as SessionRequestId,
           sessionId: sessionId as SessionId,
           mode: 'queue',
-          content: [{ type: 'text', text }],
+          content: [{ type: 'text', text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }, controller.signal)
         return await finalAnswer(iterator, requestId, text)

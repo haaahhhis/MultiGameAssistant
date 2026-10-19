@@ -18,6 +18,7 @@
     "@adg/feishu": "workspace:*",
     "@adg/gateway": "workspace:*",
     "@adg/guard": "workspace:*",
+    "@adg/intervene": "workspace:*",
     "@adg/monitor": "workspace:*",
     "@adg/notify": "workspace:*",
     "@adg/orchestrator": "workspace:*",

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { parseManifest } from '@adg/pack-schema'
 import type { Incident, ScriptInfo } from '@adg/protocol'
 import { Runner, type EmulatorBridge } from '@adg/runner'
-import { Monitor, type IncidentStore, type MonitorNotice } from '../src/monitor.ts'
+import { Monitor, type IncidentStore, type InterventionPort, type MonitorNotice } from '../src/monitor.ts'
 
 const CLI = fileURLToPath(new URL('../../test-kit/src/fake-script-cli.ts', import.meta.url))
 const SAMPLES = fileURLToPath(new URL('./samples/', import.meta.url))
@@ -47,7 +47,7 @@ recovery:
   - { on: adb-disconnected, do: restart }
 `
 
-function setup(pack: string, files: Record<string, unknown>) {
+function setup(pack: string, files: Record<string, unknown>, intervene?: InterventionPort) {
   const dir = mkdtempSync(join(tmpdir(), 'adg-mon-'))
   mkdirSync(join(dir, 'debug'))
   writeFileSync(join(dir, 'MAA.exe'), 'MZ')
@@ -84,6 +84,7 @@ function setup(pack: string, files: Record<string, unknown>) {
     readScreenshot: async id => shots.get(id),
   }
   const monitor = new Monitor({
+    ...(intervene === undefined ? {} : { intervene: () => intervene }),
     runner,
     packOf: () => ({ manifest }),
     emulators: () => bridge,
@@ -217,4 +218,59 @@ test('an error line the script recovers from on its own still ends with a done l
   assert.equal(notices.length, 1, 'the error was still worth telling')
   assert.equal(notices[0]!.image?.[0], 0x89, 'an adb task gets the emulator screenshot')
   monitor.stop()
+})
+
+test('L1/L2: what L0 leaves goes to the agent first; fixed is not pushed, given up is pushed with its summary and a 继续 button', async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }')
+  const steps = { steps: [{ logFile: 'debug/gui.log', line: '[ERR] 重连失败，连接断开！' }, { sleepMs: 60_000 }] }
+  const handled: string[] = []
+  const resumed: string[] = []
+  let answer: Awaited<ReturnType<InterventionPort['handle']>> = { state: 'resolved', summary: '点了「重新连接」，游戏恢复了', paused: false }
+  let today = 0
+  const port: InterventionPort = {
+    handle: async (incident, mode, shot) => { handled.push(`${incident.tag}:${mode}:${shot === undefined ? 'no-shot' : 'shot'}`); today++; return answer },
+    countToday: () => today,
+    resumeRun: async runId => { resumed.push(runId); return true },
+  }
+  const fixed = setup(pack, { 'daily.json': steps }, port)
+  await fixed.monitor.start(0)
+  const run1 = await fixed.runner.start('maa', 'daily')
+  await new Promise(resolve => setTimeout(resolve, 800))
+  await fixed.monitor.idle()
+  assert.deepEqual(handled, ['adb-disconnected:act:shot'], 'with the incident screenshot')
+  const first = fixed.monitor.incidents({ status: 'all' })[0]!
+  assert.equal(first.status, 'resolved')
+  assert.match(first.resolution ?? '', /agent 已处理：点了「重新连接」/)
+  assert.equal(fixed.notices.length, 0, 'fixed: nothing pushed')
+  await fixed.runner.stop(run1.id)
+  fixed.monitor.stop()
+
+  answer = { state: 'gave-up', summary: '要输入验证码，交给你', paused: true, image: Buffer.from('agent-shot') }
+  const gaveUp = setup(pack, { 'daily.json': steps }, port)
+  await gaveUp.monitor.start(0)
+  const run2 = await gaveUp.runner.start('maa', 'daily')
+  await new Promise(resolve => setTimeout(resolve, 800))
+  await gaveUp.monitor.idle()
+  const notice = gaveUp.notices[0]!
+  assert.deepEqual(notice.actions.map(a => a.id), ['resume', 'stop', 'retry', 'resolve'])
+  assert.match(notice.text, /agent 看过了：要输入验证码，交给你/)
+  assert.equal(notice.image?.toString(), 'agent-shot', 'with the agent\'s latest screenshot')
+  const incident = gaveUp.monitor.incidents()[0]!
+  await gaveUp.monitor.act(incident.id, 'resume', { by: 'user', name: '我' })
+  assert.deepEqual(resumed, [run2.id])
+  assert.equal(gaveUp.monitor.incident(incident.id).resolution, '已继续（我）')
+  await gaveUp.runner.stop(run2.id)
+  gaveUp.monitor.stop()
+
+  today = 99
+  const capped = setup(pack, { 'daily.json': steps }, port)
+  await capped.monitor.start(0)
+  const run3 = await capped.runner.start('maa', 'daily')
+  await new Promise(resolve => setTimeout(resolve, 800))
+  await capped.monitor.idle()
+  assert.equal(handled.length, 2, 'over the daily cap: the agent is not called')
+  assert.match(capped.monitor.incidents()[0]!.steps.map(s => s.detail).join(' '), /今天的 agent 处理次数（10）已用完/)
+  assert.equal(capped.notices.length, 1)
+  await capped.runner.stop(run3.id)
+  capped.monitor.stop()
 })

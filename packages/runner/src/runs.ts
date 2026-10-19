@@ -34,6 +34,8 @@ export interface EmulatorBridge {
    * @returns its ADB address (`host:port`) and a label for people.
    */
   prepare(options: { prefer?: string | undefined; signal: AbortSignal; onStatus: (text: string) => void }): Promise<{ address: string; label: string; managed?: boolean }>
+  /** `adb shell` on the device (screen input). */
+  shell?(address: string, args: readonly string[], timeoutMs?: number): Promise<string>
   /** Whether an Android app is running on the device. */
   appRunning?(address: string, pkg: string): Promise<boolean>
   /** Start an Android app's launcher activity. */
@@ -418,6 +420,17 @@ export class Runner {
    */
   async successor(runId: string): Promise<RunInfo | undefined> {
     return this.#successors.get(runId)
+  }
+
+  /** The script's process id while it runs (to pause it). */
+  processId(runId: string): number | undefined {
+    const run = this.#run(runId)
+    return run.info.endedAt === undefined ? run.child?.pid : undefined
+  }
+
+  /** Add a line to a run's log from outside (the intervention says what it is doing). */
+  note(runId: string, text: string): void {
+    this.#line(this.#run(runId), 'adg', text)
   }
 
   /** Add a warning to a run (shown with it), e.g. from the monitor. */

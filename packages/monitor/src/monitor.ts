@@ -36,7 +36,16 @@ export interface MonitorNotice {
   readonly text: string
   readonly severity: 'warning' | 'error'
   readonly image?: Buffer
-  readonly actions: readonly { id: 'stop' | 'retry' | 'resolve'; label: string; style: 'danger' | 'primary' | 'default' }[]
+  readonly actions: readonly { id: 'stop' | 'retry' | 'resolve' | 'resume'; label: string; style: 'danger' | 'primary' | 'default' }[]
+}
+
+/** What the monitor needs from `@adg/intervene` (L1/L2). */
+export interface InterventionPort {
+  handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined): Promise<{ state: string; summary: string; paused: boolean; image?: Buffer; sessionId?: string }>
+  countToday(): number
+  resumeRun(runId: string): Promise<boolean>
+  /** The user acted on the incident while the agent is still on it: the agent stops. */
+  cancel?(incidentId: string, why: string): void
 }
 
 export interface MonitorDeps {
@@ -44,6 +53,7 @@ export interface MonitorDeps {
   readonly packOf: (scriptId: string) => { manifest: ScriptManifest } | undefined
   readonly emulators: () => EmulatorBridge | undefined
   readonly notices: () => NoticeSink | undefined
+  readonly intervene?: () => InterventionPort | undefined
   /** A PNG of the whole desktop. */
   readonly desktopScreenshot: () => Promise<Buffer>
   readonly store: IncidentStore
@@ -63,7 +73,9 @@ export interface IncidentStore {
   readScreenshot(incidentId: string): Promise<Buffer | undefined>
 }
 
-export const DEFAULT_SETTINGS: MonitorSettings = { defaultStallMinutes: 30, notifyWarnings: false, screenshot: true }
+export const DEFAULT_SETTINGS: MonitorSettings = { defaultStallMinutes: 30, notifyWarnings: false, screenshot: true, intervene: 'act', interventionsPerDay: 10 }
+
+const ACTION_WORD = { stop: '停止', retry: '重试', resolve: '忽略', resume: '继续' } as const
 
 const KEEP_INCIDENTS = 300
 const TAIL_LINES = 12
@@ -151,9 +163,10 @@ export class Monitor {
    * The user's stop / retry / ignore, from the UI or a chat channel.
    * @throws Error when the action does not apply (e.g. stopping a run that ended).
    */
-  async act(id: string, action: 'stop' | 'retry' | 'resolve', who: Who = { by: 'user' }): Promise<Incident> {
+  async act(id: string, action: 'stop' | 'retry' | 'resolve' | 'resume', who: Who = { by: 'user' }): Promise<Incident> {
     const incident = this.incident(id)
     const by = who.name === undefined ? '' : `（${who.name}）`
+    if (who.by === 'user') this.#deps.intervene?.()?.cancel?.(incident.id, ACTION_WORD[action])
     if (action === 'stop') {
       const run = this.#deps.runner.get(incident.runId)
       if (run.endedAt !== undefined) throw new Error(`这次运行已经结束（${run.outcome ?? run.state}）`)
@@ -165,6 +178,10 @@ export class Monitor {
       if (next.state === 'failed') throw new Error(`重新运行没有启动：${next.outcome ?? ''}`)
       this.#step(incident, { action: 'restart', by: who.by, ok: true, detail: `已重新运行${by}（${next.id}）` })
       this.#resolve(incident, `已重新运行${by}`)
+    } else if (action === 'resume') {
+      if (!(await this.#deps.intervene?.()?.resumeRun(incident.runId))) throw new Error('这次运行没有被暂停')
+      this.#step(incident, { action: 'resolve', by: who.by, ok: true, detail: `脚本继续运行${by}` })
+      this.#resolve(incident, `已继续${by}`)
     } else {
       this.#resolve(incident, `已忽略${by}`)
     }
@@ -278,24 +295,48 @@ export class Monitor {
     if (incident.severity === 'warning' && !this.#settings.notifyWarnings) return
     if (recovered) return
     let image: Buffer | undefined
-    if (this.#settings.screenshot && incident.severity === 'error') image = await this.#capture(incident)
+    if ((this.#settings.screenshot || this.#settings.intervene !== 'off') && incident.severity === 'error') image = await this.#capture(incident)
+
+    // L1/L2: the agent looks (and in `act` mode handles it, the script paused) before the user is told.
+    let agent: Awaited<ReturnType<InterventionPort['handle']>> | undefined
+    const port = this.#deps.intervene?.()
+    if (incident.severity === 'error' && this.#settings.intervene !== 'off' && port !== undefined && incident.status === 'open') {
+      if (port.countToday() >= this.#settings.interventionsPerDay) {
+        this.#step(incident, { action: 'intervene', by: 'rule', ok: false, detail: `今天的 agent 处理次数（${this.#settings.interventionsPerDay}）已用完，直接交给你` })
+      } else {
+        this.#step(incident, { action: 'intervene', by: 'agent', ok: true, detail: this.#settings.intervene === 'act' ? '交给 agent 处理（脚本暂停，agent 看屏幕并操作）' : '交给 agent 诊断' })
+        agent = await port.handle(incident, this.#settings.intervene, image)
+        const fixed = agent.state === 'resolved' || agent.state === 'retried'
+        this.#step(incident, { action: 'intervene', by: 'agent', ok: fixed, detail: `${AGENT_STATE[agent.state] ?? agent.state}：${agent.summary}` })
+        if (fixed) {
+          this.#resolve(incident, `agent 已处理：${agent.summary}`)
+          return
+        }
+        if (agent.state === 'taken-over' || incident.status !== 'open') return
+        if (agent.image !== undefined) image = agent.image
+      }
+    }
+
     const sink = this.#deps.notices()
     if (sink === undefined) return
     const run = safeGet(this.#deps.runner, incident.runId)
+    const paused = agent?.paused === true
     const actions: MonitorNotice['actions'] = [
+      ...(paused ? [{ id: 'resume' as const, label: '继续', style: 'primary' as const }] : []),
       ...(run?.endedAt === undefined ? [{ id: 'stop' as const, label: '停止', style: 'danger' as const }] : []),
-      { id: 'retry', label: '重试', style: 'primary' },
+      { id: 'retry', label: '重试', style: paused ? 'default' : 'primary' },
       { id: 'resolve', label: '忽略', style: 'default' },
     ]
-    const tried = incident.steps.filter(s => s.by === 'rule' && s.action !== 'notify').map(s => `${s.ok ? '✓' : '✗'} ${s.detail}`)
+    const tried = incident.steps.filter(s => s.by === 'rule' && s.action !== 'notify' && s.action !== 'intervene').map(s => `${s.ok ? '✓' : '✗'} ${s.detail}`)
     const text = [
       incident.detail,
+      ...(agent === undefined ? [] : ['', `agent 看过了：${agent.summary}`, ...(paused ? ['脚本暂停中：处理好以后点「继续」。'] : [])]),
       ...(tried.length > 0 ? ['', '已尝试自动处理：', ...tried] : []),
       '',
       '最近日志：',
       ...incident.lines.slice(-6),
       '',
-      '回复「停止」「重试」或「忽略」，或直接告诉我怎么处理。',
+      paused ? '回复「继续」「停止」「重试」或「忽略」，或直接告诉我怎么处理。' : '回复「停止」「重试」或「忽略」，或直接告诉我怎么处理。',
     ].join('\n')
     try {
       const reached = await sink.send({ id: incident.id, scope: 'monitor', title: incident.title, text, severity: incident.severity, actions, ...(image === undefined ? {} : { image }) })
@@ -401,6 +442,10 @@ export class Monitor {
   }
 }
 
+const AGENT_STATE: Readonly<Record<string, string>> = {
+  resolved: '已处理，脚本继续', retried: '已处理，重新运行', 'gave-up': '处理不了', timeout: '超时', failed: '没能开始', 'taken-over': '你接管了',
+}
+
 const TITLE: Readonly<Record<IncidentKind, string>> = {
   error: '出错', warning: '警告', failed: '运行失败', stalled: '可能卡住了', overtime: '运行超时',
 }
@@ -411,6 +456,8 @@ function withPatch(base: MonitorSettings, patch: SettingsPatch): MonitorSettings
     defaultStallMinutes: patch.defaultStallMinutes ?? base.defaultStallMinutes,
     notifyWarnings: patch.notifyWarnings ?? base.notifyWarnings,
     screenshot: patch.screenshot ?? base.screenshot,
+    intervene: patch.intervene ?? base.intervene,
+    interventionsPerDay: patch.interventionsPerDay ?? base.interventionsPerDay,
   }
 }
 

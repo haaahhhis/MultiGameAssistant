@@ -184,6 +184,15 @@ export class AdgEmulators extends Service {
     return done.join('；')
   }
 
+  /** Run `adb -s <address> shell <args>` (screen input for interventions). @returns stdout. @throws Error when adb fails. */
+  async shell(address: string, args: readonly string[], timeoutMs = 20_000): Promise<string> {
+    await this.ready
+    const result = await this.exec(await this.adb(), ['-s', address, 'shell', ...args], { timeoutMs })
+    if (result === undefined) throw new Error('找不到 adb')
+    if (result.code !== 0) throw new Error(`adb shell ${args[0] ?? ''} 失败：${(result.stderr || result.stdout).trim() || `退出代码 ${result.code}`}`)
+    return result.stdout
+  }
+
   /** Whether an Android app is running on the device (`pidof`). */
   async appRunning(address: string, pkg: string): Promise<boolean> {
     await this.ready

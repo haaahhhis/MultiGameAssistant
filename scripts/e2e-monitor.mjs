@@ -114,6 +114,7 @@ const until = async (what, check, ms = 30_000) => {
   }
 }
 
+let interveneBefore
 try {
   for (const cap of ['runs', 'monitor', 'notify', 'feishu']) if (!gateway.capabilities.includes(cap)) fail(`capability ${cap} missing; rebuild and restart pnpm dev:host`)
 
@@ -121,6 +122,10 @@ try {
   await saveFakeProvider(rpc, `${llm.url}/v1`)
   const { sessionId: uiSession } = await rpc('sessions/create', {})
   await until('the fake model route', () => rpc('session/selectModel', { sessionId: uiSession, provider: FAKE_PROVIDER, model: FAKE_MODEL }).then(() => true, () => false))
+
+  // M3 behaviour: what L0 leaves goes straight to the user (M5's agent step is e2e:intervene).
+  interveneBefore = (await rpc('monitor/settings', {})).intervene
+  if (interveneBefore !== undefined) await rpc('monitor/settings/set', { intervene: 'off' })
 
   // 1. Feishu
   await rpc('credentials/set', { ref: SECRET_REF, value: 'secret-ok' })
@@ -188,6 +193,7 @@ try {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)
   process.exitCode = 1
 } finally {
+  if (interveneBefore !== undefined) await rpc('monitor/settings/set', { intervene: interveneBefore }).catch(() => {})
   for (const run of (await rpc('runs/list', { scriptId: ID }).catch(() => ({ items: [] }))).items) if (run.endedAt === undefined) await rpc('runs/stop', { runId: run.id }).catch(() => {})
   await rpc('scripts/remove', { id: ID }).catch(() => {})
   await rpc('feishu/users/remove', { openId: USER }).catch(() => {})

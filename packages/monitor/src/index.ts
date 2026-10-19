@@ -11,6 +11,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@adg/gateway'
+import type {} from '@adg/intervene'
 import type {} from '@adg/notify'
 import type {} from '@adg/runner'
 import type {} from '@adg/script-registry'
@@ -20,7 +21,7 @@ import { Monitor } from './monitor.ts'
 import { desktopScreenshot } from './screenshot.ts'
 import { FileIncidentStore } from './store.ts'
 
-export { Monitor, DEFAULT_SETTINGS, type IncidentStore, type SettingsPatch, type MonitorDeps, type MonitorNotice, type NoticeSink } from './monitor.ts'
+export { Monitor, DEFAULT_SETTINGS, type IncidentStore, type InterventionPort, type SettingsPatch, type MonitorDeps, type MonitorNotice, type NoticeSink } from './monitor.ts'
 export { FileIncidentStore } from './store.ts'
 export { desktopScreenshot } from './screenshot.ts'
 
@@ -53,6 +54,7 @@ export class AdgMonitor extends Service {
       packOf: id => scripts.library.packOf(id),
       emulators: () => ctx.get('adgEmulators'),
       notices: () => ctx.get('adgNotify'),
+      intervene: () => ctx.get('adgIntervene'),
       desktopScreenshot,
       store: new FileIncidentStore(spec.dataDir),
       onIncident: incident => ctx.get('adgGateway')?.broadcast('monitor/incident', incident),
@@ -66,7 +68,7 @@ export class AdgMonitor extends Service {
     ctx.inject(['adgNotify'], scoped => {
       scoped.effect(() => scoped.adgNotify.onAction('monitor', async (noticeId, actionId, actor) => {
         await this.ready
-        if (actionId !== 'stop' && actionId !== 'retry' && actionId !== 'resolve') throw new Error(`未知操作 ${actionId}`)
+        if (actionId !== 'stop' && actionId !== 'retry' && actionId !== 'resolve' && actionId !== 'resume') throw new Error(`未知操作 ${actionId}`)
         const incident = await monitor.act(noticeId, actionId, { by: 'user', name: actor.name ?? actor.userId })
         return incident.resolution ?? '已处理'
       }), 'adg-monitor notice actions')

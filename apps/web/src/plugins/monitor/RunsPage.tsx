@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { Incident, MonitorSettings, RunInfo } from '@adg/protocol'
+import type { Incident, Intervention, MonitorSettings, RunInfo } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -8,10 +8,17 @@ import { useNow, useStore } from '../../hooks.ts'
 import { RunLog, RUN_STATE } from '../scripts/RunsCard.tsx'
 import { errorText } from '../scripts/data.ts'
 
+/** The agent's interventions by incident, and opening its session, for the incident rows. */
+const Agent = createContext<{ byIncident: ReadonlyMap<string, Intervention>; openSession: (id: string) => void }>({ byIncident: new Map(), openSession: () => {} })
+
+const IV_STATE: Readonly<Record<Intervention['state'], string>> = {
+  running: 'agent 正在处理', resolved: 'agent 已处理', retried: 'agent 处理后重新运行', 'gave-up': 'agent 处理不了', 'taken-over': '你接管了', timeout: 'agent 超时', failed: 'agent 没能开始',
+}
+
 const KIND: Readonly<Record<Incident['kind'], string>> = { error: '出错', warning: '警告', failed: '失败', stalled: '卡住', overtime: '超时' }
 
 /** Every run across scripts with its live log, and the incidents the monitor raised. */
-export function RunsPage({ client, openSettings }: PageProps) {
+export function RunsPage({ client, openSettings, openSession }: PageProps) {
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
   const [runs, setRuns] = useState<RunInfo[]>([])
@@ -19,6 +26,22 @@ export function RunsPage({ client, openSettings }: PageProps) {
   const [selected, setSelected] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [interventions, setInterventions] = useState<Intervention[]>([])
+  const capabilities = useStore(client.capabilities)
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('intervene')) return
+    let live = true
+    client.connection.call('intervene/list', { limit: 100 }).then(r => { if (live) setInterventions(r.items) }).catch(() => {})
+    return () => { live = false }
+  }, [client, status.state, capabilities])
+  useEffect(() => client.connection.on('intervene/changed', item => {
+    setInterventions(list => [item, ...list.filter(i => i.id !== item.id)])
+  }), [client])
+  const agent = useMemo(() => {
+    const byIncident = new Map<string, Intervention>()
+    for (const item of [...interventions].sort((a, b) => a.startedAt - b.startedAt)) if (item.incidentId !== undefined) byIncident.set(item.incidentId, item)
+    return { byIncident, openSession }
+  }, [interventions, openSession])
 
   useEffect(() => {
     if (status.state !== 'open') return
@@ -59,6 +82,7 @@ export function RunsPage({ client, openSettings }: PageProps) {
   }
 
   return (
+    <Agent.Provider value={agent}>
     <section className="main scripts-page">
       <header className="page-header">
         <div className="breadcrumb"><span>运行</span><span className="breadcrumb-divider">/</span><h1>运行监控</h1></div>
@@ -93,6 +117,7 @@ export function RunsPage({ client, openSettings }: PageProps) {
         </div>
       </div>
     </section>
+    </Agent.Provider>
   )
 }
 
@@ -130,10 +155,24 @@ function RunCard({ client, run, incidents, now, openRun }: { client: AdgClient; 
 }
 
 function IncidentRow({ client, incident, now, onOpen }: { client: AdgClient; incident: Incident; now: number; onOpen?: () => void }) {
+  const { byIncident, openSession } = useContext(Agent)
+  const iv = byIncident.get(incident.id)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shot, setShot] = useState<string | null>(null)
-  const act = async (action: 'stop' | 'retry' | 'resolve') => {
+  const takeover = async () => {
+    if (iv === undefined) return
+    setBusy(true)
+    setError(null)
+    try {
+      await client.connection.call('intervene/takeover', { id: iv.id })
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const act = async (action: 'stop' | 'retry' | 'resolve' | 'resume') => {
     setBusy(true)
     setError(null)
     try {
@@ -167,10 +206,21 @@ function IncidentRow({ client, incident, now, onOpen }: { client: AdgClient; inc
         </ul>
       )}
       {incident.status === 'resolved' && <div className="muted small">已处理：{incident.resolution}</div>}
+      {iv !== undefined && (
+        <div className={`agent-line ${iv.state}`}>
+          <span className="badge">{IV_STATE[iv.state]}{iv.mode === 'diagnose' ? '（只诊断）' : ''}</span>
+          {iv.summary !== undefined && <span className="small">{iv.summary}</span>}
+          {iv.paused && <span className="badge warn">脚本暂停中</span>}
+          <span className="spacer" />
+          {iv.sessionId !== undefined && <button className="link-button small" onClick={() => openSession(iv.sessionId!)}>看 agent 的处理过程</button>}
+          {iv.state === 'running' && <button className="small-button" disabled={busy} onClick={() => void takeover()}>我来接管</button>}
+        </div>
+      )}
       {incident.status === 'open' && (
         <div className="key-actions">
           {incident.screenshot && <button className="small-button" onClick={() => void showShot()}><Icon name="image" />{shot === null ? '截图' : '收起截图'}</button>}
           <span className="spacer" />
+          {iv?.paused === true && <button className="primary small-button" disabled={busy} onClick={() => void act('resume')}>继续</button>}
           <button className="danger-outline small-button" disabled={busy} onClick={() => void act('stop')}>停止</button>
           <button className="small-button" disabled={busy} onClick={() => void act('retry')}>重试</button>
           <button className="small-button" disabled={busy} onClick={() => void act('resolve')}>忽略</button>
@@ -197,6 +247,15 @@ function MonitorSettingsCard({ client }: { client: AdgClient }) {
             onBlur={e => void set({ defaultStallMinutes: Math.max(0, Math.min(1440, Math.round(Number(e.target.value) || 0))) })} />
           <label className="check-label"><input type="checkbox" checked={settings.screenshot} onChange={e => void set({ screenshot: e.target.checked })} />出错时截图（模拟器画面或桌面）并随通知发送</label>
           <label className="check-label"><input type="checkbox" checked={settings.notifyWarnings} onChange={e => void set({ notifyWarnings: e.target.checked })} />警告也推送（默认只推送出错、失败、卡住）</label>
+          <label className="field-label" htmlFor="intervene-mode">自动处理解决不了的问题，先交给 agent（需要能看图的模型）</label>
+          <select id="intervene-mode" className="text-input plain" value={settings.intervene} onChange={e => void set({ intervene: e.target.value as MonitorSettings['intervene'] })}>
+            <option value="act">诊断并处理：暂停脚本，agent 看屏幕、点击和输入来解决（推荐）</option>
+            <option value="diagnose">只诊断：agent 看截图说明原因，由你决定</option>
+            <option value="off">关闭：直接通知我</option>
+          </select>
+          <label className="field-label" htmlFor="intervene-cap">每天最多交给 agent 几次（控制模型费用）</label>
+          <input id="intervene-cap" className="text-input plain" type="number" min={0} max={200} defaultValue={settings.interventionsPerDay}
+            onBlur={e => void set({ interventionsPerDay: Math.max(0, Math.min(200, Math.round(Number(e.target.value) || 0))) })} />
         </>
       )}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}

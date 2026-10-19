@@ -1068,3 +1068,8 @@ button.palette-item:hover:not(:disabled) { background: var(--hover); border-colo
 button.preset-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); text-align: left; font-weight: 400; }
 button.preset-option:hover:not(:disabled) { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
 .credential-inline { display: flex; flex-direction: column; gap: 6px; }
+
+/* M5: interventions */
+.agent-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 8px; border-radius: var(--r-md); background: var(--sunken); }
+.agent-line.running .badge:first-child { color: var(--accent); }
+.agent-line.resolved .badge:first-child, .agent-line.retried .badge:first-child { color: var(--ok); }

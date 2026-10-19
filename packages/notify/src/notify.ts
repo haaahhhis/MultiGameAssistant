@@ -59,6 +59,8 @@ export interface Channel {
   /** Deliver to the channel's recipients. @throws Error when it could not. */
   send(notice: Notice): Promise<void>
   update?(id: string, patch: NoticePatch): Promise<void>
+  /** Deliver to one person only (a reply to something they asked for). */
+  sendTo?(userId: string, notice: Notice): Promise<void>
   /** Approval cards, when the channel and its settings allow them. */
   readonly approvals?: {
     active(): boolean
@@ -69,9 +71,10 @@ export interface Channel {
 
 /** The slice of dsh's session controller a conversation needs. */
 export interface Conversations {
-  /** Send `text` as the person's message in `sessionId` and resolve with the agent's final answer. */
-  ask(sessionId: string, text: string, signal: AbortSignal): Promise<string>
-  create(title: string): Promise<string>
+  /** Send `text` (and PNG images) as a message in `sessionId` and resolve with the agent's final answer. */
+  ask(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
+  /** A new session; `defaultModel`: use the default model (else the one last used in the UI). */
+  create(title: string, options?: { defaultModel?: boolean }): Promise<string>
   exists(sessionId: string): Promise<boolean>
 }
 
@@ -79,7 +82,7 @@ export interface NotifyOptions {
   readonly conversations: () => Conversations | undefined
   readonly respondApproval: (approvalId: string, decision: 'allow-once' | 'reject') => boolean
   /** Person → dsh session, persisted by the caller. */
-  readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void> }
+  readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void>; keyOf?(sessionId: string): string | undefined }
   readonly changed: () => void
   readonly log: { info(message: string): void; warn(message: string): void }
   readonly now?: () => number
@@ -220,6 +223,20 @@ export class Notify {
     const open = [...this.#sent.values()].filter(s => s.open && now - s.at < REPLY_WINDOW_MS && matches(s) !== undefined)
     if (open.length !== 1) return undefined
     return { notice: open[0]!.notice, action: matches(open[0]!)!.id }
+  }
+
+  /**
+   * Send to the person whose conversation `sessionId` is (e.g. the screenshot
+   * they asked for in Feishu). @returns false when the session is not a chat-channel conversation.
+   */
+  async sendToSession(sessionId: string, notice: Notice): Promise<boolean> {
+    const key = this.#options.sessions.keyOf?.(sessionId)
+    if (key === undefined) return false
+    const [channelId, ...rest] = key.split(':')
+    const channel = this.#channels.get(channelId!)
+    if (channel?.sendTo === undefined || channel.status().state !== 'ready') return false
+    await channel.sendTo(rest.join(':'), notice)
+    return true
   }
 
   // ── approvals ─────────────────────────────────────────────────────────

@@ -49,6 +49,7 @@ export class AdgNotify extends Service {
       respondApproval: (id, decision) => ctx.get('adgGateway')?.respondApproval(id, decision) ?? false,
       sessions: {
         get: key => this.sessionMap[key],
+        keyOf: sessionId => Object.entries(this.sessionMap).find(([, id]) => id === sessionId)?.[0],
         set: async (key, sessionId) => {
           this.sessionMap[key] = sessionId
           await mkdir(join(spec.dataDir, 'notify'), { recursive: true })
@@ -100,6 +101,10 @@ export class AdgNotify extends Service {
 
   update(id: string, patch: NoticePatch): Promise<void> {
     return this.notify.update(id, patch)
+  }
+
+  sendToSession(sessionId: string, notice: Notice): Promise<boolean> {
+    return this.notify.sendToSession(sessionId, notice)
   }
 
   async inbound(message: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<string> {

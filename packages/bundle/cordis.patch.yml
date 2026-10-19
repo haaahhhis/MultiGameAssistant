@@ -65,6 +65,14 @@
       config:
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
 
+    # M5: screen tools for any image-capable model (emulator over ADB, the
+    # Windows desktop and windows) and interventions: what L0 cannot settle,
+    # the agent handles with the script paused; the `intervene` capability.
+    - id: adg-intervene
+      name: '@adg/intervene'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
     # M3: the chat layer — notices with buttons, replies, conversations with
     # the agent, approval cards; the `notify` capability.
     - id: adg-notify
