@@ -2,6 +2,8 @@
 export interface DesktopBridge {
   /** A native file dialog. @returns the chosen file's path, or null when cancelled. */
   pickFile(options: { title?: string; defaultPath?: string | undefined; filterName?: string; extensions?: string[] }): Promise<string | null>
+  /** Put a PNG (a data: URL) on the system clipboard, when the page's own clipboard is refused. */
+  copyImage?(dataUrl: string): Promise<void>
 }
 
 export function desktop(): DesktopBridge | undefined {

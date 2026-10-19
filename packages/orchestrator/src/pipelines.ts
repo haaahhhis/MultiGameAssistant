@@ -94,8 +94,8 @@ export class Pipelines {
     this.#changed()
   }
 
-  run(id: string, trigger: PipelineTrigger): PipelineRun {
-    return this.#engine.start(this.get(id), trigger)
+  run(id: string, trigger: PipelineTrigger, from?: string): PipelineRun {
+    return this.#engine.start(this.get(id), trigger, { from })
   }
 
   runs(pipelineId?: string, limit = 30): PipelineRun[] {

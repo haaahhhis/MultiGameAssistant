@@ -250,6 +250,7 @@ export class Interventions {
       '',
       '最近日志：',
       ...incident.lines.slice(-10),
+      `（完整日志用 script_run_log 查看，run_id 是 ${incident.runId}，可以搜索文字或只看错误）`,
       '',
       '附图是发现问题时的截图。',
       '',

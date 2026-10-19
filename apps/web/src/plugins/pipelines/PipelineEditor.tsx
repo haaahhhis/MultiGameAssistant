@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Background, Controls, Handle, Position, ReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { AdgClient } from '@adg/client-core'
@@ -83,7 +83,13 @@ const newId = (prefix: string, pipeline: Pipeline) => {
   }
 }
 
-export function PipelineEditor({ client, pipeline, onChange, run, check }: { client: AdgClient; pipeline: Pipeline; onChange: (p: Pipeline) => void; run: PipelineRun | undefined; check: PipelineCheck | null }) {
+export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom, idle }: {
+  client: AdgClient; pipeline: Pipeline; onChange: (p: Pipeline) => void; run: PipelineRun | undefined; check: PipelineCheck | null
+  /** Run from this node (it and what follows); absent while it cannot run. */
+  runFrom?: ((nodeId: string) => void) | undefined
+  /** The side panel while no node or edge is selected (the pipeline's own settings). */
+  idle?: ReactNode
+}) {
   const theme = useTheme()
   const [tasksRevision, setTasksRevision] = useState(0)
   const scripts = useScriptTasks(client, tasksRevision)
@@ -227,7 +233,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
       </div>
 
       <aside className="pipeline-inspector">
-        {node !== undefined && <NodeInspector client={client} node={node} pipeline={pipeline} run={run} scripts={scripts} onChange={replaceNode} onTasksChanged={() => setTasksRevision(r => r + 1)}
+        {node !== undefined && <NodeInspector client={client} node={node} pipeline={pipeline} run={run} scripts={scripts} onChange={replaceNode} onTasksChanged={() => setTasksRevision(r => r + 1)} runFrom={runFrom}
           onRemove={() => { onChange({ ...pipeline, nodes: pipeline.nodes.filter(n => n.id !== node.id), edges: pipeline.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelectedNode(null) }} />}
         {edge !== undefined && (
           <section className="inspector-section">
@@ -243,15 +249,19 @@ export function PipelineEditor({ client, pipeline, onChange, run, check }: { cli
             <button className="danger-outline small-button" onClick={() => { onChange({ ...pipeline, edges: pipeline.edges.filter((_x, i) => i !== selectedEdge) }); setSelectedEdge(null) }}>删除连线</button>
           </section>
         )}
-        {node === undefined && edge === undefined && <p className="muted small pad">点一个节点或连线来修改。选中后按 Delete 也能删除。</p>}
+        {node === undefined && edge === undefined && (idle ?? <p className="muted small pad">点一个节点或连线来修改。选中后按 Delete 也能删除。</p>)}
+        {(node !== undefined || edge !== undefined) && idle !== undefined && (
+          <button className="link-button small back-to-pipeline" onClick={() => { setSelectedNode(null); setSelectedEdge(null) }}>← 流水线设置</button>
+        )}
       </aside>
     </div>
   )
 }
 
-function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemove, onTasksChanged }: {
+function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemove, onTasksChanged, runFrom }: {
   client: AdgClient; node: PipelineNode; pipeline: Pipeline; run: PipelineRun | undefined
   scripts: ReturnType<typeof useScriptTasks>; onChange: (n: PipelineNode) => void; onRemove: () => void; onTasksChanged: () => void
+  runFrom?: ((nodeId: string) => void) | undefined
 }) {
   const [error, setError] = useState<string | null>(null)
   const state = run?.nodes[node.id]
@@ -307,17 +317,24 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
 
       {node.kind !== 'gate' && node.kind !== 'notify' && (
         <>
-          <label className="field-label" htmlFor="node-fail">失败时</label>
-          <select id="node-fail" className="text-input plain" value={policy === undefined ? 'inherit' : `${policy.retries}:${policy.then}`}
-            onChange={e => {
-              const { onFailure: _f, ...rest } = node
-              if (e.target.value === 'inherit') return onChange(rest as PipelineNode)
-              const [retries, then] = e.target.value.split(':')
-              onChange({ ...rest, onFailure: { retries: Number(retries), then: then as 'continue' | 'stop' } } as PipelineNode)
-            }}>
-            <option value="inherit">按流水线的设置（{pipeline.onFailure.retries > 0 ? `重试 ${pipeline.onFailure.retries} 次后` : ''}{pipeline.onFailure.then === 'stop' ? '停止' : '继续'}）</option>
-            {[0, 1, 2].flatMap(r => (['continue', 'stop'] as const).map(t => <option key={`${r}:${t}`} value={`${r}:${t}`}>{r === 0 ? '' : `重试 ${r} 次，仍失败就`}{t === 'continue' ? '继续其他分支' : '停止流水线'}</option>))}
-          </select>
+          <label className="field-label" htmlFor="node-retries">失败时</label>
+          <div className="select-stack">
+            <select id="node-retries" className="text-input plain" aria-label="重试次数" value={policy === undefined ? 'inherit' : String(policy.retries)}
+              onChange={e => {
+                const { onFailure: _f, ...rest } = node
+                if (e.target.value === 'inherit') return onChange(rest as PipelineNode)
+                onChange({ ...rest, onFailure: { retries: Number(e.target.value), then: policy?.then ?? pipeline.onFailure.then } } as PipelineNode)
+              }}>
+              <option value="inherit">按流水线的设置</option>
+              {[0, 1, 2, 3, 4, 5].map(r => <option key={r} value={r}>{r === 0 ? '不重试' : `重试 ${r} 次`}</option>)}
+            </select>
+            <select className="text-input plain" aria-label="仍失败时" disabled={policy === undefined} value={(policy ?? pipeline.onFailure).then}
+              onChange={e => onChange({ ...node, onFailure: { retries: policy?.retries ?? pipeline.onFailure.retries, then: e.target.value as 'continue' | 'stop' } } as PipelineNode)}>
+              <option value="continue">然后继续其他分支</option>
+              <option value="stop">然后停止流水线</option>
+            </select>
+          </div>
+          {policy === undefined && <p className="muted small">流水线的设置：{pipeline.onFailure.retries > 0 ? `重试 ${pipeline.onFailure.retries} 次，` : '不重试，'}然后{pipeline.onFailure.then === 'stop' ? '停止流水线' : '继续其他分支'}</p>}
         </>
       )}
 
@@ -336,6 +353,12 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
         </div>
       )}
       {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}
+      {runFrom !== undefined && (
+        <div className="run-from">
+          <button className="small-button" onClick={() => runFrom(node.id)}><Icon name="arrow" />从这里开始运行</button>
+          <span className="muted small">这一步和它后面的会运行，前面的不运行（例如前面已经跑过了）</span>
+        </div>
+      )}
       <button className="danger-outline small-button" onClick={onRemove}>删除这个节点</button>
     </section>
   )

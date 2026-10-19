@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { AdgClient, ChatImage } from '@adg/client-core'
+import { ImageViewer } from './ImageViewer.tsx'
 
 /** The client images are fetched through; provided by the view that shows them. */
 export const ImageClient = createContext<AdgClient | null>(null)
@@ -37,14 +38,10 @@ export function StoredImage({ image }: { image: ChatImage }) {
   if (src === null) return <span className="stored-image loading" style={{ aspectRatio: `${image.width} / ${image.height}` }} />
   return (
     <>
-      <button className="stored-image" onClick={() => setZoomed(true)} title="点击查看大图">
+      <button className="stored-image" onClick={() => setZoomed(true)} title="点击放大、标注、复制">
         <img src={src} alt={label} width={image.width} height={image.height} />
       </button>
-      {zoomed && (
-        <div className="image-zoom" role="dialog" aria-label={label} onClick={() => setZoomed(false)}>
-          <img src={src} alt={label} />
-        </div>
-      )}
+      {zoomed && <ImageViewer src={src} width={image.width} height={image.height} name={image.name ?? 'screenshot.png'} onClose={() => setZoomed(false)} />}
     </>
   )
 }

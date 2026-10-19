@@ -23,6 +23,7 @@ export const TOOL_NAMES = {
   configImport: 'script_config_import',
   settings: 'script_settings',
   choiceCreate: 'script_choice_create',
+  runLog: 'script_run_log',
   gameLocate: 'game_locate',
   gamePathSet: 'game_path_set',
 } as const
@@ -248,6 +249,35 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
         const a = parse(z.object({ id: ScriptId.nullish(), run_id: z.string().nullish() }), args)
         if (a.run_id !== undefined && a.run_id !== null) return brief(runner, a.run_id, 80)
         return { runs: runner.list(a.id ?? undefined).slice(0, 10).map(r => brief(runner, r.id, 5)) }
+      },
+    }),
+    tool({
+      name: TOOL_NAMES.runLog,
+      description: '读一次运行保存下来的完整日志（包括程序重启前的运行），用来排查问题：可以按文字或 /正则/ 搜索、只看错误或警告、从某一行开始往后翻。script_runs 只给最后几行，这里能看全部。',
+      properties: {
+        run_id: { type: 'string', description: '运行 id（script_runs 或异常记录里有）。' },
+        search: { type: 'string', description: '要找的文字，或 /正则/（不区分大小写）。' },
+        levels: { type: 'array', items: { type: 'string', enum: ['error', 'warning', 'done', 'progress', 'info'] }, description: '只看这些级别（日志规则标出来的）。' },
+        from_line: { type: 'integer', description: '从第几行开始往后看（1 开始）；不填就看最后的。' },
+        limit: { type: 'integer', description: '最多返回几行，默认 120，最多 500。' },
+      },
+      required: ['run_id'],
+      readOnly: true,
+      kind: 'read',
+      title: a => `查看运行日志：${String(a['run_id'] ?? '')}${a['search'] === undefined ? '' : ` · ${String(a['search'])}`}`,
+      execute: async args => {
+        const a = parse(z.object({
+          run_id: z.string().min(1), search: z.string().nullish(), levels: z.array(z.enum(['error', 'warning', 'done', 'progress', 'info'])).nullish(),
+          from_line: z.number().int().min(1).nullish(), limit: z.number().int().min(1).max(500).nullish(),
+        }), args)
+        const log = await runner.readLog(a.run_id, { search: a.search ?? undefined, levels: a.levels ?? undefined, fromLine: a.from_line ?? undefined, limit: a.limit ?? 120 })
+        let info
+        try { info = runner.get(a.run_id) } catch { info = undefined }
+        return {
+          run: info === undefined ? a.run_id : { id: info.id, script: info.scriptId, task: info.taskId, state: info.state, outcome: info.outcome, started: new Date(info.startedAt).toLocaleString('zh-CN', { hour12: false }) },
+          total_lines: log.total, matched: log.matched, file: log.file,
+          lines: log.lines.map(l => `${l.n} ${new Date(l.at).toLocaleTimeString('zh-CN', { hour12: false })} [${l.source}]${l.level === undefined ? '' : `[${l.level}]`} ${l.text}`),
+        }
       },
     }),
     tool({

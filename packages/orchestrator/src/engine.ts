@@ -40,6 +40,8 @@ export interface EngineDeps {
 }
 
 interface Active {
+  /** Passed over because the run started from a later node. */
+  readonly passed: ReadonlySet<string>
   run: PipelineRun
   pipeline: Pipeline
   controller: AbortController
@@ -104,21 +106,38 @@ export class Engine {
    * Start a pipeline; returns at once with the run.
    * @throws Error when the check finds errors or the pipeline is already running.
    */
-  start(pipeline: Pipeline, trigger: PipelineTrigger): PipelineRun {
+  start(pipeline: Pipeline, trigger: PipelineTrigger, options: { from?: string | undefined } = {}): PipelineRun {
     const check = checkPipeline(pipeline, this.#deps.library)
     const firstError = check.issues.find(i => i.level === 'error')
     if (firstError !== undefined) throw new Error(`流水线有问题，没有运行：${firstError.message}`)
     if (this.isRunning(pipeline.id)) throw new Error(`「${pipeline.name}」正在运行，等它结束再运行`)
+    // Starting from a node: it and everything after it run; the rest is passed over, and counts as done for what follows.
+    const fromNode = options.from === undefined ? undefined : pipeline.nodes.find(n => n.id === options.from)
+    if (options.from !== undefined && fromNode === undefined) throw new Error(`流水线里没有节点 ${options.from}`)
+    if (fromNode?.kind === 'end') throw new Error('不能从「结束」开始')
+    const passed = new Set<string>()
+    if (fromNode !== undefined && fromNode.kind !== 'start') {
+      const keep = new Set([fromNode.id])
+      for (let grew = true; grew;) {
+        grew = false
+        for (const e of pipeline.edges) if (keep.has(e.from) && !keep.has(e.to)) { keep.add(e.to); grew = true }
+      }
+      for (const n of pipeline.nodes) if (!keep.has(n.id) && n.kind !== 'end') passed.add(n.id)
+    }
     const now = this.#now()
+    const label = fromNode === undefined || passed.size === 0 ? undefined : nodeLabel(fromNode, this.#deps.library)
     const run: PipelineRun = {
       id: `pl-${new Date(now).toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`,
       pipelineId: pipeline.id, pipelineName: pipeline.name, trigger, state: 'running',
-      nodes: Object.fromEntries(pipeline.nodes.map(n => [n.id, { state: 'pending', runIds: [], attempts: 0 } satisfies NodeRun])),
+      ...(label === undefined ? {} : { from: fromNode!.id }),
+      nodes: Object.fromEntries(pipeline.nodes.map(n => [n.id, (passed.has(n.id)
+        ? { state: 'skipped', detail: `从「${label}」开始，没有运行`, runIds: [], attempts: 0 }
+        : { state: 'pending', runIds: [], attempts: 0 }) satisfies NodeRun])),
       startedAt: now,
     }
     let resolve!: (run: PipelineRun) => void
     const finished = new Promise<PipelineRun>(r => { resolve = r })
-    const active: Active = { run, pipeline, controller: new AbortController(), executing: new Set(), gates: new Map(), usedEmulator: false, pumping: false, again: false, retryWaiting: false, finished, resolve }
+    const active: Active = { run, pipeline, passed, controller: new AbortController(), executing: new Set(), gates: new Map(), usedEmulator: false, pumping: false, again: false, retryWaiting: false, finished, resolve }
     this.#active.set(run.id, active)
     this.#deps.log.info(`pipeline ${pipeline.id} started (${trigger.kind}) as ${run.id}`)
     this.#emit(active)
@@ -184,7 +203,7 @@ export class Engine {
       // 结束 waits for everything else, whatever its edges say; it is never skipped.
       if (node.kind === 'end' && pipeline.nodes.some(n => n.id !== node.id && !final(run.nodes[n.id]!.state))) continue
       if (incoming.some(e => !final(run.nodes[e.from]!.state))) continue
-      const blocked = node.kind === 'end' ? undefined : incoming.find(e => !satisfied(e.when, run.nodes[e.from]!.state))
+      const blocked = node.kind === 'end' ? undefined : incoming.find(e => !active.passed.has(e.from) && !satisfied(e.when, run.nodes[e.from]!.state))
       if (blocked !== undefined) {
         const from = pipeline.nodes.find(n => n.id === blocked.from)!
         this.#set(active, node.id, { state: 'skipped', detail: `「${nodeLabel(from, this.#deps.library)}」${STATE_WORD[run.nodes[blocked.from]!.state]}，按连线条件跳过` })
@@ -326,7 +345,7 @@ export class Engine {
   async #finish(active: Active): Promise<void> {
     const { run, pipeline } = active
     if (run.state !== 'running') return
-    const states = pipeline.nodes.filter(n => !isMarker(n)).map(n => run.nodes[n.id]!.state)
+    const states = pipeline.nodes.filter(n => !isMarker(n) && !active.passed.has(n.id)).map(n => run.nodes[n.id]!.state)
     const count = (s: NodeRun['state']) => states.filter(x => x === s).length
     run.state = active.cancelKind === 'user' ? 'cancelled' : count('failed') > 0 ? 'failed' : 'succeeded'
     run.outcome = [
@@ -335,6 +354,7 @@ export class Engine {
       ...(count('skipped') > 0 ? [`${count('skipped')} 个跳过`] : []),
       ...(count('cancelled') > 0 ? [`${count('cancelled')} 个取消`] : []),
     ].join('，') + (active.cancelReason === undefined ? '' : `（${active.cancelReason}）`)
+      + (run.from === undefined ? '' : `；从「${nodeLabel(pipeline.nodes.find(n => n.id === run.from)!, this.#deps.library)}」开始`)
     run.endedAt = this.#now()
     this.#active.delete(run.id)
     this.#deps.log.info(`pipeline run ${run.id} ${run.state}: ${run.outcome}`)

@@ -104,7 +104,8 @@ try {
   defaultBefore = (await rpc('models/catalog', {})).default
   await until('the fake model route', () => rpc('models/setDefault', { provider: FAKE_PROVIDER, model: FAKE_MODEL }).then(() => true, () => false))
   settingsBefore = await rpc('monitor/settings', {})
-  await rpc('monitor/settings/set', { intervene: 'act', interventionsPerDay: 10 })
+  // Earlier runs today count towards the daily cap: lift it for the check (restored at the end).
+  await rpc('monitor/settings/set', { intervene: 'act', interventionsPerDay: 200 })
   const imported = await rpc('scripts/import', { path: dir, id: ID, name: 'E2E 干预假工具' })
   if (imported.packId !== ID) fail('pack not attached')
   step('script imported; the fake model is the default and can see images')

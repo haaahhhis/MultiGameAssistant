@@ -100,7 +100,7 @@ export class AdgOrchestrator extends Service {
           'pipelines/save': async params => { await this.ready; return pipelines.save((params as RequestParams<'pipelines/save'>).pipeline, 'user') },
           'pipelines/remove': async params => { await this.ready; await pipelines.remove((params as RequestParams<'pipelines/remove'>).id); return {} },
           'pipelines/check': async params => { await this.ready; return pipelines.check((params as RequestParams<'pipelines/check'>).pipeline) },
-          'pipelines/run': async params => { await this.ready; return pipelines.run((params as RequestParams<'pipelines/run'>).id, { kind: 'manual' }) },
+          'pipelines/run': async params => { await this.ready; const p = params as RequestParams<'pipelines/run'>; return pipelines.run(p.id, { kind: 'manual' }, p.from) },
           'pipelines/cancel': params => { engine.cancel((params as RequestParams<'pipelines/cancel'>).runId); return {} },
           'pipelines/runs': async params => {
             await this.ready

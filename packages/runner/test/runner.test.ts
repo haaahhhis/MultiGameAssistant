@@ -76,7 +76,7 @@ function scriptDir(): string {
   return dir
 }
 
-function setup(dirs: Record<string, string>, bridge?: EmulatorBridge, pack = PACK) {
+function setup(dirs: Record<string, string>, bridge?: EmulatorBridge, pack = PACK, dataDir = mkdtempSync(join(tmpdir(), 'adg-run-data-'))) {
   const manifest = parseManifest(pack)
   const states: RunInfo[] = []
   const runner = new Runner({
@@ -84,7 +84,7 @@ function setup(dirs: Record<string, string>, bridge?: EmulatorBridge, pack = PAC
       get: id => ({ id, name: id, source: { kind: 'local', path: dirs[id]! }, dir: dirs[id], versions: [], addedAt: 0 }) as ScriptInfo,
       packOf: () => ({ manifest }),
     },
-    dataDir: mkdtempSync(join(tmpdir(), 'adg-run-data-')),
+    dataDir,
     ...(bridge === undefined ? {} : { emulators: () => bridge }),
     onState: run => states.push(run),
     onLog: () => {},
@@ -202,4 +202,35 @@ test('without a declared settings window, a settings session opens the main prog
   assert.equal(session.state, 'succeeded', session.outcome)
   assert.match(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /H8-4/)
   assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
+})
+
+test('run logs are saved whole: searched and paged by the agent, and still there after a restart', async () => {
+  const dir = scriptDir()
+  writeFileSync(join(dir, 'long.json'), JSON.stringify({ steps: [...Array.from({ length: 2500 }, (_, i) => ({ log: `line ${i + 1}` })), { log: '任务出错: 识别失败' }, { exit: 0 }] }))
+  const dataDir = mkdtempSync(join(tmpdir(), 'adg-run-data-'))
+  const { runner } = setup({ tool: dir }, undefined, PACK, dataDir)
+  const run = await runner.finished((await runner.start('tool', 'cli', { scenario: 'long.json' })).id)
+  assert.equal(runner.logs(run.id, 5000).length, 2000, 'memory keeps the last 2000 lines')
+  const all = await runner.readLog(run.id, { limit: 2000 })
+  assert.ok(all.total > 2500, `the file has every line (${all.total})`)
+  const first = await runner.readLog(run.id, { fromLine: 1, limit: 3 })
+  assert.deepEqual(first.lines.map(l => l.n), [1, 2, 3], 'paging from the first line')
+  assert.ok(first.lines.some(l => l.text === 'line 1'), 'the first lines are not lost')
+  assert.deepEqual((await runner.readLog(run.id, { search: '/^line 1$/' })).lines.map(l => l.text), ['line 1'], 'early lines are searchable')
+  const errors = await runner.readLog(run.id, { levels: ['error'] })
+  assert.deepEqual(errors.lines.map(l => [l.text, l.level]), [['任务出错: 识别失败', 'error']])
+  assert.equal((await runner.readLog(run.id, { search: '/line 24\\d\\d$/' })).matched, 100, 'a /regex/ search')
+
+  // A run cut off by a crash: its record says running.
+  const cut = join(dataDir, 'runs', 'run-cut')
+  mkdirSync(cut, { recursive: true })
+  writeFileSync(join(cut, 'run.json'), JSON.stringify({ ...run, id: 'run-cut', state: 'running', endedAt: undefined, startedAt: Date.now() }))
+  await runner.dispose()
+
+  const again = setup({ tool: dir }, undefined, PACK, dataDir).runner
+  await again.loadHistory()
+  assert.deepEqual(again.list().map(r => [r.id, r.state]).sort(), [[run.id, 'failed'], ['run-cut', 'failed']].sort())
+  assert.equal(again.get('run-cut').outcome, '程序退出时中断')
+  assert.equal((await again.readLog(run.id, { levels: ['error'] })).lines.length, 1, 'the log of a run from before the restart')
+  await again.dispose()
 })

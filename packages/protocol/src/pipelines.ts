@@ -168,6 +168,8 @@ export const PipelineRun = z.object({
   pipelineId: z.string(),
   pipelineName: z.string(),
   trigger: PipelineTrigger,
+  /** Started from this node: it and what follows ran, the rest was passed over. */
+  from: z.string().optional(),
   state: z.enum(['running', 'succeeded', 'failed', 'cancelled']),
   nodes: z.record(z.string(), NodeRun),
   startedAt: z.number(),
@@ -255,7 +257,8 @@ export const PipelineRequests = {
   },
   'pipelines/run': {
     capability: PIPELINES_CAPABILITY,
-    params: z.object({ id: PipelineId }),
+    /** `from`: start at this node (it and what follows run; the rest is passed over). */
+    params: z.object({ id: PipelineId, from: NodeId.optional() }),
     result: PipelineRun,
   },
   'pipelines/cancel': {

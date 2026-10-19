@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isMarker, withStartEnd } from '@adg/protocol'
 import type { Pipeline, PipelineCheck, PipelineRun, PipelineSummary } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
@@ -106,10 +106,10 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
     setCheck(result.check)
     setSelected(result.pipeline.id)
   })
-  const runNow = () => act('run', async () => {
+  const runNow = (from?: string) => act('run', async () => {
     if (pipeline === null) return
     if (dirty || isNew) await save()
-    const started = await client.connection.call('pipelines/run', { id: pipeline.id })
+    const started = await client.connection.call('pipelines/run', { id: pipeline.id, ...(from === undefined ? {} : { from }) })
     setShownRun(started.id)
   })
   const remove = () => act('remove', async () => {
@@ -120,43 +120,25 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
   })
 
   const update = useCallback((next: Pipeline) => setPipeline(next), [])
+  const create = () => { const p = blank(); setPipeline(p); setSaved(''); setSelected(p.id); setRuns([]); setCheck(null) }
 
   return (
     <section className="main scripts-page pipelines-page">
       <header className="page-header">
         <div className="breadcrumb"><span>编排</span><span className="breadcrumb-divider">/</span><h1>流水线</h1></div>
+        <PipelineSwitcher list={list ?? []} current={pipeline} isNew={isNew} now={now} onPick={setSelected} />
         <div className="page-actions">
           <button className="small-button" onClick={() => openSettings()}><Icon name="settings" />定时与自启</button>
-          <button className="primary small-button" onClick={() => { const p = blank(); setPipeline(p); setSaved(''); setSelected(p.id); setRuns([]); setCheck(null) }}><Icon name="plus" />新建流水线</button>
+          <button className="primary small-button" onClick={create}><Icon name="plus" />新建流水线</button>
         </div>
       </header>
-      <div className="scripts-body">
-        <aside className="scripts-list" aria-label="流水线列表">
-          <div className="sidebar-label">流水线（{list?.length ?? 0}）</div>
-          {list !== null && list.length === 0 && !isNew && (
-            <div className="sidebar-empty"><Icon name="flow" /><span>还没有流水线</span><span>新建一条，或对 agent 说「先跑方舟日常，同时跑三月七，都完了发飞书」</span></div>
-          )}
-          {isNew && pipeline !== null && (
-            <button className="script-row active"><span className="script-row-main"><span className="script-row-name">{pipeline.name}</span><span className="muted small">未保存</span></span></button>
-          )}
-          {list?.map(p => (
-            <button key={p.id} className={`script-row ${p.id === pipeline?.id && !isNew ? 'active' : ''}`} onClick={() => setSelected(p.id)}>
-              <span className="script-row-main">
-                <span className="script-row-name">{p.name}</span>
-                <span className="muted small">
-                  {p.nodes} 个节点
-                  {p.schedule.enabled && p.schedule.times.length > 0 ? ` · 每天 ${p.schedule.times.join('、')}` : ''}
-                  {p.lastRun === undefined ? '' : ` · ${relativeTime(p.lastRun.startedAt, now)}`}
-                </span>
-              </span>
-              {p.draft ? <span className="badge warn">草稿</span> : p.lastRun !== undefined ? <span className={`badge ${RUN_STATE[p.lastRun.state][0]}`}>{RUN_STATE[p.lastRun.state][1]}</span> : null}
-            </button>
-          ))}
-        </aside>
-
-        <div className="pipeline-main">
+      <div className="pipeline-main">
           {pipeline === null ? (
-            <div className="empty"><Icon name="flow" /><p>选择一条流水线，或新建一条。</p></div>
+            <div className="empty"><Icon name="flow" />
+              {list !== null && list.length === 0
+                ? <><p>还没有流水线。</p><p className="muted small">新建一条，或对 agent 说「先跑方舟日常，同时跑三月七，都完了发飞书」</p></>
+                : <p>在上面选一条流水线，或新建一条。</p>}
+            </div>
           ) : (
             <>
               <div className="pipeline-toolbar">
@@ -171,15 +153,11 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
                 <button className="small-button" disabled={busy !== null || activeRun !== undefined} onClick={() => { if (confirm(`删除流水线「${pipeline.name}」？`)) void remove() }}>删除</button>
               </div>
               {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
-              <PipelineEditor key={pipeline.id} client={client} pipeline={pipeline} onChange={update} run={run} check={check} />
-              <div className="pipeline-panels">
-                <ChecksCard check={check} pipeline={pipeline} />
-                <RunsList runs={runs} shown={run?.id} onShow={setShownRun} now={now} />
-                <ScheduleCard pipeline={pipeline} others={list ?? []} onChange={update} />
-              </div>
+              <PipelineEditor key={pipeline.id} client={client} pipeline={pipeline} onChange={update} run={run} check={check}
+                runFrom={activeRun !== undefined || busy !== null || check?.ok === false ? undefined : nodeId => void runNow(nodeId)}
+                idle={<PipelineSide pipeline={pipeline} check={check} runs={runs} shownRun={run?.id} onShowRun={setShownRun} others={list ?? []} onChange={update} now={now} />} />
             </>
           )}
-        </div>
       </div>
     </section>
   )
@@ -192,7 +170,7 @@ function ChecksCard({ check, pipeline }: { check: PipelineCheck | null; pipeline
     return node === undefined ? '' : `${node.title ?? node.id}：`
   }
   return (
-    <section className="card">
+    <section className="side-pane">
       <div className="card-head">
         <div><h3>运行前检查</h3><p className="muted small">{check.estimateMinutes === undefined ? '部分任务没有预计时长' : `预计约 ${check.estimateMinutes} 分钟`}</p></div>
         <span className={`badge ${check.ok ? 'ok' : 'warn'}`}>{check.ok ? '可以运行' : '有问题'}</span>
@@ -210,11 +188,10 @@ function ChecksCard({ check, pipeline }: { check: PipelineCheck | null; pipeline
 }
 
 function RunsList({ runs, shown, onShow, now }: { runs: PipelineRun[]; shown: string | undefined; onShow: (id: string) => void; now: number }) {
-  if (runs.length === 0) return null
+  if (runs.length === 0) return <section className="side-pane"><p className="muted small">还没有运行过。</p></section>
   const TRIGGER: Record<string, string> = { manual: '手动', schedule: '定时', autostart: '开机后', agent: 'agent', after: '接续' }
   return (
-    <section className="card">
-      <h3>最近运行</h3>
+    <section className="side-pane">
       <div className="run-history">
         {runs.map(r => (
           <button key={r.id} className={`run-row ${r.id === shown ? 'active' : ''}`} onClick={() => onShow(r.id)}>
@@ -230,6 +207,69 @@ function RunsList({ runs, shown, onShow, now }: { runs: PipelineRun[]; shown: st
   )
 }
 
+/** Which pipeline: a dropdown in the header, so the canvas gets the width. */
+function PipelineSwitcher({ list, current, isNew, now, onPick }: { list: PipelineSummary[]; current: Pipeline | null; isNew: boolean; now: number; onPick: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => { if (box.current !== null && !box.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  if (list.length === 0 && current === null) return <span className="spacer" />
+  return (
+    <div className="pipeline-switcher" ref={box}>
+      <button className="small-button switcher-button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <Icon name="flow" /><span className="switcher-name">{current?.name ?? '选择流水线'}{isNew ? '（未保存）' : ''}</span>
+        <span className="muted small">{list.length} 条</span><Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="switcher-menu" role="listbox" aria-label="流水线">
+          {list.map(p => (
+            <button key={p.id} role="option" aria-selected={p.id === current?.id} className={`switcher-item ${p.id === current?.id && !isNew ? 'active' : ''}`} onClick={() => { onPick(p.id); setOpen(false) }}>
+              <span className="switcher-item-main">
+                <span>{p.name}</span>
+                <span className="muted small">
+                  {p.nodes} 个步骤
+                  {p.schedule.enabled && p.schedule.times.length > 0 ? ` · 每天 ${p.schedule.times.join('、')}` : ''}
+                  {p.lastRun === undefined ? '' : ` · ${relativeTime(p.lastRun.startedAt, now)}`}
+                </span>
+              </span>
+              {p.draft ? <span className="badge warn">草稿</span> : p.lastRun !== undefined ? <span className={`badge ${RUN_STATE[p.lastRun.state][0]}`}>{RUN_STATE[p.lastRun.state][1]}</span> : null}
+            </button>
+          ))}
+          {list.length === 0 && <div className="muted small pad">还没有保存的流水线</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type SideTab = 'check' | 'runs' | 'schedule'
+
+/** The pipeline's own panel beside the canvas: check, runs, schedule and failure handling. */
+function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onChange, now }: {
+  pipeline: Pipeline; check: PipelineCheck | null; runs: PipelineRun[]; shownRun: string | undefined; onShowRun: (id: string) => void
+  others: PipelineSummary[]; onChange: (p: Pipeline) => void; now: number
+}) {
+  const [tab, setTab] = useState<SideTab>(runs.some(r => r.state === 'running') ? 'runs' : 'check')
+  const errors = check?.issues.filter(i => i.level === 'error').length ?? 0
+  return (
+    <div className="pipeline-side">
+      <nav className="tabs side-tabs" role="tablist" aria-label="流水线">
+        <button role="tab" aria-selected={tab === 'check'} className={tab === 'check' ? 'active' : ''} onClick={() => setTab('check')}>检查{errors > 0 ? ` · ${errors}` : ''}</button>
+        <button role="tab" aria-selected={tab === 'runs'} className={tab === 'runs' ? 'active' : ''} onClick={() => setTab('runs')}>运行记录</button>
+        <button role="tab" aria-selected={tab === 'schedule'} className={tab === 'schedule' ? 'active' : ''} onClick={() => setTab('schedule')}>定时与失败</button>
+      </nav>
+      {tab === 'check' && (check === null ? <p className="muted small pad">加上步骤后会自动检查。</p> : <ChecksCard check={check} pipeline={pipeline} />)}
+      {tab === 'runs' && <RunsList runs={runs} shown={shownRun} onShow={onShowRun} now={now} />}
+      {tab === 'schedule' && <ScheduleCard pipeline={pipeline} others={others} onChange={onChange} />}
+      <p className="muted small pad">点画布上的节点或连线来修改它；选中后按 Delete 删除。</p>
+    </div>
+  )
+}
+
 const DAYS = ['日', '一', '二', '三', '四', '五', '六']
 
 function ScheduleCard({ pipeline, others, onChange }: { pipeline: Pipeline; others: PipelineSummary[]; onChange: (p: Pipeline) => void }) {
@@ -240,8 +280,7 @@ function ScheduleCard({ pipeline, others, onChange }: { pipeline: Pipeline; othe
   const parsed = useMemo(() => times.split(/[,，\s]+/).map(t => t.trim()).filter(Boolean).map(t => (/^\d:\d\d$/.test(t) ? `0${t}` : t)), [times])
   const bad = parsed.filter(t => !/^([01]\d|2[0-3]):[0-5]\d$/.test(t))
   return (
-    <section className="card">
-      <h3>定时与失败处理</h3>
+    <section className="side-pane">
       <label className="check-label"><input type="checkbox" checked={s.enabled} onChange={e => set({ enabled: e.target.checked })} />按定时自动运行{pipeline.draft === true ? '（草稿要先保存）' : ''}</label>
       <label className="field-label" htmlFor="pl-times">时间（24 小时制，多个用逗号分开）</label>
       <input id="pl-times" className="text-input" value={times} placeholder="04:30，16:30" onChange={e => setTimes(e.target.value)}
@@ -261,13 +300,13 @@ function ScheduleCard({ pipeline, others, onChange }: { pipeline: Pipeline; othe
         {others.filter(o => o.id !== pipeline.id).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
       <label className="field-label" htmlFor="pl-fail">节点失败时（节点自己没设置时）</label>
-      <div className="key-input">
-        <select id="pl-fail" className="text-input plain" value={pipeline.onFailure.then} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, then: e.target.value as 'continue' | 'stop' } })}>
-          <option value="continue">继续运行其他分支</option>
-          <option value="stop">停止整条流水线</option>
+      <div className="select-stack">
+        <select id="pl-fail" className="text-input plain" aria-label="重试次数" value={pipeline.onFailure.retries} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, retries: Number(e.target.value) } })}>
+          {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 0 ? '不重试' : `重试 ${n} 次`}</option>)}
         </select>
-        <select className="text-input plain" aria-label="重试次数" value={pipeline.onFailure.retries} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, retries: Number(e.target.value) } })}>
-          {[0, 1, 2, 3].map(n => <option key={n} value={n}>{n === 0 ? '不重试' : `先重试 ${n} 次`}</option>)}
+        <select className="text-input plain" aria-label="仍失败时" value={pipeline.onFailure.then} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, then: e.target.value as 'continue' | 'stop' } })}>
+          <option value="continue">然后继续其他分支</option>
+          <option value="stop">然后停止流水线</option>
         </select>
       </div>
       <label className="check-label"><input type="checkbox" checked={pipeline.stopEmulatorAfter} onChange={e => onChange({ ...pipeline, stopEmulatorAfter: e.target.checked })} />结束后关闭模拟器</label>

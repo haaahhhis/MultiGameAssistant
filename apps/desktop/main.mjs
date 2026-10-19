@@ -12,7 +12,7 @@
  * scheduler registers) starts hidden in the tray; dsh is restarted when it
  * dies, and the scheduler picks up where it left off.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
@@ -89,6 +89,10 @@ async function start() {
       properties: ['openFile'],
     })
     return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  ipcMain.handle('adg:copy-image', (event, dataUrl) => {
+    if (win === null || event.sender !== win.webContents || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) return
+    clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
   })
   win.on('close', event => {
     if (quitting) return

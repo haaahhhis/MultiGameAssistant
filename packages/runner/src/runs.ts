@@ -10,7 +10,7 @@
  * signals (the black-box rule, docs/PLAN.zh.md §3.0).
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
-import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { LaunchSettings, RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
@@ -92,10 +92,26 @@ interface ActiveRun {
   release: Array<() => void | Promise<void>>
   finished: Promise<RunInfo>
   resolveFinished: (run: RunInfo) => void
+  /** Loaded from disk after a restart: its lines are only in the log file. */
+  archived?: boolean
 }
 
 const KEEP_RUNS = 50
 const KEEP_LINES = 2000
+/** Run folders (record, full log, config backups) are kept this long. */
+const KEEP_DAYS = 30
+
+/** What to pick out of a run's saved log. */
+export interface LogQuery {
+  /** Text or /regex/ to look for (case-insensitive). */
+  readonly search?: string | undefined
+  /** Only lines a log rule marked at these levels. */
+  readonly levels?: readonly NonNullable<RunLogLine['level']>[] | undefined
+  /** At most this many lines (the last ones, unless `fromLine` is given). @default 200 */
+  readonly limit?: number | undefined
+  /** Start at this line number (1-based) instead of taking the last ones. */
+  readonly fromLine?: number | undefined
+}
 
 export class Runner {
   readonly locks = new ResourceLocks()
@@ -216,6 +232,57 @@ export class Runner {
     return this.#run(runId).lines.slice(-limit)
   }
 
+  /**
+   * A run's whole saved log (every line, not just the last ones kept in
+   * memory), also for runs from before a restart, searched and paged.
+   */
+  async readLog(runId: string, query: LogQuery = {}): Promise<{ file: string; total: number; matched: number; lines: (RunLogLine & { n: number })[] }> {
+    const file = join(this.#options.dataDir, 'runs', runId, 'log.jsonl')
+    let all: RunLogLine[]
+    try {
+      all = (await readFile(file, 'utf8')).split('\n').filter(l => l !== '').flatMap(l => { try { return [JSON.parse(l) as RunLogLine] } catch { return [] } })
+    } catch {
+      // Runs from before logs were saved as JSON lines.
+      all = this.#runs.get(runId)?.lines ?? []
+      if (all.length === 0 && !this.#runs.has(runId)) throw new Error(`没有运行记录 ${runId}`)
+    }
+    const pattern = query.search === undefined || query.search === '' ? undefined : toPattern(query.search)
+    const numbered = all.map((line, i) => ({ ...line, n: i + 1 }))
+      .filter(l => (query.levels === undefined || query.levels.length === 0 || (l.level !== undefined && query.levels.includes(l.level))) && (pattern === undefined || pattern.test(l.text)))
+    const limit = Math.max(1, Math.min(query.limit ?? 200, 2000))
+    const lines = query.fromLine === undefined ? numbered.slice(-limit) : numbered.filter(l => l.n >= query.fromLine!).slice(0, limit)
+    return { file, total: all.length, matched: numbered.length, lines }
+  }
+
+  /**
+   * Runs from before a restart, from their saved records; a run cut off by
+   * the restart is marked failed. Old run folders are removed.
+   */
+  async loadHistory(): Promise<void> {
+    const root = join(this.#options.dataDir, 'runs')
+    let names: string[]
+    try { names = await readdir(root) } catch { return }
+    const infos: RunInfo[] = []
+    for (const name of names) {
+      try {
+        const info = JSON.parse(await readFile(join(root, name, 'run.json'), 'utf8')) as RunInfo
+        if (info.endedAt === undefined) {
+          Object.assign(info, { state: 'failed', outcome: '程序退出时中断', endedAt: info.startedAt })
+          await writeFile(join(root, name, 'run.json'), JSON.stringify(info, null, 2)).catch(() => {})
+        }
+        if (this.#now() - info.endedAt! > KEEP_DAYS * 86_400_000) { await rm(join(root, name), { recursive: true, force: true }).catch(() => {}); continue }
+        infos.push(info)
+      } catch { /* not a run folder */ }
+    }
+    for (const info of infos.sort((a, b) => b.startedAt - a.startedAt).slice(0, KEEP_RUNS)) {
+      if (this.#runs.has(info.id)) continue
+      this.#runs.set(info.id, {
+        info, mode: info.kind === 'settings' ? 'settings' : 'task', stopRequested: false, doneSeen: false, controller: new AbortController(),
+        lines: [], pendingLines: [], release: [], finished: Promise.resolve(info), resolveFinished: () => {}, archived: true,
+      })
+    }
+  }
+
   /** Settles when the run ends. */
   finished(runId: string): Promise<RunInfo> {
     return this.#run(runId).finished
@@ -285,6 +352,8 @@ export class Runner {
     this.#prune()
     const runDir = join(this.#options.dataDir, 'runs', runId)
     await mkdir(runDir, { recursive: true })
+    // Saved now too, so a run cut off by a crash still has a record (marked on the next start).
+    await writeFile(join(runDir, 'run.json'), JSON.stringify(run.info, null, 2)).catch(() => {})
     this.#publish(run)
 
     try {
@@ -477,6 +546,12 @@ export class Runner {
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
     child.once('exit', code => {
       void (async () => {
+        // 'exit' can come before the last output is read: give the pipes a moment to drain (not 'close', which a
+        // program the script started and that kept its handles would hold up).
+        const drained = (s: NodeJS.ReadableStream | null) => s === null || (s as { readableEnded?: boolean }).readableEnded === true
+          ? Promise.resolve()
+          : new Promise<void>(resolve => { s.once('end', () => resolve()); s.once('close', () => resolve()) })
+        await Promise.race([Promise.all([drained(child.stdout), drained(child.stderr)]), new Promise(resolve => setTimeout(resolve, 2000))])
         stdout.end()
         stderr.end()
         for (const tail of tails) await tail.stop().catch(() => {})
@@ -542,7 +617,10 @@ export class Runner {
     for (const listener of this.#listeners) {
       try { listener.line?.(run.info, line) } catch { /* a listener's problem, not the run's */ }
     }
-    void appendFile(join(this.#options.dataDir, 'runs', run.info.id, 'log.txt'), `${new Date(line.at).toISOString()} [${line.source}] ${line.text}\n`).catch(() => {})
+    // The whole log, kept with the run: log.jsonl for the agent and the UI, log.txt to read by hand.
+    const dir = join(this.#options.dataDir, 'runs', run.info.id)
+    void appendFile(join(dir, 'log.jsonl'), `${JSON.stringify(line)}\n`).catch(() => {})
+    void appendFile(join(dir, 'log.txt'), `${new Date(line.at).toISOString()} [${line.source}]${line.level === undefined ? '' : ` [${line.level}]`} ${line.text}\n`).catch(() => {})
     if (run.flushTimer === undefined) run.flushTimer = setTimeout(() => this.#flush(run), 100)
   }
 
@@ -571,6 +649,14 @@ export class Runner {
     const ended = [...this.#runs.values()].filter(r => r.info.endedAt !== undefined).sort((a, b) => b.info.startedAt - a.info.startedAt)
     for (const run of ended.slice(KEEP_RUNS)) this.#runs.delete(run.info.id)
   }
+}
+
+function toPattern(search: string): RegExp {
+  const slashed = /^\/(.+)\/$/.exec(search)
+  if (slashed !== null) {
+    try { return new RegExp(slashed[1]!, 'i') } catch { /* not a regex: plain text */ }
+  }
+  return new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
 }
 
 /** Decide the outcome from the script's own signals. */

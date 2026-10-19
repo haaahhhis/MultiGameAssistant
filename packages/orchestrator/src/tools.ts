@@ -196,15 +196,15 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
     }),
     tool({
       name: 'pipeline_run',
-      description: '运行一条流水线。立即返回 run_id；wait 为 true 时等到结束（最长 6 小时）。同一条流水线正在运行时会拒绝。',
-      properties: { id, wait: { type: 'boolean', description: '等运行结束再返回。' } },
+      description: '运行一条流水线。立即返回 run_id；wait 为 true 时等到结束（最长 6 小时）。同一条流水线正在运行时会拒绝。用户说「从某一步开始」「前面的已经跑过了」时用 from_node：这个节点和它后面的会运行，前面的不运行。',
+      properties: { id, wait: { type: 'boolean', description: '等运行结束再返回。' }, from_node: { type: 'string', description: '从这个节点开始（节点 id，pipeline_get 可查）；不填就从头运行。' } },
       required: ['id'],
       timeoutMs: 6 * 60 * 60_000,
       kind: 'execute',
       title: a => `运行流水线：${String(a['id'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ id: PipelineId, wait: z.boolean().nullish() }), args)
-        const run = pipelines.run(a.id, { kind: 'agent' })
+        const a = parse(z.object({ id: PipelineId, wait: z.boolean().nullish(), from_node: z.string().nullish() }), args)
+        const run = pipelines.run(a.id, { kind: 'agent' }, a.from_node ?? undefined)
         if (a.wait !== true) return brief(run, pipelines)
         const onAbort = () => { try { engine.cancel(run.id, 'agent 取消') } catch { /* already over */ } }
         exec.signal.addEventListener('abort', onAbort, { once: true })

@@ -262,3 +262,33 @@ test('开始 and 结束: 结束 waits for every step, is never skipped, and neit
   ])
   engine.dispose()
 })
+
+test('starting from a node: it and what follows run, the rest is passed over and does not block a step after it', async () => {
+  const a = script('a', 'none', { t: ok(100) })
+  const { engine } = setup([a])
+  const p = pipeline({
+    nodes: [
+      { id: 'start', kind: 'start' },
+      { id: 'first', kind: 'script-task', scriptId: 'a', taskId: 't' },
+      { id: 'second', kind: 'script-task', scriptId: 'a', taskId: 't', title: '第二步' },
+      { id: 'other', kind: 'notify', text: '另一支' },
+      { id: 'join', kind: 'notify', text: '都完了' },
+      { id: 'end', kind: 'end' },
+    ],
+    edges: [
+      { from: 'start', to: 'first' }, { from: 'first', to: 'second' }, { from: 'start', to: 'other' },
+      { from: 'second', to: 'join' }, { from: 'other', to: 'join' }, { from: 'join', to: 'end', when: 'always' },
+    ],
+  })
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }, { from: 'second' }).id)
+  assert.deepEqual(Object.fromEntries(Object.entries(run.nodes).map(([id, n]) => [id, n.state])), {
+    start: 'skipped', first: 'skipped', second: 'succeeded', other: 'skipped', join: 'succeeded', end: 'succeeded',
+  }, '「都完了」waits on a passed-over branch and still runs')
+  assert.equal(run.nodes['first']!.detail, '从「第二步」开始，没有运行')
+  assert.equal(run.from, 'second')
+  assert.equal(run.state, 'succeeded')
+  assert.equal(run.outcome, '2 个成功；从「第二步」开始')
+  assert.throws(() => engine.start(p, { kind: 'manual' }, { from: 'end' }), /不能从「结束」开始/)
+  assert.throws(() => engine.start(p, { kind: 'manual' }, { from: 'nope' }), /没有节点 nope/)
+  engine.dispose()
+})

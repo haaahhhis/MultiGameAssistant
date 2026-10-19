@@ -55,6 +55,8 @@ export class AdgRunner extends Service {
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })
     const runner = this.runner
+    // Earlier runs and their saved logs, for the run list and the agent.
+    void runner.loadHistory().catch(error => log.warn(`loading run history failed: ${String(error)}`))
     const library: LibraryView = { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) }
     ctx.effect(() => () => { void runner.dispose() }, 'adg-runner runs')
 
@@ -77,9 +79,13 @@ export class AdgRunner extends Service {
           },
           'runs/stop': async params => { await runner.stop((params as RequestParams<'runs/stop'>).runId); return {} },
           'runs/list': params => ({ items: runner.list((params as RequestParams<'runs/list'>).scriptId) }),
-          'runs/logs': params => {
+          'runs/logs': async params => {
             const p = params as RequestParams<'runs/logs'>
-            return { lines: runner.logs(p.runId, p.limit ?? 200) }
+            const limit = p.limit ?? 200
+            const memory = (() => { try { return runner.logs(p.runId, limit) } catch { return [] } })()
+            if (memory.length >= limit) return { lines: memory }
+            const saved = await runner.readLog(p.runId, { limit }).catch(() => undefined)
+            return { lines: saved !== undefined && saved.lines.length > memory.length ? saved.lines.map(({ n: _n, ...line }) => line) : memory }
           },
           'configs/status': async params => {
             await scripts.ready
