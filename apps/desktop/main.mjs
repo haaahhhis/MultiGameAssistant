@@ -6,14 +6,20 @@
  * URL; the gateway serves the UI and the protocol on the same loopback origin.
  * The shell owns no product logic: replace it and the UI still works in any
  * browser pointed at the gateway.
+ *
+ * Unattended use (docs/PLAN.zh.md §5.9): closing the window keeps the app in
+ * the tray so schedules keep running; `--auto-start` (the logon task the
+ * scheduler registers) starts hidden in the tray; dsh is restarted when it
+ * dies, and the scheduler picks up where it left off.
  */
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from '../../scripts/profile.mjs'
+import { trayIconPng } from './icon.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..', '..') // the repository root
@@ -26,32 +32,40 @@ const paths = {
 }
 const READY_TIMEOUT_MS = 180_000
 const LOG_TAIL_LINES = 40
+/** Restarts allowed within RESTART_WINDOW_MS before asking the user. */
+const MAX_RESTARTS = 5
+const RESTART_WINDOW_MS = 10 * 60_000
+const autoStarted = process.argv.includes('--auto-start')
+/** How the logon task starts this app again: the packaged exe, or Electron with this app's folder. */
+const launchCommand = app.isPackaged ? [process.execPath, '--auto-start'] : [process.execPath, here, '--auto-start']
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let host = null
 /** @type {BrowserWindow | null} */
 let win = null
 let quitting = false
+/** @type {Tray | null} */
+let tray = null
+let toldAboutTray = false
+const restarts = []
 const logTail = []
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (win === null) return
-    if (win.isMinimized()) win.restore()
-    win.focus()
-  })
+  app.on('second-instance', () => showWindow())
   app.whenReady().then(start)
 }
 
-app.on('window-all-closed', () => app.quit())
+// Closing the window hides it (see start); quitting is the tray's "退出".
+app.on('window-all-closed', () => {})
 app.on('before-quit', () => {
   quitting = true
   stopHost()
 })
 
 async function start() {
+  createTray()
   win = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -59,7 +73,19 @@ async function start() {
     minHeight: 480,
     title: 'AutoDailyGamePlay',
     backgroundColor: '#f4f5f9',
+    show: !autoStarted,
+    icon: nativeImage.createFromBuffer(trayIconPng(64)),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+  })
+  win.on('close', event => {
+    if (quitting) return
+    // Keep running for schedules; the tray brings the window back.
+    event.preventDefault()
+    win?.hide()
+    if (!toldAboutTray && tray !== null && process.platform === 'win32') {
+      toldAboutTray = true
+      tray.displayBalloon({ title: 'AutoDailyGamePlay 仍在运行', content: '定时任务会照常执行。点托盘图标打开，右键「退出」关闭。', iconType: 'info' })
+    }
   })
   win.on('closed', () => { win = null })
   await win.loadURL(statusPage('正在启动 dsh…', '首次启动可能需要几十秒。'))
@@ -83,6 +109,24 @@ async function start() {
   launchHost()
 }
 
+function createTray() {
+  tray = new Tray(nativeImage.createFromBuffer(trayIconPng(32)))
+  tray.setToolTip(autoStarted ? 'AutoDailyGamePlay（开机自动启动）' : 'AutoDailyGamePlay')
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 AutoDailyGamePlay', click: () => showWindow() },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit() } },
+  ]))
+  tray.on('click', () => showWindow())
+}
+
+function showWindow() {
+  if (win === null) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
 function launchHost() {
   const token = randomBytes(24).toString('base64url')
   const logDir = join(app.getPath('userData'), 'logs')
@@ -98,6 +142,8 @@ function launchHost() {
       ADG_GATEWAY_TOKEN: token,
       ADG_GATEWAY_PORT: '0',
       ADG_UI_DIR: paths.uiDir,
+      ADG_LAUNCH_COMMAND: JSON.stringify(launchCommand),
+      ADG_AUTOSTARTED: autoStarted ? '1' : '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -137,7 +183,18 @@ function launchHost() {
     clearTimeout(timer)
     logFile.end(`=== dsh exited (code ${code}, signal ${signal}) ===\n`)
     if (host === child) host = null
-    if (!quitting) void fail(ready ? 'dsh 意外退出' : 'dsh 启动失败', tail(), true)
+    if (quitting) return
+    // Unattended: bring dsh back by itself a few times before asking.
+    const now = Date.now()
+    while (restarts.length > 0 && now - restarts[0] > RESTART_WINDOW_MS) restarts.shift()
+    if (ready && restarts.length < MAX_RESTARTS) {
+      restarts.push(now)
+      logTail.push(`[desktop] dsh exited (code ${code}); restarting (${restarts.length}/${MAX_RESTARTS})`)
+      void win?.loadURL(statusPage('dsh 意外退出，正在重新启动…', '定时任务会在重新启动后继续。')).catch(() => {})
+      setTimeout(() => { if (!quitting) launchHost() }, 3000)
+      return
+    }
+    void fail(ready ? 'dsh 反复意外退出' : 'dsh 启动失败', tail(), true)
   })
 }
 
@@ -200,6 +257,7 @@ function openExternal(target) {
 async function fail(title, detail, offerRestart = false) {
   if (win !== null) await win.loadURL(statusPage(title, detail, true)).catch(() => {})
   if (!offerRestart || win === null) return
+  showWindow()
   const { response } = await dialog.showMessageBox(win, {
     type: 'error',
     title: 'AutoDailyGamePlay',
@@ -209,9 +267,11 @@ async function fail(title, detail, offerRestart = false) {
     defaultId: 0,
   })
   if (response === 0) {
+    restarts.length = 0
     await win?.loadURL(statusPage('正在重新启动 dsh…', ''))
     launchHost()
   } else {
+    quitting = true
     app.quit()
   }
 }

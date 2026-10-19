@@ -14,7 +14,7 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
-import { ResourceLocks } from './locks.ts'
+import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
 import { ConfigProfiles } from './profiles.ts'
 import { lineSplitter, LogTail } from './tail.ts'
@@ -37,6 +37,8 @@ export interface EmulatorBridge {
    * @returns what was done, for people. @throws Error when it is still unreachable.
    */
   reconnect?(address: string, signal: AbortSignal): Promise<string>
+  /** The ADB address a task would get, without starting anything (so its lock can be taken first). */
+  expectedAddress?(): Promise<string | undefined>
   /** A PNG screenshot of the device at this address. */
   screencap?(address: string, signal: AbortSignal): Promise<Buffer>
 }
@@ -91,6 +93,8 @@ export class Runner {
   readonly #options: RunnerOptions
   readonly #runs = new Map<string, ActiveRun>()
   readonly #listeners = new Set<RunListener>()
+  /** Runs being restarted → the restart (resolves undefined when it did not start). */
+  readonly #successors = new Map<string, Promise<RunInfo | undefined>>()
   readonly #now: () => number
 
   constructor(options: RunnerOptions) {
@@ -143,8 +147,35 @@ export class Runner {
   }
 
   /**
+   * The resources a task would take, and the first one held by another run.
+   * @throws Error for an unknown script or task.
+   */
+  async check(scriptId: string, taskId: string): Promise<{ keys: string[]; busy?: BusyError }> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    const task = pack?.manifest.tasks.find(t => t.id === taskId)
+    if (pack === undefined || task === undefined) throw new Error(`${script.name} 没有任务 ${taskId}`)
+    const keys = await this.#keys(scriptId, task.resources)
+    const conflict = this.locks.conflict(keys)
+    return conflict === undefined ? { keys } : { keys, busy: new BusyError(conflict.key, conflict.holder) }
+  }
+
+  async #keys(scriptId: string, resources: { input: string; account?: string | undefined }): Promise<string[]> {
+    // Most telling first: a busy desktop says more than "the same script" (both are true).
+    const keys: string[] = []
+    if (resources.input === 'desktop') keys.push('desktop')
+    if (resources.input === 'adb') {
+      const expected = await this.#options.emulators?.()?.expectedAddress?.().catch(() => undefined)
+      if (expected !== undefined) keys.push(`adb:${expected}`)
+    }
+    if (resources.account !== undefined) keys.push(`account:${resources.account}`)
+    keys.push(`script:${scriptId}`)
+    return keys
+  }
+
+  /**
    * Start a task. Resolves once the program has started (or the run failed to start).
-   * @throws Error before anything ran: unknown script or task, bad parameters, busy resources.
+   * @throws Error before anything ran: unknown script or task, bad parameters; BusyError for busy resources.
    */
   async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string } = {}): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
@@ -171,7 +202,8 @@ export class Runner {
     }
 
     const resources = task?.resources ?? { input: 'none' as const }
-    const keys = [`script:${scriptId}`, ...(resources.input === 'desktop' ? ['desktop'] : []), ...(resources.account === undefined ? [] : [`account:${resources.account}`])]
+    // The emulator's lock is taken now when its address is known, so a busy emulator refuses before anything starts.
+    const keys = await this.#keys(scriptId, resources)
     run.release.push(this.locks.acquire(keys, { runId, label: `${script.name} · ${run.info.taskTitle}` }))
     run.info.resources = keys.filter(k => !k.startsWith('script:'))
     this.#runs.set(runId, run)
@@ -188,8 +220,10 @@ export class Runner {
         this.#line(run, 'adg', '准备模拟器…')
         const emulator = await bridge.prepare({ prefer: resources.emulator, signal: run.controller.signal, onStatus: text => this.#line(run, 'adg', text) })
         const key = `adb:${emulator.address}`
-        run.release.push(this.locks.acquire([key], { runId, label: `${script.name} · ${run.info.taskTitle}` }))
-        run.info.resources.push(key)
+        if (!keys.includes(key)) {
+          run.release.push(this.locks.acquire([key], { runId, label: `${script.name} · ${run.info.taskTitle}` }))
+          run.info.resources.push(key)
+        }
         vars['adb'] = emulator.address
         this.#line(run, 'adg', `使用模拟器 ${emulator.label}（${emulator.address}）`)
       }
@@ -289,12 +323,25 @@ export class Runner {
   async restart(runId: string, reason: string): Promise<RunInfo> {
     const run = this.#run(runId)
     if (run.mode !== 'task') throw new Error('设置会话不能重启')
-    if (run.info.endedAt === undefined) {
-      this.#line(run, 'adg', `重启：${reason}`)
-      await this.stop(runId, `已重启：${reason}`)
-    }
-    await run.finished
-    return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId })
+    const next = (async () => {
+      if (run.info.endedAt === undefined) {
+        this.#line(run, 'adg', `重启：${reason}`)
+        await this.stop(runId, `已重启：${reason}`)
+      }
+      await run.finished
+      return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId })
+    })()
+    this.#successors.set(runId, next.catch(() => undefined))
+    return next
+  }
+
+  /**
+   * The run that directly replaced this one when it was restarted (L0
+   * recovery, a retry); undefined when it was not. Who waits on a run (the
+   * orchestrator) asks after it ends, and keeps following.
+   */
+  async successor(runId: string): Promise<RunInfo | undefined> {
+    return this.#successors.get(runId)
   }
 
   /** Add a warning to a run (shown with it), e.g. from the monitor. */

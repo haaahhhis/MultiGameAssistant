@@ -20,7 +20,9 @@
     "@adg/guard": "workspace:*",
     "@adg/monitor": "workspace:*",
     "@adg/notify": "workspace:*",
+    "@adg/orchestrator": "workspace:*",
     "@adg/runner": "workspace:*",
+    "@adg/scheduler": "workspace:*",
     "@adg/script-registry": "workspace:*"
   }
 }

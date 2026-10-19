@@ -1,13 +1,30 @@
 /**
  * What running tasks occupy (docs/PLAN.zh.md §3.2): the desktop's mouse and
  * keyboard, one emulator, one game account. Two runs may overlap only when
- * their resources do not. M2 refuses a conflicting start; the orchestrator
- * (M4) queues it instead.
+ * their resources do not. A conflicting start is refused with a BusyError;
+ * the orchestrator waits and tries again.
  */
 
 export interface Holder {
   readonly runId: string
   readonly label: string
+}
+
+/** A resource is held by another run; nothing was started. */
+export class BusyError extends Error {
+  readonly key: string
+  readonly holder: Holder
+  constructor(key: string, holder: Holder) {
+    super(`${describe(key)}正被「${holder.label}」占用，请等它结束后再运行`)
+    this.name = 'BusyError'
+    this.key = key
+    this.holder = holder
+  }
+
+  /** "桌面鼠标键盘（MAA · 日常）", for "等待资源：…". */
+  get resource(): string {
+    return `${describe(this.key).trim()}（${this.holder.label}）`
+  }
 }
 
 export class ResourceLocks {
@@ -24,11 +41,11 @@ export class ResourceLocks {
 
   /**
    * Take every key or none.
-   * @throws Error naming the resource and who holds it.
+   * @throws BusyError naming the resource and who holds it.
    */
   acquire(keys: readonly string[], holder: Holder): () => void {
     const busy = this.conflict(keys)
-    if (busy !== undefined) throw new Error(`${describe(busy.key)}正被「${busy.holder.label}」占用，请等它结束后再运行`)
+    if (busy !== undefined) throw new BusyError(busy.key, busy.holder)
     for (const key of keys) this.#held.set(key, holder)
     return () => {
       for (const key of keys) if (this.#held.get(key)?.runId === holder.runId) this.#held.delete(key)

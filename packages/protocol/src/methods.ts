@@ -12,6 +12,7 @@ import { PackNotifications, PackRequests } from './packs.ts'
 import { GuardNotifications, GuardRequests } from './guard.ts'
 import { MonitorNotifications, MonitorRequests } from './monitor.ts'
 import { NotifyNotifications, NotifyRequests } from './notify.ts'
+import { PipelineNotifications, PipelineRequests } from './pipelines.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -339,6 +340,7 @@ export const Requests = {
   ...PackRequests,
   ...MonitorRequests,
   ...NotifyRequests,
+  ...PipelineRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -381,6 +383,7 @@ export const Notifications = {
   ...PackNotifications,
   ...MonitorNotifications,
   ...NotifyNotifications,
+  ...PipelineNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests

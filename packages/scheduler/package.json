@@ -1,0 +1,33 @@
+{
+  "name": "@adg/scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cordis host plugin: pipelines on a timetable (catch-up window, no double runs, DST-safe), chained pipelines, and starting at Windows logon",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/protocol": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@adg/gateway": "workspace:*",
+    "@adg/orchestrator": "workspace:*",
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@types/node": "^24.13.3"
+  }
+}

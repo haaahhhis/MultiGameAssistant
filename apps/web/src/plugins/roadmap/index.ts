@@ -10,13 +10,6 @@ import { Placeholder } from './Placeholder.tsx'
 
 export const roadmapPlugins: readonly UiPlugin[] = [
   {
-    id: 'pipelines',
-    title: '编排',
-    milestone: 'M4',
-    requires: ['pipelines'],
-    pages: [{ id: 'pipelines', title: '编排', icon: 'flow', order: 20, component: Placeholder }],
-  },
-  {
     id: 'games',
     title: '游戏看板',
     milestone: 'M6',

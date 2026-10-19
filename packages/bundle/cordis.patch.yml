@@ -81,5 +81,22 @@
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
         baseUrl: !!js "process.env.ADG_FEISHU_BASE_URL || undefined"
 
+    # M4: pipelines — DAGs of script tasks and other steps, resource-aware
+    # queueing, failure policies, the feasibility check; the `pipelines` capability.
+    - id: adg-orchestrator
+      name: '@adg/orchestrator'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
+    # M4: timetables, chained pipelines, starting at logon; the `schedule` capability.
+    #   ADG_LAUNCH_COMMAND   JSON array that starts the desktop app (set by it)
+    #   ADG_AUTOSTARTED      1 when the desktop app was started at logon
+    - id: adg-scheduler
+      name: '@adg/scheduler'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        launchCommand: !!js "process.env.ADG_LAUNCH_COMMAND || undefined"
+        autostarted: !!js "process.env.ADG_AUTOSTARTED === '1'"
+
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.

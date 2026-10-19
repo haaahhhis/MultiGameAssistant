@@ -148,6 +148,14 @@ export class AdgEmulators extends Service {
     return { address: await mumu.adbAddress(index), label: `MuMu ${ready.index}（${ready.name}）` }
   }
 
+  /** The address `prepare` would return, without starting anything (the runner locks it first). */
+  async expectedAddress(): Promise<string | undefined> {
+    await this.ready
+    if (this.settings.manualAddress !== undefined) return this.settings.manualAddress
+    const mumu = await this.manager()
+    return mumu === undefined ? undefined : mumu.adbAddress(this.settings.instance).catch(() => undefined)
+  }
+
   /**
    * Reconnect an ADB address for the monitor's L0 recovery: start the MuMu
    * instance again if it went down, then `adb disconnect` / `adb connect` and
