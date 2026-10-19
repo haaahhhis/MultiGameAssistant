@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { deriveKeyRef, providersCapability, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
+import { addRetryPolicies, deriveKeyRef, providersCapability, RETRY_POLICY, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
 import type { MethodContext } from '../src/registry.ts'
 
 type Ops = { op: 'set' | 'unset'; path: readonly string[]; value?: unknown }[]
@@ -60,7 +60,7 @@ function fakeHost(initial: Record<string, unknown> = {}, active: readonly string
   const call = (method: string, params: unknown) =>
     capability.methods[method]!(params, { signal: new AbortController().signal } as MethodContext) as Promise<any>
   return {
-    call, writes, stored, unset, discoverCalls, user: () => user, changed: () => changed,
+    call, writes, stored, unset, discoverCalls, user: () => user, changed: () => changed, settings: deps.settings,
     setDefault: (value: typeof defaultModel) => { defaultModel = value },
   }
 }
@@ -85,7 +85,10 @@ test('create writes one whole profile, then stores the key under its reference',
   assert.deepEqual(host.writes, [[{
     op: 'set',
     path: ['providers', 'acme'],
-    value: { displayName: 'Acme', apiKeyEnv: 'ACME_API_KEY', api: 'openai-completions', baseURL: 'https://gw.example/v1', models: [{ id: 'm1', contextWindow: 128000 }] },
+    value: {
+      displayName: 'Acme', apiKeyEnv: 'ACME_API_KEY', api: 'openai-completions', baseURL: 'https://gw.example/v1', models: [{ id: 'm1', contextWindow: 128000 }],
+      retryPolicy: RETRY_POLICY,
+    },
   }]])
   assert.equal(host.stored.get('ACME_API_KEY'), 'sk-test')
   assert.deepEqual(result, { revision: 2, apiKeyRef: 'ACME_API_KEY' })
@@ -114,6 +117,15 @@ test('edit sets fields one by one so unshown settings survive', async () => {
   assert.equal(acme.apiKeyEnv, 'ACME_API_KEY')
   assert.deepEqual(acme.models, [{ id: 'm1', contextWindow: 128000 }])
   assert.equal(host.stored.get('ACME_API_KEY'), 'sk-new')
+  assert.deepEqual(acme.retryPolicy, RETRY_POLICY, 'an older route gets the retry policy when edited')
+})
+
+test('routes saved before the retry policy get it once; a route with its own keeps it', async () => {
+  const host = fakeHost({ acme: { api: 'openai-completions', models: [] }, own: { api: 'openai-completions', models: [], retryPolicy: { mode: 'always' } } })
+  assert.equal(await addRetryPolicies(host.settings, 'llm-pi-ai'), 1)
+  assert.deepEqual((host.user().providers as any).acme.retryPolicy, RETRY_POLICY)
+  assert.deepEqual((host.user().providers as any).own.retryPolicy, { mode: 'always' })
+  assert.equal(await addRetryPolicies(host.settings, 'llm-pi-ai'), 0)
 })
 
 test('a stale revision is refused by the settings service', async () => {

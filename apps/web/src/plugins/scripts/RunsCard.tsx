@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { RunInfo, RunLogLine, TaskInfo } from '@adg/protocol'
+import { Fold } from '../../components/Fold.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -108,12 +109,11 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
 
       {runs.length > 0 && (
-        <div className="run-history">
-          <div className="sidebar-label">最近运行</div>
+        <Fold id="scripts.recent-runs" title="最近运行" count={Math.min(runs.length, 6)} className="run-history">
           {runs.slice(0, 6).map(run => {
             const [tone, label] = RUN_STATE[run.state]
             return (
-              <button key={run.id} className={`run-row ${run.id === viewing?.id ? 'active' : ''}`} onClick={() => setShown(run.id)}>
+              <button key={run.id} className={`run-row ${run.id === viewing?.id ? 'active' : ''}`} aria-expanded={run.id === viewing?.id} onClick={() => setShown(s => (s === run.id || (s === null && run.id === viewing?.id) ? '' : run.id))}>
                 <span className={`badge ${tone}`}>{label}</span>
                 <span className="run-title">{run.taskTitle}</span>
                 <span className="muted small run-outcome">{run.outcome ?? run.resources.join(' · ')}</span>
@@ -122,7 +122,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
             )
           })}
           {viewing !== undefined && <RunLog key={viewing.id} client={client} run={viewing} />}
-        </div>
+        </Fold>
       )}
     </section>
   )

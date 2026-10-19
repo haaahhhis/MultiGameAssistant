@@ -1,6 +1,7 @@
 import { memo, useMemo, type MouseEvent } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import { desktop } from '../desktop.ts'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import css from 'highlight.js/lib/languages/css'
@@ -46,6 +47,33 @@ marked.use({
   },
 })
 
+/**
+ * A link to a file or folder on this computer (file:///C:/…, C:\…, /c/…, \\server\share),
+ * as a Windows path; undefined for web links. The sanitizer drops such hrefs, so they are
+ * kept aside before it runs and opened through the desktop app.
+ */
+export function localPath(href: string): string | undefined {
+  let path = href.trim()
+  if (/^file:/i.test(path)) {
+    try { path = decodeURIComponent(path.replace(/^file:\/{2,3}/i, '')) } catch { return undefined }
+    if (/^[A-Za-z]:/.test(path) === false && /^[^/]+\//.test(path)) path = `//${path}` // file://server/share
+  }
+  const drive = /^\/([A-Za-z])\/(.*)$/.exec(path) // /c/Users/… (Git Bash)
+  if (drive !== null) path = `${drive[1]!.toUpperCase()}:/${drive[2]}`
+  if (!/^[A-Za-z]:[\\/]/.test(path) && !/^(\\\\|\/\/)[^\\/]/.test(path)) return undefined
+  return path.replace(/\//g, '\\').replace(/[#?].*$/, '')
+}
+
+DOMPurify.addHook('beforeSanitizeAttributes', node => {
+  if (node.tagName !== 'A') return
+  const path = localPath(node.getAttribute('href') ?? '')
+  if (path === undefined) return
+  node.removeAttribute('href')
+  node.setAttribute('data-local-path', path)
+  node.setAttribute('title', path)
+  node.classList.add('local-path')
+})
+
 // Model output is untrusted: sanitize, and make every link open externally.
 DOMPurify.addHook('afterSanitizeAttributes', node => {
   if (node.tagName === 'A') {
@@ -54,8 +82,31 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
   }
 })
 
-/** Copy buttons live in sanitized HTML, so one delegated handler serves them all. */
+/** A local file link: open it (the desktop app decides how), or copy the path in a browser. */
+function openLocal(link: HTMLElement): void {
+  const path = link.dataset['localPath']
+  if (path === undefined) return
+  const flash = (text: string) => {
+    link.dataset['note'] = text
+    setTimeout(() => { delete link.dataset['note'] }, 2200)
+  }
+  const bridge = desktop()
+  if (bridge?.openPath !== undefined) {
+    bridge.openPath(path).then(r => flash(r === 'missing' ? '找不到这个文件' : r === 'revealed' ? '已在文件夹中显示' : '已打开'), () => flash('打不开'))
+    return
+  }
+  const write = navigator.clipboard?.writeText(path) ?? Promise.reject(new Error('no clipboard'))
+  write.then(() => flash('浏览器里打不开本地文件，路径已复制'), () => flash(legacyCopy(path) ? '浏览器里打不开本地文件，路径已复制' : path))
+}
+
+/** Copy buttons and local file links live in sanitized HTML, so one delegated handler serves them all. */
 function onCopy(e: MouseEvent<HTMLDivElement>) {
+  const local = (e.target as HTMLElement).closest<HTMLElement>('a[data-local-path]')
+  if (local !== null) {
+    e.preventDefault()
+    openLocal(local)
+    return
+  }
   const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-copy]')
   const code = button?.closest('.code-block')?.querySelector('pre')
   if (button == null || code == null) return

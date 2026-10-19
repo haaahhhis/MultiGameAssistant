@@ -64,6 +64,12 @@ export const NotifyRequests = {
     params: z.object({}),
     result: z.object({ channels: z.array(ChannelStatus) }),
   },
+  /** Conversations people have with the agent through a chat channel (Feishu): which session is whose. */
+  'notify/conversations': {
+    capability: NOTIFY_CAPABILITY,
+    params: z.object({}),
+    result: z.object({ items: z.array(z.object({ sessionId: z.string(), channel: z.string(), user: z.string() })) }),
+  },
   /** Send a test notice through one channel, or all. */
   'notify/test': {
     capability: NOTIFY_CAPABILITY,

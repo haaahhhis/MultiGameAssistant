@@ -44,7 +44,10 @@ export class AdgNotify extends Service {
     const notify = new Notify({
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions)
+        if (sessions === undefined) return undefined
+        const base = sessionConversations(sessions)
+        // Archived by the user: the person's next message starts a new conversation.
+        return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
       },
       respondApproval: (id, decision) => ctx.get('adgGateway')?.respondApproval(id, decision) ?? false,
       sessions: {
@@ -55,6 +58,7 @@ export class AdgNotify extends Service {
           await mkdir(join(spec.dataDir, 'notify'), { recursive: true })
           await writeFile(`${this.sessionsFile}.tmp`, JSON.stringify(this.sessionMap, null, 2))
           await rename(`${this.sessionsFile}.tmp`, this.sessionsFile)
+          ctx.get('adgGateway')?.broadcast('notify/changed', {})
         },
       },
       changed: () => ctx.get('adgGateway')?.broadcast('notify/changed', {}),
@@ -73,6 +77,15 @@ export class AdgNotify extends Service {
         version: 1,
         methods: {
           'notify/status': () => ({ channels: notify.channels() }),
+          'notify/conversations': async () => {
+            await this.ready
+            return {
+              items: Object.entries(this.sessionMap).map(([key, sessionId]) => {
+                const [channel = '', ...user] = key.split(':')
+                return { sessionId, channel, user: user.join(':') }
+              }),
+            }
+          },
           'notify/test': params => notify.test((params as RequestParams<'notify/test'>).channel),
         },
       })

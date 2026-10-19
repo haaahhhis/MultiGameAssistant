@@ -42,6 +42,10 @@ const step = (name, detail = '') => {
   steps.push(name)
   console.log(`✔ ${name}${detail === '' ? '' : `: ${detail}`}`)
 }
+const until = async (check, ms = 20_000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await delay(300)) if (await check()) return
+  throw new Error('timed out')
+}
 
 try {
   step('initialize', gateway.capabilities.join(', '))
@@ -81,6 +85,18 @@ try {
 
   await answered
   step('final answer received', FINAL)
+
+  if (gateway.capabilities.includes('archive')) {
+    // The session list's 归档: out of the list, kept, and restorable.
+    const notice = waitFor(m => m.method === 'sessions/archived' && m.params.sessionIds.includes(sessionId), 'sessions/archived', 20_000)
+    await until(async () => {
+      try { return (await call('sessions/archive', { sessionId })).sessionIds.includes(sessionId) } catch { return false } // the turn may still be settling
+    })
+    await notice
+    if (!(await call('sessions/archived', {})).sessionIds.includes(sessionId)) throw new Error('the session is not in the archived set')
+    if ((await call('sessions/unarchive', { sessionId })).sessionIds.includes(sessionId)) throw new Error('the session is still archived')
+    step('archived and restored the session')
+  }
   console.log(`\nend-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)

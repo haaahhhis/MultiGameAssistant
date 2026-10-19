@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { RequestResult, ScriptInfo } from '@adg/protocol'
+import { Fold } from '../../components/Fold.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -73,17 +74,12 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
               <span>原项目的配置在导入后改过（{data.drift.join('、')}），可能是在脚本自己的界面里改的。本应用仍按本地配置运行；需要的话可以导入。</span>
             </div>
           )}
-          <ul className="version-list">
-            {data.files.map(f => (
-              <li key={f.file}>
-                <span className="version-name">{f.file}</span>
-                {f.local ? <span className="badge ok">本地已保存</span> : <span className="badge">本地没有</span>}
-                {f.changed && <span className="badge warn">原项目已改动</span>}
-                {!f.original && <span className="muted small">原项目里没有</span>}
-              </li>
-            ))}
-            {data.files.length === 0 && <li className="muted small">脚本包没有声明配置文件</li>}
-          </ul>
+          <Fold id={`config.files.${script.id}`} title="配置文件" count={data.files.length}>
+            <ul className="version-list">
+              {data.files.map(f => <ConfigFileRow key={f.file} client={client} scriptId={script.id} file={f} />)}
+              {data.files.length === 0 && <li className="muted small">脚本包没有声明配置文件</li>}
+            </ul>
+          </Fold>
           <div className="key-actions">
             <span className="muted small">
               {data.importedAt === undefined ? '还没有导入' : `${relativeTime(data.importedAt, now)}从原项目导入`}
@@ -110,5 +106,33 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
       {note !== null && <div className="notice info left small">{note}</div>}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </section>
+  )
+}
+
+/** One config file: its state, and its local copy when opened. */
+function ConfigFileRow({ client, scriptId, file: f }: { client: AdgClient; scriptId: string; file: { file: string; local: boolean; changed: boolean; original: boolean } }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState<{ content: string; truncated: boolean } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const toggle = () => {
+    setOpen(o => !o)
+    if (text !== null || !f.local) return
+    client.connection.call('configs/read', { scriptId, file: f.file }).then(setText, e => setError(errorText(e)))
+  }
+  return (
+    <li className={`config-file ${open ? 'open' : ''}`}>
+      <button type="button" className="config-file-head" aria-expanded={open} onClick={toggle} disabled={!f.local} title={f.local ? '展开看本地配置的内容' : '本地还没有这个文件'}>
+        <Icon name="chevron" className={`fold-chevron ${open ? 'open' : ''}`} />
+        <span className="version-name">{f.file}</span>
+        {f.local ? <span className="badge ok">本地已保存</span> : <span className="badge">本地没有</span>}
+        {f.changed && <span className="badge warn">原项目已改动</span>}
+        {!f.original && <span className="muted small">原项目里没有</span>}
+      </button>
+      {open && (error !== null
+        ? <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>
+        : text === null
+          ? <div className="muted small">读取中…</div>
+          : <pre className="config-preview">{text.content}{text.truncated ? '\n…（太长，只显示前一部分）' : ''}</pre>)}
+    </li>
   )
 }

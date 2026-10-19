@@ -29,6 +29,7 @@ const paths = {
   gamepad: 'M7 9v4M5 11h4M15 10.5v.01M17.5 12.5v.01M6.5 6h11a4 4 0 0 1 4 4.4l-.6 5.3a2.6 2.6 0 0 1-4.5 1.4L14.5 15h-5l-1.9 2.1a2.6 2.6 0 0 1-4.5-1.4l-.6-5.3A4 4 0 0 1 6.5 6Z',
   plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4',
   home: 'M4 11 12 4l8 7M6 9.5V20h12V9.5',
+  archive: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4',
 } as const
 
 export type IconName = keyof typeof paths

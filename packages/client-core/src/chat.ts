@@ -202,7 +202,7 @@ export function buildChat(
 
   for (const echo of pending) {
     items.push({
-      kind: 'user', id: `p:${echo.requestId}`, text: echo.text, images: 0, imageRefs: [], files: 0, time: echo.sentAt,
+      kind: 'user', id: `p:${echo.requestId}`, text: echo.text, images: echo.images ?? 0, imageRefs: [], files: 0, time: echo.sentAt,
       pending: { requestId: echo.requestId, ...(echo.failed === undefined ? {} : { failed: echo.failed }) },
     })
   }

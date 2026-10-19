@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { Incident, Intervention, MonitorSettings, RunInfo } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
+import { Fold } from '../../components/Fold.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
@@ -94,19 +95,25 @@ export function RunsPage({ client, openSettings, openSession }: PageProps) {
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="运行列表">
           {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
-          <div className="sidebar-label">正在运行（{active.length}）</div>
-          {active.length === 0 && <div className="muted small pad">没有正在运行的任务</div>}
-          {active.map(row)}
-          {recent.length > 0 && <div className="sidebar-label pack-label">最近</div>}
-          {recent.map(row)}
+          <Fold id="monitor.active" title="正在运行" count={active.length} className="list-fold">
+            {active.length === 0 && <div className="muted small pad">没有正在运行的任务</div>}
+            {active.map(row)}
+          </Fold>
+          {recent.length > 0 && (
+            <Fold id="monitor.recent" title="最近" count={recent.length} className="list-fold">
+              {recent.map(row)}
+            </Fold>
+          )}
         </aside>
         <div className="scripts-detail">
           <div className="script-detail">
             {showSettings && <MonitorSettingsCard client={client} />}
             {open.length > 0 && (
               <section className="card">
-                <div className="card-head"><div><h3>待处理的异常（{open.length}）</h3><p className="muted small">脚本包里写了自动处理的（如重连模拟器、重新运行）会先自动处理；处理不了的才推送到飞书。</p></div></div>
-                <div className="incident-list">{open.map(i => <IncidentRow key={i.id} client={client} incident={i} now={now} onOpen={() => setSelected(i.runId)} />)}</div>
+                <Fold id="monitor.open-incidents" title={<h3>待处理的异常（{open.length}）</h3>} className="card-fold">
+                  <p className="muted small">脚本包里写了自动处理的（如重连模拟器、重新运行）会先自动处理；处理不了的才推送到飞书。</p>
+                  <div className="incident-list">{open.map(i => <IncidentRow key={i.id} client={client} incident={i} now={now} onOpen={() => setSelected(i.runId)} />)}</div>
+                </Fold>
               </section>
             )}
             {run === undefined && open.length === 0 && (
@@ -143,12 +150,15 @@ function RunCard({ client, run, incidents, now, openRun }: { client: AdgClient; 
       {run.outcome !== undefined && <div className="muted small">结果：{run.outcome}</div>}
       {run.retryOf !== undefined && <button className="link-button small" onClick={() => openRun(run.retryOf!)}>这是 {run.retryOf} 的重新运行</button>}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
-      <RunLog key={run.id} client={client} run={run} />
+      <Fold id="monitor.run-log" title="日志">
+        <RunLog key={run.id} client={client} run={run} />
+      </Fold>
       {incidents.length > 0 && (
-        <div className="incident-list">
-          <div className="sidebar-label">这次运行的异常</div>
-          {incidents.map(i => <IncidentRow key={i.id} client={client} incident={i} now={now} />)}
-        </div>
+        <Fold id="monitor.run-incidents" title="这次运行的异常" count={incidents.length}>
+          <div className="incident-list">
+            {incidents.map(i => <IncidentRow key={i.id} client={client} incident={i} now={now} />)}
+          </div>
+        </Fold>
       )}
     </section>
   )

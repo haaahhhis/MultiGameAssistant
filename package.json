@@ -24,7 +24,9 @@
     "e2e:run": "node scripts/e2e-run.mjs",
     "e2e:monitor": "node scripts/e2e-monitor.mjs",
     "e2e:pipelines": "node scripts/e2e-pipelines.mjs",
-    "e2e:intervene": "node scripts/e2e-intervene.mjs"
+    "e2e:intervene": "node scripts/e2e-intervene.mjs",
+    "e2e:sandbox": "node scripts/e2e-sandbox-shell.mjs",
+    "lint:tools": "node scripts/lint-tools.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

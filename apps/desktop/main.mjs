@@ -15,8 +15,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from '../../scripts/profile.mjs'
 import { trayIconPng } from './icon.mjs'
@@ -30,6 +30,8 @@ const paths = {
   // Development shares sessions with `pnpm dev:host`; DSH_HOME overrides.
   home: process.env.DSH_HOME ?? join(root, '.dev-home'),
 }
+/** Files opened directly from a link; the rest are only shown in Explorer. */
+const VIEWABLE = /\.(txt|log|md|json|jsonl|ya?ml|toml|ini|cfg|conf|csv|xml|html?|png|jpe?g|gif|webp|bmp|pdf)$/i
 const READY_TIMEOUT_MS = 180_000
 const LOG_TAIL_LINES = 40
 /** Restarts allowed within RESTART_WINDOW_MS before asking the user. */
@@ -89,6 +91,19 @@ async function start() {
       properties: ['openFile'],
     })
     return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  // A file or folder the agent linked to. Folders and files to look at open; anything else
+  // (programs, scripts, shortcuts) is only shown selected in Explorer, never run.
+  ipcMain.handle('adg:open-path', async (event, target) => {
+    if (win === null || event.sender !== win.webContents || typeof target !== 'string' || !isAbsolute(target)) return 'missing'
+    let stat
+    try { stat = statSync(target) } catch { return 'missing' }
+    if (stat.isDirectory() || VIEWABLE.test(target)) {
+      const failed = await shell.openPath(target)
+      if (failed === '') return 'opened'
+    }
+    shell.showItemInFolder(target)
+    return 'revealed'
   })
   ipcMain.handle('adg:copy-image', (event, dataUrl) => {
     if (win === null || event.sender !== win.webContents || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) return

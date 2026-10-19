@@ -108,3 +108,14 @@
 
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.
+
+# The agent's sandboxed PowerShell (dsh-base's `pwsh-sandbox`). Its executor
+# prefers PowerShell 7 (pwsh.exe) when installed; under the sandbox's
+# restricted Low-integrity token PowerShell 7 can die before running anything
+# (exit 0xC0000142, "DLL initialization failed"), so every confined command
+# failed. Windows PowerShell 5.1 ships with Windows and works there.
+# Unconfined commands (approved `danger-full-access`) still use the default.
+#   ADG_SANDBOX_PWSH   another PowerShell for confined commands
+- id: pwsh-sandbox
+  config:
+    pwshPath: !!js "process.env.ADG_SANDBOX_PWSH || `${process.env.SystemRoot ?? 'C:/Windows'}/System32/WindowsPowerShell/v1.0/powershell.exe`"

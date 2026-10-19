@@ -230,11 +230,11 @@ export const Requests = {
       sessionId: z.string(),
       /** Client-minted id; retrying with the same id never enqueues twice. */
       requestId: z.string(),
-      text: z.string().min(1),
+      text: z.string(),
       mode: z.enum(['queue', 'steer']),
       /** Images with the text (the model must accept images). */
       images: z.array(PromptImage).max(4).optional(),
-    }),
+    }).refine(p => p.text.trim() !== '' || (p.images?.length ?? 0) > 0, '消息是空的'),
     result: Accepted,
   },
   'session/cancel': {
@@ -247,6 +247,22 @@ export const Requests = {
     capability: 'attachments',
     params: z.object({ attachmentId: z.string(), mediaType: z.string(), bytes: z.number(), width: z.number(), height: z.number() }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
+  },
+  /** Archived sessions: hidden from the session list, kept, restorable. */
+  'sessions/archived': {
+    capability: 'archive',
+    params: Empty,
+    result: z.object({ sessionIds: z.array(z.string()) }),
+  },
+  'sessions/archive': {
+    capability: 'archive',
+    params: z.object({ sessionId: z.string() }),
+    result: z.object({ sessionIds: z.array(z.string()) }),
+  },
+  'sessions/unarchive': {
+    capability: 'archive',
+    params: z.object({ sessionId: z.string() }),
+    result: z.object({ sessionIds: z.array(z.string()) }),
   },
   /** Model for new sessions (and new chat-channel conversations). */
   'models/setDefault': {
@@ -388,6 +404,8 @@ export const Notifications = {
   'approval/resolved': z.object({ approvalId: z.string(), outcome: z.string() }),
   /** A stored credential changed (set, unset, or edited on disk). Never carries the value. */
   'credentials/changed': z.object({ ref: z.string() }),
+  /** The archived set changed (here or in dsh's own page). */
+  'sessions/archived': z.object({ sessionIds: z.array(z.string()) }),
   /** Provider routes or their models changed; re-read `providers/list` and `models/catalog`. */
   'providers/changed': z.object({}),
   /** A session's model selection changed. */

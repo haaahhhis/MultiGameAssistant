@@ -20,8 +20,9 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
+import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
-import { providersCapability } from './providers.ts'
+import { addRetryPolicies, providersCapability } from './providers.ts'
 import type { NotificationMethod, NotificationParams, RequestParams } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
@@ -64,6 +65,7 @@ export class AdgGateway extends Service {
   static inject = ['sessionController']
 
   private readonly registry = new CapabilityRegistry()
+  private archived = new Set<string>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
   /** Resolved after the listener binds. */
@@ -122,6 +124,10 @@ export class AdgGateway extends Service {
           this.broadcast('providers/changed', {})
         })
       }
+      // Routes saved before the retry policy existed get it once (see RETRY_POLICY).
+      void addRetryPolicies(scoped.settings, config.providersNamespace ?? 'llm-pi-ai')
+        .then(n => { if (n > 0) ctx.logger('adg-gateway').info(`added the retry policy to ${n} model route(s)`) })
+        .catch(error => ctx.logger('adg-gateway').warn(`adding the retry policy failed: ${String(error)}`))
       scoped.effect(() => this.registry.register(providersCapability({
         settings: scoped.settings,
         llm: scoped.llm,
@@ -155,6 +161,55 @@ export class AdgGateway extends Service {
           },
         },
       }), 'adg-gateway capability model-default')
+    })
+
+    // Archived sessions (dsh's workspace registry keeps the set; its own page shares it).
+    ctx.inject(['workspaceController'], scoped => {
+      const workspace = scoped.workspaceController
+      const publish = (ids: readonly string[]) => {
+        this.archived = new Set(ids)
+        this.broadcast('sessions/archived', { sessionIds: [...ids] })
+      }
+      scoped.effect(() => {
+        const controller = new AbortController()
+        void (async () => {
+          for (let attempt = 0; !controller.signal.aborted; attempt++) {
+            try {
+              for await (const frame of workspace.follow(controller.signal)) {
+                if (frame.type === 'baseline') publish(frame.value.archivedSessionIds)
+                else if (frame.type === 'archived') publish(frame.archivedSessionIds)
+              }
+            } catch { /* restarted below */ }
+            await new Promise(resolve => setTimeout(resolve, Math.min(30_000, 1000 * 2 ** attempt)))
+          }
+        })()
+        return () => controller.abort()
+      }, 'adg-gateway archive follow')
+      const archiveError = (error: unknown): Error => {
+        const text = error instanceof Error ? error.message : String(error)
+        return new Error(/session-active/.test(text) ? '这个会话还在运行（或有后台任务、定时），先停止再归档' : text)
+      }
+      scoped.effect(() => this.registry.register({
+        id: 'archive',
+        version: 1,
+        methods: {
+          'sessions/archived': () => ({ sessionIds: [...this.archived] }),
+          'sessions/archive': async params => {
+            const { sessionId } = params as RequestParams<'sessions/archive'>
+            try {
+              const value = await workspace.archiveSession({ sessionId: sessionId as never })
+              publish(value.archivedSessionIds)
+              return { sessionIds: [...value.archivedSessionIds] }
+            } catch (error) { throw archiveError(error) }
+          },
+          'sessions/unarchive': async params => {
+            const { sessionId } = params as RequestParams<'sessions/unarchive'>
+            const value = await workspace.unarchiveSession({ sessionId: sessionId as never })
+            publish(value.archivedSessionIds)
+            return { sessionIds: [...value.archivedSessionIds] }
+          },
+        },
+      }), 'adg-gateway capability archive')
     })
 
     // Images in sessions, for the UI to show (dsh keeps them by reference only).
@@ -268,6 +323,11 @@ export class AdgGateway extends Service {
   }
 
   /** Send one notification to every initialized client. */
+  /** Is this session archived? (A chat-channel conversation then starts a new one.) */
+  isArchived(sessionId: string): boolean {
+    return this.archived.has(sessionId)
+  }
+
   broadcast<M extends NotificationMethod>(method: M, params: NotificationParams<M>): void {
     for (const peer of this.peers) peer.notify(method, params)
   }

@@ -13,7 +13,7 @@ import type {} from '@adg/script-registry'
 import { RUNS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { Runner, type EmulatorBridge, type LibraryView } from './runs.ts'
-import { configStatus, importConfig } from './config.ts'
+import { configStatus, importConfig, readConfig } from './config.ts'
 import { runnerTools } from './tools.ts'
 
 export { Runner, killTree, parseDuration, type EmulatorBridge, type LibraryView, type RunListener, type RunnerOptions } from './runs.ts'
@@ -90,6 +90,12 @@ export class AdgRunner extends Service {
           'configs/status': async params => {
             await scripts.ready
             return configStatus(library, runner.profiles, (params as RequestParams<'configs/status'>).scriptId)
+          },
+          'configs/read': async params => {
+            await scripts.ready
+            const p = params as RequestParams<'configs/read'>
+            const { file, content, truncated } = await readConfig(library, runner.profiles, p.scriptId, p.file)
+            return { file, content, truncated }
           },
           'configs/import': async params => {
             await scripts.ready

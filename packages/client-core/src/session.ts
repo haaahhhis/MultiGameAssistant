@@ -5,7 +5,7 @@
  * The handle re-opens itself after every reconnect (new connection
  * generation) and after the gateway ends its subscription unexpectedly.
  */
-import type {
+import type { PromptImage,
   LiveFrame, RequestInput, RequestMethod, RequestResult, SessionEvent, SessionHeader,
 } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
@@ -22,6 +22,8 @@ export interface SessionTransport {
 export interface PendingPrompt {
   readonly requestId: string
   readonly text: string
+  /** Images sent with it (for the echo). */
+  readonly images?: number
   readonly mode: 'queue' | 'steer'
   readonly sentAt: number
   readonly failed?: string
@@ -86,12 +88,12 @@ export class SessionHandle {
   }
 
   /** Send a prompt. `steer` injects it into the running turn; `queue` waits for the next. */
-  async prompt(text: string, mode: 'queue' | 'steer' = 'queue'): Promise<void> {
+  async prompt(text: string, mode: 'queue' | 'steer' = 'queue', images: readonly PromptImage[] = []): Promise<void> {
     const requestId = crypto.randomUUID()
-    const echo: PendingPrompt = { requestId, text, mode, sentAt: Date.now() }
+    const echo: PendingPrompt = { requestId, text, mode, sentAt: Date.now(), ...(images.length === 0 ? {} : { images: images.length }) }
     this.#update(s => ({ ...s, pending: [...s.pending, echo] }))
     try {
-      await this.#transport.call('session/prompt', { sessionId: this.id, requestId, text, mode })
+      await this.#transport.call('session/prompt', { sessionId: this.id, requestId, text, mode, ...(images.length === 0 ? {} : { images: [...images] }) })
     } catch (error) {
       const failed = error instanceof Error ? error.message : String(error)
       this.#update(s => ({ ...s, pending: s.pending.map(p => (p.requestId === requestId ? { ...p, failed } : p)) }))

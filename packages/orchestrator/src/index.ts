@@ -5,7 +5,9 @@
  * `schedule_set` agent tools and the `pipelines@1` capability; the scheduler
  * starts pipelines through this service.
  */
+import { readFile } from 'node:fs/promises'
 import { Service, type Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@adg/gateway'
@@ -24,6 +26,17 @@ export { Engine, untilMs, type EngineDeps, type EngineNotice } from './engine.ts
 export { Pipelines, localDay } from './pipelines.ts'
 export { PipelineStore } from './store.ts'
 export { draftToPipeline, pipelineTools } from './tools.ts'
+
+const GUIDE = new URL('../skills/pipeline-planning.md', import.meta.url)
+
+/** `name` and `description` from a one-line-per-key frontmatter, and the body. */
+export function parseGuide(text: string): { name: string; description: string; content: string } | undefined {
+  const match = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text)
+  if (match === null) return undefined
+  const meta = Object.fromEntries(match[1]!.split(/\r?\n/).map(line => /^(\w+):\s*(.*)$/.exec(line)).filter(m => m !== null).map(m => [m[1]!, m[2]!.trim()]))
+  if (!meta['name'] || !meta['description']) return undefined
+  return { name: meta['name'], description: meta['description'], content: match[2]!.trim() }
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -82,6 +95,17 @@ export class AdgOrchestrator extends Service {
         engine.gate(runId, nodeId, actionId)
         return actionId === 'continue' ? '已继续' : '已停止'
       }), 'adg-orchestrator gate actions')
+    })
+
+    // The planning guide (hardware first, serial by default, failures do not block the rest).
+    ctx.inject(['skills'], scoped => {
+      let dispose: (() => void) | undefined
+      void readFile(GUIDE, 'utf8').then(text => {
+        const skill = parseGuide(text)
+        if (skill === undefined) { log.warn('skills/pipeline-planning.md has no usable frontmatter'); return }
+        dispose = scoped.skills.register({ ...skill, source: 'bundled' })
+      }, error => log.warn(`pipeline-planning skill not loaded: ${String(error)}`))
+      scoped.effect(() => () => dispose?.(), 'adg-orchestrator skill')
     })
 
     ctx.inject(['tools'], scoped => {

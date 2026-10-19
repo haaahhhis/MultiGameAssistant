@@ -54,3 +54,22 @@ test('pipeline_draft arguments become a pipeline, parameter strings typed by the
     '开始 leads to the steps nothing leads to; the steps that lead nowhere lead to 结束')
   assert.deepEqual(pipeline.onFailure, { retries: 0, then: 'stop' })
 })
+
+test('the planning skill parses; hardware advice goes serial unless the machine is clearly big enough', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { parseGuide } = await import('../src/index.ts')
+  const { advise, systemInfo } = await import('../src/system.ts')
+  const guide = parseGuide(await readFile(new URL('../skills/pipeline-planning.md', import.meta.url), 'utf8'))
+  assert.equal(guide?.name, 'pipeline-planning')
+  assert.match(guide?.content ?? '', /system_info/)
+  assert.match(guide?.content ?? '', /when: always/)
+
+  const small = advise({ memory: { totalGB: 15.9, freeGB: 6 }, gpus: [{ name: 'Intel(R) UHD Graphics 770' }], cpu: { name: 'i5', threads: 12 } })
+  assert.match(small, /一次只跑一个游戏/)
+  const big = advise({ memory: { totalGB: 63.8, freeGB: 40 }, gpus: [{ name: 'NVIDIA GeForce RTX 4070', memoryGB: 12 }], cpu: { name: 'i7', threads: 20 } })
+  assert.match(big, /可以同时跑一个模拟器游戏和一个 PC 游戏/)
+
+  const info = await systemInfo()
+  assert.ok(info.memory.totalGB > 0 && info.cpu.threads > 0, JSON.stringify(info))
+  assert.equal(typeof info.advice, 'string')
+})

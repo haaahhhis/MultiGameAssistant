@@ -4,6 +4,8 @@ export interface DesktopBridge {
   pickFile(options: { title?: string; defaultPath?: string | undefined; filterName?: string; extensions?: string[] }): Promise<string | null>
   /** Put a PNG (a data: URL) on the system clipboard, when the page's own clipboard is refused. */
   copyImage?(dataUrl: string): Promise<void>
+  /** Open a folder or a viewable file; anything else is shown selected in Explorer. */
+  openPath?(path: string): Promise<'opened' | 'revealed' | 'missing'>
 }
 
 export function desktop(): DesktopBridge | undefined {

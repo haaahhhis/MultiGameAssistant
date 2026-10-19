@@ -48,6 +48,7 @@ interface StoredProfile {
   readonly baseURL?: unknown
   readonly apiKeyEnv?: unknown
   readonly models?: unknown
+  readonly retryPolicy?: unknown
 }
 
 interface Section {
@@ -93,6 +94,25 @@ export function toProviderModel(entry: unknown): ProviderModel | undefined {
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(input === undefined || input.length === 0 ? {} : { input }),
   }
+}
+
+/**
+ * Retry for every route this page saves: dsh's transient codes plus
+ * `PI_AI_ERROR`, which is what an in-stream provider abort becomes — for one,
+ * a relay cutting off a model that keeps emitting whitespace in its tool
+ * arguments (`tool_arguments_stalled`); asking again almost always works.
+ */
+export const RETRY_POLICY = { mode: 'normal', maxRetries: 3, retryableCodes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'PI_AI_ERROR'] } as const
+
+/** Give routes saved before RETRY_POLICY existed the policy, once. @returns how many were updated. */
+export async function addRetryPolicies(settings: ProvidersDeps['settings'], namespace: string): Promise<number> {
+  const descriptor = settings.describe({ redactSecrets: true }).find(d => d.ns === namespace)
+  if (descriptor === undefined) return 0
+  const ops: SettingsPathOp[] = Object.entries(routesOf(descriptor.user))
+    .filter(([, profile]) => profile.retryPolicy === undefined)
+    .map(([id]) => ({ op: 'set', path: ['providers', id, 'retryPolicy'], value: structuredClone(RETRY_POLICY) as unknown as Record<string, unknown> }))
+  if (ops.length > 0) await settings.mutate(namespace, ops, descriptor.revision)
+  return ops.length
 }
 
 /** The profile object written for a model: only the fields pi-ai's model schema accepts. */
@@ -215,6 +235,7 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
           api: params.api,
           baseURL: params.baseURL,
           models,
+          retryPolicy: structuredClone(RETRY_POLICY),
         },
       }]
       // Field by field, so settings this form does not show (headers, compat, retry policy) survive an edit.
@@ -224,6 +245,7 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
         { op: 'set', path: [...base, 'baseURL'], value: params.baseURL },
         { op: 'set', path: [...base, 'models'], value: models },
         ...(currentRef === undefined && apiKeyRef !== undefined ? [{ op: 'set' as const, path: [...base, 'apiKeyEnv'], value: apiKeyRef }] : []),
+        ...(existing?.retryPolicy === undefined ? [{ op: 'set' as const, path: [...base, 'retryPolicy'], value: structuredClone(RETRY_POLICY) as unknown as Record<string, unknown> }] : []),
       ]
     const revision = await write(ops, params.expectedRevision)
     if (storesKey && apiKeyRef !== undefined) await credentials!.set(apiKeyRef, key)

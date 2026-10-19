@@ -145,6 +145,12 @@ export const RunRequests = {
       drift: z.array(z.string()),
     }),
   },
+  /** One declared config file of the local copy, as text (to look at). */
+  'configs/read': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId, file: z.string().min(1) }),
+    result: z.object({ file: z.string(), content: z.string(), truncated: z.boolean() }),
+  },
   /** Replace the local copy with the original project's current config (the user's call). */
   'configs/import': {
     capability: RUNS_CAPABILITY,

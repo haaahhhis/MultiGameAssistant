@@ -6,6 +6,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ClockTime, Pipeline, PipelineId, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { systemInfo } from './system.ts'
 import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
 import type { CheckLibrary } from './check.ts'
@@ -50,7 +51,8 @@ const brief = (run: PipelineRun, pipelines: Pipelines) => {
   }
 }
 
-const DRAFT_HELP = `流水线是一个 DAG：nodes 是步骤，edges 是先后关系（from 完成后才运行 to；同一个节点的多个下游并行）。
+const DRAFT_HELP = `先按 pipeline-planning 技能：调用 system_info 看电脑带不带得动，默认一次只跑一个游戏（串行），串行的连线用 always，这样一个游戏失败不影响后面的。
+流水线是一个 DAG：nodes 是步骤，edges 是先后关系（from 完成后才运行 to；同一个节点的多个下游并行）。
 节点 kind：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
 连线 when：success（默认）/ failure / always。失败处理：节点或整条流水线的 retries（重试次数）和 then（continue 继续其他分支 / stop 停止流水线），默认不重试、继续。
 需要同一资源（桌面鼠标键盘、同一台模拟器、同一账号）的并行节点会自动排队，不用自己串起来；只在有真正的先后依赖时才连线。
@@ -156,7 +158,7 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
   })
 }
 
-export function pipelineTools(pipelines: Pipelines, engine: Engine, library: CheckLibrary): ToolDefinition[] {
+export function pipelineTools(pipelines: Pipelines, engine: Engine, library: CheckLibrary, system: () => Promise<unknown> = systemInfo): ToolDefinition[] {
   const id = { type: 'string', description: '流水线 id（pipeline_list 可查）。' } as const
   return [
     tool({
@@ -259,6 +261,16 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
         const { pipeline } = await pipelines.save({ ...current, schedule }, current.draft === true ? 'agent' : 'user')
         return { ok: true, schedule: pipeline.schedule, note: pipeline.draft === true ? '这是草稿：用户在「编排」页保存后才会按定时运行' : undefined }
       },
+    }),
+    tool({
+      name: 'system_info',
+      description: '查看这台电脑的配置和当前负载：CPU、内存、显卡（显存）、屏幕、系统盘剩余空间，以及「一次能跑几个游戏」的建议。编排多个游戏、判断能不能并行之前先调用；不需要 shell。',
+      properties: {},
+      readOnly: true,
+      timeoutMs: 60_000,
+      kind: 'read',
+      title: () => '查看电脑配置',
+      execute: () => system(),
     }),
   ]
 }
