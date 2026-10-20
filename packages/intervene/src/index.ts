@@ -77,7 +77,7 @@ export class AdgIntervene extends Service {
       suspend: (pid, resume) => helper.call<number>('suspend', { pid, resume }),
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions)
+        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
       },
       visionProblem: async () => {
         const selection = ctx.get('agentDefaultModel')?.currentSelection()
@@ -89,6 +89,13 @@ export class AdgIntervene extends Service {
         return parts.length > 0 ? parts.join('；') : '没有（这个任务不用模拟器也不用桌面，只能截图查看、更新或重新运行脚本）'
       },
       onChange: item => ctx.get('adgGateway')?.broadcast('intervene/changed', item),
+      settle: async (incidentId, action) => {
+        // The monitor depends on this plugin, so it is looked up by name, not imported.
+        const monitor = (ctx.get('adgMonitor' as never) as { monitor?: { act(id: string, action: 'retry' | 'resume' | 'resolve', who: { by: 'agent'; name: string }): Promise<unknown> } } | undefined)?.monitor
+        if (monitor === undefined) return false
+        await monitor.act(incidentId, action, { by: 'agent', name: 'agent' })
+        return true
+      },
       dataDir: spec.dataDir,
       timeoutMs: spec.timeoutMinutes * 60_000,
       log: { info: m => log.info(m), warn: m => log.warn(m) },

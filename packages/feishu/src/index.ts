@@ -7,7 +7,7 @@
  * the long connection, so no public address is needed. Contributes the
  * `feishu@1` capability.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -17,6 +17,7 @@ import { FEISHU_CAPABILITY, FEISHU_SECRET_REF, FeishuPending, FeishuSettings, ty
 import { z } from 'zod'
 import { sdkApi } from './api.ts'
 import { DEFAULT_FEISHU, FeishuBot, type FeishuState } from './bot.ts'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 export { FeishuBot, DEFAULT_FEISHU, type BotOptions, type FeishuState, type NotifyPort } from './bot.ts'
 export { describeFeishuError, FeishuError, parseCardAction, parseMessage, sdkApi, type CardAction, type CardActionResponse, type ConnectionState, type FeishuApi, type InboundMessage, type Target } from './api.ts'
@@ -62,9 +63,7 @@ export class AdgFeishu extends Service {
         }
       },
       save: async state => {
-        await mkdir(spec.dataDir, { recursive: true })
-        await writeFile(`${file}.tmp`, `${JSON.stringify(state, null, 2)}\n`)
-        await rename(`${file}.tmp`, file)
+        await writeFileAtomic(file, `${JSON.stringify(state, null, 2)}\n`)
       },
       notify: () => ({
         act: (id, action, actor) => notify.notify.act(id, action, actor),

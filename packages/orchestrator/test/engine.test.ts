@@ -292,3 +292,44 @@ test('starting from a node: it and what follows run, the rest is passed over and
   assert.throws(() => engine.start(p, { kind: 'manual' }, { from: 'nope' }), /没有节点 nope/)
   engine.dispose()
 })
+
+test('a retried node holds back what follows until the retry ends', async () => {
+  // Fails on the first run, succeeds (slowly) on the second.
+  const flaky = script('flaky', 'none', { t: [{ once: 'debug/.once', steps: [{ log: 'boom' }, { exit: 2 }] }, { log: 'working' }, { sleepMs: 800 }, { exit: 0 }] })
+  const { engine, runner } = setup([flaky])
+  const p = pipeline({
+    nodes: [
+      { id: 'a', kind: 'script-task', scriptId: 'flaky', taskId: 't', onFailure: { retries: 1, then: 'continue' } },
+      { id: 'b', kind: 'notify', text: '下一步' },
+    ],
+    edges: [{ from: 'a', to: 'b', when: 'always' }],
+  })
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+  assert.equal(run.nodes['a']!.state, 'succeeded')
+  assert.equal(run.nodes['a']!.runIds.length, 2)
+  const second = runner.get(run.nodes['a']!.runIds[1]!)
+  assert.ok(run.nodes['b']!.startedAt! >= second.endedAt!, `b started ${second.endedAt! - run.nodes['b']!.startedAt!} ms before the retry ended`)
+  engine.dispose()
+})
+
+test('a run restarted after it failed (the monitor, the agent, 重试) is followed: the next node waits for the rerun', async () => {
+  const flaky = script('flaky2', 'none', { t: [{ once: 'debug/.once', steps: [{ log: 'boom' }, { exit: 2 }] }, { log: 'working' }, { sleepMs: 500 }, { exit: 0 }] })
+  const { engine, runner } = setup([flaky])
+  // Like the monitor: hold a failed run, decide a while later to run it again.
+  const off = runner.watch({ state: run => {
+    if (run.state !== 'failed' || run.retryOf !== undefined) return
+    const release = runner.hold(run.id)
+    setTimeout(() => { void runner.restart(run.id, '监控重试').finally(release) }, 400)
+  } })
+  const p = pipeline({
+    nodes: [{ id: 'a', kind: 'script-task', scriptId: 'flaky2', taskId: 't' }, { id: 'b', kind: 'notify', text: '下一步' }],
+    edges: [{ from: 'a', to: 'b', when: 'always' }],
+  })
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+  off()
+  assert.equal(run.nodes['a']!.state, 'succeeded', run.nodes['a']!.detail)
+  assert.equal(run.nodes['a']!.runIds.length, 2, 'followed to the rerun')
+  const rerun = runner.get(run.nodes['a']!.runIds[1]!)
+  assert.ok(run.nodes['b']!.startedAt! >= rerun.endedAt!, 'b waited for the rerun')
+  engine.dispose()
+})

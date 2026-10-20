@@ -11,6 +11,7 @@
  * removes its capability and methods.
  */
 import { randomBytes } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
@@ -59,12 +60,18 @@ export interface Config {
   readonly providersNamespace?: string
   /** Settings namespace of the default-model entry. @default 'agent-default-model' */
   readonly defaultModelNamespace?: string
+  /**
+   * The working folder of sessions that do not name one (created if missing).
+   * Kept apart from the app: dsh's Windows sandbox labels it low-integrity for good.
+   */
+  readonly workspaceDir?: string
 }
 
 export class AdgGateway extends Service {
   static inject = ['sessionController']
 
   private readonly registry = new CapabilityRegistry()
+  private readonly workspace: string | undefined
   private archived = new Set<string>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
@@ -74,6 +81,7 @@ export class AdgGateway extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'adgGateway')
     const log = ctx.logger('adg-gateway')
+    this.workspace = config.workspaceDir
     const token = config.token ?? randomBytes(18).toString('base64url')
 
     this.approvals = new ApprovalBroker({
@@ -81,8 +89,12 @@ export class AdgGateway extends Service {
       broadcastResolved: (approvalId, outcome) => this.broadcast('approval/resolved', { approvalId, outcome }),
     })
 
+    if (config.workspaceDir !== undefined) {
+      try { mkdirSync(config.workspaceDir, { recursive: true }) } catch (error) { log.warn(`cannot create the workspace ${config.workspaceDir}: ${String(error)}`) }
+    }
     for (const capability of builtinCapabilities({
       sessions: ctx.sessionController,
+      ...(config.workspaceDir === undefined ? {} : { workspaceDir: config.workspaceDir }),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       capabilities: () => this.registry.list().filter(c => !c.id.startsWith('$')),
@@ -323,6 +335,11 @@ export class AdgGateway extends Service {
   }
 
   /** Send one notification to every initialized client. */
+  /** Where sessions work when they do not say (the agent's own folder, never the app's). */
+  workspaceDir(): string | undefined {
+    return this.workspace
+  }
+
   /** Is this session archived? (A chat-channel conversation then starts a new one.) */
   isArchived(sessionId: string): boolean {
     return this.archived.has(sessionId)

@@ -124,6 +124,8 @@ export class Runner {
   readonly #listeners = new Set<RunListener>()
   /** Runs being restarted → the restart (resolves undefined when it did not start). */
   readonly #successors = new Map<string, Promise<RunInfo | undefined>>()
+  /** Runs someone is still deciding about (the monitor handling an incident) → how many, and who waits. */
+  readonly #holds = new Map<string, { count: number; waiters: (() => void)[] }>()
   readonly #now: () => number
 
   constructor(options: RunnerOptions) {
@@ -499,7 +501,34 @@ export class Runner {
    * orchestrator) asks after it ends, and keeps following.
    */
   async successor(runId: string): Promise<RunInfo | undefined> {
+    const hold = this.#holds.get(runId)
+    if (hold !== undefined) await new Promise<void>(resolve => hold.waiters.push(resolve))
     return this.#successors.get(runId)
+  }
+
+  /**
+   * Someone is deciding what happens after this run (the monitor recovering,
+   * the agent handling an incident, the user's 重试): `successor()` waits
+   * until every hold is released, so whoever follows the run sees a restart
+   * that comes after the run ended. @returns the release (idempotent).
+   */
+  hold(runId: string): () => void {
+    const entry = this.#holds.get(runId) ?? { count: 0, waiters: [] }
+    entry.count++
+    this.#holds.set(runId, entry)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (--entry.count > 0) return
+      this.#holds.delete(runId)
+      for (const resolve of entry.waiters.splice(0)) resolve()
+    }
+  }
+
+  /** Is someone still deciding about this run? */
+  held(runId: string): boolean {
+    return this.#holds.has(runId)
   }
 
   /** The script's process id while it runs (to pause it). */

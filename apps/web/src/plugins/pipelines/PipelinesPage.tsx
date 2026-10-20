@@ -23,7 +23,7 @@ const blank = (): Pipeline => ({
 })
 
 /** Pipelines: the list, the canvas editor, runs. */
-export function PipelinesPage({ client, openSettings }: PageProps) {
+export function PipelinesPage({ client, openSettings, arg }: PageProps) {
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
   const [list, setList] = useState<PipelineSummary[] | null>(null)
@@ -38,6 +38,8 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
   const [revision, setRevision] = useState(0)
 
   useEffect(() => client.connection.on('pipelines/changed', () => setRevision(r => r + 1)), [client])
+  // A link to one pipeline (#/p/pipelines/<id>) opens it.
+  useEffect(() => { if (arg !== undefined) setSelected(arg) }, [arg])
   useEffect(() => {
     if (status.state !== 'open') return
     let live = true
@@ -128,7 +130,7 @@ export function PipelinesPage({ client, openSettings }: PageProps) {
         <div className="breadcrumb"><span>编排</span><span className="breadcrumb-divider">/</span><h1>流水线</h1></div>
         <PipelineSwitcher list={list ?? []} current={pipeline} isNew={isNew} now={now} onPick={setSelected} />
         <div className="page-actions">
-          <button className="small-button" onClick={() => openSettings()}><Icon name="settings" />定时与自启</button>
+          <button className="small-button" onClick={() => openSettings('schedule')}><Icon name="settings" />定时与自启</button>
           <button className="primary small-button" onClick={create}><Icon name="plus" />新建流水线</button>
         </div>
       </header>

@@ -31,17 +31,19 @@ export function gatewayUrl(token: string): string {
 export type Route =
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
-  | { readonly kind: 'settings' }
-  | { readonly kind: 'page'; readonly id: string }
+  | { readonly kind: 'settings'; readonly section?: string | undefined }
+  | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
   /** One session view alone, in a popped-out window. */
   | { readonly kind: 'window'; readonly view: string; readonly sessionId: string }
 
 export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
+  const section = /^#\/settings\/(.+)$/.exec(location.hash)
+  if (section !== null) return { kind: 'settings', section: decodeURIComponent(section[1]!) }
   const popped = /^#\/w\/([^/]+)\/(.+)$/.exec(location.hash)
   if (popped !== null) return { kind: 'window', view: decodeURIComponent(popped[1]!), sessionId: decodeURIComponent(popped[2]!) }
-  const page = /^#\/p\/(.+)$/.exec(location.hash)
-  if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!) }
+  const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
+  if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
   return match === null ? { kind: 'home' } : { kind: 'session', id: decodeURIComponent(match[1]!) }
 }
@@ -49,8 +51,8 @@ export function readRoute(): Route {
 export function writeRoute(route: Route): void {
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
-    : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}`
-      : route.kind === 'settings' ? '#/settings' : ''
+    : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
+      : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`) : ''
   if (location.hash !== hash) history.replaceState(history.state, '', `${location.pathname}${location.search}${hash}`)
 }
 

@@ -171,3 +171,11 @@ test('removing the route the default model points at resets the default', async 
   assert.equal((await host.call('providers/remove', { id: 'a' })).defaultReset, true)
   assert.deepEqual(resets, ['a'])
 })
+
+test('thinking levels are saved as reasoningEfforts (off sends none) and read back', async () => {
+  const host = fakeHost()
+  await host.call('providers/save', { ...draft, models: [{ id: 'm1', efforts: ['off', 'low', 'high'] }] })
+  assert.deepEqual((host.user().providers as any).acme.models, [{ id: 'm1', reasoningEfforts: { off: null, low: 'low', high: 'high' } }])
+  const listed = await host.call('providers/list', {})
+  assert.deepEqual(listed.providers.find((p: { id: string }) => p.id === 'acme').models, [{ id: 'm1', efforts: ['off', 'low', 'high'] }])
+})

@@ -241,6 +241,14 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
     onChange(selected.has(model.id) ? models.filter(m => m.id !== model.id) : [...models, model])
   }
 
+  const toggleThinking = (id: string) => {
+    onChange(models.map(m => {
+      if (m.id !== id) return m
+      if (m.efforts !== undefined && m.efforts.length > 0) { const { efforts: _e, ...rest } = m; return rest }
+      return { ...m, efforts: ['off', 'low', 'medium', 'high'] }
+    }))
+  }
+
   const toggleImages = (id: string) => {
     onChange(models.map(m => (m.id !== id ? m : { ...m, input: m.input?.includes('image') === true ? ['text'] : ['text', 'image'] })))
   }
@@ -272,7 +280,7 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
       <div className="card-head">
         <div>
           <h3>模型</h3>
-          <div className="muted small">已选 {models.length} 个。只有选中的模型会出现在模型选择器里。能看图的模型点亮「图片」，否则 dsh 会拒绝发送图片。</div>
+          <div className="muted small">已选 {models.length} 个。只有选中的模型会出现在模型选择器里。能看图的模型点亮「图片」，否则 dsh 会拒绝发送图片；支持调思考强度的模型（如 GPT-5、o 系列、Claude、DeepSeek R 系列）点亮「思考」，对话里就能选强度。</div>
         </div>
         <button type="button" onClick={() => void pull()} disabled={disabled || busy || probeBlocked !== null} title={probeBlocked ?? undefined}>
           {busy ? '拉取中…' : candidates === null ? '拉取模型列表' : '重新拉取'}
@@ -291,6 +299,12 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
                 aria-pressed={m.input?.includes('image') === true} title={m.input?.includes('image') === true ? '支持图片输入（点击关闭）' : '不支持图片输入（点击开启）'}
               >
                 图片
+              </button>
+              <button
+                type="button" className={`chip-flag${(m.efforts?.length ?? 0) > 0 ? ' on' : ''}`} onClick={() => toggleThinking(m.id)} disabled={disabled}
+                aria-pressed={(m.efforts?.length ?? 0) > 0} title={(m.efforts?.length ?? 0) > 0 ? `可选思考强度：${m.efforts!.join(' / ')}（点击关闭）` : '没有声明思考强度（点击开启：不思考 / 低 / 中 / 高）'}
+              >
+                思考
               </button>
               <button type="button" className="chip-x" onClick={() => onChange(models.filter(x => x.id !== m.id))} disabled={disabled} aria-label={`移除 ${m.id}`}>×</button>
             </span>

@@ -239,7 +239,7 @@ export function screenTools(deps: ScreenToolDeps): ToolDefinition[] {
       title: a => `处理结论：${String(a['result'] ?? '')}`,
       execute: async (args, exec) => {
         const a = parse(z.object({ result: z.enum(['resolved', 'retry', 'give-up']), summary: z.string().min(1).max(2000) }), args)
-        return { ok: true, message: deps.interventions.done(sessionOf(exec), a.result, a.summary) }
+        return { ok: true, message: await deps.interventions.done(sessionOf(exec), a.result, a.summary) }
       },
     }),
   ]

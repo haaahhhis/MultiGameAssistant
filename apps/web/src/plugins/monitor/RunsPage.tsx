@@ -88,7 +88,7 @@ export function RunsPage({ client, openSettings, openSession }: PageProps) {
       <header className="page-header">
         <div className="breadcrumb"><span>运行</span><span className="breadcrumb-divider">/</span><h1>运行监控</h1></div>
         <div className="page-actions">
-          <button className="small-button" onClick={() => openSettings()}><Icon name="plug" />消息通知</button>
+          <button className="small-button" onClick={() => openSettings('feishu')}><Icon name="plug" />消息通知</button>
           <button className={`small-button ${showSettings ? 'primary' : ''}`} onClick={() => setShowSettings(v => !v)}><Icon name="settings" />监控设置</button>
         </div>
       </header>

@@ -16,16 +16,23 @@
  * The user may take over at any point: the agent session is stopped and the
  * script stays paused until they release it.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Incident, Intervention } from '@adg/protocol'
 import type { Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 export interface InterventionDeps {
   readonly runner: Pick<Runner, 'get' | 'processId' | 'restart' | 'stop' | 'note'>
   /** Suspend or resume a process tree. @returns how many processes changed. */
   readonly suspend: (pid: number, resume: boolean) => Promise<number>
+  /**
+   * Settle the incident the way a person would (the monitor's 重试 / 继续 /
+   * 忽略), for a conclusion that comes after the intervention ended.
+   * @returns false when it could not (then the run is restarted or resumed directly).
+   */
+  readonly settle?: (incidentId: string, action: 'retry' | 'resume' | 'resolve') => Promise<boolean>
   readonly conversations: () => Conversations | undefined
   /** Why the agent cannot look at screenshots now (no image-capable model), if so. */
   readonly visionProblem: () => Promise<string | undefined>
@@ -105,11 +112,44 @@ export class Interventions {
   }
 
   /** `intervention_done` from the agent. @throws Error when the session is not handling one. */
-  done(sessionId: string | undefined, result: 'resolved' | 'retry' | 'give-up', summary: string): string {
+  async done(sessionId: string | undefined, result: 'resolved' | 'retry' | 'give-up', summary: string): Promise<string> {
     const active = this.forSession(sessionId)
-    if (active === undefined) throw new Error('这个会话不是在处理异常，不需要调用 intervention_done')
-    active.done = { result, summary }
-    return result === 'give-up' ? '已记录，会把情况和你的说明发给用户。现在结束这一轮回复。' : '已记录，脚本会按你的结论继续。现在结束这一轮回复。'
+    if (active !== undefined) {
+      active.done = { result, summary }
+      return result === 'give-up' ? '已记录，会把情况和你的说明发给用户。现在结束这一轮回复。' : '已记录，脚本会按你的结论继续。现在结束这一轮回复。'
+    }
+    // The intervention ended (timed out, handed to the user) but the agent kept at it in the same session.
+    const item = sessionId === undefined ? undefined : [...this.#items].reverse().find(i => i.sessionId === sessionId)
+    if (item === undefined) throw new Error('这个会话不是在处理异常。要重新运行任务用 script_run，要停止用 script_stop')
+    return this.#late(item, result, summary)
+  }
+
+  /** A conclusion after the intervention ended: carry it out as the user's button would. */
+  async #late(item: Intervention, result: 'resolved' | 'retry' | 'give-up', summary: string): Promise<string> {
+    Object.assign(item, { summary, endedAt: this.#now() })
+    if (result === 'give-up' || item.runId === undefined) {
+      item.state = result === 'give-up' ? 'gave-up' : item.state
+      this.#changed(item)
+      return '已记录。'
+    }
+    const settle = (action: 'retry' | 'resume' | 'resolve') => item.incidentId === undefined || this.#deps.settle === undefined
+      ? Promise.resolve(false)
+      : this.#deps.settle(item.incidentId, action).catch(() => false)
+    if (result === 'retry') {
+      if (!(await settle('retry'))) await this.#deps.runner.restart(item.runId, `agent 处理后重新运行：${summary}`)
+      Object.assign(item, { state: 'retried', paused: false })
+      this.#changed(item)
+      return '已经重新运行这个任务（异常也标为已处理）。现在结束这一轮回复。'
+    }
+    if (item.paused) {
+      if (!(await settle('resume'))) await this.#resume(item)
+      item.paused = false
+    } else {
+      await settle('resolve')
+    }
+    item.state = 'resolved'
+    this.#changed(item)
+    return '已记录，脚本继续运行。现在结束这一轮回复。'
   }
 
   rememberShot(sessionId: string | undefined, png: Buffer): void {
@@ -274,9 +314,7 @@ export class Interventions {
 
   async #save(): Promise<void> {
     try {
-      await mkdir(join(this.#deps.dataDir, 'intervene'), { recursive: true })
-      await writeFile(`${this.#file()}.tmp`, JSON.stringify(this.#items))
-      await rename(`${this.#file()}.tmp`, this.#file())
+      await writeFileAtomic(this.#file(), JSON.stringify(this.#items))
     } catch (error) {
       this.#deps.log.warn(`saving interventions failed: ${error instanceof Error ? error.message : String(error)}`)
     }

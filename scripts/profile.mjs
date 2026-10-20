@@ -39,7 +39,19 @@ export function prepareAdgProfile({ home, bundleDir, dshBin, node = process.exec
   const linkDir = join(profile, 'node_modules', '@adg')
   mkdirSync(linkDir, { recursive: true })
   ensureLink(bundleDir, join(linkDir, 'bundle'))
+  mkdirSync(agentWorkspace(home), { recursive: true })
   return profile
+}
+
+/**
+ * The agent's working folder (the bundle points dsh's working-directory row
+ * at it). Kept apart from the app on purpose: dsh's Windows sandbox labels
+ * the working folder low-integrity for good, and a program started from a
+ * low-labeled folder (the desktop app's own Electron) runs at low integrity
+ * and fails.
+ */
+export function agentWorkspace(home) {
+  return process.env.ADG_WORKSPACE_DIR || join(home, 'adg', 'workspace')
 }
 
 /**

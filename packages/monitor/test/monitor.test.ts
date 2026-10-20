@@ -167,7 +167,13 @@ test('a stalled run is pushed with a stop button; stopping it from the notice en
   const { runner, monitor, notices, updates, later } = setup(pack, { 'daily.json': replay('march7th-stuck.log', 'stdout', [{ sleepMs: 60_000 }]) })
   await monitor.start(0)
   const run = await runner.start('maa', 'daily')
-  await new Promise(resolve => setTimeout(resolve, 400))
+  // Wait until the sample has printed all its lines (a fixed delay is flaky when the machine is busy).
+  for (let i = 0, last = -1; i < 100; i++) {
+    await new Promise(resolve => setTimeout(resolve, 150))
+    const count = runner.logs(run.id, 5000).length
+    if (count === last && monitor.incidents().length > 0) break
+    last = count
+  }
   monitor.tick()
   assert.equal(monitor.incidents().filter(i => i.kind === 'stalled').length, 0, 'not stalled yet')
   assert.equal(monitor.incidents()[0]?.tag, 'screencap-failed', 'the sample has a 截图失败 line, a warning')

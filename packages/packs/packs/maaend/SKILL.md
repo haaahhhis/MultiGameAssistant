@@ -16,6 +16,7 @@ description: MaaEnd（明日方舟：终末地自动化）的安装与运行。�
 - 没有合适的实例时，用 `script_choice_create` 新建一个（复制一个同类实例，任务列表也一起复制过来），再按用户要求用 `script_config_set` 调整它的任务，或让用户「打开脚本修改设置」在 MaaEnd 里改；新实例只在本地副本里，原项目不受影响。一个实例都没有时，先让用户打开一次 MaaEnd 建一个。
 - `script_run` 时传参数 `instance`。命令是 `MaaEnd.exe --autostart --instance <名称> --quit-after-run`，跑完会自己退出。
 - 游戏：运行前如果终末地还没打开，AutoDailyGamePlay 会先启动它（模拟器里是 `com.hypergryph.endfield`，PC 版用用户在脚本页「启动游戏」里设置的程序位置）。实例里 MaaEnd 自己的「打开游戏」任务会发现游戏已经开着，不会冲突。B 服或国际服的包名不同，可以在脚本页改。
+- PC 版**要从鹰角官方启动器打开**：直接运行 `Endfield.exe` 会提示「请通过官方启动器打开游戏」。所以「启动游戏」的程序位置要填启动器（不是 `Endfield.exe`），进程名保持 `Endfield.exe`；启动器打开后可能还要点一下「开始游戏」——游戏窗口没出来、MaaEnd 报找不到窗口时，就是这一步没走完：截图看看，点启动器里的开始按钮，等游戏进到主界面后用 `intervention_done(retry)`（处理异常时）或 `script_run` 重新运行。
 - 想知道有哪些任务：`script_analyze` 会列出 interface.json 里的全部任务（中文名）。
 
 ## 待确认（真机测试后补充）

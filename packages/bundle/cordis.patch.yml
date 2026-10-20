@@ -22,6 +22,7 @@
         port: !!js "Number(process.env.ADG_GATEWAY_PORT ?? 3290)"
         token: !!js "process.env.ADG_GATEWAY_TOKEN || undefined"
         staticDir: !!js "process.env.ADG_UI_DIR || undefined"
+        workspaceDir: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"
         validateResults: true
 
     # M1: script library — packs, GitHub installs, local imports, versions,
@@ -119,3 +120,13 @@
 - id: pwsh-sandbox
   config:
     pwshPath: !!js "process.env.ADG_SANDBOX_PWSH || `${process.env.SystemRoot ?? 'C:/Windows'}/System32/WindowsPowerShell/v1.0/powershell.exe`"
+
+# The agent's working folder for sessions that do not name one: a folder of
+# its own, never the app's. dsh's Windows sandbox gives the working folder a
+# permanent low-integrity label, and a program started from under such a
+# folder (the desktop app's Electron, when the app lives there) runs at low
+# integrity and fails to start. scripts/profile.mjs creates the folder.
+#   ADG_WORKSPACE_DIR   another folder
+- id: working-directory
+  config:
+    defaultDirectory: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"

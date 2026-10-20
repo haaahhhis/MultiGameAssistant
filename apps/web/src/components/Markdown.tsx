@@ -74,8 +74,12 @@ DOMPurify.addHook('beforeSanitizeAttributes', node => {
   node.classList.add('local-path')
 })
 
-// Model output is untrusted: sanitize, and make every link open externally.
+// Model output is untrusted: sanitize, and make every link open externally — except links into this app (#/…).
 DOMPurify.addHook('afterSanitizeAttributes', node => {
+  if (node.tagName === 'A' && /^#\/(p|s|settings)(\/|$)/.test(node.getAttribute('href') ?? '')) {
+    node.classList.add('app-link')
+    return
+  }
   if (node.tagName === 'A') {
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'noopener noreferrer')

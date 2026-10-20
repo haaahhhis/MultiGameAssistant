@@ -49,7 +49,7 @@ export interface InterventionPort {
 }
 
 export interface MonitorDeps {
-  readonly runner: Pick<Runner, 'watch' | 'get' | 'list' | 'logs' | 'stop' | 'restart' | 'warn'>
+  readonly runner: Pick<Runner, 'watch' | 'get' | 'list' | 'logs' | 'stop' | 'restart' | 'warn'> & Partial<Pick<Runner, 'hold'>>
   readonly packOf: (scriptId: string) => { manifest: ScriptManifest } | undefined
   readonly emulators: () => EmulatorBridge | undefined
   readonly notices: () => NoticeSink | undefined
@@ -59,6 +59,8 @@ export interface MonitorDeps {
   readonly store: IncidentStore
   readonly onIncident: (incident: Incident) => void
   readonly now?: () => number
+  /** How long a pipeline waits for the user after an incident was pushed. @default 5 minutes */
+  readonly userWaitMs?: number
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
@@ -76,6 +78,9 @@ export interface IncidentStore {
 export const DEFAULT_SETTINGS: MonitorSettings = { defaultStallMinutes: 30, notifyWarnings: false, screenshot: true, intervene: 'act', interventionsPerDay: 10 }
 
 const ACTION_WORD = { stop: '停止', retry: '重试', resolve: '忽略', resume: '继续' } as const
+
+/** How long a pipeline waits for the user's answer to a pushed incident before going on. */
+const USER_WAIT_MS = 5 * 60_000
 
 const KEEP_INCIDENTS = 300
 const TAIL_LINES = 12
@@ -97,6 +102,8 @@ export class Monitor {
   readonly #now: () => number
   readonly #watched = new Map<string, Watched>()
   readonly #chains = new Map<string, string>()
+  /** Incident → the release of its hold on the run (see Runner.hold). */
+  readonly #holds = new Map<string, () => void>()
   /** chain → recovery entry index → times used. */
   readonly #used = new Map<string, Map<number, number>>()
   readonly #incidents: Incident[] = []
@@ -285,15 +292,35 @@ export class Monitor {
     if (this.#incidents.length > KEEP_INCIDENTS) this.#incidents.splice(0, this.#incidents.length - KEEP_INCIDENTS)
     this.#deps.log.info(`incident ${incident.id} ${kind}/${tag} on ${run.id}: ${detail}`)
     this.#changed(incident)
-    this.#enqueue(run.id, () => this.#handle(incident))
+    // A pipeline following this run waits for what is decided here (a restart counts as the same step).
+    if (severity === 'error') {
+      const release = this.#deps.runner.hold?.(run.id)
+      if (release !== undefined) this.#holds.set(incident.id, release)
+    }
+    this.#enqueue(run.id, async () => {
+      let pushed = false
+      try {
+        pushed = await this.#handle(incident)
+      } finally {
+        // Told the user: give them a while to answer (重试 from Feishu still counts), then let the pipeline go on.
+        if (pushed && incident.status === 'open') setTimeout(() => this.#release(incident.id), this.#deps.userWaitMs ?? USER_WAIT_MS).unref?.()
+        else this.#release(incident.id)
+      }
+    })
     return incident
   }
 
+  #release(incidentId: string): void {
+    this.#holds.get(incidentId)?.()
+    this.#holds.delete(incidentId)
+  }
+
   /** L0 recovery, then the screenshot and the notice for whatever is left. */
-  async #handle(incident: Incident): Promise<void> {
+  /** @returns whether the user was told (a notice went out). */
+  async #handle(incident: Incident): Promise<boolean> {
     const recovered = await this.#recover(incident)
-    if (incident.severity === 'warning' && !this.#settings.notifyWarnings) return
-    if (recovered) return
+    if (incident.severity === 'warning' && !this.#settings.notifyWarnings) return false
+    if (recovered) return false
     let image: Buffer | undefined
     if ((this.#settings.screenshot || this.#settings.intervene !== 'off') && incident.severity === 'error') image = await this.#capture(incident)
 
@@ -310,15 +337,15 @@ export class Monitor {
         this.#step(incident, { action: 'intervene', by: 'agent', ok: fixed, detail: `${AGENT_STATE[agent.state] ?? agent.state}：${agent.summary}` })
         if (fixed) {
           this.#resolve(incident, `agent 已处理：${agent.summary}`)
-          return
+          return false
         }
-        if (agent.state === 'taken-over' || incident.status !== 'open') return
+        if (agent.state === 'taken-over' || incident.status !== 'open') return false
         if (agent.image !== undefined) image = agent.image
       }
     }
 
     const sink = this.#deps.notices()
-    if (sink === undefined) return
+    if (sink === undefined) return false
     const run = safeGet(this.#deps.runner, incident.runId)
     const paused = agent?.paused === true
     const actions: MonitorNotice['actions'] = [
@@ -343,8 +370,10 @@ export class Monitor {
       this.#step(incident, reached.length > 0
         ? { action: 'notify', by: 'rule', ok: true, detail: `已推送（${reached.join('、')}）` }
         : { action: 'notify', by: 'rule', ok: false, detail: '没有可用的消息渠道，未推送（在「设置 → 飞书」配置）' })
+      return reached.length > 0
     } catch (error) {
       this.#step(incident, { action: 'notify', by: 'rule', ok: false, detail: `推送失败：${message(error)}` })
+      return false
     }
   }
 
@@ -421,6 +450,7 @@ export class Monitor {
   }
 
   #resolve(incident: Incident, resolution: string): void {
+    this.#release(incident.id)
     if (incident.status === 'resolved') return
     incident.status = 'resolved'
     incident.resolution = resolution

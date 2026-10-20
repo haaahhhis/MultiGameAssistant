@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import type { ModelSelection } from '@adg/protocol'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
 import { NavRail, type RailTarget } from './components/NavRail.tsx'
 import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
+import { ModelPicker } from './components/ModelPicker.tsx'
 import { SessionList, relativeTime, sessionTitle } from './components/SessionList.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
@@ -24,6 +26,12 @@ export function App({ client }: { client: AdgClient }) {
   const pages = usePages(client)
   const status = useStore(client.connection.status)
   useEffect(() => writeRoute(route), [route])
+  // In-app links (an agent reply's [编排页](#/p/pipelines/…)) change the address: follow it.
+  useEffect(() => {
+    const onHash = () => setRoute(readRoute())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   // Drop a selection that no longer exists once the list has loaded.
   useEffect(() => {
@@ -31,7 +39,7 @@ export function App({ client }: { client: AdgClient }) {
   }, [route, sessions])
 
   const openSession = (id: string) => setRoute({ kind: 'session', id })
-  const openSettings = () => setRoute({ kind: 'settings' })
+  const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
   const goHome = () => setRoute({ kind: 'home' })
   const selected = route.kind === 'session' ? route.id : null
@@ -44,14 +52,14 @@ export function App({ client }: { client: AdgClient }) {
 
   return (
     <div className={`app ${chatArea || route.kind === 'settings' ? 'with-sidebar' : ''}`}>
-      <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={openSettings} />
-      {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} />}
-      {chatArea && <SessionList client={client} selected={selected} onSelect={openSession} />}
+      <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={() => openSettings()} />
+      {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={route.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
+      {chatArea && <SessionList client={client} selected={selected} onSelect={openSession} onNew={goHome} />}
       {route.kind === 'page' && (page === undefined
         ? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>
-        : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} />)}
+        : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={route.kind === 'page' ? route.arg : undefined} />)}
       {route.kind === 'home' && (
-        <Home client={client} onSettings={openSettings} onOpen={openSession}
+        <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession}
           onStart={(sessionId, text) => { setHandoff({ sessionId, text }); openSession(sessionId) }} />
       )}
       {route.kind === 'session' && (
@@ -59,7 +67,7 @@ export function App({ client }: { client: AdgClient }) {
           key={route.id} client={client} sessionId={route.id}
           initialPrompt={handoff?.sessionId === route.id ? handoff.text : undefined}
           onInitialSent={() => setHandoff(null)}
-          reminder={<ApiKeyReminder client={client} onSettings={openSettings} />}
+          reminder={<ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} />}
         />
       )}
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
@@ -83,6 +91,8 @@ function Home({ client, onSettings, onOpen, onStart }: {
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
   const [text, setText] = useState('')
+  const [model, setModel] = useState<ModelSelection | undefined>(undefined)
+  const capabilities = useStore(client.capabilities)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
@@ -95,7 +105,10 @@ function Home({ client, onSettings, onOpen, onStart }: {
     setBusy(true)
     setError(null)
     try {
-      onStart(await client.createSession(), value)
+      // The conversation is created now, when there is something to say; the chosen model goes with it.
+      const sessionId = await client.createSession()
+      if (model !== undefined) await client.selectModel(sessionId, model).catch(() => {})
+      onStart(sessionId, value)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
@@ -133,6 +146,7 @@ function Home({ client, onSettings, onOpen, onStart }: {
             disabled={disabled}
           />
           <div className="composer-actions">
+            {capabilities.has('models') && <ModelPicker client={client} disabled={disabled || busy} value={model} onChange={setModel} />}
             {error !== null && <span className="error small">{error}</span>}
             <span className="spacer" />
             <span className="composer-kbd"><kbd>Enter</kbd> 开始</span>

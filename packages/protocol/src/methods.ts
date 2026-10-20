@@ -125,6 +125,8 @@ export const ProviderModel = z.object({
   contextWindow: z.number().int().positive().optional(),
   maxTokens: z.number().int().positive().optional(),
   input: z.array(z.enum(['text', 'image'])).optional(),
+  /** Selectable thinking levels (e.g. off, low, medium, high); absent = not declared. */
+  efforts: z.array(z.string().min(1)).optional(),
 })
 export type ProviderModel = z.infer<typeof ProviderModel>
 

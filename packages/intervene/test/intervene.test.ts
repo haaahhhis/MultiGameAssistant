@@ -216,3 +216,15 @@ test('screen tools: strict schemas; acting needs the lock, an intervention may a
   await assert.rejects(byName('screen_tap').execute({ target: 'emulator', x: 1, y: 1 }, exec('chat')), /正被「MAA · 日常」使用/)
   await assert.rejects(byName('screen_tap').execute({ target: 'desktop', x: 1, y: 1 }, exec('chat')), /先用 screen_capture/)
 })
+
+test('a conclusion after the intervention ended (it timed out) still reruns or resumes the task', async () => {
+  const late = interventions({ ask: () => new Promise((_, reject) => setTimeout(() => reject(new Error('aborted')), 800)) })
+  const out = await late.iv().handle(incident, 'act', undefined)
+  assert.equal(out.state, 'timeout')
+  const sessionId = late.iv().list()[0]!.sessionId!
+  // The agent finished the job afterwards, in the same session.
+  assert.match(await late.iv().done(sessionId, 'retry', '从鹰角启动器进了游戏'), /已经重新运行/)
+  assert.deepEqual(late.restarted, ['run-1'])
+  assert.deepEqual([late.iv().list()[0]!.state, late.iv().list()[0]!.paused], ['retried', false])
+  await assert.rejects(late.iv().done('some-other-session', 'retry', 'x'), /不是在处理异常.*script_run/)
+})

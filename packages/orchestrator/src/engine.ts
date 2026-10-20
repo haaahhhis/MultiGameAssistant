@@ -26,7 +26,7 @@ export interface EngineNotice {
 }
 
 export interface EngineDeps {
-  readonly runner: Pick<Runner, 'start' | 'check' | 'stop' | 'finished' | 'watch' | 'successor'>
+  readonly runner: Pick<Runner, 'start' | 'check' | 'stop' | 'finished' | 'watch' | 'successor'> & Partial<Pick<Runner, 'held'>>
   readonly library: CheckLibrary
   readonly notices: () => { send(notice: EngineNotice): Promise<readonly string[]>; update(id: string, patch: { done?: string }): Promise<void> } | undefined
   readonly conversations: () => Conversations | undefined
@@ -272,6 +272,8 @@ export class Engine {
           this.#addRun(active, node.id, current)
           if (current.endedAt !== undefined && current.state === 'failed') return { ok: false, detail: current.outcome ?? '没有启动' }
           const ended = await this.#deps.runner.finished(current.id)
+          // The monitor (or the agent, or the user) may still restart it: wait for that before going on.
+          if (this.#deps.runner.held?.(current.id) === true) this.#set(active, node.id, { detail: '运行出了问题，正在处理（可能会重新运行），处理完再继续' })
           const next = await this.#deps.runner.successor(current.id)
           if (next === undefined || active.cancelReason !== undefined) {
             return ended.state === 'succeeded' ? { ok: true, detail: ended.outcome ?? '成功' } : { ok: false, detail: ended.outcome ?? ended.state }

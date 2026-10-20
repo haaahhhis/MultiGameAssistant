@@ -5,11 +5,12 @@
  *   <dataDir>/monitor/settings.json       monitor settings
  *   <dataDir>/monitor/shots/<id>.png      screenshots taken for incidents
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Incident, MonitorSettings } from '@adg/protocol'
 import { z } from 'zod'
 import type { IncidentStore, SettingsPatch } from './monitor.ts'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 export class FileIncidentStore implements IncidentStore {
   private readonly dir: string
@@ -46,10 +47,7 @@ export class FileIncidentStore implements IncidentStore {
   }
 
   private async write(name: string, text: string): Promise<void> {
-    await mkdir(this.dir, { recursive: true })
-    const target = join(this.dir, name)
-    await writeFile(`${target}.tmp`, text)
-    await rename(`${target}.tmp`, target)
+    await writeFileAtomic(join(this.dir, name), text)
   }
 }
 

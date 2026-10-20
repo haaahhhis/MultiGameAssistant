@@ -69,7 +69,7 @@ export class AdgOrchestrator extends Service {
       notices: () => ctx.get('adgNotify'),
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions)
+        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
       },
       emulators: () => {
         const emulators = ctx.get('adgEmulators') as { stop?: (index?: number) => Promise<void> } | undefined

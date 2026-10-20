@@ -12,11 +12,13 @@ import type { Conversations } from './notify.ts'
 type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'>
 type SessionId = SessionSummary['sessionId']
 
-export function sessionConversations(sessions: Sessions): Conversations {
+/** @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir). */
+export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined): Conversations {
   return {
     async create(title, options = {}) {
       const model = options.defaultModel === true ? undefined : await recentModel(sessions).catch(() => undefined)
-      const created = await sessions.create({})
+      const dir = cwd()
+      const created = await sessions.create(dir === undefined ? {} : { cwd: dir })
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
       return created.sessionId

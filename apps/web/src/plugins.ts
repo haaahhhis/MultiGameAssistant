@@ -40,9 +40,12 @@ export interface SettingsPageContribution {
 export interface PageProps {
   readonly client: AdgClient
   readonly openSession: (sessionId: string) => void
-  readonly openSettings: () => void
+  /** Open settings, at one page (its id, e.g. 'schedule', 'feishu', 'api-keys'). */
+  readonly openSettings: (section?: string) => void
   /** Open another top-level page. */
   readonly openPage: (pageId: string) => void
+  /** What the address names inside the page (e.g. a pipeline id), from an in-app link. */
+  readonly arg?: string | undefined
 }
 
 /** A top-level page with its own entry in the navigation rail. */

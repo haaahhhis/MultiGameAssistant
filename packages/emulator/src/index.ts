@@ -10,7 +10,7 @@
  * `emulator_*` agent tools and the `emulators@1` capability.
  */
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -23,6 +23,7 @@ import { EMULATORS_CAPABILITY, EmulatorSettings, type EmulatorProvider, type Req
 import { z } from 'zod'
 import { findMuMu, type Found } from './detect.ts'
 import { MuMuManager, type Exec } from './mumu.ts'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 export { MuMuManager, defaultMumuPort, parsePolluted, type Exec } from './mumu.ts'
 export { findMuMu, type Found } from './detect.ts'
@@ -314,9 +315,7 @@ export class AdgEmulators extends Service {
   }
 
   private async save(): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true })
-    await writeFile(`${this.file}.tmp`, `${JSON.stringify(this.settings, null, 2)}\n`)
-    await rename(`${this.file}.tmp`, this.file)
+    await writeFileAtomic(this.file, `${JSON.stringify(this.settings, null, 2)}\n`)
   }
 
   private tools(): ToolDefinition[] {

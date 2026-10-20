@@ -87,12 +87,14 @@ export function toProviderModel(entry: unknown): ProviderModel | undefined {
   const maxTokens = posInt(e.maxTokens)
   const rawInput = Array.isArray(e.input) ? e.input : Array.isArray(e.inputModalities) ? e.inputModalities : undefined
   const input = rawInput?.filter((m): m is 'text' | 'image' => m === 'text' || m === 'image')
+  const efforts = typeof e.reasoningEfforts === 'object' && e.reasoningEfforts !== null ? Object.keys(e.reasoningEfforts) : undefined
   return {
     id,
     ...(name === undefined || name === id ? {} : { name }),
     ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(input === undefined || input.length === 0 ? {} : { input }),
+    ...(efforts === undefined || efforts.length === 0 ? {} : { efforts }),
   }
 }
 
@@ -123,6 +125,8 @@ function storedModel(model: ProviderModel): Record<string, unknown> {
     ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
     ...(model.input === undefined ? {} : { input: [...model.input] }),
+    // Each level is sent as its own name; `off` sends no thinking field.
+    ...(model.efforts === undefined || model.efforts.length === 0 ? {} : { reasoningEfforts: Object.fromEntries(model.efforts.map(e => [e, e === 'off' ? null : e])) }),
   }
 }
 

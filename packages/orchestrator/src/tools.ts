@@ -193,7 +193,13 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
       execute: async args => {
         const draft = parse(Pipeline, draftToPipeline(parse(DraftArgs, args), library))
         const { pipeline, check } = await pipelines.save(draft, 'agent')
-        return { ok: check.ok, id: pipeline.id, check, next: check.ok ? '告诉用户草稿已保存在「编排」页，可以直接运行或先看看' : '修正 check.issues 里的 error 后重新提交' }
+        const link = `#/p/pipelines/${encodeURIComponent(pipeline.id)}`
+        return {
+          ok: check.ok, id: pipeline.id, check, link,
+          next: check.ok
+            ? `告诉用户草稿已保存在「编排」页，可以直接运行或先看看；回复里附上链接 [在编排页打开](${link})。每天定时运行要在编排页保存后，在「定时与失败」里设置时间；开机自动运行在 [设置 → 定时与自启](#/settings/schedule)`
+            : '修正 check.issues 里的 error 后重新提交',
+        }
       },
     }),
     tool({

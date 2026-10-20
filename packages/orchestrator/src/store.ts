@@ -4,10 +4,11 @@
  *   <dataDir>/pipelines/<id>.json
  *   <dataDir>/pipelines/_runs.json      the last 100 runs
  */
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Pipeline, PipelineRun } from '@adg/protocol'
 import { z } from 'zod'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 const KEEP_RUNS = 100
 
@@ -58,9 +59,6 @@ export class PipelineStore {
   }
 
   private async write(name: string, text: string): Promise<void> {
-    await mkdir(this.dir, { recursive: true })
-    const target = join(this.dir, name)
-    await writeFile(`${target}.tmp`, text)
-    await rename(`${target}.tmp`, target)
+    await writeFileAtomic(join(this.dir, name), text)
   }
 }

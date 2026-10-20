@@ -144,9 +144,27 @@ export function RunLog({ client, run }: { client: AdgClient; run: RunInfo }) {
     if (el !== null) el.scrollTop = el.scrollHeight
   }, [lines.length])
   const warnings = useMemo(() => run.warnings, [run.warnings])
+  const [copied, setCopied] = useState<string | null>(null)
+  // The whole saved log (up to 2000 lines), not only what this window shows.
+  const copy = async () => {
+    let all = lines
+    try { all = (await client.connection.call('runs/logs', { runId: run.id, limit: 2000 })).lines } catch { /* copy what is shown */ }
+    const text = [
+      `${run.scriptName} · ${run.taskTitle}（${run.id}）${run.outcome === undefined ? '' : ` — ${run.outcome}`}`,
+      ...all.map(l => `${new Date(l.at).toLocaleTimeString('zh-CN', { hour12: false })} [${l.source === 'adg' ? '平台' : l.source}]${l.level === undefined ? '' : ` [${l.level}]`} ${l.text}`),
+    ].join('\n')
+    const ok = await copyText(text)
+    setCopied(ok ? `已复制 ${all.length} 行` : '复制失败')
+    setTimeout(() => setCopied(null), 1800)
+  }
   return (
     <div className="run-log-wrap">
       {warnings.map(w => <div key={w} className="notice info left small"><Icon name="info" /><span>{w}</span></div>)}
+      <div className="run-log-bar">
+        <span className="muted small">{lines.length} 行{lines.length >= 1000 ? '（只显示最近的）' : ''}</span>
+        <span className="spacer" />
+        <button type="button" className="small-button" disabled={lines.length === 0} onClick={() => void copy()} title="复制整次运行的日志（最多 2000 行），方便发给别人或 agent"><Icon name="copy" />{copied ?? '复制日志'}</button>
+      </div>
       <div className="run-log" ref={box} role="log" aria-label="运行日志">
         {lines.length === 0 && <div className="muted small">还没有日志</div>}
         {lines.map((line, index) => (
@@ -159,4 +177,20 @@ export function RunLog({ client, run }: { client: AdgClient; run: RunInfo }) {
       </div>
     </div>
   )
+}
+
+/** Clipboard, with a selection-copy fallback where the clipboard API is refused. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.select()
+    try { return document.execCommand('copy') } catch { return false } finally { area.remove() }
+  }
 }

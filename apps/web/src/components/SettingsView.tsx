@@ -8,10 +8,12 @@ const PAGE_ICONS: Record<string, IconName> = { 'api-keys': 'key', plugins: 'plug
 const THEMES: readonly [ThemePreference, string][] = [['light', '浅色'], ['dark', '深色'], ['system', '跟随系统']]
 
 /** Settings take over the sidebar: categories on the left, the page in the main panel. */
-export function SettingsView({ client, onClose }: { client: AdgClient; onClose: () => void }) {
+export function SettingsView({ client, onClose, section, onSection }: { client: AdgClient; onClose: () => void; section?: string | undefined; onSection?: (id: string) => void }) {
   const pages = useSettingsPages(client)
   const theme = useTheme()
-  const [selected, setSelected] = useState<string | null>(null)
+  const [picked, setPicked] = useState<string | null>(null)
+  const selected = picked ?? section ?? null
+  const setSelected = (id: string) => { setPicked(id); onSection?.(id) }
   const active = pages.find(p => p.id === selected) ?? pages[0]
   return (
     <>

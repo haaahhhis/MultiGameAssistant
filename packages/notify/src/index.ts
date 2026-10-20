@@ -4,7 +4,7 @@
  * messages become conversations with the agent; approvals go out as cards.
  * Contributes the `notify@1` capability. Channels: `@adg/feishu`.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -13,6 +13,7 @@ import { NOTIFY_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { sessionConversations } from './conversations.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
+import { writeFileAtomic } from '@adg/protocol/node'
 
 export { Notify, type ActionHandler, type Actor, type Channel, type Conversations, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions } from './notify.ts'
 export { sessionConversations } from './conversations.ts'
@@ -45,7 +46,7 @@ export class AdgNotify extends Service {
       conversations: () => {
         const sessions = ctx.get('sessionController')
         if (sessions === undefined) return undefined
-        const base = sessionConversations(sessions)
+        const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
         // Archived by the user: the person's next message starts a new conversation.
         return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
       },
@@ -55,9 +56,7 @@ export class AdgNotify extends Service {
         keyOf: sessionId => Object.entries(this.sessionMap).find(([, id]) => id === sessionId)?.[0],
         set: async (key, sessionId) => {
           this.sessionMap[key] = sessionId
-          await mkdir(join(spec.dataDir, 'notify'), { recursive: true })
-          await writeFile(`${this.sessionsFile}.tmp`, JSON.stringify(this.sessionMap, null, 2))
-          await rename(`${this.sessionsFile}.tmp`, this.sessionsFile)
+          await writeFileAtomic(this.sessionsFile, JSON.stringify(this.sessionMap, null, 2))
           ctx.get('adgGateway')?.broadcast('notify/changed', {})
         },
       },

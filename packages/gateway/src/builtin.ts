@@ -72,6 +72,8 @@ export interface BuiltinDeps {
   readonly serverInfo: { readonly name: string; readonly version: string; readonly dsh?: string }
   readonly capabilities: () => RequestResult<'initialize'>['capabilities']
   readonly notify: <M extends NotificationMethod>(call: MethodContext, method: M, params: NotificationParams<M>) => void
+  /** Working folder for sessions created without one. */
+  readonly workspaceDir?: string
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -101,7 +103,8 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         return { items: value.items.map(toSessionItem) }
       },
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
-        const created = await sessions.create(params.cwd === undefined ? {} : { cwd: params.cwd })
+        const cwd = params.cwd ?? deps.workspaceDir
+        const created = await sessions.create(cwd === undefined ? {} : { cwd })
         return { sessionId: created.sessionId }
       },
       'sessions/rename': async (params: RequestParams<'sessions/rename'>) => {
