@@ -2,7 +2,10 @@ import { strict as assert } from 'node:assert'
 import { spawn } from 'node:child_process'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import { WinHelper } from '../src/winhelper.ts'
+import { mkdtempSync, readdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { errorLines, WinHelper } from '../src/winhelper.ts'
 
 // Compiles and runs the real helper. Clicking and capturing need an interactive
 // desktop, so they are checked on a real machine (docs/testing/M5.md).
@@ -32,4 +35,29 @@ test('the Windows helper compiles, answers, keeps Unicode, lists windows, and su
   } finally {
     helper.dispose()
   }
+})
+
+test('the helper is compiled once into the cache folder; later starts only load it', { skip: process.platform !== 'win32', timeout: 120_000 }, async () => {
+  const cacheDir = mkdtempSync(join(tmpdir(), 'adg-wh-cache-'))
+  for (let round = 0; round < 2; round++) {
+    const helper = new WinHelper({ cacheDir })
+    try {
+      assert.equal(await helper.call('ping'), 'pong')
+    } finally {
+      helper.dispose()
+    }
+    assert.deepEqual(readdirSync(cacheDir).filter(f => f.endsWith('.dll')).length, 1)
+  }
+})
+
+test('a helper that cannot start says why, not where in the script', () => {
+  const stderr = [
+    'Add-Type : 拒绝访问。',
+    '所在位置 C:\\Temp\\helper.ps1:5 字符: 1',
+    '+ Add-Type -TypeDefinition $env:ADG_WIN_CS -ReferencedAssemblies System.Drawing',
+    '+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~',
+    '    + CategoryInfo          : NotSpecified: (:) [Add-Type], Win32Exception',
+    '    + FullyQualifiedErrorId : System.ComponentModel.Win32Exception,Microsoft.PowerShell.Commands.AddTypeCommand',
+  ].join('\r\n')
+  assert.equal(errorLines(stderr), 'Add-Type : 拒绝访问。')
 })

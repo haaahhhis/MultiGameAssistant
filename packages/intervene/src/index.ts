@@ -8,6 +8,7 @@
  * Executors: ADB through `@adg/emulator` for the emulator; a small Windows
  * helper (Win32 calls, compiled once) for the desktop and windows.
  */
+import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -52,14 +53,14 @@ export class AdgIntervene extends Service {
   static inject = ['adgRunner']
   readonly interventions: Interventions
   readonly ready: Promise<void>
-  private readonly helper = new WinHelper()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'adgIntervene')
     const spec = ConfigSchema.parse(config)
     const log = ctx.logger('adg-intervene')
     const runner = ctx.adgRunner.runner
-    const helper = this.helper
+    // The compiled desktop helper is kept with the plugin's data, so it is built once.
+    const helper = new WinHelper({ cacheDir: join(spec.dataDir, 'intervene', 'bin') })
     ctx.effect(() => () => helper.dispose(), 'adg-intervene helper')
 
     const screens = new Screens({ adb: () => ctx.get('adgEmulators'), win: helper, maxEdge: () => spec.maxEdge })

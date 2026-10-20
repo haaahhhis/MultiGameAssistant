@@ -1,13 +1,21 @@
 /**
  * The Windows executor: one long-lived PowerShell process with a small C#
- * class (compiled once, Win32 calls only), driven by JSON lines on stdin and
- * stdout. No native Node module to build or ship.
+ * class (Win32 calls only), driven by JSON lines on stdin and stdout. No
+ * native Node module to build or ship.
+ *
+ * The class is compiled once with the .NET Framework's own csc.exe, started
+ * directly, into a DLL cached by its source hash; PowerShell then only loads
+ * it. Compiling with `Add-Type -TypeDefinition` (CodeDom starting csc.exe on
+ * every start) fails on some machines with a Win32Exception, so that is only
+ * the fallback.
  *
  * Coordinates are physical screen pixels (the process is per-monitor DPI
  * aware), the same as the screenshots it takes.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -162,7 +170,7 @@ const SCRIPT = `
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Add-Type -TypeDefinition $env:ADG_WIN_CS -ReferencedAssemblies System.Drawing
+if ($env:ADG_WIN_DLL) { [void][System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($env:ADG_WIN_DLL)) } else { Add-Type -TypeDefinition $env:ADG_WIN_CS -ReferencedAssemblies System.Drawing }
 [AdgWin]::InitDpi()
 $VK = @{ ctrl = 0x11; control = 0x11; shift = 0x10; alt = 0x12; win = 0x5B; enter = 0x0D; return = 0x0D; esc = 0x1B; escape = 0x1B; tab = 0x09; backspace = 0x08; delete = 0x2E; del = 0x2E; space = 0x20; up = 0x26; down = 0x28; left = 0x25; right = 0x27; home = 0x24; end = 0x23; pageup = 0x21; pagedown = 0x22 }
 function Get-Vk([string]$name) {
@@ -221,11 +229,17 @@ export interface WinWindow {
 
 /** One PowerShell helper, started on first use and kept for the life of the plugin. */
 export class WinHelper {
+  /** Where the compiled DLL is kept (the plugin's data folder); a temp folder when absent. */
+  readonly #cacheDir: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
   #ready: Promise<void> | undefined
   #dir: string | undefined
   #seq = 0
   readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
+
+  constructor(options: { cacheDir?: string } = {}) {
+    this.#cacheDir = options.cacheDir
+  }
 
   async call<T = unknown>(op: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<T> {
     await this.#start()
@@ -269,13 +283,42 @@ export class WinHelper {
     return this.#dir
   }
 
+  /** The DLL of the C# class, compiled on first use. @throws Error with csc's output when it cannot be built. */
+  async #compiled(): Promise<string> {
+    const hash = createHash('sha256').update(CSHARP).digest('hex').slice(0, 12)
+    const dir = this.#cacheDir ?? join(tmpdir(), 'adg-win-cache')
+    const dll = join(dir, `AdgWin-${hash}.dll`)
+    if (existsSync(dll)) return dll
+    await mkdir(dir, { recursive: true })
+    const source = join(dir, `AdgWin-${hash}.cs`)
+    const out = join(dir, `AdgWin-${hash}.${process.pid}.tmp`)
+    await writeFile(source, CSHARP, 'utf8')
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile(cscPath(), ['/nologo', '/target:library', '/optimize+', `/out:${out}`, '/r:System.Drawing.dll', source], { windowsHide: true, timeout: 120_000 }, (error, stdout, stderr) => {
+          if (error === null) resolve()
+          else reject(new Error(`编译桌面助手失败：${`${stdout}\n${stderr}`.trim() || error.message}`))
+        })
+      })
+      // Another process may have finished the same DLL first.
+      await rename(out, dll).catch(error => { if (!existsSync(dll)) throw error })
+    } finally {
+      await rm(source, { force: true }).catch(() => {})
+      await rm(out, { force: true }).catch(() => {})
+    }
+    return dll
+  }
+
   #start(): Promise<void> {
     if (process.platform !== 'win32') return Promise.reject(new Error('桌面操作目前只支持 Windows'))
     this.#ready ??= (async () => {
+      let compileError: string | undefined
       const file = join(await this.#tmp(), 'helper.ps1')
       await writeFile(file, `﻿${SCRIPT}`, 'utf8')
+      // A compiler problem is not fatal yet: Add-Type gets its chance, and its error is reported.
+      const dll = await this.#compiled().catch(error => { compileError = error instanceof Error ? error.message : String(error); return undefined })
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], {
-        windowsHide: true, env: { ...process.env, ADG_WIN_CS: CSHARP }, stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true, env: { ...process.env, ...(dll === undefined ? { ADG_WIN_CS: CSHARP } : { ADG_WIN_DLL: dll }) }, stdio: ['pipe', 'pipe', 'pipe'],
       })
       this.#child = child
       let stderr = ''
@@ -295,7 +338,7 @@ export class WinHelper {
         })
         child.once('exit', code => {
           clearTimeout(timer)
-          reject(new Error(`桌面助手退出了（${code}）：${stderr.trim().split('\n').pop() ?? ''}`))
+          reject(new Error(`桌面助手没能启动（退出码 ${code}）：${errorLines(stderr)}${compileError === undefined ? '' : `；之前${compileError}`}`))
           this.#child = undefined
           this.#ready = undefined
           for (const p of this.#pending.values()) p.reject(new Error('桌面助手退出了'))
@@ -305,6 +348,20 @@ export class WinHelper {
     })()
     return this.#ready
   }
+}
+
+/** The .NET Framework 4 C# compiler that every Windows 10/11 has. */
+function cscPath(): string {
+  const root = process.env['SystemRoot'] ?? process.env['windir'] ?? 'C:\\Windows'
+  const x64 = join(root, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe')
+  return existsSync(x64) ? x64 : join(root, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe')
+}
+
+/** PowerShell's error output without its position and category lines: what actually went wrong. */
+export function errorLines(stderr: string): string {
+  const lines = stderr.split(/\r?\n/).map(l => l.trim())
+    .filter(l => l !== '' && !/^(\+|所在位置|At line|At [A-Z]:|CategoryInfo|FullyQualifiedErrorId|~+$)/.test(l))
+  return lines.slice(0, 3).join(' ').slice(0, 400) || stderr.trim().split(/\r?\n/).pop() || '没有输出'
 }
 
 function explain(error: unknown): string {
