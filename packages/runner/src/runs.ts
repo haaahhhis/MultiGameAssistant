@@ -304,6 +304,62 @@ export class Runner {
     return conflict === undefined ? { keys } : { keys, busy: new BusyError(conflict.key, conflict.holder) }
   }
 
+  /** Whether a script is in the library and has a pack (so its game can be started). */
+  hasPack(scriptId: string): boolean {
+    try {
+      this.#options.library.get(scriptId)
+      return this.#options.library.packOf(scriptId) !== undefined
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Start a script's game on its own (no task), as a run would: in the emulator
+   * (started first if needed) or the PC program from the 「启动游戏」 setting.
+   * Refused while a run uses that emulator or the desktop.
+   * @returns what was done, line by line ("已经在运行" when it was).
+   * @throws Error when it cannot be started (no program set, busy, no emulator).
+   */
+  async startGame(scriptId: string, where: 'emulator' | 'pc', signal: AbortSignal): Promise<string[]> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    if (pack === undefined) throw new Error(`${script.name} 没有脚本包`)
+    const manifest = pack.manifest
+    const name = manifest.game?.name ?? '游戏'
+    const settings = await this.launch.get(scriptId)
+    const lines: string[] = []
+    const holder = { runId: `game-start-${this.#now()}`, label: `启动${name}` }
+    let release: () => void = () => {}
+    let address: string | undefined
+    try {
+      if (where === 'emulator') {
+        const bridge = this.#options.emulators?.()
+        if (bridge === undefined) throw new Error('需要安卓模拟器，但模拟器插件没有加载')
+        if ((settings.androidPackage ?? manifest.game?.android?.package) === undefined) throw new Error(`不知道${name}在模拟器里的包名：在脚本页「启动游戏」里填写`)
+        const expected = await bridge.expectedAddress?.().catch(() => undefined)
+        if (expected !== undefined) release = this.locks.acquire([`adb:${expected}`], holder)
+        const emulator = await bridge.prepare({ signal, onStatus: text => lines.push(text) })
+        if (expected !== emulator.address) {
+          release()
+          release = this.locks.acquire([`adb:${emulator.address}`], holder)
+        }
+        address = emulator.address
+        lines.push(`使用模拟器 ${emulator.label}（${emulator.address}）`)
+      } else {
+        if (settings.pcExe === undefined) throw new Error(`还没有设置${name}的程序位置：在脚本页「启动游戏」里点「自动查找」或「选择文件」`)
+        release = this.locks.acquire(['desktop'], holder)
+      }
+      await ensureGame({
+        manifest, settings: { ...settings, mode: 'platform' }, input: where === 'emulator' ? 'adb' : 'desktop', scriptDir: script.dir ?? '', address,
+        android: this.#options.emulators?.(), signal, line: text => lines.push(text), ...this.#options.game,
+      })
+      return lines
+    } finally {
+      release()
+    }
+  }
+
   async #keys(scriptId: string, resources: { input: string; account?: string | undefined }): Promise<string[]> {
     // Most telling first: a busy desktop says more than "the same script" (both are true).
     const keys: string[] = []

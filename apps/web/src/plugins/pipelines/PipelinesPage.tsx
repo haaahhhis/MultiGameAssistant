@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isMarker, withStartEnd } from '@adg/protocol'
-import type { Pipeline, PipelineCheck, PipelineRun, PipelineSummary } from '@adg/protocol'
+import type { Pipeline, PipelineCheck, PipelineRun, PipelineSummary, ScheduleSettings } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -38,6 +38,20 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
   const [revision, setRevision] = useState(0)
 
   useEffect(() => client.connection.on('pipelines/changed', () => setRevision(r => r + 1)), [client])
+  // Which pipelines run when the app starts (the scheduler's settings; shown per pipeline here).
+  const capabilities = useStore(client.capabilities)
+  const [startup, setStartup] = useState<ScheduleSettings | null>(null)
+  const [startupRevision, setStartupRevision] = useState(0)
+  useEffect(() => client.connection.on('schedule/changed', () => setStartupRevision(r => r + 1)), [client])
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('schedule')) return
+    let live = true
+    client.connection.call('schedule/status', {}).then(r => { if (live) setStartup(r.settings) }).catch(() => {})
+    return () => { live = false }
+  }, [client, status.state, capabilities, startupRevision])
+  const setStartupSettings = async (patch: Partial<ScheduleSettings>) => {
+    try { setStartup((await client.connection.call('schedule/settings/set', patch)).settings) } catch (e) { setError(errorText(e)) }
+  }
   // A link to one pipeline (#/p/pipelines/<id>) opens it.
   useEffect(() => { if (arg !== undefined) setSelected(arg) }, [arg])
   useEffect(() => {
@@ -157,7 +171,7 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
               {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
               <PipelineEditor key={pipeline.id} client={client} pipeline={pipeline} onChange={update} run={run} check={check}
                 runFrom={activeRun !== undefined || busy !== null || check?.ok === false ? undefined : nodeId => void runNow(nodeId)}
-                idle={<PipelineSide pipeline={pipeline} check={check} runs={runs} shownRun={run?.id} onShowRun={setShownRun} others={list ?? []} onChange={update} now={now} />} />
+                idle={<PipelineSide pipeline={pipeline} check={check} runs={runs} shownRun={run?.id} onShowRun={setShownRun} others={list ?? []} onChange={update} now={now} startup={startup} onStartup={patch => void setStartupSettings(patch)} />} />
             </>
           )}
       </div>
@@ -191,7 +205,7 @@ function ChecksCard({ check, pipeline }: { check: PipelineCheck | null; pipeline
 
 function RunsList({ runs, shown, onShow, now }: { runs: PipelineRun[]; shown: string | undefined; onShow: (id: string) => void; now: number }) {
   if (runs.length === 0) return <section className="side-pane"><p className="muted small">还没有运行过。</p></section>
-  const TRIGGER: Record<string, string> = { manual: '手动', schedule: '定时', autostart: '开机后', agent: 'agent', after: '接续' }
+  const TRIGGER: Record<string, string> = { manual: '手动', schedule: '定时', autostart: '启动时', agent: 'agent', after: '接续' }
   return (
     <section className="side-pane">
       <div className="run-history">
@@ -251,9 +265,10 @@ function PipelineSwitcher({ list, current, isNew, now, onPick }: { list: Pipelin
 type SideTab = 'check' | 'runs' | 'schedule'
 
 /** The pipeline's own panel beside the canvas: check, runs, schedule and failure handling. */
-function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onChange, now }: {
+function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onChange, now, startup, onStartup }: {
   pipeline: Pipeline; check: PipelineCheck | null; runs: PipelineRun[]; shownRun: string | undefined; onShowRun: (id: string) => void
   others: PipelineSummary[]; onChange: (p: Pipeline) => void; now: number
+  startup: ScheduleSettings | null; onStartup: (patch: Partial<ScheduleSettings>) => void
 }) {
   const [tab, setTab] = useState<SideTab>(runs.some(r => r.state === 'running') ? 'runs' : 'check')
   const errors = check?.issues.filter(i => i.level === 'error').length ?? 0
@@ -266,7 +281,7 @@ function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onCh
       </nav>
       {tab === 'check' && (check === null ? <p className="muted small pad">加上步骤后会自动检查。</p> : <ChecksCard check={check} pipeline={pipeline} />)}
       {tab === 'runs' && <RunsList runs={runs} shown={shownRun} onShow={onShowRun} now={now} />}
-      {tab === 'schedule' && <ScheduleCard pipeline={pipeline} others={others} onChange={onChange} />}
+      {tab === 'schedule' && <ScheduleCard pipeline={pipeline} others={others} onChange={onChange} startup={startup} onStartup={onStartup} />}
       <p className="muted small pad">点画布上的节点或连线来修改它；选中后按 Delete 删除。</p>
     </div>
   )
@@ -274,7 +289,11 @@ function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onCh
 
 const DAYS = ['日', '一', '二', '三', '四', '五', '六']
 
-function ScheduleCard({ pipeline, others, onChange }: { pipeline: Pipeline; others: PipelineSummary[]; onChange: (p: Pipeline) => void }) {
+function ScheduleCard({ pipeline, others, onChange, startup, onStartup }: {
+  pipeline: Pipeline; others: PipelineSummary[]; onChange: (p: Pipeline) => void
+  startup: ScheduleSettings | null; onStartup: (patch: Partial<ScheduleSettings>) => void
+}) {
+  const onStart = startup?.autostartPipelines.includes(pipeline.id) === true
   const s = pipeline.schedule
   const [times, setTimes] = useState(s.times.join('，'))
   useEffect(() => setTimes(s.times.join('，')), [pipeline.id])
@@ -294,6 +313,22 @@ function ScheduleCard({ pipeline, others, onChange }: { pipeline: Pipeline; othe
         ))}
         <span className="muted small">{s.days.length === 0 ? '不选＝每天' : ''}</span>
       </div>
+      {startup !== null && (
+        <div className="startup-box">
+          <label className="check-label">
+            <input type="checkbox" checked={onStart} disabled={pipeline.draft === true}
+              onChange={e => onStartup({ autostartPipelines: e.target.checked ? [...startup.autostartPipelines, pipeline.id] : startup.autostartPipelines.filter(id => id !== pipeline.id) })} />
+            软件启动时运行{pipeline.draft === true ? '（草稿要先保存）' : ''}
+          </label>
+          {onStart && (
+            <>
+              <label className="check-label sub"><input type="checkbox" checked={startup.firstStartOnly} onChange={e => onStartup({ firstStartOnly: e.target.checked })} />只在每天第一次启动时运行</label>
+              <label className="check-label sub"><input type="checkbox" checked={startup.skipIfRanToday} onChange={e => onStartup({ skipIfRanToday: e.target.checked })} />今天已经成功运行过就跳过</label>
+              <p className="muted small">打开桌面版（自己打开或开机自启）后{startup.autostart ? `开机自启时等 ${startup.autostartDelaySeconds} 秒、自己打开时等 10 秒` : '等 10 秒'}再运行；dsh 崩溃后自动重启不算。这两项对所有「软件启动时运行」的流水线生效。</p>
+            </>
+          )}
+        </div>
+      )}
       <label className="field-label" htmlFor="pl-catchup">错过多少分钟以内还补跑（睡眠、刚开机）</label>
       <input id="pl-catchup" className="text-input plain" type="number" min={0} max={720} value={s.catchUpMinutes} onChange={e => set({ catchUpMinutes: Math.max(0, Math.min(720, Math.round(Number(e.target.value) || 0))) })} />
       <label className="field-label" htmlFor="pl-after">另一条流水线成功后接着运行</label>

@@ -100,12 +100,14 @@
     # M4: timetables, chained pipelines, starting at logon; the `schedule` capability.
     #   ADG_LAUNCH_COMMAND   JSON array that starts the desktop app (set by it)
     #   ADG_AUTOSTARTED      1 when the desktop app was started at logon
+    #   ADG_APP_START        1 on the desktop app's first dsh start (0 after a crash restart)
     - id: adg-scheduler
       name: '@adg/scheduler'
       config:
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
         launchCommand: !!js "process.env.ADG_LAUNCH_COMMAND || undefined"
         autostarted: !!js "process.env.ADG_AUTOSTARTED === '1'"
+        appStart: !!js "process.env.ADG_APP_START === '1'"
 
     # M6: game information — Game Packs, the event calendar (data sites read
     # without a model, the agent reading the game screen), the daily report;

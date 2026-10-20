@@ -33,9 +33,15 @@ export function App({ client }: { client: AdgClient }) {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  // Drop a selection that no longer exists once the list has loaded.
+  // Drop a selection that no longer exists once the list has loaded. A session another
+  // part of the app just created (「让 agent 进游戏读取」) may not be listed yet: give it a moment.
+  const listed = useRef(new Set<string>())
   useEffect(() => {
-    if (route.kind === 'session' && sessions.loaded && !sessions.items.some(i => i.id === route.id)) setRoute({ kind: 'home' })
+    for (const item of sessions.items) listed.current.add(item.id)
+    if (route.kind !== 'session' || !sessions.loaded || sessions.items.some(i => i.id === route.id)) return
+    if (listed.current.has(route.id)) { setRoute({ kind: 'home' }); return }
+    const timer = setTimeout(() => setRoute(r => (r.kind === 'session' && r.id === route.id ? { kind: 'home' } : r)), 8000)
+    return () => clearTimeout(timer)
   }, [route, sessions])
 
   const openSession = (id: string) => setRoute({ kind: 'session', id })

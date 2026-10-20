@@ -262,6 +262,9 @@ importers:
       '@adg/intervene':
         specifier: workspace:*
         version: link:../intervene
+      '@adg/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)

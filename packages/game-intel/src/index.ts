@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@adg/gateway'
 import type {} from '@adg/intervene'
 import type {} from '@adg/notify'
+import type {} from '@adg/runner'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, parseGameManifest, type GameManifest } from '@adg/pack-schema'
 import { GAMES_DIR } from '@adg/packs'
@@ -125,6 +126,7 @@ export class AdgGameIntel extends Service {
         activities: game => calendar.list(game),
         refresh: async game => { await this.ready; return this.refresh(game) },
         record: async (game, from, events, sessionId, keep) => { await this.ready; return this.record(game, from, events, sessionId, keep) },
+        launch: async (game, signal) => { await this.ready; return this.launch(game, signal) },
         report: () => this.preview(),
         sendReport: async () => ({ channels: await this.sendReport(localDay(this.clock.now())) }),
         now: () => this.clock.now(),
@@ -300,7 +302,7 @@ export class AdgGameIntel extends Service {
     const prompt = [
       `读取「${manifest.name}」现在的活动和进度（游戏 id：${manifest.id}）。按技能 game-intel 和 game-${manifest.id}：`,
       `1. game_sites_refresh（game=${manifest.id}）拿数据站的活动时间；没有能直接读的数据站就按技能看官网公告并用 game_record（source=site）记下。`,
-      `2. 看${screen}。有脚本正在用它、或者游戏没开，就不要打断也不要启动游戏，说明原因后结束。`,
+      `2. 看${screen}。有脚本正在用它，就不要打断，说明原因后结束；游戏没开就用 game_launch（game=${manifest.id}）启动，等它进到主界面（关掉公告和更新提示，启动器要点「开始游戏」就点；要输入账号密码或验证码时停下，告诉用户）。`,
       '3. 按技能里的路线进活动页，只看不花东西；每读完一个活动就 game_record（source=screen）。',
       '4. 读完回到主界面，用一两句话总结哪些活动快结束、还有什么没做。',
     ].join('\n')
@@ -309,6 +311,21 @@ export class AdgGameIntel extends Service {
       error => this.calendar.setReading(manifest.id, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
     ).finally(() => this.changed(manifest.id))
     return sessionId
+  }
+
+  /**
+   * Start the game when it is not running, through the first installed script
+   * that plays it (its 「启动游戏」 setting; the emulator is started first).
+   * @returns what was done. @throws Error with what is missing, or who is using the screen.
+   */
+  async launch(gameId: string, signal: AbortSignal): Promise<{ script: string; lines: string[] }> {
+    const { manifest } = this.game(gameId)
+    const runner = this.ctx.get('adgRunner')?.runner
+    if (runner === undefined) throw new Error('运行插件没有加载，不能启动游戏')
+    const script = manifest.scripts.find(id => runner.hasPack(id))
+    if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本（${manifest.scripts.join('、') || '游戏包里没写'}），不知道怎么启动它；请用户先打开游戏，或先安装脚本并在脚本页设置「启动游戏」`)
+    const lines = await runner.startGame(script, manifest.screen?.target === 'emulator' ? 'emulator' : 'pc', signal)
+    return { script, lines }
   }
 
   // ── report ──

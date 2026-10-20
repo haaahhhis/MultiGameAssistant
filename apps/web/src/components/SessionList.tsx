@@ -11,7 +11,7 @@ const TABS: readonly [Tab, string][] = [['chats', '对话'], ['remote', '远程'
 const EMPTY: Readonly<Record<Tab, [string, string]>> = {
   chats: ['还没有会话', '新建一个，告诉 agent 今天要跑什么'],
   remote: ['还没有远程会话', '在飞书里给机器人发消息，就会在这里出现一个会话'],
-  auto: ['还没有自动会话', '异常交给 agent 处理、流水线里的 agent 步骤会在这里'],
+  auto: ['还没有自动会话', '异常交给 agent 处理、流水线里的 agent 步骤、进游戏读取活动会在这里'],
   archived: ['没有归档的会话', '不要的会话点右边的归档按钮放到这里，需要时再恢复'],
 }
 const CHANNEL: Readonly<Record<string, string>> = { feishu: '飞书' }
@@ -69,9 +69,20 @@ export function SessionList({ client, selected, onSelect, onNew }: {
 
   const kindOf = (item: { id: string; title: string | null }): Exclude<Tab, 'archived'> => {
     if (remote.has(item.id) || /^(飞书|feishu)：/.test(item.title ?? '')) return 'remote'
-    if (/^(干预|编排)：/.test(item.title ?? '')) return 'auto'
+    if (/^(干预|编排|游戏信息)：/.test(item.title ?? '')) return 'auto'
     return 'chats'
   }
+
+  // A session opened from elsewhere (a link, 「让 agent 进游戏读取」) shows in its own tab.
+  const shownFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (selected === null || shownFor.current === selected) return
+    const item = sessions.items.find(i => i.id === selected)
+    if (item === undefined) return
+    shownFor.current = selected
+    setTab(archived.has(item.id) ? 'archived' : kindOf(item))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, sessions.items, archived, remote])
 
   const { groups, counts } = useMemo(() => {
     const needle = query.trim().toLowerCase()

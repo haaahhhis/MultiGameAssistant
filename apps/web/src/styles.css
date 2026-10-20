@@ -1130,6 +1130,9 @@ button.switcher-item.active { background: var(--sunken); border-color: var(--bor
 .side-pane { display: flex; flex-direction: column; gap: 8px; padding: 0 4px; }
 .side-pane h3 { margin: 0; font-size: 14px; }
 .side-pane .chip-row { flex-wrap: wrap; }
+.startup-box { display: flex; flex-direction: column; gap: 6px; margin: 4px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
+.startup-box .check-label.sub { padding-left: 22px; font-size: 12.5px; }
+.startup-box p { margin: 0; }
 .back-to-pipeline { align-self: flex-start; margin: 4px; }
 @media (max-width: 1100px) { .pipelines-page .pipeline-editor { grid-template-columns: 160px minmax(0, 1fr); grid-template-rows: minmax(360px, 1fr) auto; } }
 

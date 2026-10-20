@@ -9,7 +9,7 @@ import { Scheduler, slotsBetween, type AutostartPort, type SavedState } from '..
 
 const at = (y: number, mo: number, d: number, h: number, mi: number, s = 0) => new Date(y, mo - 1, d, h, mi, s).getTime()
 
-function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; lastSuccess?: string; running?: string[] } = {}) {
+function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; appStart?: boolean; lastSuccess?: string; running?: string[] } = {}) {
   let now = at(2026, 10, 19, 4, 0)
   const started: { id: string; trigger: PipelineTrigger; at: number }[] = []
   let saved: SavedState | undefined = options.saved as SavedState | undefined
@@ -28,6 +28,8 @@ function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; au
     store: { load: async () => structuredClone(saved ?? {}), save: async state => { saved = structuredClone(state) } },
     autostart,
     autostarted: options.autostarted ?? false,
+    appStart: options.appStart ?? false,
+    manualStartDelayMs: 0,
     now: () => now,
     changed: () => {},
     log: { info() {}, warn() {} },
@@ -200,4 +202,33 @@ test('real schtasks: register, read back, remove', { skip: process.env['ADG_REAL
     await port.unregister()
   }
   assert.deepEqual(await port.status(), { registered: false })
+})
+
+test('on-start pipelines run when the app is started by hand too, not after a crash restart; optionally only on the first start of the day', async () => {
+  const settings = { autostart: false, autostartPipelines: ['a'], autostartDelaySeconds: 0, skipIfRanToday: false, firstStartOnly: false }
+  const env = setup([daily({}, 'a')], { appStart: true, saved: { settings } })
+  const first = env.make()
+  await first.start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.deepEqual(env.started.map(s => [s.id, s.trigger.kind]), [['a', 'autostart']])
+  assert.equal(first.history().at(0)?.slot, '启动 2026-10-19')
+  first.stop()
+
+  // dsh restarted after a crash: not an app start.
+  const crash = setup([daily({}, 'a')], { appStart: false, saved: { settings } })
+  await crash.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(crash.started.length, 0)
+
+  // Only the first start of the day: a second start the same day runs nothing, the next day runs again.
+  const once = setup([daily({}, 'a')], { appStart: true, saved: { settings: { ...settings, firstStartOnly: true } } })
+  await once.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  await once.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(once.started.length, 1, 'second start today: skipped')
+  once.set(at(2026, 10, 20, 9, 0))
+  await once.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(once.started.length, 2, 'first start of the next day')
 })

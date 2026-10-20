@@ -31,6 +31,8 @@ const ConfigSchema = z.object({
   /** JSON array: the program and arguments that start the desktop app at logon. */
   launchCommand: z.string().optional(),
   autostarted: z.boolean().default(false),
+  /** The desktop app was just started (not dsh restarted after a crash). */
+  appStart: z.boolean().default(false),
   /** Windows task name. @default AutoDailyGamePlay */
   taskName: z.string().optional(),
 })
@@ -73,6 +75,7 @@ export class AdgScheduler extends Service {
       },
       autostart,
       autostarted: spec.autostarted,
+      appStart: spec.appStart,
       changed,
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })

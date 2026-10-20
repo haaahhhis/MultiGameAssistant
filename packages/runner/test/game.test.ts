@@ -207,3 +207,47 @@ test('finding the PC game: running, installed programs, shortcuts, then matching
   const disk = await locateGame({ exe: 'starrail', keywords, roots: [join(root, 'D')], probe: async () => ({ running: [], entries: [], shortcuts: [] }) })
   assert.deepEqual(disk.map(c => c.path), [onDisk], 'Games → a folder named after the game → its program; unrelated folders are not searched')
 })
+
+test('starting a game on its own: in the emulator (started first), or the PC program; never over a run that holds the screen', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-game-only-'))
+  const manifest = parseManifest(`id: tool
+name: Tool
+launch: { exe: tool.exe }
+game:
+  name: 测试游戏
+  android: { package: com.example.game }
+  pc: { process: Game.exe }
+  selfLaunch: always
+  startupSeconds: 0
+tasks:
+  - { id: t, title: T, resources: { input: adb } }
+`)
+  const launched: string[] = []
+  const started: string[] = []
+  let up = false
+  const dataDir = mkdtempSync(join(tmpdir(), 'adg-game-only-data-'))
+  const runner = new Runner({
+    library: { get: id => { if (id !== 'tool') throw new Error('no such script'); return { id, name: 'Tool', source: { kind: 'local', path: dir }, dir, versions: [], addedAt: 0 } as ScriptInfo }, packOf: () => ({ manifest }) },
+    dataDir,
+    emulators: () => ({ prepare: async ({ onStatus }) => { onStatus('启动模拟器 MuMu 0'); return { address: '127.0.0.1:16384', label: 'MuMu 0' } }, appRunning: async () => false, launchApp: async (_a, pkg) => { launched.push(pkg) } }),
+    onState: () => {}, onLog: () => {},
+    log: { info() {}, warn() {} },
+    game: { processRunning: async () => up, startProgram: exe => { started.push(exe); up = true }, sleep: async () => {} },
+  })
+  assert.equal(runner.hasPack('tool'), true)
+  assert.equal(runner.hasPack('other'), false)
+
+  const lines = await runner.startGame('tool', 'emulator', AbortSignal.timeout(5000))
+  assert.deepEqual(launched, ['com.example.game'], 'started although the script would start it itself: no script runs now')
+  assert.deepEqual(lines, ['启动模拟器 MuMu 0', '使用模拟器 MuMu 0（127.0.0.1:16384）', '在模拟器里启动测试游戏（com.example.game）'])
+
+  await assert.rejects(runner.startGame('tool', 'pc', AbortSignal.timeout(5000)), /还没有设置测试游戏的程序位置/)
+  await runner.launch.set('tool', { pcExe: 'D:\Games\launcher.exe' })
+  const release = runner.locks.acquire(['desktop'], { runId: 'run-x', label: '三月七 · 日常' })
+  await assert.rejects(runner.startGame('tool', 'pc', AbortSignal.timeout(5000)), /desktop|三月七/)
+  release()
+  await runner.startGame('tool', 'pc', AbortSignal.timeout(5000))
+  assert.deepEqual(started, ['D:\Games\launcher.exe'])
+  assert.deepEqual(await runner.startGame('tool', 'pc', AbortSignal.timeout(5000)), ['测试游戏（Game.exe）已经在运行'])
+  assert.equal(runner.locks.held().size, 0, 'no lock left behind')
+})

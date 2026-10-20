@@ -12,8 +12,10 @@
  *   change repeats runs once.
  * - "After" chains: a pipeline whose schedule says `after: X` starts when X
  *   finishes successfully.
- * - Autostart: when this start was an automatic one (at logon), the chosen
- *   pipelines run after a delay, skipping those that already succeeded today.
+ * - On start: each time the app is started (by hand or at logon, not when
+ *   the desktop shell restarts a crashed dsh), the chosen pipelines run after
+ *   a delay — optionally only on the first start of the day, and skipping
+ *   those that already succeeded today.
  */
 import type { Pipeline, PipelineRun, PipelineTrigger, ScheduleEntry, ScheduleSettings } from '@adg/protocol'
 
@@ -24,6 +26,8 @@ export interface SavedState {
   /** Pipeline → slot keys already handled (fired or missed). */
   handled: Record<string, string[]>
   history: ScheduleEntry[]
+  /** The local day of the last app start, for "only on the first start of the day". */
+  lastStartDay?: string
 }
 
 export interface ScheduleStore {
@@ -49,12 +53,18 @@ export interface SchedulerDeps {
   readonly autostart: AutostartPort
   /** This process was started at logon. */
   readonly autostarted: boolean
+  /** The app was just started (not dsh restarted after a crash): run the on-start pipelines. */
+  readonly appStart?: boolean
+  /** Wait after a start by hand. @default 10000 */
+  readonly manualStartDelayMs?: number
   readonly now?: () => number
   readonly changed: () => void
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
-export const DEFAULT_SETTINGS: ScheduleSettings = { autostart: false, autostartPipelines: [], autostartDelaySeconds: 60, skipIfRanToday: true }
+export const DEFAULT_SETTINGS: ScheduleSettings = { autostart: false, autostartPipelines: [], autostartDelaySeconds: 60, skipIfRanToday: true, firstStartOnly: false }
+/** Wait after a start by hand (the user is there; the network is up). */
+const MANUAL_START_DELAY_MS = 10_000
 
 const KEEP_HANDLED = 40
 const KEEP_HISTORY = 100
@@ -85,15 +95,25 @@ export class Scheduler {
       history: saved.history ?? [],
       // First start ever: nothing before now counts as missed.
       lastCheck: saved.lastCheck ?? this.#now(),
+      ...(saved.lastStartDay === undefined ? {} : { lastStartDay: saved.lastStartDay }),
     }
     this.tick()
     if (tickMs > 0) {
       this.#timer = setInterval(() => this.tick(), tickMs)
       this.#timer.unref?.()
     }
-    if (this.#deps.autostarted) {
-      this.#autostartTimer = setTimeout(() => this.runAutostart(), this.#state.settings.autostartDelaySeconds * 1000)
-      this.#autostartTimer.unref?.()
+    if (this.#deps.autostarted || this.#deps.appStart === true) {
+      const today = localDay(this.#now())
+      const firstToday = this.#state.lastStartDay !== today
+      this.#state.lastStartDay = today
+      void this.#save(true)
+      if (this.#state.settings.firstStartOnly && !firstToday) {
+        this.#deps.log.info('not the first start today: on-start pipelines skipped')
+      } else {
+        const delay = this.#deps.autostarted ? this.#state.settings.autostartDelaySeconds * 1000 : this.#deps.manualStartDelayMs ?? MANUAL_START_DELAY_MS
+        this.#autostartTimer = setTimeout(() => this.runAutostart(), delay)
+        this.#autostartTimer.unref?.()
+      }
     }
   }
 
@@ -148,18 +168,19 @@ export class Scheduler {
     }
   }
 
-  /** The pipelines chosen to run after an automatic start. */
+  /** The pipelines chosen to run when the app starts. */
   runAutostart(): void {
     const today = localDay(this.#now())
+    const slot = `${this.#deps.autostarted ? '开机' : '启动'} ${today}`
     const pipelines = new Map(this.#deps.pipelines().map(p => [p.id, p]))
     for (const id of this.#state.settings.autostartPipelines) {
       const pipeline = pipelines.get(id)
       if (pipeline === undefined) continue
       if (this.#state.settings.skipIfRanToday && this.#deps.lastSuccessDay(id) === today) {
-        this.#record(pipeline, `开机 ${today}`, 'skipped', '今天已经成功运行过')
+        this.#record(pipeline, slot, 'skipped', '今天已经成功运行过')
         continue
       }
-      this.#fire(pipeline, `开机 ${today}`, { kind: 'autostart' })
+      this.#fire(pipeline, slot, { kind: 'autostart' })
     }
     this.#deps.changed()
   }
@@ -182,6 +203,7 @@ export class Scheduler {
       autostartPipelines: patch.autostartPipelines ?? this.#state.settings.autostartPipelines,
       autostartDelaySeconds: patch.autostartDelaySeconds ?? this.#state.settings.autostartDelaySeconds,
       skipIfRanToday: patch.skipIfRanToday ?? this.#state.settings.skipIfRanToday,
+      firstStartOnly: patch.firstStartOnly ?? this.#state.settings.firstStartOnly,
     }
     if (patch.autostart !== undefined && patch.autostart !== this.#state.settings.autostart) {
       if (patch.autostart) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { PipelineSummary, RequestResult } from '@adg/protocol'
+import type { RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
@@ -17,7 +17,6 @@ export function ScheduleSettingsPage({ client }: { client: AdgClient }) {
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
   const [data, setData] = useState<Status | null>(null)
-  const [pipelines, setPipelines] = useState<PipelineSummary[]>([])
   const [revision, setRevision] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -28,7 +27,6 @@ export function ScheduleSettingsPage({ client }: { client: AdgClient }) {
     if (status.state !== 'open') return
     let live = true
     client.connection.call('schedule/status', {}).then(s => { if (live) setData(s) }).catch(e => { if (live) setError(errorText(e)) })
-    client.connection.call('pipelines/list', {}).then(r => { if (live) setPipelines(r.items) }).catch(() => {})
     return () => { live = false }
   }, [client, status.state, revision])
 
@@ -48,7 +46,7 @@ export function ScheduleSettingsPage({ client }: { client: AdgClient }) {
   return (
     <div className="settings-page">
       <h2>定时与自启</h2>
-      <p>每条流水线的运行时间在「编排」页里设置。这里设置电脑开机登录后是否自动启动 AutoDailyGamePlay、启动后自动运行哪些流水线。关掉窗口后程序在托盘里继续运行，定时照常执行。</p>
+      <p>每条流水线的运行时间在「编排」页里设置。这里设置电脑开机登录后是否自动启动 AutoDailyGamePlay。关掉窗口后程序在托盘里继续运行，定时照常执行。</p>
 
       {data !== null && settings !== undefined && (
         <section className="card">
@@ -57,19 +55,10 @@ export function ScheduleSettingsPage({ client }: { client: AdgClient }) {
             <span className={`badge ${data.autostart.registered ? 'ok' : ''}`}>{data.autostart.registered ? '已开启' : '未开启'}</span>
           </div>
           <label className="check-label"><input type="checkbox" checked={settings.autostart} disabled={busy || !data.autostart.available} onChange={e => void set({ autostart: e.target.checked })} />登录 Windows 后自动启动</label>
-          <div className="sidebar-label">启动后自动运行</div>
-          {pipelines.length === 0 && <div className="muted small">还没有流水线，先在「编排」页建一条。</div>}
-          {pipelines.filter(p => !p.draft).map(p => (
-            <label key={p.id} className="check-label">
-              <input type="checkbox" checked={settings.autostartPipelines.includes(p.id)} disabled={busy}
-                onChange={e => void set({ autostartPipelines: e.target.checked ? [...settings.autostartPipelines, p.id] : settings.autostartPipelines.filter(id => id !== p.id) })} />
-              {p.name}
-            </label>
-          ))}
-          <label className="field-label" htmlFor="autostart-delay">启动后等待多少秒再运行（等网络、桌面和显卡驱动就绪）</label>
+          <div className="notice info left small"><Icon name="info" /><span>软件启动时运行哪些流水线、是否只在每天第一次启动时运行，在「编排」页每条流水线的「定时与失败」里设置。{settings.autostartPipelines.length > 0 ? `现在有 ${settings.autostartPipelines.length} 条。` : ''}</span></div>
+          <label className="field-label" htmlFor="autostart-delay">开机自启后等待多少秒再运行流水线（等网络、桌面和显卡驱动就绪）</label>
           <input id="autostart-delay" className="text-input plain" type="number" min={0} max={1800} defaultValue={settings.autostartDelaySeconds}
             onBlur={e => void set({ autostartDelaySeconds: Math.max(0, Math.min(1800, Math.round(Number(e.target.value) || 0))) })} />
-          <label className="check-label"><input type="checkbox" checked={settings.skipIfRanToday} disabled={busy} onChange={e => void set({ skipIfRanToday: e.target.checked })} />今天已经成功运行过的就跳过</label>
           {data.autostarted && <div className="notice info left small"><Icon name="info" /><span>这次是开机自动启动的。</span></div>}
         </section>
       )}

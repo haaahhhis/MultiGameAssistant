@@ -193,12 +193,14 @@ export type PipelineSummary = z.infer<typeof PipelineSummary>
 export const ScheduleSettings = z.object({
   /** Start AutoDailyGamePlay when the user logs on to Windows (a Task Scheduler task). */
   autostart: z.boolean(),
-  /** Pipelines run after an automatic start. */
+  /** Pipelines run when the app starts (by hand or at logon). */
   autostartPipelines: z.array(PipelineId),
-  /** Seconds to wait after an automatic start (network, desktop, drivers). */
+  /** Seconds to wait after a start at logon (network, desktop, drivers); a start by hand waits 10 s. */
   autostartDelaySeconds: z.number().int().min(0).max(1800),
-  /** Skip an autostart pipeline that already ran today. */
+  /** Skip an on-start pipeline that already ran today. */
   skipIfRanToday: z.boolean(),
+  /** Run the on-start pipelines only on the app's first start of the day. */
+  firstStartOnly: z.boolean().default(false),
 })
 export type ScheduleSettings = z.infer<typeof ScheduleSettings>
 

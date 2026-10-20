@@ -54,6 +54,8 @@ let tray = null
 let toldAboutTray = false
 /** The splash is showing (not the UI): its buttons are answered, its state can be pushed. */
 let onSplash = false
+/** dsh has come up once: later starts are restarts (the scheduler does not run on-start pipelines again). */
+let everReady = false
 /** What the failure screen's 「复制错误信息」 copies. */
 let failure = ''
 const restarts = []
@@ -246,7 +248,8 @@ function launchHost() {
       ADG_GATEWAY_PORT: '0',
       ADG_UI_DIR: paths.uiDir,
       ADG_LAUNCH_COMMAND: JSON.stringify(launchCommand),
-      ADG_AUTOSTARTED: autoStarted ? '1' : '0',
+      ADG_AUTOSTARTED: autoStarted && !everReady ? '1' : '0',
+      ADG_APP_START: everReady ? '0' : '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -268,6 +271,7 @@ function launchHost() {
     const match = /adg gateway: (http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/.exec(line)
     if (match !== null && !ready) {
       ready = true
+      everReady = true
       clearTimeout(timer)
       void openUi(match[1])
     }

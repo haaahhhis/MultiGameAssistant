@@ -15,6 +15,7 @@ export interface GameToolDeps {
   readonly activities: (game?: string) => Activity[]
   readonly refresh: (game?: string) => Promise<Array<{ game: string; ok: boolean; count: number; detail?: string | undefined }>>
   readonly record: (game: string, from: 'screen' | 'site', events: readonly ReadEvent[], sessionId: string | undefined, keepScreenshot: boolean) => Promise<Array<{ activity: Activity; matched: boolean }>>
+  readonly launch: (game: string, signal: AbortSignal) => Promise<{ script: string; lines: string[] }>
   readonly report: () => { title: string; text: string }
   readonly sendReport: () => Promise<{ channels: string[] }>
   readonly now: () => number
@@ -181,6 +182,21 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
           recorded: written.map(w => ({ ...brief(w.activity, game.timezone), ...(w.matched ? {} : { note: '日历里原来没有这个活动，新加了一条' }) })),
           next: a.source === 'screen' ? '读完了就回到游戏主界面；有 mismatch 的告诉用户以数据站为准。' : '记下了。',
         }
+      },
+    }),
+    tool({
+      name: 'game_launch',
+      description: '游戏没开时启动它：用玩它的脚本在「启动游戏」里的设置（模拟器里的游戏会先启动模拟器；PC 版打开设置好的程序或启动器），已经开着就什么都不做。有脚本正在用这台模拟器或鼠标键盘时会拒绝。启动后截图确认：关掉公告和更新提示，启动器需要点「开始游戏」就点；要输入账号密码或验证码时停下交给用户。',
+      properties: { game: GAME },
+      required: ['game'],
+      timeoutMs: 300_000,
+      kind: 'execute',
+      title: a => `启动游戏：${String(a['game'] ?? '')}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({ game: z.string() }), args)
+        const game = known(a.game)
+        const { script, lines } = await deps.launch(game.id, exec.signal)
+        return { game: game.name, via: script, done: lines, next: '截图看看游戏到了哪个界面，等它进到主界面再继续。' }
       },
     }),
     tool({
