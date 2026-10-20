@@ -78,8 +78,13 @@ export class AdgFeishu extends Service {
     ctx.effect(() => () => bot.stop(), 'adg-feishu connection')
     notify.registerChannel(bot)
 
-    // A new App Secret saved from the UI takes effect at once.
+    // A new App Secret saved from the UI takes effect at once. The first start may
+    // have run before the credentials service was up and found no secret: when it
+    // arrives, connect with the secret it holds.
     ctx.inject(['credentials'], scoped => {
+      void this.ready.then(() => {
+        if (!bot.state.secretConfigured || bot.status().state === 'error') return bot.restart()
+      })
       scoped.on('credentials/reference-updated', ref => {
         if (ref === FEISHU_SECRET_REF) void this.ready.then(() => bot.restart())
       })

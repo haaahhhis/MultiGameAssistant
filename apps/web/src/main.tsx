@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { AdgClient } from '@adg/client-core'
 import { App, TokenPrompt } from './App.tsx'
+import { BootScreen } from './components/BootScreen.tsx'
 import { gatewayUrl, readToken, saveToken } from './config.ts'
 import { registerPlugin } from './plugins.ts'
 import { chatPlugin } from './plugins/chat/index.ts'
@@ -39,7 +40,7 @@ const root = createRoot(document.getElementById('root')!)
 function boot(token: string) {
   const client = new AdgClient({ url: gatewayUrl(token), clientInfo: { name: 'adg-web', version: '0.1.0' } })
   client.start()
-  root.render(<App client={client} />)
+  root.render(<><App client={client} /><BootScreen client={client} /></>)
 }
 
 const token = readToken()

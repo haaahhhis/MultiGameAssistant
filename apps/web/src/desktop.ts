@@ -6,6 +6,8 @@ export interface DesktopBridge {
   copyImage?(dataUrl: string): Promise<void>
   /** Open a folder or a viewable file; anything else is shown selected in Explorer. */
   openPath?(path: string): Promise<'opened' | 'revealed' | 'missing'>
+  /** Follow the theme picked here, so the startup screen and window background match it. */
+  setTheme?(theme: 'system' | 'light' | 'dark'): Promise<void>
 }
 
 export function desktop(): DesktopBridge | undefined {

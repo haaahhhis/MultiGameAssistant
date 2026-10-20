@@ -29,7 +29,7 @@ function fakeApi(options: { tokenError?: string } = {}) {
   return { api, sent, patched, events: () => handlers! }
 }
 
-function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: string; secret?: string } = {}) {
+function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: string | undefined; secret?: string; retryDelaysMs?: number[] } = {}) {
   const fake = fakeApi(options)
   let saved: FeishuState | undefined
   const inbound: { text: string; replyTo?: string | undefined; userId: string }[] = []
@@ -50,6 +50,7 @@ function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: s
     log: { info() {}, warn() {} },
     ackAfterMs: 20,
     clickBudgetMs: 1000,
+    retryDelaysMs: options.retryDelaysMs ?? [],
   })
   return { bot, fake, inbound, acted, answered, saved: () => saved }
 }
@@ -138,6 +139,19 @@ test('bad credentials, missing secret and a disabled channel are reported, not t
   await off.bot.start()
   assert.equal(off.bot.status().state, 'off')
   assert.equal(off.bot.approvals.active(), false)
+})
+
+test('a start that could not connect tries again by itself until it does', async () => {
+  const options: { tokenError?: string | undefined; retryDelaysMs: number[] } = { tokenError: 'getaddrinfo ENOTFOUND open.feishu.cn', retryDelaysMs: [30, 60] }
+  const { bot } = setup({}, options)
+  await bot.start()
+  assert.equal(bot.status().state, 'error', 'no network yet at logon')
+  await delay(50)
+  assert.equal(bot.status().state, 'error', 'still no network on the first retry')
+  options.tokenError = undefined
+  for (let i = 0; i < 40 && bot.status().state !== 'ready'; i++) await delay(10)
+  assert.equal(bot.status().state, 'ready', 'connected on a later retry, no 重新检查 needed')
+  bot.stop()
 })
 
 test('the SDK-backed API talks to the platform the way Feishu expects', async () => {

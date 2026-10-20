@@ -5,9 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
     <title>AutoDailyGamePlay</title>
+    <link rel="stylesheet" href="/src/boot.css" />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The first paint, until the script mounts BootScreen in its place (same markup). -->
+    <div id="root"><div class="boot">
+      <div class="boot-center">
+        <div class="boot-mark" aria-hidden="true">
+          <svg class="boot-orbit" viewBox="0 0 132 132"><circle class="track" cx="66" cy="66" r="62" /><circle class="comet" cx="66" cy="66" r="62" /></svg>
+          <span class="boot-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 8.3v7.4l6.2-3.7-6.2-3.7Z" /><path class="loop" d="M4 12a8 8 0 0 1 14.5-4.7M20 12a8 8 0 0 1-14.5 4.7" /></svg></span>
+        </div>
+        <h1 class="boot-name">AutoDailyGamePlay</h1>
+        <p class="boot-stage" role="status"><span>正在载入界面</span></p>
+        <ol class="boot-steps">
+          <li class="done"><i></i><span>准备环境</span></li>
+          <li class="done"><i></i><span>启动服务</span></li>
+          <li class="now"><i></i><span>载入界面</span></li>
+          <li><i></i><span>连接 agent</span></li>
+        </ol>
+        <p class="boot-hint"></p>
+      </div>
+      <p class="boot-foot">日常交给 agent · 在本机运行</p>
+    </div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

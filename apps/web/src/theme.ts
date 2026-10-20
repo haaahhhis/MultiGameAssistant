@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { desktop } from './desktop.ts'
 
 /** Light, dark, or whatever the OS prefers; kept per browser in localStorage. */
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -20,6 +21,7 @@ function read(): ThemePreference {
 export function applyTheme(): void {
   if (current === 'system') delete document.documentElement.dataset['theme']
   else document.documentElement.dataset['theme'] = current
+  void desktop()?.setTheme?.(current).catch(() => {})
 }
 
 export function setTheme(theme: ThemePreference): void {

@@ -1,0 +1,203 @@
+/*
+ * The startup screen, in three places that must look the same so one hands
+ * over to the next without a jump: the desktop shell's splash
+ * (apps/desktop/splash.html, before the gateway exists), this page's first
+ * paint (index.html, before the script runs) and the React overlay
+ * (BootScreen, until the agent is connected). It loads before styles.css, so
+ * it carries its own copy of the graphite-and-cyan tokens, and it sticks to
+ * system fonts so the wordmark does not shift when the web fonts arrive.
+ */
+.boot {
+  --b-bg: #f2f2f0;
+  --b-panel: #ffffff;
+  --b-surface: #f6f6f4;
+  --b-text: #17171a;
+  --b-text-2: #3a3a41;
+  --b-muted: #66666e;
+  --b-faint: #b4b4ba;
+  --b-border: rgb(16 16 20 / .08);
+  --b-border-strong: rgb(16 16 20 / .14);
+  --b-accent: #0a6a83;
+  --b-fill: #6fe3f2;
+  --b-fill-hover: #58d9eb;
+  --b-on-fill: #04222a;
+  --b-soft: rgb(10 140 170 / .12);
+  --b-line: rgb(10 120 150 / .38);
+  --b-error: #c8432f;
+  --b-dots: rgb(16 16 20 / .07);
+  --b-shadow: 0 1px 2px rgb(16 16 20 / .05), 0 18px 40px -18px rgb(10 106 131 / .45);
+  --b-ease: cubic-bezier(.2, .8, .2, 1);
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  overflow: hidden;
+  background: var(--b-bg);
+  color: var(--b-text);
+  font: 14px/1.6 "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: opacity .36s var(--b-ease), visibility 0s linear .36s;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .boot {
+    --b-bg: #0b0b0c;
+    --b-panel: #131315;
+    --b-surface: #161618;
+    --b-text: #ededef;
+    --b-text-2: #c9c9cf;
+    --b-muted: #8e8e96;
+    --b-faint: #4a4a52;
+    --b-border: rgb(255 255 255 / .07);
+    --b-border-strong: rgb(255 255 255 / .12);
+    --b-accent: #7fe6f5;
+    --b-fill: #7fe6f5;
+    --b-fill-hover: #a6eef9;
+    --b-soft: rgb(127 230 245 / .09);
+    --b-line: rgb(127 230 245 / .34);
+    --b-error: #ff8b7b;
+    --b-dots: rgb(255 255 255 / .05);
+    --b-shadow: inset 0 1px 0 rgb(255 255 255 / .35), 0 18px 48px -16px rgb(127 230 245 / .35);
+  }
+}
+:root[data-theme="dark"] .boot {
+  --b-bg: #0b0b0c;
+  --b-panel: #131315;
+  --b-surface: #161618;
+  --b-text: #ededef;
+  --b-text-2: #c9c9cf;
+  --b-muted: #8e8e96;
+  --b-faint: #4a4a52;
+  --b-border: rgb(255 255 255 / .07);
+  --b-border-strong: rgb(255 255 255 / .12);
+  --b-accent: #7fe6f5;
+  --b-fill: #7fe6f5;
+  --b-fill-hover: #a6eef9;
+  --b-soft: rgb(127 230 245 / .09);
+  --b-line: rgb(127 230 245 / .34);
+  --b-error: #ff8b7b;
+  --b-dots: rgb(255 255 255 / .05);
+  --b-shadow: inset 0 1px 0 rgb(255 255 255 / .35), 0 18px 48px -16px rgb(127 230 245 / .35);
+}
+.boot [hidden] { display: none !important; }
+.boot .glyph-fail, .boot.failed .glyph-run { display: none; }
+.boot.failed .glyph-fail { display: inline; }
+.boot.leaving { opacity: 0; visibility: hidden; pointer-events: none; }
+.boot.leaving .boot-center { transform: translateY(-6px) scale(.985); }
+
+/* A faint dot field and a cyan glow behind the mark; both fade out towards the edges. */
+.boot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--b-dots) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 46% 42% at 50% 44%, #000 20%, transparent 100%);
+  mask-image: radial-gradient(ellipse 46% 42% at 50% 44%, #000 20%, transparent 100%);
+  pointer-events: none;
+}
+.boot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: 560px;
+  height: 560px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, var(--b-soft) 0%, transparent 62%);
+  pointer-events: none;
+}
+.boot.failed::after { opacity: .35; }
+
+.boot-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+  transition: transform .36s var(--b-ease);
+}
+
+/* The mark: the app tile, its loop turning while things start, inside a slow orbit. */
+.boot-mark { position: relative; width: 132px; height: 132px; display: grid; place-items: center; margin-bottom: 26px; }
+.boot-orbit { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.boot-orbit circle { fill: none; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.boot-orbit .track { stroke: var(--b-faint); stroke-dasharray: 1 5; opacity: .55; }
+.boot-orbit .comet { stroke: var(--b-accent); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 46 400; transform-origin: 50% 50%; animation: boot-spin 2.8s linear infinite; opacity: .9; }
+.boot-tile {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: linear-gradient(160deg, var(--b-fill-hover), var(--b-fill));
+  color: var(--b-on-fill);
+  box-shadow: var(--b-shadow);
+  transition: background .3s, color .3s, box-shadow .3s;
+}
+.boot-tile svg { width: 36px; height: 36px; overflow: visible; }
+.boot-tile .loop { transform-box: view-box; transform-origin: 50% 50%; animation: boot-loop 2.4s var(--b-ease) infinite; }
+
+.boot-name { margin: 0; font-size: 21px; line-height: 1.3; font-weight: 600; letter-spacing: -.02em; color: var(--b-text); }
+.boot-stage { display: flex; align-items: baseline; justify-content: center; gap: 8px; min-height: 22px; margin: 10px 0 0; font-size: 13.5px; color: var(--b-text-2); overflow-wrap: anywhere; }
+.boot-elapsed { font: 12px/1 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--b-faint); font-variant-numeric: tabular-nums; }
+.boot-elapsed:empty { display: none; }
+
+/* Four steps as a segmented bar: done segments are cyan, the current one sweeps. */
+.boot-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 312px; margin: 26px 0 0; padding: 0; list-style: none; }
+.boot-steps li { display: flex; flex-direction: column; gap: 9px; min-width: 0; font-size: 11.5px; line-height: 1.2; color: var(--b-faint); transition: color .3s; }
+.boot-steps i { position: relative; display: block; height: 2px; overflow: hidden; border-radius: 2px; background: var(--b-border-strong); }
+.boot-steps i::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--b-accent); transform: scaleX(0); transform-origin: left; transition: transform .45s var(--b-ease); }
+.boot-steps li.done { color: var(--b-muted); }
+.boot-steps li.done i::after { transform: scaleX(1); }
+.boot-steps li.now { color: var(--b-text); }
+.boot-steps li.now i::after { width: 45%; transform: none; animation: boot-sweep 1.5s ease-in-out infinite; }
+
+.boot-hint { max-width: 360px; min-height: 20px; margin: 18px 0 0; font-size: 12.5px; color: var(--b-muted); opacity: 0; transition: opacity .4s; }
+.boot-hint.shown { opacity: 1; }
+/* Out of the flow, so the column does not move when it appears. */
+.boot-skip { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 6px 14px; border: 1px solid var(--b-border-strong); border-radius: 999px; background: var(--b-panel); color: var(--b-text-2); font: inherit; font-size: 12.5px; cursor: pointer; }
+.boot-skip:hover { border-color: var(--b-line); color: var(--b-text); }
+
+.boot-foot { position: absolute; bottom: 22px; left: 0; right: 0; z-index: 1; margin: 0; text-align: center; font-size: 11.5px; letter-spacing: .02em; color: var(--b-faint); }
+
+/* When starting failed: the tile turns into a quiet warning and the details take the steps' place. */
+.boot.failed .boot-tile { background: var(--b-surface); color: var(--b-error); box-shadow: inset 0 0 0 1px var(--b-border-strong); }
+.boot.failed .boot-orbit .comet, .boot.failed .boot-tile .loop { animation: none; }
+.boot.failed .boot-orbit .comet { opacity: 0; }
+.boot.failed .boot-center { max-width: 600px; }
+.boot.failed .boot-stage { margin-top: 8px; font-size: 15px; font-weight: 600; color: var(--b-error); }
+.boot.failed .boot-mark { width: 104px; height: 104px; margin-bottom: 20px; }
+.boot-detail { position: relative; width: 100%; margin-top: 22px; text-align: left; border: 1px solid var(--b-border); border-radius: 12px; background: var(--b-panel); }
+.boot-detail pre { margin: 0; max-height: 34vh; overflow: auto; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.75 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--b-muted); }
+.boot-detail pre:focus-visible { outline: 2px solid var(--b-line); outline-offset: -2px; border-radius: 12px; }
+.boot-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
+.boot-actions button { height: 34px; padding: 0 16px; border: 1px solid var(--b-border-strong); border-radius: 10px; background: var(--b-panel); color: var(--b-text-2); font: inherit; font-size: 13px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.boot-actions button:hover { border-color: var(--b-line); color: var(--b-text); }
+.boot-actions button.primary { border-color: transparent; background: var(--b-fill); color: var(--b-on-fill); font-weight: 600; }
+.boot-actions button.primary:hover { background: var(--b-fill-hover); }
+.boot-actions button:focus-visible, .boot-skip:focus-visible { outline: 2px solid var(--b-line); outline-offset: 2px; }
+
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@keyframes boot-loop { 0% { transform: rotate(0deg); } 70%, 100% { transform: rotate(360deg); } }
+@keyframes boot-sweep { 0% { transform: translateX(-110%); } 100% { transform: translateX(240%); } }
+
+@media (max-height: 560px) {
+  .boot-mark { width: 96px; height: 96px; margin-bottom: 16px; }
+  .boot-tile { width: 54px; height: 54px; border-radius: 16px; }
+  .boot-tile svg { width: 29px; height: 29px; }
+  .boot-steps { margin-top: 18px; }
+  .boot-foot { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot, .boot-center { transition: none; }
+  .boot-orbit .comet, .boot-tile .loop { animation: none; }
+  .boot-steps li.now i::after { animation: none; width: 100%; opacity: .45; }
+}

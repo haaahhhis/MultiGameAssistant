@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  The desktop shell's startup screen, shown until the gateway is up. The look
+  lives in apps/web/src/boot.css, shared with the page's first paint and the
+  React overlay so the three hand over without a jump. main.mjs drives it with
+  window.adgSplash.set(state); the buttons go back through preload.cjs.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+    <title>AutoDailyGamePlay</title>
+    <link rel="stylesheet" href="../web/src/boot.css" />
+  </head>
+  <body>
+    <div class="boot" id="boot">
+      <div class="boot-center">
+        <div class="boot-mark" aria-hidden="true">
+          <svg class="boot-orbit" viewBox="0 0 132 132"><circle class="track" cx="66" cy="66" r="62" /><circle class="comet" cx="66" cy="66" r="62" /></svg>
+          <span class="boot-tile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <g class="glyph-run"><path d="M9.5 8.3v7.4l6.2-3.7-6.2-3.7Z" /><path class="loop" d="M4 12a8 8 0 0 1 14.5-4.7M20 12a8 8 0 0 1-14.5 4.7" /></g>
+              <g class="glyph-fail"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.8v5.2m0 3.2h.01" /></g>
+            </svg>
+          </span>
+        </div>
+        <h1 class="boot-name">AutoDailyGamePlay</h1>
+        <p class="boot-stage" role="status" aria-live="polite"><span id="stage">正在启动</span><span class="boot-elapsed" id="elapsed"></span></p>
+        <ol class="boot-steps" id="steps">
+          <li data-step="env"><i></i><span>准备环境</span></li>
+          <li data-step="service"><i></i><span>启动服务</span></li>
+          <li data-step="ui"><i></i><span>载入界面</span></li>
+          <li data-step="connect"><i></i><span>连接 agent</span></li>
+        </ol>
+        <p class="boot-hint" id="hint"></p>
+        <div class="boot-detail" id="detail" hidden><pre tabindex="0" aria-label="错误详情" id="detail-text"></pre></div>
+        <div class="boot-actions" id="actions" hidden></div>
+      </div>
+      <p class="boot-foot">日常交给 agent · 在本机运行</p>
+    </div>
+    <script src="splash.js"></script>
+  </body>
+</html>

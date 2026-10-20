@@ -33,6 +33,14 @@ export interface BotOptions {
   readonly ackAfterMs?: number
   /** How long a card click may run before the toast says it is still going. @default 2500 */
   readonly clickBudgetMs?: number
+  /**
+   * Waits before reconnecting by itself after a start that did not connect (the
+   * network not up yet at logon, a timeout, the long connection dropping); the
+   * last one repeats. @default [5s, 15s, 30s, 1min, 5min]
+   */
+  readonly retryDelaysMs?: readonly number[]
+  /** How long the long connection may stay "connecting" before it is opened again. @default 45000 */
+  readonly connectTimeoutMs?: number
 }
 
 export const DEFAULT_FEISHU: FeishuSettings = { enabled: false, domain: 'feishu', allowedUsers: [], approvals: true }
@@ -45,6 +53,7 @@ interface Delivered {
 
 const KEEP_DELIVERED = 200
 const KEEP_PENDING = 20
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 300_000]
 
 export class FeishuBot implements Channel {
   readonly id = 'feishu'
@@ -61,6 +70,8 @@ export class FeishuBot implements Channel {
   readonly #approvals = new Map<string, { request: ApprovalRequested; messageIds: string[] }>()
   readonly #queues = new Map<string, Promise<void>>()
   #generation = 0
+  #retryTimer: ReturnType<typeof setTimeout> | undefined
+  #retries = 0
 
   constructor(options: BotOptions) {
     this.#options = options
@@ -78,6 +89,8 @@ export class FeishuBot implements Channel {
   /** (Re)connect with the current settings and secret; runs the self-check. */
   async restart(): Promise<void> {
     const generation = ++this.#generation
+    clearTimeout(this.#retryTimer)
+    this.#retryTimer = undefined
     this.#api?.close()
     this.#api = undefined
     this.#connection = 'idle'
@@ -93,7 +106,11 @@ export class FeishuBot implements Channel {
     const api = this.#options.createApi({ appId: settings.appId, appSecret: secret!, domain: settings.domain })
     this.#api = api
     await this.check()
-    if (generation !== this.#generation || this.#checks.find(c => c.id === 'token')?.ok !== true) return
+    if (generation !== this.#generation) return
+    if (this.#checks.find(c => c.id === 'token')?.ok !== true) {
+      this.#retryLater(generation)
+      return
+    }
     try {
       await api.connect({
         message: event => this.#onMessage(event),
@@ -103,18 +120,49 @@ export class FeishuBot implements Channel {
         this.#connection = state
         this.#error = error
         this.#setCheck('ws', state === 'connected' ? true : state === 'failed' ? false : null, state === 'failed' ? error : undefined)
+        if (state === 'connected') this.#retries = 0
+        if (state === 'failed') this.#retryLater(generation)
         this.#options.changed()
       })
+      // Stuck at "connecting" (no ready, no error) is as good as failed.
+      const watchdog = setTimeout(() => {
+        if (generation !== this.#generation || this.#connection === 'connected') return
+        this.#options.log.warn('feishu: the long connection did not open in time')
+        this.#retryLater(generation)
+      }, this.#options.connectTimeoutMs ?? 45_000)
+      watchdog.unref?.()
     } catch (error) {
       this.#connection = 'failed'
       this.#error = message(error)
       this.#setCheck('ws', false, this.#error)
+      this.#retryLater(generation)
     }
     this.#options.changed()
   }
 
+  /**
+   * Try again by itself, so a start that failed for a passing reason (no
+   * network yet, a timeout) recovers without the user pressing 重新检查.
+   * Wrong settings fail the same way each time and only cost a request per wait.
+   */
+  #retryLater(generation: number): void {
+    if (generation !== this.#generation || this.#retryTimer !== undefined) return
+    const delays = this.#options.retryDelaysMs ?? RETRY_DELAYS_MS
+    if (delays.length === 0) return
+    const delay = delays[Math.min(this.#retries, delays.length - 1)]!
+    this.#retries++
+    this.#options.log.info(`feishu: not connected, trying again in ${Math.round(delay / 1000)}s`)
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined
+      if (generation === this.#generation) void this.restart().catch(error => this.#options.log.warn(`feishu reconnect failed: ${message(error)}`))
+    }, delay)
+    this.#retryTimer.unref?.()
+  }
+
   stop(): void {
     this.#generation++
+    clearTimeout(this.#retryTimer)
+    this.#retryTimer = undefined
     this.#api?.close()
     this.#api = undefined
     this.#connection = 'idle'
