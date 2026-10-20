@@ -1,0 +1,27 @@
+# 明日方舟 (Arknights, CN server). Event dates come from PRTS, the players'
+# wiki, over its Semantic MediaWiki API (no model needed); progress inside
+# the game is read from the emulator screen by the agent (GAME.md).
+id: arknights
+name: 明日方舟
+aliases: [方舟, Arknights]
+scripts: [maa]
+timezone: Asia/Shanghai
+dailyReset: '04:00'
+screen:
+  target: emulator
+sources:
+  - id: prts
+    name: PRTS
+    homepage: https://prts.wiki/w/活动一览
+    smw:
+      api: https://prts.wiki/api.php
+      conditions: '[[分类:有活动信息的页面]]'
+      title: 名称
+      start: 活动开始时间
+      end: 活动结束时间
+      shopEnd: 兑换结束时间
+      dates: date
+      page: https://prts.wiki/w/{page}
+  - id: official
+    name: 官网公告
+    homepage: https://ak.hypergryph.com/news

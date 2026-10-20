@@ -26,7 +26,9 @@
     "e2e:pipelines": "node scripts/e2e-pipelines.mjs",
     "e2e:intervene": "node scripts/e2e-intervene.mjs",
     "e2e:sandbox": "node scripts/e2e-sandbox-shell.mjs",
-    "lint:tools": "node scripts/lint-tools.mjs"
+    "lint:tools": "node scripts/lint-tools.mjs",
+    "e2e:games": "node scripts/e2e-games.mjs",
+    "check:sites": "node scripts/check-game-sites.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

@@ -4,16 +4,8 @@
  * Each declares the capability its host plugin will serve, so it stays hidden
  * until that plugin is mounted; the plugin status page lists it meanwhile.
  * When a milestone lands, its entry here is replaced by the real UI plugin.
+ * (Empty since M6: every planned area has its page.)
  */
 import type { UiPlugin } from '../../plugins.ts'
-import { Placeholder } from './Placeholder.tsx'
 
-export const roadmapPlugins: readonly UiPlugin[] = [
-  {
-    id: 'games',
-    title: '游戏看板',
-    milestone: 'M6',
-    requires: ['games'],
-    pages: [{ id: 'games', title: '游戏', icon: 'gamepad', order: 40, component: Placeholder }],
-  },
-]
+export const roadmapPlugins: readonly UiPlugin[] = []

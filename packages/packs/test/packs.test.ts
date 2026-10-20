@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { parseManifest, renderTask } from '@adg/pack-schema'
+import { parseGameManifest, parseManifest, renderTask } from '@adg/pack-schema'
 
 const DIR = fileURLToPath(new URL('../packs/', import.meta.url))
 const load = (id: string) => parseManifest(readFileSync(join(DIR, id, 'adg.script.yaml'), 'utf8'), `${id}/adg.script.yaml`)
@@ -47,4 +47,16 @@ test('log rules classify the scripts\' real messages', () => {
   assert.equal(classify('march7th', '2026-10-18 05:00:09 | ERROR | 截图失败：没有找到游戏窗口'), 'warning:script-error')
   assert.equal(classify('march7th', '2026-10-18 05:00:01 | INFO | 开始运行：清体力'), undefined, 'a plain pipe does not match')
   assert.deepEqual(load('maa').recovery.map(r => `${r.on}→${r.do}`), ['adb-disconnected→reconnect-adb', 'adb-disconnected→restart', 'stalled→restart'])
+})
+
+test('every built-in game pack is valid, names script packs that exist, and has a GAME.md skill', () => {
+  const games = fileURLToPath(new URL('../games/', import.meta.url))
+  const scripts = new Set(readdirSync(DIR))
+  for (const id of readdirSync(games)) {
+    const game = parseGameManifest(readFileSync(join(games, id, 'game.yaml'), 'utf8'), `${id}/game.yaml`)
+    assert.equal(game.id, id)
+    for (const script of game.scripts) assert.ok(scripts.has(script), `${id} plays ${script}`)
+    assert.match(readFileSync(join(games, id, 'GAME.md'), 'utf8'), new RegExp(`^---\nname: game-${id}\ndescription: .+\n---\n`), `${id}/GAME.md frontmatter`)
+  }
+  assert.ok(readdirSync(games).length >= 3)
 })

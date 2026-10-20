@@ -1,0 +1,26 @@
+# 崩坏：星穹铁道 (Honkai: Star Rail, CN server). Event dates come from the
+# Bilibili wiki's Semantic MediaWiki API, where they are stored as text in
+# server time; progress is read from the PC window by the agent (GAME.md).
+id: starrail
+name: 崩坏：星穹铁道
+aliases: [星穹铁道, 星铁, 崩铁, Star Rail]
+scripts: [march7th]
+timezone: Asia/Shanghai
+dailyReset: '04:00'
+screen:
+  target: window
+  window: 崩坏：星穹铁道
+sources:
+  - id: biligame
+    name: 星穹铁道 WIKI（哔哩哔哩）
+    homepage: https://wiki.biligame.com/sr/活动一览
+    smw:
+      api: https://wiki.biligame.com/sr/api.php
+      conditions: '[[分类:活动]]'
+      start: 开始时间
+      end: 结束时间
+      dates: text
+      page: https://wiki.biligame.com/sr/{page}
+  - id: official
+    name: 官网新闻
+    homepage: https://sr.mihoyo.com/news

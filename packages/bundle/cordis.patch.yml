@@ -107,6 +107,14 @@
         launchCommand: !!js "process.env.ADG_LAUNCH_COMMAND || undefined"
         autostarted: !!js "process.env.ADG_AUTOSTARTED === '1'"
 
+    # M6: game information — Game Packs, the event calendar (data sites read
+    # without a model, the agent reading the game screen), the daily report;
+    # the `games` capability.
+    - id: adg-game-intel
+      name: '@adg/game-intel'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+
 # M4 of the plan trims the official browser client here (ui-*, client-* rows).
 # Until then the official Web UI stays up for side-by-side comparison.
 

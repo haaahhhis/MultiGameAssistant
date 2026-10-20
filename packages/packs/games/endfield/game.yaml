@@ -1,0 +1,18 @@
+# 明日方舟：终末地 (Arknights: Endfield, CN server). No wiki keeps its event
+# dates in a form the plugin can read by itself yet, so the agent reads the
+# official news (web_fetch / web_search) and the game screen (GAME.md).
+id: endfield
+name: 明日方舟：终末地
+aliases: [终末地, Endfield]
+scripts: [maaend]
+timezone: Asia/Shanghai
+dailyReset: '04:00'
+screen:
+  target: window
+sources:
+  - id: official
+    name: 官网新闻
+    homepage: https://endfield.hypergryph.com/news
+  - id: biligame
+    name: 终末地 WIKI（哔哩哔哩）
+    homepage: https://wiki.biligame.com/zmd/活动一览

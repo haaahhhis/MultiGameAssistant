@@ -65,6 +65,8 @@ export interface Outcome {
 }
 
 const KEEP = 100
+/** Sessions whose latest screenshot is kept. */
+const KEEP_SHOTS = 20
 
 export class Interventions {
   readonly #deps: InterventionDeps
@@ -72,6 +74,8 @@ export class Interventions {
   readonly #items: Intervention[] = []
   readonly #active = new Map<string, Active>()
   readonly #bySession = new Map<string, string>()
+  /** The latest screenshot of each recent session, for whoever wants to keep it as evidence. */
+  readonly #shots = new Map<string, Buffer>()
   #seq = 0
 
   constructor(deps: InterventionDeps) {
@@ -155,6 +159,15 @@ export class Interventions {
   rememberShot(sessionId: string | undefined, png: Buffer): void {
     const active = this.forSession(sessionId)
     if (active !== undefined) active.lastShot = png
+    if (sessionId === undefined) return
+    this.#shots.delete(sessionId)
+    this.#shots.set(sessionId, png)
+    while (this.#shots.size > KEEP_SHOTS) this.#shots.delete(this.#shots.keys().next().value!)
+  }
+
+  /** The latest screenshot taken in a session (the last few sessions only). */
+  lastShot(sessionId: string): Buffer | undefined {
+    return this.#shots.get(sessionId)
   }
 
   /** Hand an incident to the agent and wait for it to finish. Never throws. */

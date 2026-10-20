@@ -8,6 +8,7 @@ import { chatPlugin } from './plugins/chat/index.ts'
 import { roadmapPlugins } from './plugins/roadmap/index.ts'
 import { feishuPlugin, monitorPlugin } from './plugins/monitor/index.ts'
 import { pipelinesPlugin, schedulePlugin } from './plugins/pipelines/index.ts'
+import { gamesPlugin } from './plugins/games/index.ts'
 import { emulatorsPlugin, scriptsPlugin } from './plugins/scripts/index.ts'
 import { settingsPlugin } from './plugins/settings/index.ts'
 import { statusPlugin } from './plugins/status/index.ts'
@@ -33,6 +34,7 @@ registerPlugin(monitorPlugin)
 registerPlugin(feishuPlugin)
 registerPlugin(pipelinesPlugin)
 registerPlugin(schedulePlugin)
+registerPlugin(gamesPlugin)
 for (const plugin of roadmapPlugins) registerPlugin(plugin)
 
 const root = createRoot(document.getElementById('root')!)

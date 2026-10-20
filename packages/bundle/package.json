@@ -16,6 +16,7 @@
     "@adg/analyzer": "workspace:*",
     "@adg/emulator": "workspace:*",
     "@adg/feishu": "workspace:*",
+    "@adg/game-intel": "workspace:*",
     "@adg/gateway": "workspace:*",
     "@adg/guard": "workspace:*",
     "@adg/intervene": "workspace:*",

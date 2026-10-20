@@ -30,6 +30,9 @@ const paths = {
   plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4',
   home: 'M4 11 12 4l8 7M6 9.5V20h12V9.5',
   archive: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4',
+  refresh: 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4',
+  calendar: 'M5 5.5h14a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6.5a1 1 0 0 1 1-1ZM4 10h16M8 3.5v4M16 3.5v4M8 14h2M14 14h2M8 17h2',
+  send: 'M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4 17-6.5Z',
 } as const
 
 export type IconName = keyof typeof paths

@@ -165,6 +165,11 @@ export class AdgIntervene extends Service {
     this.interventions.cancel(incidentId, why)
   }
 
+  /** The latest screenshot the screen tools took in a session. */
+  lastShot(sessionId: string): Buffer | undefined {
+    return this.interventions.lastShot(sessionId)
+  }
+
   resumeRun(runId: string): Promise<boolean> {
     return this.interventions.resumeRun(runId)
   }
