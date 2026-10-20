@@ -12,6 +12,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
@@ -24,16 +25,18 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
 import { addRetryPolicies, providersCapability } from './providers.ts'
-import type { NotificationMethod, NotificationParams, RequestParams } from '@adg/protocol'
+import { PERMISSIONS_CAPABILITY, type NotificationMethod, type NotificationParams, type RequestParams } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
+import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
 import { startServer } from './server.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
 export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
 export { convertRecord } from './convert.ts'
+export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -65,6 +68,15 @@ export interface Config {
    * Kept apart from the app: dsh's Windows sandbox labels it low-integrity for good.
    */
   readonly workspaceDir?: string
+  /** Where the gateway keeps its own state (the permission mode). */
+  readonly dataDir?: string
+}
+
+/** The slice of dsh's session and permission-preset services the mode needs. */
+interface PresetSession { readonly id: string }
+interface PresetService {
+  current(session: PresetSession): string
+  set(session: PresetSession, name: string): void
 }
 
 export class AdgGateway extends Service {
@@ -75,6 +87,8 @@ export class AdgGateway extends Service {
   private archived = new Set<string>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
+  private readonly permissions: Permissions
+  private readonly permissionsReady: Promise<void>
   /** Resolved after the listener binds. */
   url: string | undefined
 
@@ -107,6 +121,12 @@ export class AdgGateway extends Service {
     // dsh's own remote bridge (dsh-api-remotes) holds a request for its browser
     // client even when none is attached, so answerers after it never run.
     ctx.on('approval/request', (request, next) => {
+      // Full access (设置 → 权限): the user said yes to everything in advance.
+      if (this.permissions.mode === 'full') {
+        this.permissions.allowed({ at: Date.now(), sessionId: request.agent.session.id, toolName: request.toolName, ...(request.reason === undefined ? {} : { reason: request.reason }) })
+        this.broadcast('permissions/changed', this.permissions.state())
+        return Promise.resolve('allowed-once' as const)
+      }
       if (!this.hasClients() && !this.approvals.hasActiveAnswerer()) return next()
       return this.approvals.ask({
         sessionId: request.agent.session.id,
@@ -118,6 +138,39 @@ export class AdgGateway extends Service {
       })
     }, true)
     ctx.effect(() => () => this.approvals.dispose(), 'adg-gateway approvals')
+
+    // ── permissions: the sandbox preset of every session follows the mode ──
+    this.permissions = new Permissions(config.dataDir === undefined ? undefined : join(config.dataDir, 'permissions.json'))
+    const presetFor = (session: PresetSession) => {
+      const presets = ctx.get('permissionPresets' as never) as PresetService | undefined
+      if (presets === undefined) return
+      try {
+        if (presets.current(session) !== PRESET[this.permissions.mode]) presets.set(session, PRESET[this.permissions.mode])
+      } catch (error) {
+        log.warn(`permission preset for ${session.id}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    const everySession = () => {
+      for (const session of (ctx.get('sessions' as never) as { list(): PresetSession[] } | undefined)?.list() ?? []) presetFor(session)
+    }
+    this.permissionsReady = this.permissions.load().then(everySession)
+    ctx.on('session/created' as never, ((session: PresetSession) => { void this.permissionsReady.then(() => presetFor(session)) }) as never)
+    ctx.effect(() => this.registry.register({
+      id: PERMISSIONS_CAPABILITY,
+      version: 1,
+      methods: {
+        'permissions/get': async () => { await this.permissionsReady; return this.permissions.state() },
+        'permissions/set': async params => {
+          await this.permissionsReady
+          await this.permissions.set((params as RequestParams<'permissions/set'>).mode)
+          everySession()
+          log.info(`permissions: ${this.permissions.mode}`)
+          const state = this.permissions.state()
+          this.broadcast('permissions/changed', state)
+          return state
+        },
+      },
+    }), 'adg-gateway capability permissions')
 
     // Optional capability: present exactly while the host mounts a credentials controller.
     ctx.inject(['credentialsController'], scoped => {
@@ -338,6 +391,11 @@ export class AdgGateway extends Service {
   /** Where sessions work when they do not say (the agent's own folder, never the app's). */
   workspaceDir(): string | undefined {
     return this.workspace
+  }
+
+  /** The user turned on full access (设置 → 权限): no sandbox, no approvals, no guard. */
+  fullAccess(): boolean {
+    return this.permissions.mode === 'full'
   }
 
   /** Is this session archived? (A chat-channel conversation then starts a new one.) */

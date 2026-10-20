@@ -10,6 +10,7 @@ import { ModelPicker } from './components/ModelPicker.tsx'
 import { SessionList, relativeTime, sessionTitle } from './components/SessionList.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
+import { readDraft, saveDraft } from './drafts.ts'
 import { useCredentials, useModelCatalog, useNow, usePages, useStore } from './hooks.ts'
 
 /** A first message typed on the home page, sent once its new session opens. */
@@ -96,7 +97,9 @@ function Home({ client, onSettings, onOpen, onStart }: {
   const sessions = useStore(client.sessions)
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
-  const [text, setText] = useState('')
+  // Kept while you look at other pages (drafts.ts).
+  const [text, setText] = useState(() => readDraft('home'))
+  useEffect(() => saveDraft('home', text), [text])
   const [model, setModel] = useState<ModelSelection | undefined>(undefined)
   const capabilities = useStore(client.capabilities)
   const [busy, setBusy] = useState(false)
@@ -114,6 +117,7 @@ function Home({ client, onSettings, onOpen, onStart }: {
       // The conversation is created now, when there is something to say; the chosen model goes with it.
       const sessionId = await client.createSession()
       if (model !== undefined) await client.selectModel(sessionId, model).catch(() => {})
+      saveDraft('home', '')
       onStart(sessionId, value)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

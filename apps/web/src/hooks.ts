@@ -101,3 +101,18 @@ export function useNow(ms: number): number {
   }, [ms])
   return now
 }
+
+/** The permission mode (设置 → 权限), kept current; undefined when the host does not serve it. */
+export function usePermissionMode(client: AdgClient): 'ask' | 'full' | undefined {
+  const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  const [mode, setMode] = useState<'ask' | 'full' | undefined>(undefined)
+  useEffect(() => client.connection.on('permissions/changed', state => setMode(state.mode)), [client])
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('permissions')) return
+    let live = true
+    client.connection.call('permissions/get', {}).then(state => { if (live) setMode(state.mode) }).catch(() => {})
+    return () => { live = false }
+  }, [client, status.state, capabilities])
+  return mode
+}

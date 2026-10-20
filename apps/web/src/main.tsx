@@ -10,7 +10,7 @@ import { feishuPlugin, monitorPlugin } from './plugins/monitor/index.ts'
 import { pipelinesPlugin, schedulePlugin } from './plugins/pipelines/index.ts'
 import { gamesPlugin } from './plugins/games/index.ts'
 import { emulatorsPlugin, scriptsPlugin } from './plugins/scripts/index.ts'
-import { settingsPlugin } from './plugins/settings/index.ts'
+import { permissionsPlugin, settingsPlugin } from './plugins/settings/index.ts'
 import { statusPlugin } from './plugins/status/index.ts'
 import { trajectoryPlugin } from './plugins/trajectory/index.ts'
 import { applyTheme } from './theme.ts'
@@ -27,6 +27,7 @@ applyTheme()
 registerPlugin(chatPlugin)
 registerPlugin(trajectoryPlugin)
 registerPlugin(settingsPlugin)
+registerPlugin(permissionsPlugin)
 registerPlugin(statusPlugin)
 registerPlugin(scriptsPlugin)
 registerPlugin(emulatorsPlugin)

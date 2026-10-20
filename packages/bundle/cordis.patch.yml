@@ -23,6 +23,7 @@
         token: !!js "process.env.ADG_GATEWAY_TOKEN || undefined"
         staticDir: !!js "process.env.ADG_UI_DIR || undefined"
         workspaceDir: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
         validateResults: true
 
     # M1: script library — packs, GitHub installs, local imports, versions,
@@ -130,6 +131,29 @@
 - id: pwsh-sandbox
   config:
     pwshPath: !!js "process.env.ADG_SANDBOX_PWSH || `${process.env.SystemRoot ?? 'C:/Windows'}/System32/WindowsPowerShell/v1.0/powershell.exe`"
+
+# Permission presets (dsh-base's `permission` row, restated whole: an id row
+# replaces the config). `full-access` is what 设置 → 权限 → 完全访问 puts on
+# every session: no sandbox, and approvals still asked — dsh's `never` policy
+# rejects them, which would fail the app's own tools — but the gateway
+# answers every one with "allow" at once.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+      full-access:
+        sandbox: danger-full-access
+        approval: ask
+        name: 完全访问
+        description: 不用沙箱，所有需要确认的操作都自动允许（设置 → 权限）
 
 # The agent's working folder for sessions that do not name one: a folder of
 # its own, never the app's. dsh's Windows sandbox gives the working folder a

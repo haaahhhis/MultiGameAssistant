@@ -6,7 +6,8 @@
  * Hooks `tools/pre-execute` for every agent tool call and denies writes into
  * protected directories (each script's directories, and the whole tools
  * directory). The user lifts that for one script for a limited time from the
- * UI (`guard@1`); there is deliberately no agent tool for it.
+ * UI (`guard@1`); there is deliberately no agent tool for it. Full access
+ * (设置 → 权限, served by the gateway) turns the guard off.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -48,6 +49,8 @@ export class AdgGuard extends Service {
     }
 
     ctx.on('tools/pre-execute', async (exec, next) => {
+      // Full access (设置 → 权限) is the user's explicit word for everything, scripts included.
+      if (ctx.get('adgGateway')?.fullAccess() === true) return next()
       const { protectedDirs, allowed } = dirs()
       // dsh file tools take absolute paths; shells pass `workdir`, so no session cwd is needed here.
       const verdict = judgeCall({ toolName: exec.name, args: exec.arguments }, protectedDirs, allowed)

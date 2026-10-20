@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { MAX_IMAGE_BASE64, type PromptImage } from '@adg/protocol'
 import type { SessionHandle, AdgClient } from '@adg/client-core'
-import { useStore } from '../hooks.ts'
+import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
+import { usePermissionMode, useStore } from '../hooks.ts'
 import { ModelPicker } from './ModelPicker.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
 
@@ -14,13 +15,17 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   onInitialSent?: (() => void) | undefined
 }) {
   const capabilities = useStore(client.capabilities)
-  const [text, setText] = useState('')
+  // What was typed here before switching away comes back (drafts.ts).
+  const [text, setText] = useState(() => readDraft(session.id))
   const [steer, setSteer] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
   const handedOff = useRef(false)
-  const [images, setImages] = useState<(PromptImage & { url: string })[]>([])
+  const [images, setImages] = useState<(PromptImage & { url: string })[]>(() => readDraftImages(session.id))
+  useEffect(() => saveDraft(session.id, text), [session.id, text])
+  useEffect(() => saveDraftImages(session.id, images), [session.id, images])
+  const permission = usePermissionMode(client)
   const [dragging, setDragging] = useState(false)
 
   const addFiles = async (files: readonly File[]) => {
@@ -109,6 +114,9 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           {capabilities.has('models') && <ModelPicker client={client} sessionId={session.id} disabled={disabled} />}
           <button type="button" className="attach-button" title="添加图片（也可以直接粘贴或拖进来）" aria-label="添加图片" disabled={disabled || images.length >= MAX_IMAGES} onClick={() => picker.current?.click()}><Icon name="image" /></button>
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={e => { void addFiles([...(e.target.files ?? [])]); e.target.value = '' }} />
+          {permission === 'full' && (
+            <button type="button" className="full-access-chip" title="agent 做事不再请求确认，点这里修改" onClick={() => { location.hash = '#/settings/permissions' }}><Icon name="alert" />完全访问</button>
+          )}
           <span className="spacer" />
           {running && (
             <label className="steer-toggle" title="把消息插入正在进行的轮次，而不是等下一轮">

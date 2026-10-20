@@ -1206,3 +1206,23 @@ button.attach-button { display: inline-flex; align-items: center; justify-conten
 button.attach-button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 .run-log-bar { display: flex; align-items: center; gap: 8px; }
 .run-log-bar .small-button .ui-icon { width: 14px; height: 14px; }
+
+/* notices that warn without being errors */
+.notice.warn-note { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent); }
+
+/* 设置 → 权限 */
+.permission-options { display: flex; flex-direction: column; gap: 8px; }
+.permission-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; text-align: left; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--raised); color: var(--text); }
+.permission-option:hover:not(:disabled) { border-color: var(--border-strong); background: var(--raised); }
+.permission-option.active { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.permission-option.full.active { border-color: color-mix(in srgb, var(--warn) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 12%, transparent); }
+.permission-dot { flex-shrink: 0; width: 14px; height: 14px; margin-top: 3px; border-radius: 50%; border: 1.5px solid var(--border-strong); }
+.permission-option.active .permission-dot { border: 4px solid var(--accent); }
+.permission-option.full.active .permission-dot { border-color: var(--warn); }
+.permission-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.permission-text strong { font-size: 14px; font-weight: 600; }
+.permission-text span { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.permission-reason { min-width: 0; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.full-access-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--warn) 10%, transparent); color: var(--warn); font-size: 12px; font-weight: 500; }
+.full-access-chip:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.full-access-chip .ui-icon { width: 13px; height: 13px; }

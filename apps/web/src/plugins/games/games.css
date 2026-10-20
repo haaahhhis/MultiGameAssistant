@@ -43,7 +43,6 @@
 .todo-chip.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent); border-color: color-mix(in srgb, var(--ok) 20%, transparent); }
 .todo-chip.progress { color: var(--text-2); background: var(--sunken); border-color: var(--border); }
 .activity-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-left: -4px; }
-.notice.warn-note { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent); }
 
 .report-preview { white-space: pre-wrap; font-size: 13px; line-height: 1.75; padding: 14px 16px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); color: var(--text-2); overflow-wrap: anywhere; }
 .report-preview strong { color: var(--text); }
