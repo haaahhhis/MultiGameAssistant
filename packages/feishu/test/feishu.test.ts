@@ -35,10 +35,14 @@ function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: s
   const inbound: { text: string; replyTo?: string | undefined; userId: string }[] = []
   const acted: string[] = []
   const answered: string[] = []
+  const questions: string[] = []
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => { release = resolve })
   const port: NotifyPort = {
     act: async (id, action, actor) => { acted.push(`${id}:${action}:${actor.userId}`); if (action === 'stop') await delay(50); return '已停止' },
-    inbound: async m => { inbound.push({ text: m.text, replyTo: m.replyTo, userId: m.actor.userId }); return `收到：${m.text}` },
+    inbound: async m => { inbound.push({ text: m.text, replyTo: m.replyTo, userId: m.actor.userId }); if (m.text === '慢') await gate; return `收到：${m.text}` },
     respondApproval: (id, decision) => { answered.push(`${id}:${decision}`); return answered.length === 1 },
+    answerQuestion: (id, item) => { questions.push(`${id}:${item.selected.join()}`); return questions.length === 1 ? { done: true } : undefined },
   }
   const bot = new FeishuBot({
     createApi: () => fake.api,
@@ -52,7 +56,7 @@ function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: s
     clickBudgetMs: 1000,
     retryDelaysMs: options.retryDelaysMs ?? [],
   })
-  return { bot, fake, inbound, acted, answered, saved: () => saved }
+  return { bot, fake, inbound, acted, answered, questions, release: () => release(), saved: () => saved }
 }
 
 const message = (over: Partial<InboundMessage> = {}): InboundMessage => ({
@@ -139,6 +143,35 @@ test('approvals stay in their conversation: the asker only; other sessions only 
   await bot.approvals.ask({ approvalId: 'ap-ui', sessionId: 'ui-session', toolName: 'pwsh' }, undefined)
   assert.deepEqual(fake.sent.slice(1).map(s => s.to), [{ openId: 'ou_me' }, { openId: 'ou_mate' }, { chatId: 'oc_group' }])
   assert.match(JSON.stringify(fake.sent.at(-1)!.card), /来自：软件里的会话 ui-session/)
+})
+
+test('the agent’s question: a card to the asker, a button answers it, and a reply skips the queue', async () => {
+  const { bot, fake, inbound, questions, release } = setup()
+  await bot.start()
+  // The agent is still on this message when it asks.
+  fake.events().message(message({ messageId: 'om_slow', text: '慢' }))
+  await delay(20)
+  const request = { questionId: 'q-1', sessionId: 'chat', questions: [{ id: 'close', question: '要不要把游戏关掉？', options: [{ label: '关掉游戏 (Recommended)', description: '游戏是这次打开的' }, { label: '先开着' }] }] }
+  assert.equal(bot.questions.active('ou_me'), true)
+  await bot.questions.ask(request, 'ou_me')
+  const card = fake.sent.at(-1)!
+  assert.deepEqual(card.to, { openId: 'ou_me' })
+  assert.match(JSON.stringify(card.card), /agent 在问你.*要不要把游戏关掉/)
+  assert.match(JSON.stringify(card.card), /"value":\{"kind":"question","id":"q-1","item":"close","label":"先开着"\}/)
+
+  // A reply while the agent waits is handled at once, not behind the message it is waiting on.
+  fake.events().message(message({ messageId: 'om_answer', text: '2' }))
+  await delay(50)
+  assert.deepEqual(inbound.map(m => m.text), ['慢', '2'])
+  release()
+
+  const clicked = await fake.events().cardAction({ operatorOpenId: 'ou_me', value: { kind: 'question', id: 'q-1', item: 'close', label: '先开着' } })
+  assert.equal(clicked?.toast?.content, '已回答：先开着')
+  assert.match(JSON.stringify(clicked?.card), /你的回答：先开着.*已回答（我）/)
+  assert.deepEqual(questions, ['q-1:先开着'])
+  await bot.questions.resolved('q-1', 'answered', [{ id: 'close', selected: ['先开着'] }])
+  assert.match(JSON.stringify(fake.patched.at(-1)!.card), /你的回答：先开着/)
+  assert.equal((await fake.events().cardAction({ operatorOpenId: 'ou_me', value: { kind: 'question', id: 'q-1', item: 'close', label: '先开着' } }))?.toast?.content, '这个问题已经在别处回答过了')
 })
 
 test('bad credentials, missing secret and a disabled channel are reported, not thrown', async () => {

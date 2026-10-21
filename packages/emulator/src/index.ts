@@ -215,6 +215,11 @@ export class AdgEmulators extends Service {
     }
   }
 
+  /** Close an Android app (`am force-stop`). @throws Error when adb fails. */
+  async stopApp(address: string, pkg: string): Promise<void> {
+    await this.shell(address, ['am', 'force-stop', pkg], 30_000)
+  }
+
   /** A PNG screenshot over ADB. @throws Error when adb fails or returns no image. */
   async screencap(address: string, _signal: AbortSignal): Promise<Buffer> {
     await this.ready

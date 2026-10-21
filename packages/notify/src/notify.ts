@@ -8,14 +8,16 @@
  *   the notice it replies to, or on the only open notice offering it.
  * - Conversation: anything else goes to the agent in a dsh session kept per
  *   person, and the agent's final answer is the reply.
- * - Approvals: a chat conversation's questions go to its person only, on its
- *   channel; other sessions' questions go to channels that take them (Feishu's
- *   「其他会话」 setting). The first answer anywhere (UI or chat) wins.
+ * - Approvals and the agent's questions (ask_user_question): a chat
+ *   conversation's go to its person only, on its channel; other sessions' go
+ *   to channels that take them (Feishu's 「软件里的会话」 setting). A reply
+ *   while the agent waits for that person answers the question. The first
+ *   answer anywhere (UI or chat) wins.
  *
  * Channels (Feishu now; QQ / WeCom / Telegram later) only translate.
  */
 import { randomUUID } from 'node:crypto'
-import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
+import type { ApprovalRequested, ChannelStatus, QuestionAnswerItem, QuestionItem, QuestionRequested } from '@adg/protocol'
 
 export interface NoticeAction {
   readonly id: string
@@ -72,6 +74,23 @@ export interface Channel {
     ask(request: ApprovalRequested, owner: string | undefined): Promise<void>
     resolved(approvalId: string, outcome: string): Promise<void>
   }
+  /**
+   * The agent's questions (ask_user_question) as cards, routed like approvals.
+   * Answers come back through `answerQuestion`, or as a plain reply (`inbound`).
+   */
+  readonly questions?: {
+    active(owner: string | undefined): boolean
+    ask(request: QuestionRequested, owner: string | undefined): Promise<void>
+    /** Answered (with what) or withdrawn anywhere. */
+    resolved(questionId: string, outcome: string, answers: readonly QuestionAnswerItem[] | undefined): Promise<void>
+  }
+}
+
+/** Where a question stands: what each item was answered with so far. */
+export interface QuestionProgress {
+  readonly done: boolean
+  /** The next unanswered question, when not done. */
+  readonly next?: QuestionItem
 }
 
 /** The slice of dsh's session controller a conversation needs. */
@@ -86,6 +105,8 @@ export interface Conversations {
 export interface NotifyOptions {
   readonly conversations: () => Conversations | undefined
   readonly respondApproval: (approvalId: string, decision: 'allow-once' | 'reject') => boolean
+  /** Answer the agent's question at the gateway. @returns false when it is gone or answered. */
+  readonly respondQuestion?: (questionId: string, answers: readonly QuestionAnswerItem[]) => boolean
   /** Person → dsh session, persisted by the caller. */
   readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void>; keyOf?(sessionId: string): string | undefined }
   readonly changed: () => void
@@ -107,6 +128,8 @@ export class Notify {
   readonly #channels = new Map<string, Channel>()
   readonly #handlers = new Map<string, ActionHandler>()
   readonly #sent = new Map<string, Sent>()
+  /** Open questions: whose conversation asked (`channel:user`, if one did) and the answers so far. */
+  readonly #questions = new Map<string, { request: QuestionRequested; key: string | undefined; answers: Map<string, QuestionAnswerItem> }>()
   readonly #now: () => number
 
   constructor(options: NotifyOptions) {
@@ -130,9 +153,14 @@ export class Notify {
     return [...this.#channels.values()].map(c => c.status())
   }
 
-  /** Questions from `sessionId` can go somewhere right now. */
+  /** Approvals from `sessionId` can go somewhere right now. */
   approvalsActive(sessionId: string): boolean {
-    return this.#approvalRoutes(sessionId).length > 0
+    return this.#routes(sessionId, 'approvals').length > 0
+  }
+
+  /** The agent's questions from `sessionId` can go somewhere right now. */
+  questionsActive(sessionId: string): boolean {
+    return this.#routes(sessionId, 'questions').length > 0
   }
 
   // ── notices ───────────────────────────────────────────────────────────
@@ -195,6 +223,10 @@ export class Notify {
    */
   async inbound(message_: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<string> {
     const text = message_.text.trim()
+    // The agent is waiting for this person's answer: the message is it.
+    const key = `${message_.actor.channel}:${message_.actor.userId}`
+    const waiting = [...this.#questions.entries()].find(([, q]) => q.key === key)
+    if (waiting !== undefined && text !== '') return this.#replyToQuestion(waiting[0], text, message_.actor)
     const target = this.#noticeFor(text, message_.replyTo)
     if (target !== undefined) {
       try {
@@ -205,7 +237,6 @@ export class Notify {
     }
     const conversations = this.#options.conversations()
     if (conversations === undefined) return 'agent 现在不可用（会话服务没有加载）。'
-    const key = `${message_.actor.channel}:${message_.actor.userId}`
     let sessionId = this.#options.sessions.get(key)
     if (sessionId === undefined || !(await conversations.exists(sessionId))) {
       sessionId = await conversations.create(`${message_.actor.channel === 'feishu' ? '飞书' : message_.actor.channel}：${message_.actor.name ?? message_.actor.userId}`)
@@ -247,25 +278,25 @@ export class Notify {
   // ── approvals ─────────────────────────────────────────────────────────
 
   askApproval(request: ApprovalRequested): void {
-    for (const { channel, owner } of this.#approvalRoutes(request.sessionId)) {
+    for (const { channel, owner } of this.#routes(request.sessionId, 'approvals')) {
       void channel.approvals!.ask(request, owner).catch(error => this.#options.log.warn(`approval card via ${channel.id} failed: ${message(error)}`))
     }
   }
 
   /**
-   * Where a question from `sessionId` may go: a chat conversation's only to its
-   * person (not the group, other people or other channels); any other
-   * session's to the channels that take those.
+   * Where an approval or question from `sessionId` may go: a chat
+   * conversation's only to its person (not the group, other people or other
+   * channels); any other session's to the channels that take those.
    */
-  #approvalRoutes(sessionId: string): { channel: Channel; owner: string | undefined }[] {
+  #routes(sessionId: string, kind: 'approvals' | 'questions'): { channel: Channel; owner: string | undefined }[] {
     const key = this.#options.sessions.keyOf?.(sessionId)
     if (key !== undefined) {
       const [channelId, ...rest] = key.split(':')
       const channel = this.#channels.get(channelId!)
       const owner = rest.join(':')
-      return channel?.approvals?.active(owner) === true ? [{ channel, owner }] : []
+      return channel?.[kind]?.active(owner) === true ? [{ channel, owner }] : []
     }
-    return [...this.#channels.values()].filter(c => c.approvals?.active(undefined) === true).map(channel => ({ channel, owner: undefined }))
+    return [...this.#channels.values()].filter(c => c[kind]?.active(undefined) === true).map(channel => ({ channel, owner: undefined }))
   }
 
   approvalResolved(approvalId: string, outcome: string): void {
@@ -277,6 +308,55 @@ export class Notify {
     const answered = this.#options.respondApproval(approvalId, decision)
     if (answered) this.#options.log.info(`${actor.channel}:${actor.userId} ${decision} approval ${approvalId}`)
     return answered
+  }
+
+  // ── the agent's questions ─────────────────────────────────────────────
+
+  askQuestion(request: QuestionRequested): void {
+    const routes = this.#routes(request.sessionId, 'questions')
+    if (routes.length === 0) return
+    const key = this.#options.sessions.keyOf?.(request.sessionId)
+    this.#questions.set(request.questionId, { request, key, answers: new Map() })
+    for (const { channel, owner } of routes) {
+      void channel.questions!.ask(request, owner).catch(error => this.#options.log.warn(`question card via ${channel.id} failed: ${message(error)}`))
+    }
+  }
+
+  questionResolved(questionId: string, outcome: string, answers?: readonly QuestionAnswerItem[]): void {
+    this.#questions.delete(questionId)
+    for (const channel of this.#channels.values()) void channel.questions?.resolved(questionId, outcome, answers).catch(() => {})
+  }
+
+  /**
+   * One question of a request answered (a card button, or a reply). Once every
+   * question has an answer, the whole batch goes to the agent.
+   * @returns where it stands, or undefined when the question is gone (answered elsewhere, withdrawn).
+   */
+  answerQuestion(questionId: string, item: QuestionAnswerItem, actor: Actor): QuestionProgress | undefined {
+    const open = this.#questions.get(questionId)
+    if (open === undefined || !open.request.questions.some(q => q.id === item.id)) return undefined
+    open.answers.set(item.id, item)
+    const next = open.request.questions.find(q => !open.answers.has(q.id))
+    if (next !== undefined) return { done: false, next }
+    const answered = this.#options.respondQuestion?.(questionId, open.request.questions.map(q => open.answers.get(q.id)!)) ?? false
+    if (!answered) return undefined
+    this.#options.log.info(`${actor.channel}:${actor.userId} answered question ${questionId}`)
+    return { done: true }
+  }
+
+  /** A reply while the agent waits for this person: an option's label or number picks it, anything else is the answer itself. */
+  #replyToQuestion(questionId: string, text: string, actor: Actor): string {
+    const open = this.#questions.get(questionId)!
+    const item = open.request.questions.find(q => !open.answers.has(q.id)) ?? open.request.questions[0]!
+    const options = item.options ?? []
+    const plain = text.replace(/[。.!！\s]/g, '')
+    const byNumber = /^\d+$/.test(plain) ? options[Number(plain) - 1] : undefined
+    const byLabel = options.find(o => o.label.replace(/[。.!！\s]/g, '') === plain || o.label.replace(/\s*[(（]推荐[)）]|\s*\(Recommended\)/i, '').replace(/[。.!！\s]/g, '') === plain)
+    const chosen = byNumber ?? byLabel
+    const progress = this.answerQuestion(questionId, chosen !== undefined ? { id: item.id, selected: [chosen.label] } : { id: item.id, selected: [], custom: text }, actor)
+    if (progress === undefined) return '这个问题已经在别处回答过了。'
+    if (!progress.done) return `收到。还有一个问题：${describeQuestion(progress.next!)}`
+    return `收到，已经告诉 agent：${chosen?.label ?? text}`
   }
 
   // ── test ──────────────────────────────────────────────────────────────
@@ -307,4 +387,10 @@ export class Notify {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** A question as chat text: the question, then its choices numbered (reply with the number or the words). */
+export function describeQuestion(item: QuestionItem): string {
+  const options = item.options ?? []
+  return [item.question, ...options.map((o, i) => `${i + 1}. ${o.label}${o.description === undefined ? '' : `（${o.description}）`}`)].join('\n')
 }

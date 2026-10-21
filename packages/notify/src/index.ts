@@ -1,7 +1,8 @@
 /**
  * @adg/notify — the chat layer (`ctx.adgNotify`): channels register here;
  * other plugins send notices with buttons and handle the clicks; people's
- * messages become conversations with the agent; approvals go out as cards.
+ * messages become conversations with the agent; approvals and the agent's
+ * questions go out as cards.
  * Contributes the `notify@1` capability. Channels: `@adg/feishu`.
  */
 import { readFile } from 'node:fs/promises'
@@ -15,7 +16,7 @@ import { sessionConversations } from './conversations.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
 
-export { Notify, type ActionHandler, type Actor, type Channel, type Conversations, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions } from './notify.ts'
+export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
 export { sessionConversations } from './conversations.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -51,6 +52,7 @@ export class AdgNotify extends Service {
         return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
       },
       respondApproval: (id, decision) => ctx.get('adgGateway')?.respondApproval(id, decision) ?? false,
+      respondQuestion: (id, answers) => ctx.get('adgGateway')?.respondQuestion(id, answers) ?? false,
       sessions: {
         get: key => this.sessionMap[key],
         keyOf: sessionId => Object.entries(this.sessionMap).find(([, id]) => id === sessionId)?.[0],
@@ -70,6 +72,11 @@ export class AdgNotify extends Service {
         active: sessionId => notify.approvalsActive(sessionId),
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
+      })
+      scoped.adgGateway.addQuestionAnswerer({
+        active: sessionId => notify.questionsActive(sessionId),
+        asked: request => notify.askQuestion(request),
+        resolved: (id, outcome, answers) => notify.questionResolved(id, outcome, answers),
       })
       scoped.adgGateway.register({
         id: NOTIFY_CAPABILITY,

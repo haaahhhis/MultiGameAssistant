@@ -21,13 +21,14 @@ export function NavRail({ client, pages, current, onChat, onPage, onSettings }: 
 }) {
   const status = useStore(client.connection.status)
   const approvals = useStore(client.approvals)
+  const questions = useStore(client.questions)
   return (
     <nav className="rail" aria-label="功能区">
       <button className="rail-brand" onClick={onChat} title="AutoDailyGamePlay">
         <AdgMark />
       </button>
       <div className="rail-items">
-        <RailItem icon="chat" label="对话" active={current.kind === 'chat'} onClick={onChat} badge={approvals.length} />
+        <RailItem icon="chat" label="对话" active={current.kind === 'chat'} onClick={onChat} badge={approvals.length + questions.length} />
         {pages.map(page => (
           <RailItem key={page.id} icon={page.icon} label={page.title}
             active={current.kind === 'page' && current.id === page.id} onClick={() => onPage(page.id)} />

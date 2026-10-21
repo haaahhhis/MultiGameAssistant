@@ -251,3 +251,54 @@ tasks:
   assert.deepEqual(await runner.startGame('tool', 'pc', AbortSignal.timeout(5000)), ['测试游戏（Game.exe）已经在运行'])
   assert.equal(runner.locks.held().size, 0, 'no lock left behind')
 })
+
+test('closing a game: only the app in the emulator, or the PC process (asked first, ended if it stays); never under a run', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-game-close-'))
+  const manifest = parseManifest(`id: tool
+name: Tool
+launch: { exe: tool.exe }
+game:
+  name: 测试游戏
+  android: { package: com.example.game }
+  pc: { process: Game.exe }
+tasks:
+  - { id: t, title: T, resources: { input: adb } }
+`)
+  const stopped: string[] = []
+  const ended: string[] = []
+  let appUp = true
+  let pcUp = true
+  let stubborn = false
+  let address: string | undefined = '127.0.0.1:16384'
+  const runner = new Runner({
+    library: { get: id => ({ id, name: 'Tool', source: { kind: 'local', path: dir }, dir, versions: [], addedAt: 0 }) as ScriptInfo, packOf: () => ({ manifest }) },
+    dataDir: mkdtempSync(join(tmpdir(), 'adg-game-close-data-')),
+    emulators: () => ({
+      prepare: async () => { throw new Error('closing never starts the emulator') },
+      expectedAddress: async () => address,
+      appRunning: async () => appUp,
+      stopApp: async (a, pkg) => { stopped.push(`${a} ${pkg}`); appUp = false },
+    }),
+    onState: () => {}, onLog: () => {},
+    log: { info() {}, warn() {} },
+    game: { processRunning: async () => pcUp, stopProgram: async (name, force) => { ended.push(`${name}${force ? ' /F' : ''}`); if (force || !stubborn) pcUp = false }, sleep: async () => {} },
+  })
+
+  assert.deepEqual(await runner.closeGame('tool', 'emulator', AbortSignal.timeout(5000)), ['已关闭模拟器里的测试游戏（com.example.game），模拟器还开着'])
+  assert.deepEqual(stopped, ['127.0.0.1:16384 com.example.game'])
+  assert.deepEqual(await runner.closeGame('tool', 'emulator', AbortSignal.timeout(5000)), ['测试游戏（com.example.game）没有在模拟器里运行'])
+  address = undefined
+  assert.deepEqual(await runner.closeGame('tool', 'emulator', AbortSignal.timeout(5000)), ['模拟器没有在运行，游戏也就没开着'])
+
+  const release = runner.locks.acquire(['desktop'], { runId: 'run-x', label: '三月七 · 日常' })
+  await assert.rejects(runner.closeGame('tool', 'pc', AbortSignal.timeout(5000)), /desktop|三月七/)
+  release()
+  assert.deepEqual(await runner.closeGame('tool', 'pc', AbortSignal.timeout(5000)), ['已关闭测试游戏（Game.exe）'])
+  assert.deepEqual(ended, ['Game.exe'], 'asked to close, no force needed')
+  pcUp = true
+  stubborn = true
+  assert.deepEqual(await runner.closeGame('tool', 'pc', AbortSignal.timeout(5000)), ['测试游戏（Game.exe）没有自己退出，已强制结束'])
+  assert.deepEqual(ended, ['Game.exe', 'Game.exe', 'Game.exe /F'])
+  assert.deepEqual(await runner.closeGame('tool', 'pc', AbortSignal.timeout(5000)), ['测试游戏（Game.exe）没有在运行'])
+  assert.equal(runner.locks.held().size, 0, 'no lock left behind')
+})

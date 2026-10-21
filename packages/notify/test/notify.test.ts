@@ -123,6 +123,59 @@ test('a chat conversation’s approvals go to its person only; other sessions’
   assert.equal(lone.notify.approvalsActive('ui-1'), false, 'nothing can answer a UI session’s question: the UI asks alone')
 })
 
+test('the agent’s questions: routed like approvals, answered by buttons or by a plain reply', async () => {
+  const answered: string[] = []
+  const sessions = new Map<string, string>([['feishu:ou_1', 'chat-1']])
+  const prompts: string[] = []
+  const notify = new Notify({
+    conversations: () => ({ ask: async (_s, text) => { prompts.push(text); return '好的' }, create: async () => 'new', exists: async () => true }),
+    respondApproval: () => true,
+    respondQuestion: (id, answers) => { answered.push(`${id}:${JSON.stringify(answers)}`); return true },
+    sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.set(key, id) }, keyOf: id => [...sessions].find(([, s]) => s === id)?.[0] },
+    changed: () => {},
+    log: { info() {}, warn() {} },
+  })
+  const asked: { id: string; owner: string | undefined }[] = []
+  notify.registerChannel({
+    id: 'feishu', name: '飞书',
+    status: () => ({ id: 'feishu', name: '飞书', state: 'ready', recipients: 1, checks: [] }),
+    send: async () => {},
+    questions: { active: owner => owner !== undefined, ask: async (r, owner) => { asked.push({ id: r.questionId, owner }) }, resolved: async () => {} },
+  })
+  const feishuActor = { channel: 'feishu', userId: 'ou_1', name: '张三' }
+
+  // a UI session's question stays in the UI here (the channel takes only its own conversations')
+  assert.equal(notify.questionsActive('ui-1'), false)
+  notify.askQuestion({ questionId: 'q-ui', sessionId: 'ui-1', questions: [{ id: 'a', question: '?' }] })
+  assert.deepEqual(asked, [])
+  assert.equal(await notify.inbound({ actor: feishuActor, text: '在吗' }), '好的', 'with nothing asked, a message goes to the agent')
+
+  // the Feishu conversation's: two questions, the first answered by number, the second by text
+  notify.askQuestion({
+    questionId: 'q-1', sessionId: 'chat-1',
+    questions: [
+      { id: 'close', question: '要不要把游戏关掉？', options: [{ label: '关掉游戏 (Recommended)' }, { label: '先开着' }] },
+      { id: 'when', question: '明天几点再看？' },
+    ],
+  })
+  assert.deepEqual(asked, [{ id: 'q-1', owner: 'ou_1' }])
+  assert.match(await notify.inbound({ actor: feishuActor, text: '1' }), /还有一个问题：明天几点再看？/)
+  assert.deepEqual(answered, [], 'not sent until every question has an answer')
+  assert.match(await notify.inbound({ actor: feishuActor, text: '早上九点' }), /已经告诉 agent：早上九点/)
+  assert.deepEqual(answered, [`q-1:${JSON.stringify([{ id: 'close', selected: ['关掉游戏 (Recommended)'] }, { id: 'when', selected: [], custom: '早上九点' }])}`])
+  assert.deepEqual(prompts, ['在吗'], 'answers never become new prompts')
+  notify.questionResolved('q-1', 'answered')
+
+  // a label without "(Recommended)" picks it too; a button answers through answerQuestion
+  notify.askQuestion({ questionId: 'q-2', sessionId: 'chat-1', questions: [{ id: 'close', question: '关掉吗？', options: [{ label: '关掉游戏 (Recommended)' }, { label: '先开着' }] }] })
+  assert.match(await notify.inbound({ actor: feishuActor, text: '关掉游戏' }), /已经告诉 agent：关掉游戏 \(Recommended\)/)
+  notify.questionResolved('q-2', 'answered')
+  notify.askQuestion({ questionId: 'q-3', sessionId: 'chat-1', questions: [{ id: 'close', question: '关掉吗？', options: [{ label: '关掉' }, { label: '先开着' }] }] })
+  assert.deepEqual(notify.answerQuestion('q-3', { id: 'close', selected: ['先开着'] }, feishuActor), { done: true })
+  notify.questionResolved('q-3', 'answered')
+  assert.equal(notify.answerQuestion('q-3', { id: 'close', selected: ['关掉'] }, feishuActor), undefined, 'answered already')
+})
+
 test('test notices report channels that are not ready', async () => {
   const { notify } = setup()
   notify.registerChannel(fakeChannel().channel)

@@ -21,7 +21,7 @@ import { writeFileAtomic } from '@adg/protocol/node'
 
 export { FeishuBot, DEFAULT_FEISHU, type BotOptions, type FeishuState, type NotifyPort } from './bot.ts'
 export { describeFeishuError, FeishuError, parseCardAction, parseMessage, sdkApi, type CardAction, type CardActionResponse, type ConnectionState, type FeishuApi, type InboundMessage, type Target } from './api.ts'
-export { approvalCard, noticeCard } from './cards.ts'
+export { approvalCard, noticeCard, questionCard } from './cards.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -69,6 +69,7 @@ export class AdgFeishu extends Service {
         act: (id, action, actor) => notify.notify.act(id, action, actor),
         inbound: m => notify.inbound(m),
         respondApproval: (id, decision, actor) => notify.notify.respondApproval(id, decision, actor),
+        answerQuestion: (id, item, actor) => notify.notify.answerQuestion(id, item, actor),
       }),
       changed: () => notify.changed(),
       log: { info: m => log.info(m), warn: m => log.warn(m) },

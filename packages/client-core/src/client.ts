@@ -9,7 +9,7 @@
  *   client.release(s)
  */
 import type {
-  ApprovalRequested, CredentialInfo, ModelCatalog, ModelSelection, RequestInput, RequestResult, SessionItem, SessionModel,
+  ApprovalRequested, CredentialInfo, ModelCatalog, ModelSelection, QuestionAnswerItem, QuestionRequested, RequestInput, RequestResult, SessionItem, SessionModel,
 } from '@adg/protocol'
 import { RpcConnection, type RpcConnectionOptions } from './rpc.ts'
 import { SessionHandle } from './session.ts'
@@ -32,6 +32,8 @@ export class AdgClient {
   readonly connection: RpcConnection
   readonly sessions = new Store<SessionsState>({ items: [], loaded: false, error: null })
   readonly approvals = new Store<readonly ApprovalRequested[]>([])
+  /** Questions the agent is waiting for an answer to (dsh's ask_user_question). */
+  readonly questions = new Store<readonly QuestionRequested[]>([])
   /** Capability ids the gateway reported in the current generation. */
   readonly capabilities = new Store<ReadonlySet<string>>(new Set())
   /** Bumped whenever a stored credential changes; re-describe on change. */
@@ -54,8 +56,9 @@ export class AdgClient {
 
     c.onReady(() => {
       this.capabilities.set(new Set(c.server.get()?.capabilities.map(x => x.id) ?? []))
-      // The gateway replays still-pending approvals after initialize.
+      // The gateway replays still-pending approvals and questions after initialize.
       this.approvals.set([])
+      this.questions.set([])
       void this.refreshSessions()
     })
 
@@ -89,6 +92,12 @@ export class AdgClient {
     })
     c.on('approval/resolved', ({ approvalId }) => {
       this.approvals.set(list => list.filter(a => a.approvalId !== approvalId))
+    })
+    c.on('question/requested', request => {
+      this.questions.set(list => (list.some(q => q.questionId === request.questionId) ? list : [...list, request]))
+    })
+    c.on('question/resolved', ({ questionId }) => {
+      this.questions.set(list => list.filter(q => q.questionId !== questionId))
     })
     c.on('credentials/changed', () => this.credentialRevision.set(n => n + 1))
     c.on('providers/changed', () => this.providersRevision.set(n => n + 1))
@@ -194,6 +203,12 @@ export class AdgClient {
   async respondApproval(approvalId: string, decision: 'allow-once' | 'reject'): Promise<void> {
     await this.connection.call('approval/respond', { approvalId, decision })
     this.approvals.set(list => list.filter(a => a.approvalId !== approvalId))
+  }
+
+  /** Answer the agent's question; questions left out count as skipped. */
+  async answerQuestion(questionId: string, answers: readonly QuestionAnswerItem[]): Promise<void> {
+    await this.connection.call('question/respond', { questionId, answers: [...answers] })
+    this.questions.set(list => list.filter(q => q.questionId !== questionId))
   }
 
   /** Get (or open) the handle for a session; pair every call with `release`. */

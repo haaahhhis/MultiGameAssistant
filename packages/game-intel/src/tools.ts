@@ -16,6 +16,7 @@ export interface GameToolDeps {
   readonly refresh: (game?: string) => Promise<Array<{ game: string; ok: boolean; count: number; detail?: string | undefined }>>
   readonly record: (game: string, from: 'screen' | 'site', events: readonly ReadEvent[], sessionId: string | undefined, keepScreenshot: boolean) => Promise<Array<{ activity: Activity; matched: boolean }>>
   readonly launch: (game: string, signal: AbortSignal) => Promise<{ script: string; lines: string[] }>
+  readonly close: (game: string, signal: AbortSignal) => Promise<{ script: string; lines: string[] }>
   readonly report: () => { title: string; text: string }
   readonly sendReport: () => Promise<{ channels: string[] }>
   readonly now: () => number
@@ -197,6 +198,21 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
         const game = known(a.game)
         const { script, lines } = await deps.launch(game.id, exec.signal)
         return { game: game.name, via: script, done: lines, next: '截图看看游戏到了哪个界面，等它进到主界面再继续。' }
+      },
+    }),
+    tool({
+      name: 'game_close',
+      description: '关闭游戏：模拟器里的游戏只关掉游戏本身（模拟器留着），PC 版先请它退出，一会儿还没退就强制结束。只在用户同意后调用（读完活动后用 ask_user_question 问过「要不要把游戏关掉」）。有脚本正在用这台模拟器或鼠标键盘时会拒绝。',
+      properties: { game: GAME },
+      required: ['game'],
+      timeoutMs: 120_000,
+      kind: 'execute',
+      title: a => `关闭游戏：${String(a['game'] ?? '')}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({ game: z.string() }), args)
+        const game = known(a.game)
+        const { script, lines } = await deps.close(game.id, exec.signal)
+        return { game: game.name, via: script, done: lines }
       },
     }),
     tool({

@@ -18,6 +18,8 @@
  * 5. An approval the agent needs is sent as a card and answered from Feishu.
  * 6. A session in the app keeps its approvals out of Feishu, unless
  *    「软件里的会话需要确认时也发到飞书」 is on.
+ * 7. The agent's question (ask_user_question) in a Feishu conversation goes to
+ *    that person as a card; replying with an option's number answers it.
  *
  *   ADG_GATEWAY_TOKEN=dev-token ADG_FEISHU_BASE_URL=http://127.0.0.1:3299 pnpm dev:host
  *   ADG_GATEWAY_TOKEN=dev-token pnpm e2e:monitor
@@ -95,6 +97,7 @@ const llm = await startFakeLlm({
     call(SHELL, { description: 'Print hi', command: 'echo hi', sandbox_permissions: 'danger-full-access', justification: 'e2e：在飞书里确认' }), { text: '命令已经运行，输出 hi。' },
     call(SHELL, { description: 'Print ui-1', command: 'echo ui-1', sandbox_permissions: 'danger-full-access', justification: 'e2e：只在界面里确认' }), { text: '运行了 ui-1。' },
     call(SHELL, { description: 'Print ui-2', command: 'echo ui-2', sandbox_permissions: 'danger-full-access', justification: 'e2e：也发到飞书' }), { text: '运行了 ui-2。' },
+    call('ask_user_question', { questions: [{ id: 'close', question: '活动看完了，要不要把游戏关掉？', options: [{ label: '关掉游戏 (Recommended)' }, { label: '先开着' }] }] }), { text: '好的，游戏先开着。' },
   ],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
@@ -209,11 +212,24 @@ try {
   const shared = await uiApproval('运行 ui-2')
   await rpc('feishu/settings/set', { otherApprovals: false })
   if (shared === undefined) fail('with 「软件里的会话」 on, the UI session’s approval did not reach Feishu')
+  // Its last reply is scripted too: let the UI session take it before Feishu asks for the next one.
+  await until('the UI session to finish', () => llm.requests.some(r => r.messages?.at(-1)?.role === 'tool' && JSON.stringify(r.messages.at(-1)).includes('ui-2')), 60_000)
   step('a UI session’s approval stayed in the UI; with 「软件里的会话」 on it also went to Feishu')
+
+  // 7. the agent's question in the Feishu conversation, answered by a plain reply
+  await feishu.sendMessage({ openId: USER, text: '帮我去看看有什么活动没做' })
+  const asking = await feishu.waitForMessage(m => m.kind === 'create' && m.text.includes('agent 在问你'), 120_000)
+  if (asking.to !== USER) fail(`the question went to ${asking.to}, not the person who asked`)
+  await feishu.sendMessage({ openId: USER, text: '2' })
+  await feishu.waitForMessage(m => m.kind === 'reply' && m.text.includes('已经告诉 agent：先开着'), 60_000)
+  await feishu.waitForMessage(m => m.kind === 'reply' && m.text.includes('游戏先开着'), 120_000)
+  await feishu.waitForMessage(m => m.kind === 'patch' && m.id === asking.id && m.text.includes('你的回答：先开着'), 30_000)
+  step('the agent’s question in a Feishu conversation went to that person; replying 2 answered it')
 
   console.log(`\nM3 end-to-end OK (${steps.length} steps); fake Feishu saw ${feishu.messages.length} messages, the fake model ${llm.requests.length} requests`)
 } catch (error) {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)
+  for (const m of feishu.messages.slice(-5)) console.error(`  last Feishu ${m.kind} → ${m.to ?? m.parentId ?? m.id}: ${m.text.slice(0, 120).replace(/\n/g, ' ')}`)
   process.exitCode = 1
 } finally {
   if (interveneBefore !== undefined) await rpc('monitor/settings/set', { intervene: interveneBefore }).catch(() => {})

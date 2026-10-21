@@ -72,10 +72,11 @@ export async function scriptLaunchesGame(game: Game | undefined, scriptDir: stri
   return false
 }
 
-/** What the runner needs to start an Android game. */
+/** What the runner needs to start (and close) an Android game. */
 export interface AndroidPort {
   appRunning?(address: string, pkg: string): Promise<boolean>
   launchApp?(address: string, pkg: string): Promise<void>
+  stopApp?(address: string, pkg: string): Promise<void>
 }
 
 export interface GameStart {
@@ -90,7 +91,53 @@ export interface GameStart {
   /** Injected for tests. */
   readonly processRunning?: (name: string) => Promise<boolean>
   readonly startProgram?: (exe: string) => void
+  readonly stopProgram?: (name: string, force: boolean) => Promise<void>
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
+}
+
+/** How long a PC game may take to close after being asked before it is ended. */
+const CLOSE_GRACE_MS = 15_000
+
+/**
+ * Close the game (the user said so once the agent was done with it): the app
+ * in the emulator, or the PC game's process — asked to close first, ended if
+ * it is still there after a while. The emulator itself stays up.
+ * @returns false when it was not running. @throws Error when it is not known how to find it.
+ */
+export async function closeGame(stop: Omit<GameStart, 'scriptDir'>): Promise<boolean> {
+  const { manifest, settings, line } = stop
+  const game = manifest.game
+  const name = game?.name ?? '游戏'
+  const sleep = stop.sleep ?? delay
+  if (stop.input === 'adb') {
+    const pkg = settings.androidPackage ?? game?.android?.package
+    if (pkg === undefined) throw new Error(`不知道${name}在模拟器里的包名：在脚本页「启动游戏」里填写`)
+    if (stop.address === undefined || stop.android?.stopApp === undefined) throw new Error('模拟器插件没有加载，不能关闭游戏')
+    if (!(await stop.android.appRunning?.(stop.address, pkg).catch(() => false) ?? true)) {
+      line(`${name}（${pkg}）没有在模拟器里运行`)
+      return false
+    }
+    await stop.android.stopApp(stop.address, pkg)
+    line(`已关闭模拟器里的${name}（${pkg}），模拟器还开着`)
+    return true
+  }
+  const processName = settings.pcProcess ?? game?.pc?.process ?? (settings.pcExe === undefined ? undefined : basename(settings.pcExe))
+  if (processName === undefined) throw new Error(`不知道${name}的进程名：在脚本页「启动游戏」里设置程序位置`)
+  const running = stop.processRunning ?? processRunning
+  const end = stop.stopProgram ?? stopProgram
+  if (!(await running(processName))) {
+    line(`${name}（${processName}）没有在运行`)
+    return false
+  }
+  await end(processName, false)
+  for (let waited = 0; waited < CLOSE_GRACE_MS && await running(processName); waited += 1000) await sleep(1000, stop.signal)
+  if (await running(processName)) {
+    await end(processName, true)
+    line(`${name}（${processName}）没有自己退出，已强制结束`)
+  } else {
+    line(`已关闭${name}（${processName}）`)
+  }
+  return true
 }
 
 /**
@@ -153,6 +200,15 @@ export function processRunning(name: string): Promise<boolean> {
     execFile('tasklist.exe', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 15_000 }, (_error, stdout) => {
       resolve(String(stdout).toLowerCase().includes(`"${image.toLowerCase()}"`))
     })
+  })
+}
+
+/** Close every process with this image name (and its children); `force` ends it without asking. */
+export function stopProgram(name: string, force: boolean): Promise<void> {
+  if (process.platform !== 'win32') return Promise.resolve()
+  const image = name.toLowerCase().endsWith('.exe') ? name : `${name}.exe`
+  return new Promise(resolve => {
+    execFile('taskkill.exe', ['/IM', image, '/T', ...(force ? ['/F'] : [])], { windowsHide: true, timeout: 15_000 }, () => resolve())
   })
 }
 

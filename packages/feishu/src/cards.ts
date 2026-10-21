@@ -5,8 +5,9 @@
  *
  *   { kind: 'notice', id, action }        a notice's button (routed by @adg/notify)
  *   { kind: 'approval', id, decision }    an approval answer
+ *   { kind: 'question', id, item, label } one of the agent's questions answered with a choice
  */
-import type { ApprovalRequested } from '@adg/protocol'
+import type { ApprovalRequested, QuestionRequested } from '@adg/protocol'
 import type { Notice } from '@adg/notify'
 
 const TEMPLATE: Readonly<Record<Notice['severity'], string>> = { error: 'red', warning: 'orange', success: 'green', info: 'blue' }
@@ -61,6 +62,48 @@ export function approvalCard(request: ApprovalRequested, options: { outcome?: st
       note('也可以在 AutoDailyGamePlay 界面里回答，先回答的生效'),
     ],
   }
+}
+
+/**
+ * The agent's question: each question with a button per choice (a click
+ * answers it with that choice); a plain reply answers too. `answers`: what
+ * each question got so far; `outcome`: the final line once settled.
+ */
+export function questionCard(request: QuestionRequested, options: { own?: boolean; answers?: ReadonlyMap<string, string>; outcome?: string | undefined } = {}): object {
+  const done = options.outcome !== undefined
+  return {
+    config: { wide_screen_mode: true, update_multi: true },
+    header: { template: done ? 'grey' : 'blue', title: plain('agent 在问你') },
+    elements: [
+      ...request.questions.flatMap((item, index) => {
+        const answer = options.answers?.get(item.id)
+        const choices = item.options ?? []
+        const text = [
+          `${request.questions.length > 1 ? `${index + 1}. ` : ''}${item.header === undefined ? '' : `【${item.header}】`}${item.question}`,
+          ...(item.detail === undefined ? [] : [item.detail]),
+          ...(answer === undefined ? choices.filter(c => c.description !== undefined).map(c => `· ${c.label}：${c.description}`) : [`你的回答：${answer}`]),
+        ].join('\n')
+        return [
+          div(text),
+          ...(done || answer !== undefined || choices.length === 0 ? [] : [{
+            tag: 'action',
+            actions: choices.map((choice, i) => ({
+              tag: 'button', text: plain(choice.label), type: i === 0 ? 'primary' : 'default',
+              value: { kind: 'question', id: request.questionId, item: item.id, label: choice.label },
+            })),
+          }]),
+        ]
+      }),
+      ...(done ? [{ tag: 'hr' }, div(options.outcome!)] : []),
+      note(`${options.own === true ? '来自：你在飞书里的对话' : `来自：软件里的会话 ${request.sessionId}`} · 也可以直接回复文字回答（选项可以回复序号），在界面里回答也行`),
+    ],
+  }
+}
+
+export const QUESTION_OUTCOME: Readonly<Record<string, string>> = {
+  answered: '已回答',
+  cancelled: 'agent 不再等这个回答了',
+  unavailable: '已失效',
 }
 
 export const OUTCOME: Readonly<Record<string, string>> = {

@@ -210,7 +210,7 @@ test('cancel stops what is running; agent and wait nodes work', async () => {
   engine.cancel(started.id, '用户取消')
   const run = await engine.finished(started.id)
   assert.equal(run.state, 'cancelled')
-  assert.equal(run.nodes['ask']!.detail, 'agent 看了：活动还剩几天')
+  assert.match(run.nodes['ask']!.detail ?? '', /^agent 看了：活动还剩几天\n\n（这是编排里的自动步骤.*不要用 ask_user_question 提问/, 'the agent is told nobody may be there to answer')
   assert.equal(run.nodes['w']!.state, 'cancelled')
   assert.equal(runner.get(run.nodes['s']!.runIds[0]!).state, 'cancelled')
   engine.dispose()

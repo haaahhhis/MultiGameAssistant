@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { LaunchSettings, RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
 import { listWithNew, readChoices } from './choices.ts'
-import { describeSelfLaunch, ensureGame, LaunchStore, type GameStart } from './game.ts'
+import { closeGame, describeSelfLaunch, ensureGame, LaunchStore, type GameStart } from './game.ts'
 import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
 import { ConfigProfiles } from './profiles.ts'
@@ -41,6 +41,8 @@ export interface EmulatorBridge {
   appRunning?(address: string, pkg: string): Promise<boolean>
   /** Start an Android app's launcher activity. */
   launchApp?(address: string, pkg: string): Promise<void>
+  /** Close an Android app (`am force-stop`). */
+  stopApp?(address: string, pkg: string): Promise<void>
   /**
    * Reconnect an ADB address (starting the emulator again if it went down).
    * @returns what was done, for people. @throws Error when it is still unreachable.
@@ -73,7 +75,7 @@ export interface RunnerOptions {
   /** Log file poll interval. @default 500 */
   readonly pollMs?: number
   /** Game start hooks, injected in tests. */
-  readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'sleep'>
+  readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'sleep'>
 }
 
 interface ActiveRun {
@@ -352,6 +354,42 @@ export class Runner {
       }
       await ensureGame({
         manifest, settings: { ...settings, mode: 'platform' }, input: where === 'emulator' ? 'adb' : 'desktop', scriptDir: script.dir ?? '', address,
+        android: this.#options.emulators?.(), signal, line: text => lines.push(text), ...this.#options.game,
+      })
+      return lines
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Close a script's game (the app in the emulator, or the PC game), never the
+   * emulator itself and never under a running script: refused while a run
+   * uses that emulator or the desktop.
+   * @returns what was done ("没有在运行" when it was not).
+   * @throws Error when it is not known how to find the game, or it is busy.
+   */
+  async closeGame(scriptId: string, where: 'emulator' | 'pc', signal: AbortSignal): Promise<string[]> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    if (pack === undefined) throw new Error(`${script.name} 没有脚本包`)
+    const manifest = pack.manifest
+    const settings = await this.launch.get(scriptId)
+    const lines: string[] = []
+    const holder = { runId: `game-close-${this.#now()}`, label: `关闭${manifest.game?.name ?? '游戏'}` }
+    let release: () => void = () => {}
+    try {
+      let address: string | undefined
+      if (where === 'emulator') {
+        // Only the emulator a task would use, and only if it is up: closing never starts it.
+        address = await this.#options.emulators?.()?.expectedAddress?.().catch(() => undefined)
+        if (address === undefined) return ['模拟器没有在运行，游戏也就没开着']
+        release = this.locks.acquire([`adb:${address}`], holder)
+      } else {
+        release = this.locks.acquire(['desktop'], holder)
+      }
+      await closeGame({
+        manifest, settings, input: where === 'emulator' ? 'adb' : 'desktop', address,
         android: this.#options.emulators?.(), signal, line: text => lines.push(text), ...this.#options.game,
       })
       return lines

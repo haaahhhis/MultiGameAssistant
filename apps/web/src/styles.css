@@ -470,6 +470,17 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .approval-elsewhere { display: flex; align-items: center; gap: 8px; background: var(--raised); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); box-shadow: var(--shadow-pop); font-size: 13px; text-align: left; }
 .approval-elsewhere .ui-icon { width: 15px; height: 15px; margin-left: auto; color: var(--muted); }
 .approval-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.question-card { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
+.question-card .approval-head > .ui-icon { color: var(--accent); }
+.question-item { display: flex; flex-direction: column; gap: 8px; padding-left: 30px; }
+.question-header { align-self: flex-start; font-size: 11.5px; color: var(--muted); background: var(--sunken); border-radius: 999px; padding: 1px 8px; }
+.question-text { font-size: 13.5px; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-detail { font-size: 12.5px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-options { display: flex; flex-direction: column; gap: 6px; }
+.question-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 8px 12px; text-align: left; font-size: 13px; }
+.question-option.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--raised)); }
+.question-option-desc { font-size: 12px; color: var(--muted); }
+.question-custom { height: 34px; font-size: 13px; }
 
 /* token prompt */
 .token-prompt { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--bg); }

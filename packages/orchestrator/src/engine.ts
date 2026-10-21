@@ -63,6 +63,9 @@ type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stop
 
 const UNATTENDED = new Set<PipelineTrigger['kind']>(['schedule', 'autostart', 'after'])
 
+/** Said with every agent step: a pipeline may run with nobody there to answer. */
+const NO_QUESTIONS = '（这是编排里的自动步骤，旁边可能没有人：不要用 ask_user_question 提问，按上面的要求自己做完；需要用户决定的事写进最后的回答里。）'
+
 export class Engine {
   readonly #deps: EngineDeps
   readonly #now: () => number
@@ -285,7 +288,7 @@ export class Engine {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
         active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`)
-        const answer = await conversations.ask(active.agentSession, node.prompt, signal)
+        const answer = await conversations.ask(active.agentSession, `${node.prompt}\n\n${NO_QUESTIONS}`, signal)
         const clipped = answer.length > 300 ? `${answer.slice(0, 300)}…` : answer
         return answer.startsWith('（这一轮没有完成') ? { ok: false, detail: clipped } : { ok: true, detail: clipped }
       }

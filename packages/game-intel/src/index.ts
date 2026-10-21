@@ -127,6 +127,7 @@ export class AdgGameIntel extends Service {
         refresh: async game => { await this.ready; return this.refresh(game) },
         record: async (game, from, events, sessionId, keep) => { await this.ready; return this.record(game, from, events, sessionId, keep) },
         launch: async (game, signal) => { await this.ready; return this.launch(game, signal) },
+        close: async (game, signal) => { await this.ready; return this.close(game, signal) },
         report: () => this.preview(),
         sendReport: async () => ({ channels: await this.sendReport(localDay(this.clock.now())) }),
         now: () => this.clock.now(),
@@ -305,6 +306,7 @@ export class AdgGameIntel extends Service {
       `2. 看${screen}。有脚本正在用它，就不要打断，说明原因后结束；游戏没开就用 game_launch（game=${manifest.id}）启动，等它进到主界面（关掉公告和更新提示，启动器要点「开始游戏」就点；要输入账号密码或验证码时停下，告诉用户）。`,
       '3. 按技能里的路线进活动页，只看不花东西；每读完一个活动就 game_record（source=screen）。',
       '4. 读完回到主界面，用一两句话总结哪些活动快结束、还有什么没做。',
+      `5. 有始有终：最后用 ask_user_question 问用户要不要把游戏关掉（选项「关掉游戏」「先开着」；游戏是你这次用 game_launch 打开的，就把「关掉游戏」放第一个并标上 (Recommended)）。用户选关掉就用 game_close（game=${manifest.id}），然后告诉用户已经关了。第 2 步因为有脚本在用而结束的，不要问、也不要关。`,
     ].join('\n')
     void conversations.ask(sessionId, prompt, AbortSignal.timeout(READ_TIMEOUT_MS)).then(
       answer => this.calendar.setReading(manifest.id, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
@@ -325,6 +327,21 @@ export class AdgGameIntel extends Service {
     const script = manifest.scripts.find(id => runner.hasPack(id))
     if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本（${manifest.scripts.join('、') || '游戏包里没写'}），不知道怎么启动它；请用户先打开游戏，或先安装脚本并在脚本页设置「启动游戏」`)
     const lines = await runner.startGame(script, manifest.screen?.target === 'emulator' ? 'emulator' : 'pc', signal)
+    return { script, lines }
+  }
+
+  /**
+   * Close the game (only the game: the emulator stays up), through the first
+   * installed script that plays it, the same way `launch` finds it.
+   * @returns what was done. @throws Error with what is missing, or who is using the screen.
+   */
+  async close(gameId: string, signal: AbortSignal): Promise<{ script: string; lines: string[] }> {
+    const { manifest } = this.game(gameId)
+    const runner = this.ctx.get('adgRunner')?.runner
+    if (runner === undefined) throw new Error('运行插件没有加载，不能关闭游戏')
+    const script = manifest.scripts.find(id => runner.hasPack(id))
+    if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本，不知道怎么找到它的进程；请用户自己关掉游戏`)
+    const lines = await runner.closeGame(script, manifest.screen?.target === 'emulator' ? 'emulator' : 'pc', signal)
     return { script, lines }
   }
 

@@ -3,7 +3,7 @@
  *
  * Mounted by `@adg/bundle` next to the upstream host services. It is
  * the only code that touches dsh internals: it calls `ctx.sessionController`,
- * answers the `approval/request` waterfall, forwards `api-session/*` list
+ * answers the `approval/request` and `user-questions/request` waterfalls, forwards `api-session/*` list
  * events, and exposes everything as protocol v1 over one WebSocket.
  *
  * Other plugins extend the protocol with `ctx.adgGateway.register()`; the
@@ -25,8 +25,10 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
 import { addRetryPolicies, providersCapability } from './providers.ts'
-import { PERMISSIONS_CAPABILITY, type NotificationMethod, type NotificationParams, type RequestParams } from '@adg/protocol'
+import type {} from '@deepseek-ai/dsh-user-questions/types'
+import { ErrorCode, PERMISSIONS_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
+import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
@@ -35,6 +37,7 @@ import { startServer } from './server.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
 export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
+export type { QuestionAnswerer } from './questions.ts'
 export { convertRecord } from './convert.ts'
 export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
@@ -87,6 +90,7 @@ export class AdgGateway extends Service {
   private archived = new Set<string>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
+  private readonly questions: QuestionBroker
   private readonly permissions: Permissions
   private readonly permissionsReady: Promise<void>
   /** Resolved after the listener binds. */
@@ -101,6 +105,10 @@ export class AdgGateway extends Service {
     this.approvals = new ApprovalBroker({
       broadcastRequested: request => this.broadcast('approval/requested', request),
       broadcastResolved: (approvalId, outcome) => this.broadcast('approval/resolved', { approvalId, outcome }),
+    })
+    this.questions = new QuestionBroker({
+      broadcastRequested: request => this.broadcast('question/requested', request),
+      broadcastResolved: (questionId, outcome, answers) => this.broadcast('question/resolved', { questionId, outcome, ...(answers === undefined ? {} : { answers }) }),
     })
 
     if (config.workspaceDir !== undefined) {
@@ -138,6 +146,31 @@ export class AdgGateway extends Service {
       })
     }, true)
     ctx.effect(() => () => this.approvals.dispose(), 'adg-gateway approvals')
+
+    // The agent's questions (dsh's ask_user_question), the same way: prepended,
+    // and claimed only while someone here can answer them.
+    ctx.on('user-questions/request', (request, next) => {
+      const sessionId = request.agent?.session.id
+      if (sessionId === undefined || (!this.hasClients() && !this.questions.hasActiveAnswerer(sessionId))) return next()
+      return this.questions.ask({
+        sessionId,
+        ...(request.wait?.callId === undefined ? {} : { callId: request.wait.callId }),
+        questions: request.questions,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      })
+    }, true)
+    ctx.effect(() => () => this.questions.dispose(), 'adg-gateway questions')
+    ctx.effect(() => this.registry.register({
+      id: QUESTIONS_CAPABILITY,
+      version: 1,
+      methods: {
+        'question/respond': params => {
+          const p = params as RequestParams<'question/respond'>
+          if (!this.questions.respond(p.questionId, p.answers)) throw new RpcError(ErrorCode.NotFound, `no pending question ${p.questionId}`)
+          return {}
+        },
+      },
+    }), 'adg-gateway capability questions')
 
     // ── permissions: the sandbox preset of every session follows the mode ──
     this.permissions = new Permissions(config.dataDir === undefined ? undefined : join(config.dataDir, 'permissions.json'))
@@ -330,6 +363,7 @@ export class AdgGateway extends Service {
             log,
             onInitialized: ready => {
               for (const request of this.approvals.open()) ready.notify('approval/requested', request)
+              for (const request of this.questions.open()) ready.notify('question/requested', request)
             },
           })
           this.peers.add(peer)
@@ -385,6 +419,21 @@ export class AdgGateway extends Service {
   /** Answer an approval from an answerer. @returns false when it is unknown or already answered. */
   respondApproval(approvalId: string, decision: 'allow-once' | 'reject'): boolean {
     return this.approvals.respond(approvalId, decision)
+  }
+
+  /** Let another place answer the agent's questions too (first answer wins), on the caller's fiber. */
+  addQuestionAnswerer(answerer: QuestionAnswerer): () => void {
+    let dispose: () => void = () => {}
+    this.ctx.effect(() => {
+      dispose = this.questions.addAnswerer(answerer)
+      return dispose
+    }, 'adg-gateway question answerer')
+    return () => dispose()
+  }
+
+  /** Answer a question from an answerer. @returns false when it is unknown or already answered. */
+  respondQuestion(questionId: string, answers: readonly QuestionAnswerItem[]): boolean {
+    return this.questions.respond(questionId, answers)
   }
 
   /** Send one notification to every initialized client. */

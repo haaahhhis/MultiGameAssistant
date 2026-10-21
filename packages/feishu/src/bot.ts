@@ -1,19 +1,21 @@
 /**
- * The Feishu channel: settings, connection and self-check; notices and
- * approval questions out as cards; messages and card clicks in, from allowed
+ * The Feishu channel: settings, connection and self-check; notices,
+ * approvals and the agent's questions out as cards; messages and card clicks in, from allowed
  * people only. What a message means is decided by `@adg/notify` (a reply
  * like "停止" acts on a notice, anything else goes to the agent).
  */
-import type { ApprovalRequested, ChannelCheck, ChannelStatus, FeishuPending, FeishuSettings } from '@adg/protocol'
-import type { Actor, Channel, Notice, NoticePatch } from '@adg/notify'
+import type { ApprovalRequested, ChannelCheck, ChannelStatus, FeishuPending, FeishuSettings, QuestionAnswerItem, QuestionRequested } from '@adg/protocol'
+import type { Actor, Channel, Notice, NoticePatch, QuestionProgress } from '@adg/notify'
 import type { CardAction, CardActionResponse, ConnectionState, FeishuApi, InboundMessage, Target } from './api.ts'
-import { approvalCard, noticeCard, OUTCOME } from './cards.ts'
+import { approvalCard, noticeCard, OUTCOME, QUESTION_OUTCOME, questionCard } from './cards.ts'
 
 /** What the bot needs from `@adg/notify`. */
 export interface NotifyPort {
   act(noticeId: string, actionId: string, actor: Actor): Promise<string>
   inbound(message: { actor: Actor; text: string; replyTo?: string | undefined }): Promise<string>
   respondApproval(approvalId: string, decision: 'allow-once' | 'reject', actor: Actor): boolean
+  /** One of the agent's questions answered from a card button. @returns undefined when it was answered elsewhere. */
+  answerQuestion(questionId: string, item: QuestionAnswerItem, actor: Actor): QuestionProgress | undefined
 }
 
 export interface FeishuState {
@@ -68,6 +70,7 @@ export class FeishuBot implements Channel {
   readonly #delivered = new Map<string, Delivered>()
   readonly #byMessage = new Map<string, string>()
   readonly #approvals = new Map<string, { request: ApprovalRequested; own: boolean; messageIds: string[] }>()
+  readonly #questions = new Map<string, { request: QuestionRequested; own: boolean; owner: string | undefined; messageIds: string[]; answers: Map<string, string> }>()
   readonly #queues = new Map<string, Promise<void>>()
   #generation = 0
   #retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -333,6 +336,27 @@ export class FeishuBot implements Channel {
     },
   }
 
+  /** The agent's questions, routed like approvals (`approvals.active` decides who gets them). */
+  readonly questions = {
+    active: (owner: string | undefined) => this.approvals.active(owner),
+    ask: async (request: QuestionRequested, owner: string | undefined) => {
+      const api = this.#ready()
+      const own = owner !== undefined
+      const entry = { request, own, owner, messageIds: [] as string[], answers: new Map<string, string>() }
+      this.#questions.set(request.questionId, entry)
+      const card = questionCard(request, { own })
+      for (const target of own ? [{ openId: owner }] : this.#targets()) entry.messageIds.push(await api.sendCard(target, card))
+    },
+    resolved: async (questionId: string, outcome: string, answers: readonly QuestionAnswerItem[] | undefined) => {
+      const entry = this.#questions.get(questionId)
+      if (entry === undefined || this.#api === undefined) return
+      this.#questions.delete(questionId)
+      for (const answer of answers ?? []) entry.answers.set(answer.id, answerText(answer))
+      const card = questionCard(entry.request, { own: entry.own, answers: entry.answers, outcome: QUESTION_OUTCOME[outcome] ?? outcome })
+      for (const messageId of entry.messageIds) await this.#api.patchCard(messageId, card).catch(() => {})
+    },
+  }
+
   #targets(): Target[] {
     const { settings } = this.#state
     return [...settings.allowedUsers.map(u => ({ openId: u.openId })), ...(settings.chatId === undefined ? [] : [{ chatId: settings.chatId }])]
@@ -368,7 +392,12 @@ export class FeishuBot implements Channel {
       return
     }
     if (event.text === '') return
-    // One person's messages are handled in order; different people in parallel.
+    // One person's messages are handled in order; different people in parallel. An
+    // answer to the agent's question goes at once: the message before it is waiting for it.
+    if ([...this.#questions.values()].some(q => q.owner === event.senderOpenId)) {
+      void this.#answer(api, event).catch(error => this.#options.log.warn(`reply failed: ${message(error)}`))
+      return
+    }
     const key = event.senderOpenId
     const previous = this.#queues.get(key) ?? Promise.resolve()
     const next = previous.then(() => this.#answer(api, event)).catch(error => this.#options.log.warn(`reply failed: ${message(error)}`))
@@ -418,6 +447,15 @@ export class FeishuBot implements Channel {
       const outcome = `${decision === 'allow-once' ? '已允许这一次' : '已拒绝'}（${actor.name ?? actor.userId}）`
       return { toast: { type: 'success', content: outcome }, ...(entry === undefined ? {} : { card: approvalCard(entry.request, { own: entry.own, outcome }) }) }
     }
+    if (kind === 'question' && typeof id === 'string' && typeof event.value['item'] === 'string' && typeof event.value['label'] === 'string') {
+      const entry = this.#questions.get(id)
+      const label = event.value['label']
+      const progress = notify.answerQuestion(id, { id: event.value['item'], selected: [label] }, actor)
+      if (progress === undefined) return { toast: { type: 'info', content: '这个问题已经在别处回答过了' } }
+      entry?.answers.set(event.value['item'], label)
+      const card = entry === undefined ? undefined : questionCard(entry.request, { own: entry.own, answers: entry.answers, ...(progress.done ? { outcome: `已回答（${actor.name ?? actor.userId}）` } : {}) })
+      return { toast: { type: 'success', content: progress.done ? `已回答：${label}` : '收到，还有问题要回答' }, ...(card === undefined ? {} : { card }) }
+    }
     if (kind === 'notice' && typeof id === 'string' && typeof event.value['action'] === 'string') {
       const work = notify.act(id, event.value['action'], actor)
       const budget = new Promise<'pending'>(resolve => setTimeout(() => resolve('pending'), this.#options.clickBudgetMs ?? 2500))
@@ -442,6 +480,12 @@ function put(checks: ChannelCheck[], id: string, ok: boolean | null, detail?: st
   check.ok = ok
   if (detail === undefined) delete check.detail
   else check.detail = detail
+}
+
+/** An answer as text: the choices, then anything typed. */
+function answerText(answer: QuestionAnswerItem): string {
+  const parts = [...answer.selected, ...(answer.custom === undefined ? [] : [answer.custom])]
+  return parts.length === 0 ? '（跳过）' : parts.join('、')
 }
 
 function message(error: unknown): string {

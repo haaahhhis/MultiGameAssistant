@@ -16,6 +16,7 @@ import { PipelineNotifications, PipelineRequests } from './pipelines.ts'
 import { InterveneNotifications, InterveneRequests } from './intervene.ts'
 import { GamesNotifications, GamesRequests } from './games.ts'
 import { PermissionsNotifications, PermissionsRequests } from './permissions.ts'
+import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -379,6 +380,7 @@ export const Requests = {
   ...InterveneRequests,
   ...GamesRequests,
   ...PermissionsRequests,
+  ...QuestionsRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -427,6 +429,7 @@ export const Notifications = {
   ...InterveneNotifications,
   ...GamesNotifications,
   ...PermissionsNotifications,
+  ...QuestionsNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests
