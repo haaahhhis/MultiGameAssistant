@@ -1,4 +1,11 @@
 /*
+ * The desktop window's own title bar (apps/desktop sets --title-bar): a strip to
+ * drag the window by, as tall as the overlay holding Windows' three buttons.
+ * A browser does not set it: the strip is 0 px high there.
+ */
+.title-bar { position: fixed; top: 0; left: 0; right: 0; height: var(--title-bar, 0px); z-index: 2000; -webkit-app-region: drag; app-region: drag; pointer-events: auto; }
+
+/*
  * The startup screen, in three places that must look the same so one hands
  * over to the next without a jump: the desktop shell's splash
  * (apps/desktop/splash.html, before the gateway exists), this page's first

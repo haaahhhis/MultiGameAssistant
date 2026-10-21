@@ -48,12 +48,20 @@ export function readRoute(): Route {
   return match === null ? { kind: 'home' } : { kind: 'session', id: decodeURIComponent(match[1]!) }
 }
 
-export function writeRoute(route: Route): void {
+/**
+ * Put the route in the address. A new page is a history entry, so the mouse's
+ * back and forward buttons (and the browser's) move between pages; `replace`
+ * for corrections nobody should go back to.
+ */
+export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): void {
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`) : ''
-  if (location.hash !== hash) history.replaceState(history.state, '', `${location.pathname}${location.search}${hash}`)
+  if (location.hash === hash) return
+  const url = `${location.pathname}${location.search}${hash}`
+  if (mode === 'replace') history.replaceState(history.state, '', url)
+  else history.pushState(null, '', url)
 }
 
 /**

@@ -26,8 +26,13 @@ export function App({ client }: { client: AdgClient }) {
   const sessions = useStore(client.sessions)
   const pages = usePages(client)
   const status = useStore(client.connection.status)
-  useEffect(() => writeRoute(route), [route])
-  // In-app links (an agent reply's [编排页](#/p/pipelines/…)) change the address: follow it.
+  // Each page is a history entry (mouse back / forward); a correction replaces the entry instead.
+  const replacing = useRef(false)
+  useEffect(() => {
+    writeRoute(route, replacing.current ? 'replace' : 'push')
+    replacing.current = false
+  }, [route])
+  // Back / forward, and in-app links (an agent reply's [编排页](#/p/pipelines/…)), change the address: follow it.
   useEffect(() => {
     const onHash = () => setRoute(readRoute())
     window.addEventListener('hashchange', onHash)
@@ -40,8 +45,9 @@ export function App({ client }: { client: AdgClient }) {
   useEffect(() => {
     for (const item of sessions.items) listed.current.add(item.id)
     if (route.kind !== 'session' || !sessions.loaded || sessions.items.some(i => i.id === route.id)) return
-    if (listed.current.has(route.id)) { setRoute({ kind: 'home' }); return }
-    const timer = setTimeout(() => setRoute(r => (r.kind === 'session' && r.id === route.id ? { kind: 'home' } : r)), 8000)
+    const leave = () => { replacing.current = true; setRoute(r => (r.kind === 'session' && r.id === route.id ? { kind: 'home' } : r)) }
+    if (listed.current.has(route.id)) { leave(); return }
+    const timer = setTimeout(leave, 8000)
     return () => clearTimeout(timer)
   }, [route, sessions])
 
@@ -180,10 +186,9 @@ function Home({ client, onSettings, onOpen, onStart }: {
           <div className="resume">
             <div className="resume-head"><span className="sidebar-label">继续上次</span></div>
             {recent.map(item => (
-              <button key={item.id} className="resume-item" onClick={() => onOpen(item.id)}>
+              <button key={item.id} className="resume-item" title={item.cwd === undefined ? undefined : `工作文件夹：${item.cwd}`} onClick={() => onOpen(item.id)}>
                 <span className="resume-text">
                   <span className="resume-title">{sessionTitle(item)}</span>
-                  {item.cwd !== undefined && <span className="resume-path">{item.cwd}</span>}
                 </span>
                 <span className="session-time">{item.running ? '运行中' : relativeTime(item.updatedAt, now)}</span>
               </button>

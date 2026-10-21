@@ -141,6 +141,8 @@
 /* base */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* Below the desktop title bar (boot.css .title-bar; nothing in a browser). */
+#root { box-sizing: border-box; padding-top: var(--title-bar, 0px); }
 body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -.01em; }
 button { font: inherit; font-weight: 500; color: inherit; cursor: pointer; border: 1px solid var(--border-strong); background: transparent; border-radius: var(--r-md); padding: 7px 14px; transition: background .12s var(--ease), border-color .12s var(--ease), color .12s var(--ease), transform .12s var(--ease), box-shadow .12s var(--ease); }
@@ -182,7 +184,7 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
 /* layout */
-.app { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 4px; height: 100%; padding: 10px 10px 10px 0; }
+.app { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 4px; height: 100%; padding: calc(10px - min(10px, var(--title-bar, 0px))) 10px 10px 0; }
 .app.with-sidebar { grid-template-columns: 68px 248px minmax(0, 1fr); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 

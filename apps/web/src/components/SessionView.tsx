@@ -37,10 +37,9 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
     <section className="main">
       <header className="session-header">
         <div className="session-heading">
-          <div className="breadcrumb"><span>会话</span><span className="breadcrumb-divider">/</span><h1>{state.title ?? '新会话'}</h1></div>
+          <div className="breadcrumb"><span>会话</span><span className="breadcrumb-divider">/</span><h1 title={state.header?.cwd === undefined ? undefined : `工作文件夹：${state.header.cwd}`}>{state.title ?? '新会话'}</h1></div>
           <div className="session-meta">
             <RunState running={state.running} />
-            {state.header?.cwd !== undefined && <span className="cwd" title={state.header.cwd}>{state.header.cwd}</span>}
           </div>
         </div>
         <div className="session-actions">

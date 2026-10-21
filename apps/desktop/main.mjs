@@ -35,6 +35,9 @@ const VIEWABLE = /\.(txt|log|md|json|jsonl|ya?ml|toml|ini|cfg|conf|csv|xml|html?
 const READY_TIMEOUT_MS = 180_000
 /** The page's --bg, so the window never flashes another colour while pages change. */
 const BACKGROUND = { light: '#f2f2f0', dark: '#0b0b0c' }
+/** The window's own title bar (no menu, icon or title): the page draws it, Windows keeps the three buttons. */
+const TITLE_BAR_HEIGHT = 34
+const TITLE_BAR_SYMBOLS = { light: '#3d3d42', dark: '#d6d6db' }
 const THEMES = ['system', 'light', 'dark']
 const LOG_TAIL_LINES = 40
 /** Restarts allowed within RESTART_WINDOW_MS before asking the user. */
@@ -76,6 +79,8 @@ app.on('before-quit', () => {
 })
 
 async function start() {
+  // No File / Edit / View menu: the window has the app's own title bar (see TITLE_BAR_HEIGHT).
+  Menu.setApplicationMenu(null)
   createTray()
   // The theme the user picked in the UI, so the splash before it matches.
   nativeTheme.themeSource = savedTheme()
@@ -86,6 +91,7 @@ async function start() {
     minHeight: 480,
     title: 'AutoDailyGamePlay',
     backgroundColor: background(),
+    ...titleBar(),
     show: false,
     icon: nativeImage.createFromBuffer(trayIconPng(64)),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(here, 'preload.cjs') },
@@ -120,7 +126,10 @@ async function start() {
     if (!THEMES.includes(theme)) return
     nativeTheme.themeSource = theme
     try { writeFileSync(themeFile(), JSON.stringify({ theme })) } catch { /* a preference, not worth failing over */ }
-    for (const w of BrowserWindow.getAllWindows()) w.setBackgroundColor(background())
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.setBackgroundColor(background())
+      w.setTitleBarOverlay?.(titleBar().titleBarOverlay)
+    }
   })
   // The splash's buttons when starting failed.
   ipcMain.handle('adg:splash', async (event, action) => {
@@ -156,6 +165,7 @@ async function start() {
     }
   })
   win.on('closed', () => { win = null })
+  windowChrome(win.webContents)
   win.once('ready-to-show', () => { if (!autoStarted) win?.show() })
   await showSplash({ step: 'env', title: '正在准备运行环境' })
 
@@ -209,6 +219,41 @@ function savedTheme() {
 
 function background() {
   return nativeTheme.shouldUseDarkColors ? BACKGROUND.dark : BACKGROUND.light
+}
+
+/** Window options for the app's own title bar: the minimise / maximise / close buttons in the page's colours. */
+function titleBar() {
+  return {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: background(), symbolColor: nativeTheme.shouldUseDarkColors ? TITLE_BAR_SYMBOLS.dark : TITLE_BAR_SYMBOLS.light, height: TITLE_BAR_HEIGHT },
+  }
+}
+
+/**
+ * What every window's page gets from the shell: the title bar's height (the
+ * pages draw the strip, boot.css .title-bar), and the shortcuts the removed
+ * menu used to give — zoom always, developer tools only when running from
+ * the repository.
+ * @param {Electron.WebContents} contents
+ */
+function windowChrome(contents) {
+  contents.on('dom-ready', () => { void contents.insertCSS(`:root { --title-bar: ${TITLE_BAR_HEIGHT}px; }`).catch(() => {}) })
+  contents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const ctrl = input.control || input.meta
+    if ((input.key === 'F12' || (ctrl && input.shift && input.key.toLowerCase() === 'i')) && !app.isPackaged) {
+      contents.toggleDevTools()
+    } else if (ctrl && (input.key === '=' || input.key === '+')) {
+      contents.setZoomLevel(Math.min(contents.getZoomLevel() + 0.5, 4))
+    } else if (ctrl && input.key === '-') {
+      contents.setZoomLevel(Math.max(contents.getZoomLevel() - 0.5, -3))
+    } else if (ctrl && input.key === '0') {
+      contents.setZoomLevel(0)
+    } else {
+      return
+    }
+    event.preventDefault()
+  })
 }
 
 function logDir() {
@@ -317,6 +362,8 @@ async function openUi(url) {
     if (!quitting) void fail('界面进程崩溃', details.reason, false)
   })
   await win.loadURL(url)
+  // The startup screen came before the UI in this window: mouse back must not go there.
+  win.webContents.navigationHistory.clear()
 }
 
 /**
@@ -340,15 +387,18 @@ function guardContents(contents, origin) {
           minWidth: 480,
           minHeight: 360,
           backgroundColor: background(),
-          autoHideMenuBar: true,
-          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+          ...titleBar(),
+          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(here, 'preload.cjs') },
         },
       }
     }
     openExternal(target)
     return { action: 'deny' }
   })
-  contents.on('did-create-window', child => guardContents(child.webContents, origin))
+  contents.on('did-create-window', child => {
+    guardContents(child.webContents, origin)
+    windowChrome(child.webContents)
+  })
   contents.on('will-navigate', (event, target) => {
     if (!sameOrigin(target)) {
       event.preventDefault()
