@@ -75,7 +75,7 @@ export interface RunnerOptions {
   /** Log file poll interval. @default 500 */
   readonly pollMs?: number
   /** Game start hooks, injected in tests. */
-  readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'sleep'>
+  readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'launchMaaEnd' | 'sleep'>
 }
 
 interface ActiveRun {
@@ -349,7 +349,7 @@ export class Runner {
         address = emulator.address
         lines.push(`使用模拟器 ${emulator.label}（${emulator.address}）`)
       } else {
-        if (settings.pcExe === undefined) throw new Error(`还没有设置${name}的程序位置：在脚本页「启动游戏」里点「自动查找」或「选择文件」`)
+        if (settings.pcExe === undefined && settings.pcLaunch !== 'maaend') throw new Error(`还没有设置${name}的程序位置：在脚本页「启动游戏」里点「自动查找」或「选择文件」`)
         release = this.locks.acquire(['desktop'], holder)
       }
       await ensureGame({
