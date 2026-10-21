@@ -95,6 +95,17 @@ export function SessionList({ client, selected, onSelect, onNew }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions.items, query, now, tab, archived, remote, selected])
 
+  // Renaming in place: the pencil on hover, or a double-click on the row.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null)
+  const rename = async () => {
+    const target = renaming
+    setRenaming(null)
+    const title = target?.value.trim() ?? ''
+    const item = sessions.items.find(i => i.id === target?.id)
+    if (target === null || item === undefined || title === '' || title === sessionTitle(item)) return
+    await client.renameSession(target.id, title).catch(e => setError(e instanceof Error ? e.message : String(e)))
+  }
+
   const create = () => {
     setError(null)
     setTab('chats')
@@ -149,11 +160,22 @@ export function SessionList({ client, selected, onSelect, onNew }: {
               const who = remote.get(item.id)
               return (
                 <div key={item.id} className={`session-row ${item.id === selected ? 'active' : ''}`}>
+                  {renaming?.id === item.id ? (
+                    <input className="text-input session-rename" autoFocus value={renaming.value} maxLength={80} aria-label="会话名称"
+                      onFocus={e => e.target.select()}
+                      onChange={e => setRenaming({ id: item.id, value: e.target.value })}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) void rename()
+                        if (e.key === 'Escape') setRenaming(null)
+                      }}
+                      onBlur={() => void rename()} />
+                  ) : (
                   <button
                     className={`nav-item session-item ${item.id === selected ? 'active' : ''}`}
                     aria-current={item.id === selected ? 'page' : undefined}
                     onClick={() => onSelect(item.id)}
-                    title={item.cwd}
+                    onDoubleClick={() => setRenaming({ id: item.id, value: sessionTitle(item) })}
+                    title={item.cwd === undefined ? '双击改名' : `双击改名 · ${item.cwd}`}
                   >
                     {tab === 'remote' && <span className="channel-badge">{CHANNEL[who?.channel ?? 'feishu'] ?? who?.channel}</span>}
                     <span className="nav-item-label">{tab === 'remote' ? sessionTitle(item).replace(/^(飞书|feishu)：/, '') : sessionTitle(item)}</span>
@@ -161,11 +183,19 @@ export function SessionList({ client, selected, onSelect, onNew }: {
                       ? <span className="run-dot" role="img" aria-label="运行中" />
                       : <span className="session-time">{relativeTime(item.updatedAt, now)}</span>}
                   </button>
-                  {canArchive && !item.running && (
-                    <button className="session-action" title={tab === 'archived' ? '恢复到会话列表' : '归档：从列表里移走，之后可以在「已归档」里找回'}
-                      aria-label={tab === 'archived' ? '恢复' : '归档'} onClick={() => void toggleArchive(item.id, tab !== 'archived')}>
-                      <Icon name={tab === 'archived' ? 'back' : 'archive'} />
-                    </button>
+                  )}
+                  {renaming?.id !== item.id && (
+                    <span className="session-row-actions">
+                      <button className="session-action" title="改名" aria-label="改名" onClick={() => setRenaming({ id: item.id, value: sessionTitle(item) })}>
+                        <Icon name="pencil" />
+                      </button>
+                      {canArchive && !item.running && (
+                        <button className="session-action" title={tab === 'archived' ? '恢复到会话列表' : '归档：从列表里移走，之后可以在「已归档」里找回'}
+                          aria-label={tab === 'archived' ? '恢复' : '归档'} onClick={() => void toggleArchive(item.id, tab !== 'archived')}>
+                          <Icon name={tab === 'archived' ? 'back' : 'archive'} />
+                        </button>
+                      )}
+                    </span>
                   )}
                 </div>
               )

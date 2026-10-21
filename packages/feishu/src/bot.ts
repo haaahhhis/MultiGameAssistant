@@ -417,7 +417,11 @@ export class FeishuBot implements Channel {
       const replyTo = event.parentId === undefined ? undefined : this.#byMessage.get(event.parentId)
       const reply = await notify.inbound({ actor: this.#actor(event.senderOpenId), text: event.text, replyTo })
       answered = true
-      await api.replyText(event.messageId, reply)
+      // The agent writes markdown: rich text shows it formatted; plain text if Feishu refuses that.
+      await api.replyMarkdown(event.messageId, reply).catch(error => {
+        this.#options.log.warn(`markdown reply refused, sending plain text: ${message(error)}`)
+        return api.replyText(event.messageId, reply)
+      })
     } catch (error) {
       answered = true
       await api.replyText(event.messageId, `出错了：${message(error)}`).catch(() => {})

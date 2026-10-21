@@ -5,10 +5,11 @@ import type { ApprovalRequested, FeishuSettings } from '@adg/protocol'
 import { startFakeFeishu } from '../../test-kit/src/fake-feishu.ts'
 import { parseCardAction, parseMessage, sdkApi, type CardAction, type CardActionResponse, type ConnectionState, type FeishuApi, type InboundMessage, type Target } from '../src/api.ts'
 import { DEFAULT_FEISHU, FeishuBot, type FeishuState, type NotifyPort } from '../src/bot.ts'
+import { markdownPost, toFeishuMarkdown } from '../src/markdown.ts'
 
-interface Sent { to?: Target; replyTo?: string; card?: object; text?: string; id: string }
+interface Sent { to?: Target; replyTo?: string; card?: object; text?: string; markdown?: boolean; id: string }
 
-function fakeApi(options: { tokenError?: string } = {}) {
+function fakeApi(options: { tokenError?: string; refuseMarkdown?: boolean } = {}) {
   const sent: Sent[] = []
   const patched: { id: string; card: object }[] = []
   let handlers: { message(event: InboundMessage): void; cardAction(event: CardAction): Promise<CardActionResponse | undefined> } | undefined
@@ -21,6 +22,10 @@ function fakeApi(options: { tokenError?: string } = {}) {
     patchCard: async (id, card) => { patched.push({ id, card }) },
     sendText: async (to, text) => { const id = `om_${++seq}`; sent.push({ to, text, id }); return id },
     replyText: async (replyTo, text) => { const id = `om_${++seq}`; sent.push({ replyTo, text, id }); return id },
+    replyMarkdown: async (replyTo, text) => {
+      if (options.refuseMarkdown === true) throw new Error('回复失败：消息内容格式不对（230001）')
+      const id = `om_${++seq}`; sent.push({ replyTo, text, markdown: true, id }); return id
+    },
     uploadImage: async () => 'img_1',
     connect: async (h, onState) => { handlers = h; state = 'connected'; onState('connected') },
     connectionState: () => state,
@@ -29,7 +34,7 @@ function fakeApi(options: { tokenError?: string } = {}) {
   return { api, sent, patched, events: () => handlers! }
 }
 
-function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: string | undefined; secret?: string; retryDelaysMs?: number[] } = {}) {
+function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: string | undefined; secret?: string; retryDelaysMs?: number[]; refuseMarkdown?: boolean } = {}) {
   const fake = fakeApi(options)
   let saved: FeishuState | undefined
   const inbound: { text: string; replyTo?: string | undefined; userId: string }[] = []
@@ -283,3 +288,35 @@ test('the real SDK over the long connection: messages in, replies out, a card cl
     await server.close()
   }
 })
+
+test('the agent’s answers go out as rich text that renders markdown; plain text when Feishu refuses it', async () => {
+  const { bot, fake, inbound } = setup()
+  await bot.start()
+  fake.events().message(message({ messageId: 'om_q', text: '完成了吗' }))
+  await delay(50)
+  const reply = fake.sent.find(s => s.replyTo === 'om_q')!
+  assert.equal(reply.markdown, true)
+  assert.equal(reply.text, '收到：完成了吗')
+  assert.deepEqual(inbound.map(m => m.text), ['完成了吗'])
+
+  const refused = setup({}, { refuseMarkdown: true })
+  await refused.bot.start()
+  refused.fake.events().message(message({ messageId: 'om_r', text: '状态' }))
+  await delay(50)
+  const plain = refused.fake.sent.find(s => s.replyTo === 'om_r')!
+  assert.equal(plain.markdown, undefined)
+  assert.equal(plain.text, '收到：状态')
+})
+
+test('markdown for Feishu: headings become bold lines, images links; code blocks are left alone', () => {
+  const text = [
+    '## 今日结果', '', '完成了，差分宇宙在 **23:34** 跑完。', '', '', '',
+    '- 积分 **18000 / 18000**', '- ![截图](https://x/y.png)', '', '```', '# 不是标题', '```',
+  ].join('\n')
+  assert.equal(toFeishuMarkdown(text), [
+    '**今日结果**', '', '完成了，差分宇宙在 **23:34** 跑完。', '',
+    '- 积分 **18000 / 18000**', '- [截图](https://x/y.png)', '', '```', '# 不是标题', '```',
+  ].join('\n'))
+  assert.deepEqual(markdownPost('**a**'), { zh_cn: { content: [[{ tag: 'md', text: '**a**' }]] } })
+})
+

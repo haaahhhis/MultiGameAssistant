@@ -6,6 +6,7 @@
  */
 import { Readable } from 'node:stream'
 import * as lark from '@larksuiteoapi/node-sdk'
+import { markdownPost } from './markdown.ts'
 
 /** Where a message goes: a person (p2p) or a group chat. */
 export type Target = { readonly openId: string } | { readonly chatId: string }
@@ -47,6 +48,8 @@ export interface FeishuApi {
   patchCard(messageId: string, card: object): Promise<void>
   sendText(to: Target, text: string): Promise<string>
   replyText(messageId: string, text: string): Promise<string>
+  /** Reply with markdown rendered (rich text with an `md` block). */
+  replyMarkdown(messageId: string, markdown: string): Promise<string>
   uploadImage(png: Buffer): Promise<string>
   /** Open the long connection; handlers run for each event. */
   connect(handlers: { message(event: InboundMessage): void; cardAction(event: CardAction): Promise<CardActionResponse | undefined> }, onState: (state: ConnectionState, error?: string) => void): Promise<void>
@@ -162,6 +165,12 @@ export function sdkApi(options: SdkOptions): FeishuApi {
     async replyText(messageId, text) {
       return call('回复消息', async () => {
         const result = check(await client.im.message.reply({ path: { message_id: messageId }, data: { msg_type: 'text', content: JSON.stringify({ text }) } }), '回复')
+        return result.data?.message_id ?? ''
+      })
+    },
+    async replyMarkdown(messageId, markdown) {
+      return call('回复消息', async () => {
+        const result = check(await client.im.message.reply({ path: { message_id: messageId }, data: { msg_type: 'post', content: JSON.stringify(markdownPost(markdown)) } }), '回复')
         return result.data?.message_id ?? ''
       })
     },

@@ -184,7 +184,8 @@ try {
   const answer = await feishu.waitForMessage(m => m.kind === 'reply' && m.text.includes('自动重跑成功'), 120_000)
   const asked = llm.requests.find(r => JSON.stringify(r.messages ?? []).includes('刚才怎么了'))
   if (asked === undefined) fail('the agent never saw the Feishu message')
-  step('a Feishu message became a conversation with the agent (it used monitor_incidents)', answer.text.slice(0, 40))
+  if (answer.msgType !== 'post' || answer.content?.zh_cn?.content?.[0]?.[0]?.tag !== 'md') fail(`the answer went out as ${answer.msgType}, not rich text with markdown`)
+  step('a Feishu message became a conversation with the agent (it used monitor_incidents); the answer is rich text', answer.text.slice(0, 40))
 
   // 5. approval answered in Feishu
   await feishu.sendMessage({ openId: USER, text: '运行 echo hi' })

@@ -1211,9 +1211,12 @@ button.fold-head h3 { margin: 0; }
 .tab-count { margin-left: 3px; color: var(--muted); font-size: 11px; }
 .session-row { position: relative; display: flex; align-items: center; }
 .session-row > .session-item { flex: 1; min-width: 0; }
-button.session-action { position: absolute; right: 4px; display: none; width: 26px; height: 26px; padding: 0; border: none; border-radius: 6px; background: var(--raised); color: var(--muted); }
+.session-row-actions { position: absolute; right: 4px; display: none; gap: 2px; }
+button.session-action { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 6px; background: var(--raised); color: var(--muted); }
 button.session-action .ui-icon { width: 15px; height: 15px; }
-.session-row:hover > button.session-action, button.session-action:focus-visible { display: inline-flex; align-items: center; justify-content: center; }
+.session-row:hover > .session-row-actions, .session-row-actions:focus-within { display: inline-flex; }
+.session-rename { flex: 1; min-width: 0; height: 32px; font-size: 13px; }
+@media (hover: none) { .session-row.active > .session-row-actions { display: inline-flex; } }
 .session-row:hover > .session-item .session-time, .session-row:hover > .session-item .run-dot { visibility: hidden; }
 button.session-action:hover { color: var(--text); background: var(--hover); }
 .channel-badge { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-fill) 22%, transparent); color: var(--accent); font-size: 11px; font-weight: 600; }

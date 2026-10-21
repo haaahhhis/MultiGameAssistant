@@ -296,6 +296,7 @@ function textOf(content: unknown): string {
     else if (typeof value === 'object' && value !== null) {
       const v = value as { tag?: unknown; content?: unknown }
       if (v.tag === 'plain_text' && typeof v.content === 'string') texts.push(v.content)
+      if (v.tag === 'md' && typeof (v as { text?: unknown }).text === 'string') texts.push((v as { text: string }).text)
       for (const child of Object.values(value)) if (typeof child === 'object') walk(child)
     }
   }
