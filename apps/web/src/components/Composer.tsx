@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
-import { MAX_IMAGE_BASE64, type PromptImage } from '@adg/protocol'
+import { MAX_IMAGE_BASE64, type PromptImage, type QueuedPrompt } from '@adg/protocol'
 import type { SessionHandle, AdgClient } from '@adg/client-core'
 import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
 import { usePermissionMode, useStore } from '../hooks.ts'
@@ -15,6 +15,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   onInitialSent?: (() => void) | undefined
 }) {
   const capabilities = useStore(client.capabilities)
+  const { queue } = useStore(session.state)
   // What was typed here before switching away comes back (drafts.ts).
   const [text, setText] = useState(() => readDraft(session.id))
   const [steer, setSteer] = useState(false)
@@ -83,9 +84,32 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     }
   }
 
+  // A waiting message taken back comes back into the box, unless something new is being typed.
+  const withdraw = (item: QueuedPrompt) => {
+    session.updateQueue(item.id, 'remove').then(() => {
+      if (text.trim() === '' && item.text !== '') setText(item.text)
+    }, e => setError(e instanceof Error ? e.message : String(e)))
+  }
+  const insert = (item: QueuedPrompt) => {
+    session.updateQueue(item.id, 'steer').catch(e => setError(e instanceof Error ? e.message : String(e)))
+  }
+
   return (
     <div className="composer">
       {error !== null && <div className="error small composer-error">{error}</div>}
+      {queue.length > 0 && (
+        <div className="queue" aria-label="等待发送的消息">
+          {queue.map(item => (
+            <div key={item.id} className="queue-item">
+              <span className={`queue-tag ${item.placement}`}>{item.placement === 'next-step' ? '插入中' : '排队中'}</span>
+              <span className="queue-text" title={item.text}>{item.text === '' ? '（图片）' : item.text}{item.images !== undefined && <span className="muted"> · {item.images} 张图片</span>}</span>
+              <span className="queue-when muted">{item.placement === 'next-step' ? '这一步做完就交给 agent' : '这一轮结束后发送'}</span>
+              {item.placement === 'next-turn' && running && <button type="button" className="small-button" title="不等这一轮结束，现在就交给 agent" onClick={() => insert(item)}>现在插入</button>}
+              <button type="button" className="small-button" title="撤回这条消息" onClick={() => withdraw(item)}>撤回</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className={`composer-box ${dragging ? 'dragging' : ''}`}
         onDragOver={e => { if ([...e.dataTransfer.items].some(i => i.kind === 'file')) { e.preventDefault(); setDragging(true) } }}
         onDragLeave={() => setDragging(false)} onDrop={onDrop}>

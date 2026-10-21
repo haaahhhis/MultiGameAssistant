@@ -5,7 +5,7 @@
  * The handle re-opens itself after every reconnect (new connection
  * generation) and after the gateway ends its subscription unexpectedly.
  */
-import type { PromptImage,
+import type { PromptImage, QueuedPrompt,
   LiveFrame, RequestInput, RequestMethod, RequestResult, SessionEvent, SessionHeader,
 } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
@@ -41,6 +41,8 @@ export interface SessionState {
   readonly loadingOlder: boolean
   readonly live: LiveAttemptView | null
   readonly pending: readonly PendingPrompt[]
+  /** Messages waiting in the host's queue (sent while busy); kept by the host, so they survive switching away. */
+  readonly queue: readonly QueuedPrompt[]
   /** A turn is open in the loaded window, or output is streaming. */
   readonly running: boolean
   /** Bumped on every change, including in-place live delta appends. */
@@ -50,7 +52,7 @@ export interface SessionState {
 
 const INITIAL: SessionState = {
   status: 'opening', header: null, title: null, events: [], cursor: -1, hasMore: false,
-  loadingOlder: false, live: null, pending: [], running: false, version: 0, error: null,
+  loadingOlder: false, live: null, pending: [], queue: [], running: false, version: 0, error: null,
 }
 
 type Delta = Extract<LiveFrame, { type: 'delta' }>
@@ -104,6 +106,11 @@ export class SessionHandle {
   /** Drop a failed echo from the transcript. */
   dismissPending(requestId: string): void {
     this.#update(s => ({ ...s, pending: s.pending.filter(p => p.requestId !== requestId) }))
+  }
+
+  /** A waiting message: into the running turn now (`steer`), or taken back (`remove`). */
+  async updateQueue(itemId: string, action: 'steer' | 'remove'): Promise<void> {
+    await this.#transport.call('session/queue/update', { sessionId: this.id, itemId, action })
   }
 
   async cancel(): Promise<void> {
@@ -197,6 +204,11 @@ export class SessionHandle {
     }, 1000)
   }
 
+  /** The host's queue for this session changed. @internal */
+  receiveQueue(queue: readonly QueuedPrompt[]): void {
+    this.#update(s => ({ ...s, queue, pending: withoutQueued(s.pending, queue) }))
+  }
+
   /** Update the title from list-level notifications. @internal */
   receiveTitle(title: string | null): void {
     this.#update(s => (s.title === title ? s : { ...s, title }))
@@ -228,7 +240,8 @@ export class SessionHandle {
             cursor: opened.cursor,
             hasMore: opened.hasMore,
             live,
-            pending: s.pending.filter(p => !echoed.has(p.requestId)),
+            pending: withoutQueued(s.pending.filter(p => !echoed.has(p.requestId)), opened.queue ?? []),
+            queue: opened.queue ?? [],
             running: computeRunning(opened.events, live),
             loadingOlder: false,
             error: null,
@@ -254,6 +267,12 @@ export class SessionHandle {
       return value === previous ? previous : { ...value, version: previous.version + 1 }
     })
   }
+}
+
+/** Echoes whose message the host's queue now shows (the queue lists it from then on). */
+function withoutQueued(pending: readonly PendingPrompt[], queue: readonly QueuedPrompt[]): readonly PendingPrompt[] {
+  const queued = new Set(queue.flatMap(q => (q.requestId === undefined ? [] : [q.requestId])))
+  return queued.size === 0 ? pending : pending.filter(p => !queued.has(p.requestId))
 }
 
 /** Whether the loaded window has an open turn or output is streaming. */

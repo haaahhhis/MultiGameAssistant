@@ -17,6 +17,7 @@ import { InterveneNotifications, InterveneRequests } from './intervene.ts'
 import { GamesNotifications, GamesRequests } from './games.ts'
 import { PermissionsNotifications, PermissionsRequests } from './permissions.ts'
 import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
+import { SkillsRequests } from './skills.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -68,6 +69,22 @@ export const SessionItem = z.object({
   origin: z.enum(['subagent']).optional(),
 })
 export type SessionItem = z.infer<typeof SessionItem>
+
+/**
+ * A message sent while the agent was busy, still waiting in the session's
+ * queue: `next-turn` starts a turn once the current one ends; `next-step` goes
+ * into the running turn at its next step (「插入当前轮次」).
+ */
+export const QueuedPrompt = z.object({
+  /** Queue item id (for `session/queue/update`). */
+  id: z.string(),
+  /** The `requestId` it was sent with, when it came from a client. */
+  requestId: z.string().optional(),
+  text: z.string(),
+  images: z.number().int().optional(),
+  placement: z.enum(['next-turn', 'next-step']),
+})
+export type QueuedPrompt = z.infer<typeof QueuedPrompt>
 
 export const SessionHeader = z.object({
   id: z.string(),
@@ -212,6 +229,8 @@ export const Requests = {
       hasMore: z.boolean(),
       title: z.string().nullable(),
       live: LiveAttempt.nullable(),
+      /** Messages still waiting in the queue. */
+      queue: z.array(QueuedPrompt).optional(),
     }),
   },
   'session/close': {
@@ -245,6 +264,12 @@ export const Requests = {
   'session/cancel': {
     capability: 'chat',
     params: z.object({ sessionId: z.string() }),
+    result: Accepted,
+  },
+  /** A waiting message: put it into the running turn now (`steer`), or take it back (`remove`). */
+  'session/queue/update': {
+    capability: 'chat',
+    params: z.object({ sessionId: z.string(), itemId: z.string(), action: z.enum(['steer', 'remove']) }),
     result: Accepted,
   },
   /** The bytes of an image in a session (a screenshot a tool took, an image the user sent). */
@@ -381,6 +406,7 @@ export const Requests = {
   ...GamesRequests,
   ...PermissionsRequests,
   ...QuestionsRequests,
+  ...SkillsRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -408,6 +434,8 @@ export const Notifications = {
   'session/closed': z.object({ subscriptionId: z.string(), reason: z.string() }),
   'session/title': z.object({ sessionId: z.string(), title: z.string().nullable() }),
   'session/error': z.object({ sessionId: z.string(), message: z.string() }),
+  /** A session's waiting messages changed (sent, inserted, taken back, or admitted). */
+  'session/queue': z.object({ sessionId: z.string(), items: z.array(QueuedPrompt) }),
   'approval/requested': ApprovalRequested,
   'approval/resolved': z.object({ approvalId: z.string(), outcome: z.string() }),
   /** A stored credential changed (set, unset, or edited on disk). Never carries the value. */

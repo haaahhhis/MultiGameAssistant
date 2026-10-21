@@ -37,7 +37,9 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
     <section className="main">
       <header className="session-header">
         <div className="session-heading">
-          <div className="breadcrumb"><span>会话</span><span className="breadcrumb-divider">/</span><h1 title={state.header?.cwd === undefined ? undefined : `工作文件夹：${state.header.cwd}`}>{state.title ?? '新会话'}</h1></div>
+          <div className="breadcrumb"><span>会话</span><span className="breadcrumb-divider">/</span>
+            <SessionTitle title={state.title} cwd={state.header?.cwd} onRename={title => client.renameSession(session.id, title)} />
+          </div>
           <div className="session-meta">
             <RunState running={state.running} />
           </div>
@@ -104,6 +106,44 @@ function PoppedSession({ client, session, view }: {
         <div className="view"><view.component client={client} session={session} state={state} /></div>
       </section>
     </div>
+  )
+}
+
+/** The conversation's name; the pencil (or a double-click) edits it in place. Enter saves, Esc cancels. */
+function SessionTitle({ title, cwd, onRename }: { title: string | null; cwd: string | undefined; onRename: (title: string) => Promise<void> }) {
+  const [editing, setEditing] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const shown = title ?? '新会话'
+  const save = async () => {
+    const next = editing?.trim() ?? ''
+    if (next === '' || next === title) { setEditing(null); return }
+    try {
+      await onRename(next)
+      setEditing(null)
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+  if (editing !== null) {
+    return (
+      <span className="title-edit">
+        <input className="text-input" autoFocus value={editing} maxLength={80} aria-label="会话名称" onChange={e => setEditing(e.target.value)}
+          onFocus={e => e.target.select()}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) void save()
+            if (e.key === 'Escape') { setEditing(null); setError(null) }
+          }}
+          onBlur={() => void save()} />
+        {error !== null && <span className="error small">{error}</span>}
+      </span>
+    )
+  }
+  return (
+    <span className="session-title">
+      <h1 title={cwd === undefined ? '双击改名' : `双击改名 · 工作文件夹：${cwd}`} onDoubleClick={() => setEditing(shown)}>{shown}</h1>
+      <button type="button" className="icon-button rename-button" title="改名" aria-label="给这个会话改名" onClick={() => setEditing(shown)}><Icon name="pencil" /></button>
+    </span>
   )
 }
 

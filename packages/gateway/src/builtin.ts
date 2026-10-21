@@ -10,13 +10,13 @@ import type {
 import {
   ErrorCode, RpcError,
   type ModelCatalog, type ModelSelection, type SessionModel, type NotificationMethod, type NotificationParams, type RequestMethod, type RequestParams,
-  type RequestResult, type SessionItem,
+  type QueuedPrompt, type RequestResult, type SessionItem,
 } from '@adg/protocol'
 import { convertLiveBaseline, convertLiveFrame, convertRecord, convertRecords } from './convert.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
 
 export type HostSessions = Pick<SessionController,
-  'list' | 'create' | 'rename' | 'follow' | 'page' | 'prompt' | 'cancel' | 'modelCatalog' | 'selectModel' | 'projections'>
+  'list' | 'create' | 'rename' | 'follow' | 'page' | 'prompt' | 'cancel' | 'updateQueue' | 'modelCatalog' | 'selectModel' | 'projections'>
 
 /** Protocol method → handler, typed by the method's params and result schemas. */
 type ProtocolHandlers = {
@@ -31,6 +31,33 @@ type SessionId = SessionSummary['sessionId']
 
 /** Brand casts at the protocol boundary: protocol ids are plain strings. */
 const sid = (id: string) => id as SessionId
+
+/**
+ * The people's messages still waiting in dsh's `inbox` projection, in the
+ * order they will run: `next-step` ones go into the running turn first.
+ * Other inbox entries (a subagent's report, a reminder) are not shown.
+ */
+export function toQueue(inbox: unknown): QueuedPrompt[] {
+  const items: QueuedPrompt[] = []
+  for (const placement of ['next-step', 'next-turn'] as const) {
+    const list = (inbox as Record<string, unknown> | undefined)?.[placement]
+    if (!Array.isArray(list)) continue
+    for (const message of list as { id?: unknown; source?: { kind?: unknown; rpcId?: unknown }; content?: unknown }[]) {
+      if (typeof message.id !== 'string' || message.source?.kind !== 'user') continue
+      const content = Array.isArray(message.content) ? message.content as { type?: unknown; text?: unknown }[] : []
+      const text = content.filter(c => c.type === 'text' && typeof c.text === 'string').map(c => c.text as string).join('\n')
+      const images = content.filter(c => c.type === 'image').length
+      items.push({
+        id: message.id,
+        ...(typeof message.source.rpcId === 'string' ? { requestId: message.source.rpcId } : {}),
+        text,
+        ...(images === 0 ? {} : { images }),
+        placement,
+      })
+    }
+  }
+  return items
+}
 
 function titleOf(values: unknown): string | null {
   const title = (values as { title?: unknown } | undefined)?.title
@@ -148,6 +175,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
           hasMore: snapshot.hasMore,
           title: titleOf(snapshot.projections.values),
           live: convertLiveBaseline(snapshot.assistantStream),
+          queue: toQueue((snapshot.projections.values as { inbox?: unknown }).inbox),
         }
       },
       'session/close': (params: RequestParams<'session/close'>, call: MethodContext) => {
@@ -205,6 +233,10 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
       },
       'session/cancel': (params: RequestParams<'session/cancel'>) => {
         sessions.cancel({ sessionId: sid(params.sessionId) })
+        return { accepted: true as const }
+      },
+      'session/queue/update': async (params: RequestParams<'session/queue/update'>) => {
+        await sessions.updateQueue({ sessionId: sid(params.sessionId), itemId: params.itemId as never, action: { kind: params.action } })
         return { accepted: true as const }
       },
     }),

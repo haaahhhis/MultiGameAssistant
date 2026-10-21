@@ -50,7 +50,7 @@ export function PermissionsPage({ client }: { client: AdgClient }) {
           ))}
         </div>
         {state?.mode === 'full' && (
-          <div className="notice warn-note left small"><Icon name="alert" /><span>完全访问已打开{state.since === undefined ? '' : `（${relativeTime(state.since, now)}）`}。agent 不会再请求确认；它仍然不会替你输入密码、验证码或付款。用完记得改回「每次确认」。</span></div>
+          <div className="notice warn-note left small"><Icon name="alert" /><span>完全访问一直开着，没有时间限制，直到你改回「每次确认」{state.since === undefined ? '' : `（${openedAgo(state.since, now)}）`}。agent 不会再请求确认；它仍然不会替你输入密码、验证码或付款。</span></div>
         )}
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
       </section>
@@ -72,4 +72,11 @@ export function PermissionsPage({ client }: { client: AdgClient }) {
       )}
     </div>
   )
+}
+
+/** When full access was turned on, in words: 「3 小时前打开」 (relativeTime alone reads like a time limit). */
+function openedAgo(since: number, now: number): string {
+  const ago = relativeTime(since, now)
+  if (ago === '刚刚') return '刚刚打开'
+  return /^\d+ (分钟|小时|天)$/.test(ago) ? `${ago}前打开` : `${ago} 打开`
 }

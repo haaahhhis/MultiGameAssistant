@@ -277,6 +277,14 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .session-heading { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .breadcrumb { display: flex; align-items: baseline; gap: 0; min-width: 0; font-size: 13px; color: var(--muted); }
 .breadcrumb h1 { margin: 0; min-width: 0; font-size: 14.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.session-title h1 { cursor: text; }
+.rename-button { width: 24px; height: 24px; padding: 0; border-color: transparent; opacity: 0; color: var(--muted); }
+.rename-button .ui-icon { width: 14px; height: 14px; }
+.session-title:hover .rename-button, .rename-button:focus-visible { opacity: 1; }
+@media (hover: none) { .rename-button { opacity: 1; } }
+.title-edit { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.title-edit .text-input { height: 30px; font-size: 14px; font-weight: 600; min-width: 220px; max-width: 420px; }
 .breadcrumb-divider { margin: 0 8px; color: var(--faint); }
 .session-meta { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; color: var(--muted); }
 .session-meta > * { flex-shrink: 0; }
@@ -472,6 +480,15 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .approval-elsewhere { display: flex; align-items: center; gap: 8px; background: var(--raised); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); box-shadow: var(--shadow-pop); font-size: 13px; text-align: left; }
 .approval-elsewhere .ui-icon { width: 15px; height: 15px; margin-left: auto; color: var(--muted); }
 .approval-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+/* messages waiting in the session's queue (Composer) */
+.queue { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.queue-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border: 1px dashed var(--border); border-radius: var(--r-md, 10px); background: var(--raised); font-size: 13px; min-width: 0; }
+.queue-tag { flex-shrink: 0; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; color: var(--muted); background: var(--sunken); }
+.queue-tag.next-step { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-when { flex-shrink: 0; font-size: 12px; }
+.queue-item .small-button { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+@media (max-width: 720px) { .queue-when { display: none; } }
 .question-card { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
 .question-card .approval-head > .ui-icon { color: var(--accent); }
 .question-item { display: flex; flex-direction: column; gap: 8px; padding-left: 30px; }

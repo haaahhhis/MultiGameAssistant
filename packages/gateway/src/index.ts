@@ -26,10 +26,11 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
 import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
-import { ErrorCode, PERMISSIONS_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams } from '@adg/protocol'
+import type { SkillSummary } from '@deepseek-ai/dsh-skill'
+import { ErrorCode, PERMISSIONS_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
-import { builtinCapabilities, toSessionItem, toSessionModel } from './builtin.ts'
+import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -325,6 +326,34 @@ export class AdgGateway extends Service {
       }), 'adg-gateway capability attachments')
     })
 
+    // The agent's skills, for people to look at (packs, game packs, the app's own, the user's folders).
+    ctx.inject(['skills'], scoped => {
+      const info = (s: SkillSummary): SkillInfo => ({
+        name: s.name,
+        description: s.description,
+        ...(s.whenToUse === undefined ? {} : { whenToUse: s.whenToUse }),
+        source: s.source,
+        provider: s.provider,
+        ...(s.path === undefined ? {} : { path: s.path }),
+        modelInvocable: s.invocation.modelInvocable,
+        userInvocable: s.invocation.userInvocable,
+      })
+      const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
+      scoped.effect(() => this.registry.register({
+        id: SKILLS_CAPABILITY,
+        version: 1,
+        methods: {
+          'skills/list': async (_params, call) => ({ skills: (await scoped.skills.list(options(call.signal))).map(info) }),
+          'skills/get': async (params, call) => {
+            const { name } = params as RequestParams<'skills/get'>
+            const skill = await scoped.skills.get(name, options(call.signal))
+            if (skill === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
+            return { ...info(skill), content: skill.content }
+          },
+        },
+      }), 'adg-gateway capability skills')
+    })
+
     // Session list deltas come from the controller's own lifecycle events.
     ctx.on('api-session/added', summary => {
       this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary) })
@@ -472,6 +501,8 @@ export class AdgGateway extends Service {
             this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title } })
           } else if (frame.key === 'modelSelection') {
             this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(frame.value) })
+          } else if (frame.key === 'inbox') {
+            this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(frame.value) })
           }
         }
       } catch (error) {
