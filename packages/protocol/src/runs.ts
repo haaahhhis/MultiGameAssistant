@@ -25,7 +25,11 @@ export const TaskParamInfo = z.object({
 export const LaunchSettings = z.object({
   /** `auto`: only when the script will not and the game is not running; `platform`: always unless running; `off`: never. */
   mode: z.enum(['auto', 'platform', 'off']),
-  /** PC game program (for tasks that use the desktop). */
+  /** PC launch implementation; MaaEnd uses its standalone LaunchGamePC pretask. */
+  pcLaunch: z.enum(['program', 'maaend']).optional(),
+  /** MaaEnd launcher region; defaults to CN. */
+  pcRegion: z.enum(['CN', 'Global', 'Bilibili', 'TapTap', 'Steam', 'Epic']).optional(),
+  /** PC game program, or the official Launcher.exe for MaaEnd. */
   pcExe: z.string().optional(),
   /** Its process name, when it differs from the program's file name. */
   pcProcess: z.string().optional(),
@@ -179,6 +183,8 @@ export const RunRequests = {
     params: z.object({
       scriptId: ScriptId,
       mode: z.enum(['auto', 'platform', 'off']).optional(),
+      pcLaunch: z.enum(['program', 'maaend']).nullable().optional(),
+      pcRegion: z.enum(['CN', 'Global', 'Bilibili', 'TapTap', 'Steam', 'Epic']).nullable().optional(),
       pcExe: z.string().trim().nullable().optional(),
       pcProcess: z.string().trim().nullable().optional(),
       androidPackage: z.string().trim().regex(/^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/, '安卓包名像 com.example.game').nullable().optional(),

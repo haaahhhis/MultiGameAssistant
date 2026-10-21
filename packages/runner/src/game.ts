@@ -90,6 +90,7 @@ export interface GameStart {
   /** Injected for tests. */
   readonly processRunning?: (name: string) => Promise<boolean>
   readonly startProgram?: (exe: string) => void
+  readonly launchMaaEnd?: (start: GameStart) => Promise<void>
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
 }
 
@@ -128,12 +129,19 @@ export async function ensureGame(start: GameStart): Promise<void> {
   if (start.input === 'desktop' || start.input === 'window') {
     const exe = settings.pcExe
     const processName = settings.pcProcess ?? game?.pc?.process ?? (exe === undefined ? undefined : basename(exe))
-    if (exe === undefined) return
+    const maaend = settings.pcLaunch === 'maaend'
+    if (exe === undefined && !maaend) return
     const running = start.processRunning ?? processRunning
     if (processName !== undefined && await running(processName)) {
       line(`${name}（${processName}）已经在运行`)
       return
     }
+    if (maaend) {
+      line(`通过 MaaEnd LaunchGamePC 启动${name}（官方启动器）`)
+      await (start.launchMaaEnd ?? launchMaaEnd)(start)
+      return
+    }
+    if (exe === undefined) return
     line(`启动${name}：${exe}`)
     ;(start.startProgram ?? startProgram)(exe)
     // Wait for it to show up (launchers may take a while), then give it time to load.
@@ -143,6 +151,33 @@ export async function ensureGame(start: GameStart): Promise<void> {
       await sleep(startupMs, start.signal)
     }
   }
+}
+
+/** Reuse MaaEnd's launcher recognition pipeline; never start Endfield.exe directly. */
+export function launchMaaEnd(start: GameStart): Promise<void> {
+  if (!start.scriptDir) return Promise.reject(new Error('MaaEnd 尚未安装，无法运行 LaunchGamePC'))
+  const launcher = start.settings.pcExe
+  if (launcher !== undefined && !/(?:^|[\\/])launcher\.exe$/i.test(launcher)) {
+    return Promise.reject(new Error('MaaEnd 启动路径必须是官方 Launcher.exe，不能直接运行 Endfield.exe；清除路径可自动查找'))
+  }
+  const options = {
+    LaunchGamePCRegion: start.settings.pcRegion ?? 'CN',
+    LaunchGamePCLauncherPath: launcher === undefined ? 'Auto' : 'Manual',
+    ...(launcher === undefined ? {} : { LaunchGamePCLauncherExe: { LauncherExe: launcher } }),
+    LaunchGamePCGameSetting: 'No',
+  }
+  return new Promise((resolve, reject) => {
+    execFile(join(start.scriptDir, 'agent', 'go-service.exe'), ['--pretask', 'LaunchGamePC', JSON.stringify(options)], {
+      cwd: start.scriptDir, signal: start.signal, timeout: 240_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true,
+    }, (error, _stdout, stderr) => {
+      if (error !== null) {
+        reject(new Error(`MaaEnd LaunchGamePC 启动失败：${error.message}${stderr.trim() ? `\n${stderr.trim().slice(-2000)}` : ''}`, { cause: error }))
+        return
+      }
+      start.line('MaaEnd LaunchGamePC 完成，游戏窗口已就绪')
+      resolve()
+    })
+  })
 }
 
 /** Is a process with this image name running? (Windows `tasklist`.) */

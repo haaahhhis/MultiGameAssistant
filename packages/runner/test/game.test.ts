@@ -251,3 +251,40 @@ tasks:
   assert.deepEqual(await runner.startGame('tool', 'pc', AbortSignal.timeout(5000)), ['测试游戏（Game.exe）已经在运行'])
   assert.equal(runner.locks.held().size, 0, 'no lock left behind')
 })
+
+test('MaaEnd standalone launch uses its pretask without a program path and keeps desktop locking', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-maaend-'))
+  const manifest = parseManifest('id: maaend\nname: MaaEnd\nlaunch: { exe: MaaEnd.exe }\ngame:\n  pc: { process: Endfield.exe }\n  startupSeconds: 0\n')
+  let running = false
+  let fail = false
+  let calls = 0
+  const runner = new Runner({
+    library: { get: id => ({ id, name: 'MaaEnd', source: { kind: 'local', path: dir }, dir, versions: [], addedAt: 0 }) as ScriptInfo, packOf: () => ({ manifest }) },
+    dataDir: mkdtempSync(join(tmpdir(), 'adg-maaend-data-')),
+    onState: () => {}, onLog: () => {}, log: { info() {}, warn() {} },
+    game: {
+      processRunning: async () => running,
+      startProgram: () => { assert.fail('must not start the game executable directly') },
+      launchMaaEnd: async start => {
+        calls++
+        assert.equal(start.scriptDir, dir)
+        assert.equal(start.settings.pcRegion, 'CN')
+        if (fail) throw new Error('pretask failed')
+        running = true
+      },
+    },
+  })
+  await runner.launch.set('maaend', { pcLaunch: 'maaend', pcRegion: 'CN' })
+  const release = runner.locks.acquire(['desktop'], { runId: 'busy', label: 'busy' })
+  await assert.rejects(runner.startGame('maaend', 'pc', AbortSignal.timeout(5000)), /desktop|busy/)
+  assert.equal(calls, 0)
+  release()
+  await runner.startGame('maaend', 'pc', AbortSignal.timeout(5000))
+  assert.equal(calls, 1)
+  await runner.startGame('maaend', 'pc', AbortSignal.timeout(5000))
+  assert.equal(calls, 1, 'already running: do not launch twice')
+  running = false
+  fail = true
+  await assert.rejects(runner.startGame('maaend', 'pc', AbortSignal.timeout(5000)), /pretask failed/)
+  assert.equal(runner.locks.held().size, 0, 'failed launches release the desktop')
+})
