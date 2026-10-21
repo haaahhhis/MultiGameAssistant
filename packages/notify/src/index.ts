@@ -67,7 +67,7 @@ export class AdgNotify extends Service {
 
     ctx.inject(['adgGateway'], scoped => {
       scoped.adgGateway.addApprovalAnswerer({
-        active: () => notify.approvalsActive(),
+        active: sessionId => notify.approvalsActive(sessionId),
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
       })

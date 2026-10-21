@@ -180,8 +180,9 @@ export function FeishuSettingsPage({ client }: { client: AdgClient }) {
       {settings !== undefined && (
         <section className="card">
           <h3>通知</h3>
-          <label className="check-label"><input type="checkbox" checked={settings.approvals} disabled={busy !== null}
-            onChange={e => void act('approvals', () => client.connection.call('feishu/settings/set', { approvals: e.target.checked }))} />需要确认的操作也发到飞书（在飞书或界面里先回答的生效）</label>
+          <label className="check-label"><input type="checkbox" checked={settings.otherApprovals} disabled={busy !== null}
+            onChange={e => void act('approvals', () => client.connection.call('feishu/settings/set', { otherApprovals: e.target.checked }))} />软件里的会话（对话、定时运行、游戏读取）需要确认时也发到飞书</label>
+          <p className="muted small">在飞书里和 agent 的对话需要确认时，只发给发消息的那个人；软件里的会话默认只在界面里问。两边都能回答，先回答的生效。</p>
           <label className="field-label" htmlFor="feishu-chat">同时发到群（可选，填群 ID，机器人需要在群里）</label>
           <div className="key-input">
             <input id="feishu-chat" className="text-input" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="oc_xxxxxxxx" spellCheck={false} />

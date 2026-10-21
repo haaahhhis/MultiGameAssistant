@@ -43,7 +43,7 @@ export interface BotOptions {
   readonly connectTimeoutMs?: number
 }
 
-export const DEFAULT_FEISHU: FeishuSettings = { enabled: false, domain: 'feishu', allowedUsers: [], approvals: true }
+export const DEFAULT_FEISHU: FeishuSettings = { enabled: false, domain: 'feishu', allowedUsers: [], otherApprovals: false }
 
 interface Delivered {
   notice: Notice
@@ -67,7 +67,7 @@ export class FeishuBot implements Channel {
   #secretConfigured = false
   readonly #delivered = new Map<string, Delivered>()
   readonly #byMessage = new Map<string, string>()
-  readonly #approvals = new Map<string, { request: ApprovalRequested; messageIds: string[] }>()
+  readonly #approvals = new Map<string, { request: ApprovalRequested; own: boolean; messageIds: string[] }>()
   readonly #queues = new Map<string, Promise<void>>()
   #generation = 0
   #retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -170,11 +170,11 @@ export class FeishuBot implements Channel {
 
   // ── settings ──────────────────────────────────────────────────────────
 
-  async configure(patch: { enabled?: boolean | undefined; appId?: string | null | undefined; domain?: FeishuSettings['domain'] | undefined; chatId?: string | null | undefined; approvals?: boolean | undefined }): Promise<void> {
+  async configure(patch: { enabled?: boolean | undefined; appId?: string | null | undefined; domain?: FeishuSettings['domain'] | undefined; chatId?: string | null | undefined; otherApprovals?: boolean | undefined }): Promise<void> {
     const next: FeishuSettings = { ...this.#state.settings }
     if (patch.enabled !== undefined) next.enabled = patch.enabled
     if (patch.domain !== undefined) next.domain = patch.domain
-    if (patch.approvals !== undefined) next.approvals = patch.approvals
+    if (patch.otherApprovals !== undefined) next.otherApprovals = patch.otherApprovals
     if (patch.appId !== undefined) { if (patch.appId === null || patch.appId === '') delete next.appId; else next.appId = patch.appId }
     if (patch.chatId !== undefined) { if (patch.chatId === null || patch.chatId === '') delete next.chatId; else next.chatId = patch.chatId }
     const reconnect = next.enabled !== this.#state.settings.enabled || next.appId !== this.#state.settings.appId || next.domain !== this.#state.settings.domain
@@ -306,20 +306,29 @@ export class FeishuBot implements Channel {
     for (const messageId of delivered.messageIds) await api.patchCard(messageId, card).catch(error => this.#options.log.warn(`card patch failed: ${message(error)}`))
   }
 
+  /**
+   * A Feishu conversation's approvals go to its person only; other sessions'
+   * (the UI, schedules) to everyone, and only when 「其他会话」 is on.
+   */
   readonly approvals = {
-    active: () => this.#state.settings.enabled && this.#state.settings.approvals && this.#connection === 'connected' && this.#targets().length > 0,
-    ask: async (request: ApprovalRequested) => {
+    active: (owner: string | undefined) => {
+      const { settings } = this.#state
+      if (!settings.enabled || this.#connection !== 'connected') return false
+      return owner !== undefined ? this.#allowed(owner) : settings.otherApprovals && this.#targets().length > 0
+    },
+    ask: async (request: ApprovalRequested, owner: string | undefined) => {
       const api = this.#ready()
-      const card = approvalCard(request)
+      const own = owner !== undefined
+      const card = approvalCard(request, { own })
       const messageIds: string[] = []
-      for (const target of this.#targets()) messageIds.push(await api.sendCard(target, card))
-      this.#approvals.set(request.approvalId, { request, messageIds })
+      for (const target of own ? [{ openId: owner }] : this.#targets()) messageIds.push(await api.sendCard(target, card))
+      this.#approvals.set(request.approvalId, { request, own, messageIds })
     },
     resolved: async (approvalId: string, outcome: string) => {
       const entry = this.#approvals.get(approvalId)
       if (entry === undefined || this.#api === undefined) return
       this.#approvals.delete(approvalId)
-      const card = approvalCard(entry.request, { outcome: OUTCOME[outcome] ?? outcome })
+      const card = approvalCard(entry.request, { own: entry.own, outcome: OUTCOME[outcome] ?? outcome })
       for (const messageId of entry.messageIds) await this.#api.patchCard(messageId, card).catch(() => {})
     },
   }
@@ -407,7 +416,7 @@ export class FeishuBot implements Channel {
       const answered = notify.respondApproval(id, decision, actor)
       if (!answered) return { toast: { type: 'info', content: '这个请求已经在别处回答过了' } }
       const outcome = `${decision === 'allow-once' ? '已允许这一次' : '已拒绝'}（${actor.name ?? actor.userId}）`
-      return { toast: { type: 'success', content: outcome }, ...(entry === undefined ? {} : { card: approvalCard(entry.request, { outcome }) }) }
+      return { toast: { type: 'success', content: outcome }, ...(entry === undefined ? {} : { card: approvalCard(entry.request, { own: entry.own, outcome }) }) }
     }
     if (kind === 'notice' && typeof id === 'string' && typeof event.value['action'] === 'string') {
       const work = notify.act(id, event.value['action'], actor)

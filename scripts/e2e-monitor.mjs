@@ -16,6 +16,8 @@
  * 4. A Feishu message becomes a conversation with the agent: it looks at the
  *    incidents and the answer comes back as a reply.
  * 5. An approval the agent needs is sent as a card and answered from Feishu.
+ * 6. A session in the app keeps its approvals out of Feishu, unless
+ *    「软件里的会话需要确认时也发到飞书」 is on.
  *
  *   ADG_GATEWAY_TOKEN=dev-token ADG_FEISHU_BASE_URL=http://127.0.0.1:3299 pnpm dev:host
  *   ADG_GATEWAY_TOKEN=dev-token pnpm e2e:monitor
@@ -91,6 +93,8 @@ const llm = await startFakeLlm({
   replies: [
     call('monitor_incidents', { status: 'all' }), { text: '刚才「会出错的任务」遇到了不认识的界面，已经按你的要求停止了；「会断线的任务」断线后自动重跑成功。' },
     call(SHELL, { description: 'Print hi', command: 'echo hi', sandbox_permissions: 'danger-full-access', justification: 'e2e：在飞书里确认' }), { text: '命令已经运行，输出 hi。' },
+    call(SHELL, { description: 'Print ui-1', command: 'echo ui-1', sandbox_permissions: 'danger-full-access', justification: 'e2e：只在界面里确认' }), { text: '运行了 ui-1。' },
+    call(SHELL, { description: 'Print ui-2', command: 'echo ui-2', sandbox_permissions: 'danger-full-access', justification: 'e2e：也发到飞书' }), { text: '运行了 ui-2。' },
   ],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
@@ -129,7 +133,7 @@ try {
 
   // 1. Feishu
   await rpc('credentials/set', { ref: SECRET_REF, value: 'secret-ok' })
-  await rpc('feishu/settings/set', { appId: APP_ID, enabled: true, approvals: true })
+  await rpc('feishu/settings/set', { appId: APP_ID, enabled: true })
   const ready = await until('the Feishu bot to connect (was the host started with ADG_FEISHU_BASE_URL?)', async () => {
     const { channels } = await rpc('notify/status', {})
     const channel = channels.find(c => c.id === 'feishu')
@@ -187,6 +191,25 @@ try {
   if (allowed?.toast?.type !== 'success') fail(`approval click answered ${JSON.stringify(allowed)}`)
   await feishu.waitForMessage(m => m.kind === 'reply' && m.text.includes('输出 hi'), 120_000)
   step('an approval went to Feishu as a card and was answered there', allowed.toast.content)
+
+  // 6. a session in the app keeps its approvals to itself, unless 「软件里的会话」 is on
+  const seen = new Set()
+  const uiApproval = async text => {
+    const requested = gateway.waitFor(m => m.method === 'approval/requested' && m.params.sessionId === uiSession, 'an approval in the UI session', 120_000)
+    await rpc('session/prompt', { sessionId: uiSession, requestId: `p-${Date.now()}`, text, mode: 'queue' })
+    const request = await requested
+    await delay(1500)
+    const card = feishu.messages.find(m => m.kind === 'create' && m.text.includes('需要你确认') && m.text.includes(uiSession) && !seen.has(m.id))
+    for (const m of feishu.messages) seen.add(m.id)
+    await rpc('approval/respond', { approvalId: request.approvalId, decision: 'allow-once' })
+    return card
+  }
+  if ((await uiApproval('运行 ui-1')) !== undefined) fail('a UI session’s approval was sent to Feishu')
+  await rpc('feishu/settings/set', { otherApprovals: true })
+  const shared = await uiApproval('运行 ui-2')
+  await rpc('feishu/settings/set', { otherApprovals: false })
+  if (shared === undefined) fail('with 「软件里的会话」 on, the UI session’s approval did not reach Feishu')
+  step('a UI session’s approval stayed in the UI; with 「软件里的会话」 on it also went to Feishu')
 
   console.log(`\nM3 end-to-end OK (${steps.length} steps); fake Feishu saw ${feishu.messages.length} messages, the fake model ${llm.requests.length} requests`)
 } catch (error) {

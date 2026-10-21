@@ -111,9 +111,10 @@ test('card buttons: notice actions answer with a toast; approvals answer once', 
   assert.equal((await click({ kind: 'notice', id: 'inc-1', action: 'stop' }, 'ou_other'))?.toast?.type, 'error', 'strangers cannot press buttons')
 
   const request: ApprovalRequested = { approvalId: 'ap-1', sessionId: 'sess', toolName: 'pwsh', reason: '安装 VC++ 运行库' }
-  assert.equal(bot.approvals.active(), true)
-  await bot.approvals.ask(request)
+  assert.equal(bot.approvals.active('ou_me'), true)
+  await bot.approvals.ask(request, 'ou_me')
   assert.match(JSON.stringify(fake.sent.at(-1)!.card), /agent 想要执行：pwsh/)
+  assert.match(JSON.stringify(fake.sent.at(-1)!.card), /来自：你在飞书里的对话/)
   const first = await click({ kind: 'approval', id: 'ap-1', decision: 'allow-once' })
   assert.equal(first?.toast?.type, 'success')
   assert.match(JSON.stringify(first?.card), /已允许这一次（我）/)
@@ -121,6 +122,23 @@ test('card buttons: notice actions answer with a toast; approvals answer once', 
   assert.deepEqual(answered, ['ap-1:allow-once', 'ap-1:reject'])
   await bot.approvals.resolved('ap-1', 'allowed-once')
   assert.match(JSON.stringify(fake.patched.at(-1)!.card), /已允许这一次/)
+})
+
+test('approvals stay in their conversation: the asker only; other sessions only when 「软件里的会话」 is on', async () => {
+  const users = [{ openId: 'ou_me', name: '我', addedAt: 0 }, { openId: 'ou_mate', name: '同事', addedAt: 0 }]
+  const { bot, fake } = setup({ chatId: 'oc_group', allowedUsers: users })
+  await bot.start()
+  const own: ApprovalRequested = { approvalId: 'ap-own', sessionId: 'chat', toolName: 'pwsh' }
+  await bot.approvals.ask(own, 'ou_mate')
+  assert.deepEqual(fake.sent.map(s => s.to), [{ openId: 'ou_mate' }], 'not the group, not the other person')
+  assert.equal(bot.approvals.active('ou_stranger'), false, 'a conversation of someone no longer allowed gets nothing')
+
+  assert.equal(bot.approvals.active(undefined), false, 'sessions in the app are not sent by default')
+  await bot.configure({ otherApprovals: true })
+  assert.equal(bot.approvals.active(undefined), true)
+  await bot.approvals.ask({ approvalId: 'ap-ui', sessionId: 'ui-session', toolName: 'pwsh' }, undefined)
+  assert.deepEqual(fake.sent.slice(1).map(s => s.to), [{ openId: 'ou_me' }, { openId: 'ou_mate' }, { chatId: 'oc_group' }])
+  assert.match(JSON.stringify(fake.sent.at(-1)!.card), /来自：软件里的会话 ui-session/)
 })
 
 test('bad credentials, missing secret and a disabled channel are reported, not thrown', async () => {
@@ -138,7 +156,7 @@ test('bad credentials, missing secret and a disabled channel are reported, not t
   const off = setup({ enabled: false })
   await off.bot.start()
   assert.equal(off.bot.status().state, 'off')
-  assert.equal(off.bot.approvals.active(), false)
+  assert.equal(off.bot.approvals.active('ou_me'), false)
 })
 
 test('a start that could not connect tries again by itself until it does', async () => {

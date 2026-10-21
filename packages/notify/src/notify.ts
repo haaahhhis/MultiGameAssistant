@@ -8,8 +8,9 @@
  *   the notice it replies to, or on the only open notice offering it.
  * - Conversation: anything else goes to the agent in a dsh session kept per
  *   person, and the agent's final answer is the reply.
- * - Approvals: channels that can show approval cards get every question the
- *   agent asks; the first answer anywhere (UI or chat) wins.
+ * - Approvals: a chat conversation's questions go to its person only, on its
+ *   channel; other sessions' questions go to channels that take them (Feishu's
+ *   「其他会话」 setting). The first answer anywhere (UI or chat) wins.
  *
  * Channels (Feishu now; QQ / WeCom / Telegram later) only translate.
  */
@@ -61,10 +62,14 @@ export interface Channel {
   update?(id: string, patch: NoticePatch): Promise<void>
   /** Deliver to one person only (a reply to something they asked for). */
   sendTo?(userId: string, notice: Notice): Promise<void>
-  /** Approval cards, when the channel and its settings allow them. */
+  /**
+   * Approval cards, when the channel and its settings allow them. `owner`: the
+   * person on this channel whose conversation asks (send to them only);
+   * undefined for a session started anywhere else.
+   */
   readonly approvals?: {
-    active(): boolean
-    ask(request: ApprovalRequested): Promise<void>
+    active(owner: string | undefined): boolean
+    ask(request: ApprovalRequested, owner: string | undefined): Promise<void>
     resolved(approvalId: string, outcome: string): Promise<void>
   }
 }
@@ -125,9 +130,9 @@ export class Notify {
     return [...this.#channels.values()].map(c => c.status())
   }
 
-  /** Approval questions can go somewhere right now. */
-  approvalsActive(): boolean {
-    return [...this.#channels.values()].some(c => c.approvals?.active() === true)
+  /** Questions from `sessionId` can go somewhere right now. */
+  approvalsActive(sessionId: string): boolean {
+    return this.#approvalRoutes(sessionId).length > 0
   }
 
   // ── notices ───────────────────────────────────────────────────────────
@@ -242,10 +247,25 @@ export class Notify {
   // ── approvals ─────────────────────────────────────────────────────────
 
   askApproval(request: ApprovalRequested): void {
-    for (const channel of this.#channels.values()) {
-      if (channel.approvals?.active() !== true) continue
-      void channel.approvals.ask(request).catch(error => this.#options.log.warn(`approval card via ${channel.id} failed: ${message(error)}`))
+    for (const { channel, owner } of this.#approvalRoutes(request.sessionId)) {
+      void channel.approvals!.ask(request, owner).catch(error => this.#options.log.warn(`approval card via ${channel.id} failed: ${message(error)}`))
     }
+  }
+
+  /**
+   * Where a question from `sessionId` may go: a chat conversation's only to its
+   * person (not the group, other people or other channels); any other
+   * session's to the channels that take those.
+   */
+  #approvalRoutes(sessionId: string): { channel: Channel; owner: string | undefined }[] {
+    const key = this.#options.sessions.keyOf?.(sessionId)
+    if (key !== undefined) {
+      const [channelId, ...rest] = key.split(':')
+      const channel = this.#channels.get(channelId!)
+      const owner = rest.join(':')
+      return channel?.approvals?.active(owner) === true ? [{ channel, owner }] : []
+    }
+    return [...this.#channels.values()].filter(c => c.approvals?.active(undefined) === true).map(channel => ({ channel, owner: undefined }))
   }
 
   approvalResolved(approvalId: string, outcome: string): void {

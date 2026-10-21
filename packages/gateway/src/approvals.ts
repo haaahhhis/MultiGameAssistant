@@ -23,8 +23,8 @@ export interface ApprovalAsk {
 
 /** Another place a person can answer approvals, e.g. a Feishu card (`@adg/notify`). */
 export interface ApprovalAnswerer {
-  /** Whether it can reach someone right now (a connected chat channel). */
-  active(): boolean
+  /** Whether it can reach someone for a question from `sessionId` right now (a connected chat channel that shows it). */
+  active(sessionId: string): boolean
   /** A new question; answer it with the gateway's `respondApproval`. */
   asked(request: ApprovalRequested): void
   /** Answered or withdrawn anywhere. */
@@ -56,9 +56,9 @@ export class ApprovalBroker {
     return () => { this.answerers.delete(answerer) }
   }
 
-  /** Whether some answerer besides protocol clients can take a question now. */
-  hasActiveAnswerer(): boolean {
-    for (const answerer of this.answerers) if (safely(() => answerer.active(), false)) return true
+  /** Whether some answerer besides protocol clients can take a question from `sessionId` now. */
+  hasActiveAnswerer(sessionId: string): boolean {
+    for (const answerer of this.answerers) if (safely(() => answerer.active(sessionId), false)) return true
     return false
   }
 
@@ -85,7 +85,7 @@ export class ApprovalBroker {
       })
       ask.signal?.addEventListener('abort', onAbort, { once: true })
       this.options.broadcastRequested(request)
-      for (const answerer of this.answerers) if (safely(() => answerer.active(), false)) safely(() => answerer.asked(request), undefined)
+      for (const answerer of this.answerers) if (safely(() => answerer.active(request.sessionId), false)) safely(() => answerer.asked(request), undefined)
     })
   }
 

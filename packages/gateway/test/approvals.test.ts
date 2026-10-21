@@ -9,8 +9,10 @@ test('answerers get questions while active, and every answerer hears how each on
   const asked: ApprovalRequested[] = []
   const resolved: string[] = []
   let active = true
-  broker.addAnswerer({ active: () => active, asked: r => asked.push(r), resolved: (id, outcome) => resolved.push(`${id}:${outcome}`) })
-  assert.equal(broker.hasActiveAnswerer(), true)
+  const askedFrom: string[] = []
+  broker.addAnswerer({ active: sessionId => { askedFrom.push(sessionId); return active }, asked: r => asked.push(r), resolved: (id, outcome) => resolved.push(`${id}:${outcome}`) })
+  assert.equal(broker.hasActiveAnswerer('s'), true)
+  assert.deepEqual(askedFrom, ['s'], 'answerers decide per session')
 
   const answer = broker.ask({ sessionId: 's', toolName: 'pwsh', reason: '安装依赖' })
   assert.equal(asked.length, 1)
@@ -21,7 +23,7 @@ test('answerers get questions while active, and every answerer hears how each on
   assert.deepEqual(broadcast, ['asked:pwsh', 'resolved:allowed-once'])
 
   active = false
-  assert.equal(broker.hasActiveAnswerer(), false)
+  assert.equal(broker.hasActiveAnswerer('s'), false)
   const withdrawn = new AbortController()
   const second = broker.ask({ sessionId: 's', toolName: 'write', signal: withdrawn.signal })
   assert.equal(asked.length, 1, 'an inactive answerer is not asked')

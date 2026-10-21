@@ -40,9 +40,10 @@ export function noticeCard(notice: Notice, options: { imageKey?: string | undefi
   }
 }
 
-export function approvalCard(request: ApprovalRequested, options: { outcome?: string | undefined } = {}): object {
+/** `own`: asked in the person's own Feishu conversation (else a session in the app). */
+export function approvalCard(request: ApprovalRequested, options: { outcome?: string | undefined; own?: boolean } = {}): object {
   const reason = request.displayReason?.['zh-CN'] ?? request.displayReason?.['zh'] ?? request.reason
-  const lines = [`agent 想要执行：${request.toolName}`, ...(reason === undefined ? [] : [`原因：${reason}`]), `会话：${request.sessionId}`]
+  const lines = [`agent 想要执行：${request.toolName}`, ...(reason === undefined ? [] : [`原因：${reason}`]), options.own === true ? '来自：你在飞书里的对话' : `来自：软件里的会话 ${request.sessionId}`]
   return {
     config: { wide_screen_mode: true, update_multi: true },
     header: { template: options.outcome === undefined ? 'orange' : 'grey', title: plain('需要你确认') },

@@ -127,7 +127,7 @@ export class AdgGateway extends Service {
         this.broadcast('permissions/changed', this.permissions.state())
         return Promise.resolve('allowed-once' as const)
       }
-      if (!this.hasClients() && !this.approvals.hasActiveAnswerer()) return next()
+      if (!this.hasClients() && !this.approvals.hasActiveAnswerer(request.agent.session.id)) return next()
       return this.approvals.ask({
         sessionId: request.agent.session.id,
         toolName: request.toolName,

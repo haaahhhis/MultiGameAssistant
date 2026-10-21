@@ -3,17 +3,23 @@ import { test } from 'node:test'
 import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
 import { Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
 
-function fakeChannel(state: ChannelStatus['state'] = 'ready') {
+function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: string; others?: boolean } = {}) {
+  const id = options.id ?? 'fake'
   const sent: Notice[] = []
   const asked: ApprovalRequested[] = []
+  const owners: (string | undefined)[] = []
   const resolved: string[] = []
   const channel: Channel = {
-    id: 'fake', name: '假渠道',
-    status: () => ({ id: 'fake', name: '假渠道', state, recipients: 1, checks: [] }),
+    id, name: '假渠道',
+    status: () => ({ id, name: '假渠道', state, recipients: 1, checks: [] }),
     send: async notice => { sent.push(notice) },
-    approvals: { active: () => state === 'ready', ask: async request => { asked.push(request) }, resolved: async (id, outcome) => { resolved.push(`${id}:${outcome}`) } },
+    approvals: {
+      active: owner => state === 'ready' && (owner !== undefined || options.others !== false),
+      ask: async (request, owner) => { asked.push(request); owners.push(owner) },
+      resolved: async (approvalId, outcome) => { resolved.push(`${approvalId}:${outcome}`) },
+    },
   }
-  return { channel, sent, asked, resolved }
+  return { channel, sent, asked, owners, resolved }
 }
 
 function setup(conversations?: Conversations) {
@@ -22,7 +28,7 @@ function setup(conversations?: Conversations) {
   const notify = new Notify({
     conversations: () => conversations,
     respondApproval: (id, decision) => { answered.push(`${id}:${decision}`); return true },
-    sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.set(key, id) } },
+    sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.set(key, id) }, keyOf: id => [...sessions].find(([, s]) => s === id)?.[0] },
     changed: () => {},
     log: { info() {}, warn() {} },
   })
@@ -89,6 +95,32 @@ test('approvals go to channels that can show them; the answer goes back to the g
   assert.deepEqual(answered, ['ap-1:allow-once'])
   notify.approvalResolved('ap-1', 'allowed-once')
   assert.deepEqual(ready.resolved, ['ap-1:allowed-once'])
+})
+
+test('a chat conversation’s approvals go to its person only; other sessions’ only where channels take them', async () => {
+  const { notify, sessions } = setup()
+  const feishu = fakeChannel('ready', { id: 'feishu', others: false })
+  const other = fakeChannel('ready', { id: 'qq' })
+  notify.registerChannel(feishu.channel)
+  notify.registerChannel(other.channel)
+  sessions.set('feishu:ou_1', 'chat-1')
+
+  const fromChat: ApprovalRequested = { approvalId: 'ap-chat', sessionId: 'chat-1', toolName: 'pwsh' }
+  assert.equal(notify.approvalsActive('chat-1'), true)
+  notify.askApproval(fromChat)
+  assert.deepEqual(feishu.asked, [fromChat])
+  assert.deepEqual(feishu.owners, ['ou_1'], 'sent to the person whose conversation it is')
+  assert.deepEqual(other.asked, [], 'and to no other channel')
+
+  const fromUi: ApprovalRequested = { approvalId: 'ap-ui', sessionId: 'ui-1', toolName: 'pwsh' }
+  notify.askApproval(fromUi)
+  assert.deepEqual(feishu.asked, [fromChat], 'a channel that does not take other sessions’ questions gets none')
+  assert.deepEqual(other.asked, [fromUi])
+  assert.deepEqual(other.owners, [undefined])
+
+  const lone = setup()
+  lone.notify.registerChannel(fakeChannel('ready', { id: 'feishu', others: false }).channel)
+  assert.equal(lone.notify.approvalsActive('ui-1'), false, 'nothing can answer a UI session’s question: the UI asks alone')
 })
 
 test('test notices report channels that are not ready', async () => {

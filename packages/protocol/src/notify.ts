@@ -47,8 +47,12 @@ export const FeishuSettings = z.object({
   allowedUsers: z.array(FeishuUser),
   /** Also post notices to this group chat (`oc_…`). */
   chatId: z.string().optional(),
-  /** Send approval requests as cards (answered by whoever is first: UI or Feishu). */
-  approvals: z.boolean(),
+  /**
+   * Also send approvals from sessions not started in Feishu (the UI, schedules,
+   * game reading) as cards to everyone above. A Feishu conversation's own
+   * approvals always go to its person only, whatever this says.
+   */
+  otherApprovals: z.boolean(),
 })
 export type FeishuSettings = z.infer<typeof FeishuSettings>
 
@@ -88,7 +92,7 @@ export const NotifyRequests = {
       appId: z.string().trim().regex(/^cli_[0-9a-fA-F]{16}$/, 'App ID 是 cli_ 加 16 位字母数字，在「凭证与基础信息」里复制').nullable().optional(),
       domain: z.enum(['feishu', 'lark']).optional(),
       chatId: z.string().trim().regex(/^oc_[A-Za-z0-9]+$/, '群 ID 以 oc_ 开头').nullable().optional(),
-      approvals: z.boolean().optional(),
+      otherApprovals: z.boolean().optional(),
     }),
     result: FeishuView,
   },
