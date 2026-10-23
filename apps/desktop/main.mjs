@@ -18,18 +18,34 @@ import { randomBytes } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareAdgProfile } from '../../scripts/profile.mjs'
+import { prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = resolve(here, '..', '..') // the repository root
-const paths = {
-  dshBin: join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
-  bundleDir: join(root, 'packages', 'bundle'),
-  uiDir: join(root, 'apps', 'web', 'dist'),
-  // Development shares sessions with `pnpm dev:host`; DSH_HOME overrides.
-  home: process.env.DSH_HOME ?? join(root, '.dev-home'),
-}
+/**
+ * Installed (scripts/package-desktop.mjs writes installed.json): dsh and the
+ * bundle are in this folder's node_modules, the UI in web/, and the data in
+ * %LOCALAPPDATA%\AutoDailyGamePlay (outside the install folder, so upgrades
+ * and uninstalling keep it). Otherwise this runs from the repository.
+ */
+const installed = readInstalled()
+const paths = installed !== undefined
+  ? {
+      dshBin: join(here, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      bundleDir: join(here, 'node_modules', '@adg', 'bundle'),
+      uiDir: join(here, 'web'),
+      home: process.env.DSH_HOME ?? join(process.env.LOCALAPPDATA ?? app.getPath('appData'), 'AutoDailyGamePlay'),
+    }
+  : (() => {
+      const root = resolve(here, '..', '..') // the repository root
+      return {
+        dshBin: join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+        bundleDir: join(root, 'packages', 'bundle'),
+        uiDir: join(root, 'apps', 'web', 'dist'),
+        // Development shares sessions with `pnpm dev:host`; DSH_HOME overrides.
+        home: process.env.DSH_HOME ?? join(root, '.dev-home'),
+      }
+    })()
 /** Files opened directly from a link; the rest are only shown in Explorer. */
 const VIEWABLE = /\.(txt|log|md|json|jsonl|ya?ml|toml|ini|cfg|conf|csv|xml|html?|png|jpe?g|gif|webp|bmp|pdf)$/i
 const READY_TIMEOUT_MS = 180_000
@@ -170,7 +186,7 @@ async function start() {
   await showSplash({ step: 'env', title: '正在准备运行环境' })
 
   if (!existsSync(join(paths.uiDir, 'index.html'))) {
-    await fail('界面还没有构建', '请先在项目目录运行 pnpm build（或用 pnpm desktop:dev 启动）。')
+    await fail('界面还没有构建', installed === undefined ? '请先在项目目录运行 pnpm build（或用 pnpm desktop:dev 启动）。' : `安装不完整（缺少 ${paths.uiDir}），请重新运行安装程序。`)
     return
   }
   // Let the splash paint before the synchronous profile work below.
@@ -254,6 +270,20 @@ function windowChrome(contents) {
     }
     event.preventDefault()
   })
+}
+
+/**
+ * What the packaging script recorded about this build (version, commit, when);
+ * undefined when running from the repository.
+ * @returns {{ version: string, commit?: string, builtAt?: string } | undefined}
+ */
+function readInstalled() {
+  try {
+    const value = JSON.parse(readFileSync(join(here, 'installed.json'), 'utf8'))
+    return typeof value?.version === 'string' ? value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function logDir() {

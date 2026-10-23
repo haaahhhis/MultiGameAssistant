@@ -1,7 +1,8 @@
 /**
  * Shared profile setup: make `<home>/profiles/adg` boot
  * dsh-base → dsh-web-app → @adg/bundle, with the local bundle linked in
- * place. Used by `pnpm dev:home` and by the Electron shell on every start.
+ * place. Used by the Electron shell on every start (from the repository or
+ * installed) and by `pnpm dev:home`.
  */
 import { execFileSync } from 'node:child_process'
 import {

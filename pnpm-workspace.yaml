@@ -11,3 +11,5 @@ allowBuilds:
   electron: true
   '@google/genai': false
   protobufjs: false
+  # electron-builder's Squirrel target; not used (the installer is NSIS).
+  electron-winstaller: false

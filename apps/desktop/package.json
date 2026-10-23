@@ -10,6 +10,11 @@
     "dev": "pnpm --filter @adg/web run build && electron ."
   },
   "devDependencies": {
-    "electron": "44.7.0"
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0"
+  },
+  "dependencies": {
+    "@adg/bundle": "workspace:*",
+    "@deepseek-ai/dsh": "0.2.1-alpha.2"
   }
 }

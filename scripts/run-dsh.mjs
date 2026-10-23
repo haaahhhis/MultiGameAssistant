@@ -10,7 +10,7 @@ const bin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 const args = ['--profile', 'adg', ...process.argv.slice(2)]
 if (!args.includes('--no-open')) args.push('--no-open')
 const home = process.env.DSH_HOME ?? join(root, '.dev-home')
-// The agent's working folder, apart from the repository (see agentWorkspace in profile.mjs).
+// The agent's working folder, apart from the repository (see agentWorkspace in apps/desktop/profile.mjs).
 mkdirSync(process.env.ADG_WORKSPACE_DIR || join(home, 'adg', 'workspace'), { recursive: true })
 const child = spawn(process.execPath, [bin, ...args], {
   env: { ...process.env, DSH_HOME: home },

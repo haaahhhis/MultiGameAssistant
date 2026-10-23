@@ -2,7 +2,7 @@
 /** Prepare .dev-home with profile "adg" (see profile.mjs). */
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareAdgProfile } from './profile.mjs'
+import { prepareAdgProfile } from '../apps/desktop/profile.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const profile = prepareAdgProfile({

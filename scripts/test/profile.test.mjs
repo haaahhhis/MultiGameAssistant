@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { ensureLink } from '../profile.mjs'
+import { ensureLink } from '../../apps/desktop/profile.mjs'
 
 function sandbox() {
   const dir = mkdtempSync(join(tmpdir(), 'adg-link-'))

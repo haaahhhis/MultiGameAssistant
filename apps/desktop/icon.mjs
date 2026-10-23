@@ -77,3 +77,28 @@ function crc32(bytes) {
   for (const b of bytes) c = TABLE[(c ^ b) & 0xff] ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
 }
+
+/**
+ * The same mark as a Windows icon (PNG frames, 16–256 px) for the installed
+ * app and its installer (scripts/package-desktop.mjs).
+ * @returns {Buffer} ICO bytes
+ */
+export function appIconIco() {
+  const frames = [16, 24, 32, 48, 64, 128, 256].map(size => ({ size, png: trayIconPng(size) }))
+  const header = Buffer.alloc(6 + 16 * frames.length)
+  header.writeUInt16LE(0, 0)
+  header.writeUInt16LE(1, 2) // icon
+  header.writeUInt16LE(frames.length, 4)
+  let offset = header.length
+  frames.forEach(({ size, png }, i) => {
+    const at = 6 + i * 16
+    header.writeUInt8(size >= 256 ? 0 : size, at) // 0 means 256
+    header.writeUInt8(size >= 256 ? 0 : size, at + 1)
+    header.writeUInt16LE(1, at + 4) // colour planes
+    header.writeUInt16LE(32, at + 6) // bits per pixel
+    header.writeUInt32LE(png.length, at + 8)
+    header.writeUInt32LE(offset, at + 12)
+    offset += png.length
+  })
+  return Buffer.concat([header, ...frames.map(f => f.png)])
+}

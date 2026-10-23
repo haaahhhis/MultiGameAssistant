@@ -31,7 +31,8 @@
     "check:sites": "node scripts/check-game-sites.mjs",
     "e2e:permissions": "node scripts/e2e-permissions.mjs",
     "e2e:questions": "node scripts/e2e-questions.mjs",
-    "e2e:steer": "node scripts/e2e-steer.mjs"
+    "e2e:steer": "node scripts/e2e-steer.mjs",
+    "package:desktop": "node scripts/package-desktop.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

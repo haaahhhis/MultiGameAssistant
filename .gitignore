@@ -7,3 +7,4 @@ apps/*/dist/
 *.log
 # Machine-specific preview config (absolute Node path).
 .claude/launch.json
+/dist/
