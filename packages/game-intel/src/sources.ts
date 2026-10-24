@@ -30,7 +30,7 @@ export interface SiteVersion {
 
 export type Fetch = (url: string, init: { signal: AbortSignal; headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>
 
-const USER_AGENT = 'AutoDailyGamePlay/0.6 (game event calendar; +https://github.com/haaahhhis/AutoDailyGamePlay)'
+const USER_AGENT = 'AutoDailyGamePlay/0.6 (game event calendar; +https://github.com/haaahhhis/MultiGameAssistant)'
 const TIMEOUT_MS = 25_000
 /** Pages of results followed at most. */
 const MAX_PAGES = 4
