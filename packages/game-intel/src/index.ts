@@ -4,6 +4,7 @@
  * model) and by the agent reading the game screen, and a daily report to the
  * chat channels. Contributes the `games@1` capability.
  */
+import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
@@ -22,7 +23,7 @@ import { z } from 'zod'
 import { Calendar, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport } from './report.ts'
-import { readSmw, readSra, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
+import { readSmw, readSra, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
 
@@ -51,6 +52,9 @@ export type Config = z.input<typeof ConfigSchema>
 const SKILL = new URL('../skills/game-intel.md', import.meta.url)
 /** How to look things up on the web: public APIs first, then wiki query APIs, pages last. */
 const WEB_SKILL = new URL('../skills/web-reading.md', import.meta.url)
+/** Pictures kept for the board, by extension and media type. */
+const IMAGE_TYPES: ReadonlyArray<readonly [string, string]> = [['jpg', 'image/jpeg'], ['png', 'image/png'], ['webp', 'image/webp'], ['gif', 'image/gif'], ['avif', 'image/avif']]
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 /** An agent reading of the game gives up after this long. */
 const READ_TIMEOUT_MS = 20 * 60_000
 
@@ -181,6 +185,10 @@ export class AdgGameIntel extends Service {
             if (calendar.get(id)?.screen?.evidence !== true) throw new Error('这个活动没有保存截图')
             return { mediaType: 'image/png', data: (await readFile(this.evidenceFile(id))).toString('base64') }
           },
+          'games/image': async params => {
+            await this.ready
+            return this.picture((params as RequestParams<'games/image'>).url)
+          },
           'games/catalog': async () => {
             await this.ready
             const followed = new Set(calendar.settings.followed)
@@ -225,6 +233,31 @@ export class AdgGameIntel extends Service {
 
   private changed: (game?: string) => void = () => {}
 
+  /**
+   * A data site's picture, kept on disk after the first fetch (covers rarely
+   * change, and the board shows them every time). Only addresses a data site
+   * gave are fetched: this is not a general-purpose proxy.
+   */
+  private async picture(url: string): Promise<{ mediaType: string; data: string }> {
+    if (!this.calendar.pictures().has(url)) throw new Error('这张图片不是数据站给的地址')
+    const name = createHash('sha256').update(url).digest('hex').slice(0, 32)
+    const dir = join(this.dir, 'images')
+    for (const [ext, mediaType] of IMAGE_TYPES) {
+      const cached = await readFile(join(dir, `${name}.${ext}`)).catch(() => undefined)
+      if (cached !== undefined) return { mediaType, data: cached.toString('base64') }
+    }
+    const response = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { accept: 'image/*', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MultiGameAssistant' } })
+    if (!response.ok) throw new Error(`图片读不到：HTTP ${response.status}`)
+    const mediaType = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
+    const ext = IMAGE_TYPES.find(([, type]) => type === mediaType)?.[0]
+    if (ext === undefined) throw new Error(`不是图片（${mediaType || '没有类型'}）`)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.length > MAX_IMAGE_BYTES) throw new Error('图片太大')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, `${name}.${ext}`), bytes)
+    return { mediaType, data: bytes.toString('base64') }
+  }
+
   // ── games ──
 
   private async loadGames(log: { warn(message: string): void }): Promise<void> {
@@ -267,6 +300,7 @@ export class AdgGameIntel extends Service {
       const refreshed = this.calendar.refreshed(m.id)
       const reading = this.calendar.reading(m.id)
       const version = this.calendar.version(m.id)
+      const pools = this.calendar.pools(m.id, this.clock.now())
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
@@ -276,6 +310,7 @@ export class AdgGameIntel extends Service {
         ...(refreshed === undefined ? {} : { refreshed }),
         ...(reading === undefined ? {} : { reading }),
         ...(version === undefined ? {} : { version }),
+        ...(pools.length === 0 ? {} : { pools }),
       }
     })
   }
@@ -295,6 +330,7 @@ export class AdgGameIntel extends Service {
       const failures: string[] = []
       let count = 0
       let version: ({ source: string } & SiteVersion) | undefined
+      let pools: SitePool[] | undefined
       for (const source of sources) {
         const now = this.clock.now()
         try {
@@ -303,6 +339,7 @@ export class AdgGameIntel extends Service {
             const read = await readSra(source.sra, manifest, now, this.fetch)
             events = read.events
             if (read.version !== undefined) version ??= { source: source.name, ...read.version }
+            pools ??= read.pools
           } else {
             events = await readSmw(source.smw!, manifest, now, this.fetch)
           }
@@ -313,7 +350,7 @@ export class AdgGameIntel extends Service {
         }
       }
       if (failures.length > 0 && count === 0) await this.calendar.refreshFailed(manifest.id, failures.join('；'), this.clock.now())
-      else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.site !== undefined && a.site.source !== 'agent').length, this.clock.now(), version)
+      else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.site !== undefined && a.site.source !== 'agent').length, this.clock.now(), version, pools)
       results.push({ game: manifest.id, ok: failures.length === 0 || count > 0, count, ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
       this.changed(manifest.id)
     }

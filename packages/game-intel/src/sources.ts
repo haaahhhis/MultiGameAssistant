@@ -18,6 +18,8 @@ export interface SiteEvent {
   readonly url?: string
   readonly kind?: string
   readonly description?: string
+  /** A picture for it (an https address). */
+  readonly cover?: string
 }
 
 /** The game's current version, from a source that knows it. */
@@ -26,6 +28,17 @@ export interface SiteVersion {
   readonly title?: string
   readonly startsAt?: number
   readonly endsAt?: number
+  readonly cover?: string
+}
+
+/** A banner (卡池): who is on rate-up, and until when. */
+export interface SitePool {
+  readonly name: string
+  readonly type?: string
+  readonly startsAt?: number
+  readonly endsAt: number
+  readonly cover?: string
+  readonly up: readonly string[]
 }
 
 export type Fetch = (url: string, init: { signal: AbortSignal; headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>
@@ -128,11 +141,25 @@ export async function readSmw(smw: SmwSource, game: GameManifest, now: number, f
   return events
 }
 
-/** Turn an SRA activity file into the version and the events still ahead. */
-export function parseSra(body: unknown, timeZone: string, now: number): { version?: SiteVersion; events: SiteEvent[] } {
+/** Turn an SRA activity file into the version (with its cover), the events still ahead, and the banners still open. */
+export function parseSra(body: unknown, timeZone: string, now: number): { version?: SiteVersion; events: SiteEvent[]; pools: SitePool[] } {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
   const str = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined)
   const when = (v: unknown) => { const t = str(v); const at = t === undefined ? undefined : parseDateText(t, timeZone, now); return typeof at === 'number' ? at : undefined }
+  // Only pictures over https: the board fetches them through the host.
+  const picture = (v: unknown) => { const u = str(v); return u !== undefined && /^https:\/\/[^\s]+$/.test(u) ? u : undefined }
+  const pools: SitePool[] = []
+  for (const raw of Array.isArray(b['pools']) ? b['pools'] : []) {
+    const p = (raw ?? {}) as Record<string, unknown>
+    const name = str(p['name'])
+    const endsAt = when(p['endTime'])
+    if (name === undefined || endsAt === undefined || endsAt < now) continue
+    const startsAt = when(p['startTime'])
+    const type = str(p['type'])
+    const cover = picture(p['cover'])
+    const up = Array.isArray(p['upCharacters']) ? p['upCharacters'].filter((c): c is string => typeof c === 'string' && c.trim() !== '').map(c => c.trim()) : []
+    pools.push({ name, endsAt, up, ...(startsAt === undefined ? {} : { startsAt }), ...(type === undefined ? {} : { type }), ...(cover === undefined ? {} : { cover }) })
+  }
   const events: SiteEvent[] = []
   for (const raw of Array.isArray(b['activities']) ? b['activities'] : []) {
     const a = (raw ?? {}) as Record<string, unknown>
@@ -142,28 +169,31 @@ export function parseSra(body: unknown, timeZone: string, now: number): { versio
     const startsAt = when(a['startTime'])
     const kind = str(a['kind'])
     const description = str(a['description'])
+    const cover = picture(a['cover'])
     events.push({
       name, aliases: [], endsAt,
       ...(startsAt === undefined ? {} : { startsAt }),
       ...(kind === undefined ? {} : { kind }),
       ...(description === undefined ? {} : { description: description.length > 300 ? `${description.slice(0, 300)}…` : description }),
+      ...(cover === undefined ? {} : { cover }),
     })
   }
   const name = str(b['version'])
   const title = str(b['versionName'])
   const startsAt = when(b['startTime'])
   const endsAt = when(b['endTime'])
+  const cover = picture(b['cover'])
   const version: SiteVersion | undefined = name === undefined ? undefined : {
-    name, ...(title === undefined ? {} : { title }), ...(startsAt === undefined ? {} : { startsAt }), ...(endsAt === undefined ? {} : { endsAt }),
+    name, ...(title === undefined ? {} : { title }), ...(startsAt === undefined ? {} : { startsAt }), ...(endsAt === undefined ? {} : { endsAt }), ...(cover === undefined ? {} : { cover }),
   }
-  return { ...(version === undefined ? {} : { version }), events: events.sort((x, y) => x.endsAt - y.endsAt) }
+  return { ...(version === undefined ? {} : { version }), events: events.sort((x, y) => x.endsAt - y.endsAt), pools: pools.sort((x, y) => x.endsAt - y.endsAt) }
 }
 
 /**
  * Read one game's SRA activity file.
  * @throws with a message for the user when it cannot be read.
  */
-export async function readSra(sra: SraSource, game: GameManifest, now: number, fetchImpl: Fetch, signal?: AbortSignal): Promise<{ version?: SiteVersion; events: SiteEvent[] }> {
+export async function readSra(sra: SraSource, game: GameManifest, now: number, fetchImpl: Fetch, signal?: AbortSignal): Promise<ReturnType<typeof parseSra>> {
   const url = `${sra.api.replace(/\/$/, '')}/activity/${sra.game}${sra.locale === undefined ? '' : `-${sra.locale}`}.json`
   const timeout = AbortSignal.timeout(TIMEOUT_MS)
   try {

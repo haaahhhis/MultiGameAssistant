@@ -216,7 +216,18 @@ test('SRA public API: the version, and events still ahead with their kind and de
   assert.deepEqual(read.version, { name: '1.6', title: '丹青渡', startsAt: Date.UTC(2026, 9, 15, 4), endsAt: Date.UTC(2026, 10, 25, 22) })
   assert.equal(read.events.length, 1, 'ended and undated ones are left out')
   assert.deepEqual(read.events[0], { name: '丹青渡·版本活动', aliases: [], endsAt: Date.UTC(2026, 10, 4, 19, 59), startsAt: Date.UTC(2026, 9, 15, 4), kind: '版本活动' })
-  assert.deepEqual(parseSra('not json', 'Asia/Shanghai', now), { events: [] })
+  assert.deepEqual(parseSra('not json', 'Asia/Shanghai', now), { events: [], pools: [] })
+  const pictured = parseSra({
+    version: '4.6', cover: 'https://cdn.example/v.jpg',
+    activities: [{ name: 'A', startTime: '2026-10-20T12:00:00', endTime: '2026-11-01T04:00:00', cover: 'http://insecure.example/a.jpg' }],
+    pools: [
+      { name: '万物更新', type: '特许寻访', upCharacters: ['祀'], startTime: '2026-10-15T12:00:00', endTime: '2026-11-05T12:00:00', cover: 'https://cdn.example/p.png' },
+      { name: '旧卡池', type: '常驻', upCharacters: [], startTime: '2026-09-01T12:00:00', endTime: '2026-10-01T12:00:00' },
+    ],
+  }, 'Asia/Shanghai', now)
+  assert.equal(pictured.version?.cover, 'https://cdn.example/v.jpg')
+  assert.equal(pictured.events[0]?.cover, undefined, 'only https pictures')
+  assert.deepEqual(pictured.pools, [{ name: '万物更新', type: '特许寻访', up: ['祀'], startsAt: Date.UTC(2026, 9, 15, 4), endsAt: Date.UTC(2026, 10, 5, 4), cover: 'https://cdn.example/p.png' }], 'ended banners are left out')
 })
 
 test('the built-in game packs parse, and SRA comes before the wikis so their dates have the last word', async () => {

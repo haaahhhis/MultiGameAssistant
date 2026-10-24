@@ -9,7 +9,7 @@ import { writeFileAtomic } from '@adg/protocol/node'
 import { GamesSettings, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
-import type { SiteEvent, SiteVersion } from './sources.ts'
+import type { SitePool, SiteEvent, SiteVersion } from './sources.ts'
 import { MS, leftText, parseDateText, parseRemaining, shortDate } from './time.ts'
 
 /** An event that ended this long ago is dropped. */
@@ -45,7 +45,8 @@ const StoredSchema = z.object({
   refreshed: z.record(z.string(), z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })).default({}),
   readings: z.record(z.string(), z.object({ state: z.enum(['running', 'done', 'failed']), at: z.number(), sessionId: z.string().optional(), summary: z.string().optional() })).default({}),
   report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional() }).default({}),
-  versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), source: z.string(), at: z.number() })).default({}),
+  versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(), source: z.string(), at: z.number() })).default({}),
+  pools: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number(), cover: z.string().optional(), up: z.array(z.string()) }))).default({}),
   settings: z.object({ report: GamesSettings.shape.report.partial().default({}), followed: z.array(z.string()).default([]) }).default({ report: {}, followed: [] }),
 })
 type Saved = z.infer<typeof StoredSchema>
@@ -53,7 +54,7 @@ type Saved = z.infer<typeof StoredSchema>
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {}, pools: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -67,7 +68,7 @@ export class Calendar {
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
       this.#items = saved.activities.map(a => ({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] }) as Stored)
-      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions }
+      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools }
     } catch {
       // first start, or unreadable: start empty
     }
@@ -110,6 +111,20 @@ export class Calendar {
 
   reading(game: string): GameInfo['reading'] {
     return this.#saved.readings[game]
+  }
+
+  /** Banners still open. */
+  pools(game: string, now: number): NonNullable<GameInfo['pools']> {
+    return (this.#saved.pools[game] ?? []).filter(p => p.endsAt > now)
+  }
+
+  /** Every picture address a data site gave: the only ones the host will fetch. */
+  pictures(): Set<string> {
+    const out = new Set<string>()
+    for (const a of this.#items) if (a.cover !== undefined) out.add(a.cover)
+    for (const v of Object.values(this.#saved.versions)) if (v.cover !== undefined) out.add(v.cover)
+    for (const list of Object.values(this.#saved.pools)) for (const p of list) if (p.cover !== undefined) out.add(p.cover)
+    return out
   }
 
   version(game: string): GameInfo['version'] {
@@ -186,6 +201,7 @@ export class Calendar {
       if (event.url !== undefined) item.url = event.url
       if (event.kind !== undefined) item.kind = event.kind
       if (event.description !== undefined) item.description = event.description
+      if (event.cover !== undefined) item.cover = event.cover
       item.site = { source: source.id, name: source.name, at: now }
       this.#crossCheck(item, timeZone)
     }
@@ -197,7 +213,8 @@ export class Calendar {
   }
 
   /** After every source of a game was read: the total, and the version if one said. */
-  async refreshDone(game: string, count: number, now: number, version?: { source: string } & SiteVersion): Promise<void> {
+  async refreshDone(game: string, count: number, now: number, version?: { source: string } & SiteVersion, pools?: readonly SitePool[]): Promise<void> {
+    if (pools !== undefined) this.#saved.pools[game] = pools.map(p => ({ ...p, up: [...p.up] }))
     this.#saved.refreshed[game] = { at: now, ok: true, count }
     if (version !== undefined) this.#saved.versions[game] = { ...version, at: now }
     await this.save()

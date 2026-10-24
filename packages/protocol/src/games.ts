@@ -23,6 +23,8 @@ export const Activity = z.object({
   kind: z.string().optional(),
   /** What it is about, from the data site. */
   description: z.string().optional(),
+  /** Its picture (an https address; fetch it with `games/image`). */
+  cover: z.string().optional(),
   /** Seen on a data site: its dates are the ones that count. */
   site: z.object({ source: z.string(), name: z.string(), at: z.number() }).optional(),
   /** Read from the game screen by the agent. */
@@ -72,9 +74,20 @@ export const GameInfo = z.object({
     title: z.string().optional(),
     startsAt: z.number().optional(),
     endsAt: z.number().optional(),
+    /** The version's key art (fetch it with `games/image`). */
+    cover: z.string().optional(),
     source: z.string(),
     at: z.number(),
   }).optional(),
+  /** Banners (卡池) open now or soon, from a data site that lists them. */
+  pools: z.array(z.object({
+    name: z.string(),
+    type: z.string().optional(),
+    startsAt: z.number().optional(),
+    endsAt: z.number(),
+    cover: z.string().optional(),
+    up: z.array(z.string()),
+  })).optional(),
   /** The last data-site refresh. */
   refreshed: z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() }).optional(),
   /** The last time the agent read the game screen. */
@@ -150,6 +163,16 @@ export const GamesRequests = {
   'games/evidence': {
     capability: GAMES_CAPABILITY,
     params: z.object({ activityId: z.string() }),
+    result: z.object({ mediaType: z.string(), data: z.string() }),
+  },
+  /**
+   * A picture a data site gave (a version's art, an event's or a banner's
+   * cover), fetched and kept by the host: the UI loads no outside addresses.
+   * Only addresses that came from a data site are fetched.
+   */
+  'games/image': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ url: z.string().url() }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
   },
   /** Every game the SRA public API knows, and whether it is shown (a Game Pack reads it, or it is followed). */

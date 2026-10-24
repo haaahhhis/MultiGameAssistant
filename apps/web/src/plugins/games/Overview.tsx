@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { Activity, GameInfo, RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
+import { ImageViewer } from '../../components/ImageViewer.tsx'
 import { errorText } from '../scripts/data.ts'
 
 const DAY = 86_400_000
@@ -9,7 +10,7 @@ const DAY = 86_400_000
 const BEFORE_DAYS = 2
 const AFTER_DAYS = 28
 /** Mid-tone hues that read on both the light and the dark theme. */
-const PALETTE = ['#3b82c4', '#c0567d', '#2f9e7a', '#c98a1b', '#7a62d6', '#d2643c', '#4d9a3c', '#2a93a8', '#a86bb8', '#8a7a3a']
+export const PALETTE = ['#3b82c4', '#c0567d', '#2f9e7a', '#c98a1b', '#7a62d6', '#d2643c', '#4d9a3c', '#2a93a8', '#a86bb8', '#8a7a3a']
 const SHOWN_KEY = 'adg:games:overview:shown'
 const MODE_KEY = 'adg:games:overview:mode'
 
@@ -59,7 +60,6 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
   const [shown, setShown] = useState<string[] | null>(() => load<string[] | null>(SHOWN_KEY, null))
   const [mode, setMode] = useState<Mode>(() => load<Mode>(MODE_KEY, 'time'))
   const [open, setOpen] = useState<string | null>(null)
-  const [catalogOpen, setCatalogOpen] = useState(false)
   useEffect(() => keep(SHOWN_KEY, shown), [shown])
   useEffect(() => keep(MODE_KEY, mode), [mode])
 
@@ -134,9 +134,7 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
               <span className="game-dot" />{g.name}
             </button>
           ))}
-          <button className="chip chip-button" onClick={() => setCatalogOpen(o => !o)}><Icon name="plus" />更多游戏</button>
         </div>
-        {catalogOpen && <CatalogPicker client={client} onChanged={onChanged} />}
       </section>
 
       <section className="card games-overview-board">
@@ -224,7 +222,7 @@ function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays
   )
 }
 
-function ProgressPill({ progress: p }: { progress: ReturnType<typeof progressOf> }) {
+export function ProgressPill({ progress: p }: { progress: ReturnType<typeof progressOf> }) {
   if (p.state === 'finished') return <span className="ov-progress done"><Icon name="check" />做完了</span>
   if (p.state === 'unknown') return <span className="ov-progress unknown">未记录</span>
   return (
@@ -235,13 +233,16 @@ function ProgressPill({ progress: p }: { progress: ReturnType<typeof progressOf>
 }
 
 /** The event's description and dates, and its checklist: tick, untick, add, or call the whole thing done. */
-function ActivityDetail({ client, activity: a, game, onOpenGame, onChanged }: {
+export function ActivityDetail({ client, activity: a, game, onOpenGame, onChanged, openSession }: {
   client: AdgClient
   activity: Activity
   game: GameInfo | undefined
-  onOpenGame: () => void
+  /** Absent: already on the game's own page. */
+  onOpenGame?: (() => void) | undefined
   onChanged: () => void
+  openSession?: ((id: string) => void) | undefined
 }) {
+  const [shot, setShot] = useState<{ src: string; width: number; height: number } | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -294,16 +295,25 @@ function ActivityDetail({ client, activity: a, game, onOpenGame, onChanged }: {
       <div className="ov-detail-actions">
         <label className="check-label"><input type="checkbox" checked={a.finished !== undefined} disabled={busy} onChange={e => void save({ finished: e.target.checked })} />这个活动我做完了</label>
         <span className="spacer" />
+        {a.screen?.evidence === true && <button className="link-button small" onClick={() => void client.connection.call('games/evidence', { activityId: a.id }).then(r => {
+          const src = `data:${r.mediaType};base64,${r.data}`
+          const img = new Image()
+          img.onload = () => setShot({ src, width: img.naturalWidth, height: img.naturalHeight })
+          img.src = src
+        }, e => setError(errorText(e)))}>看游戏截图</button>}
+        {a.screen?.sessionId !== undefined && openSession !== undefined && <button className="link-button small" onClick={() => openSession(a.screen!.sessionId!)}>agent 的对话</button>}
         {a.url !== undefined && <a className="link-button small" href={a.url} target="_blank" rel="noreferrer">活动页面</a>}
-        <button className="link-button small" onClick={onOpenGame}>去{game?.name ?? '游戏'}</button>
+        {onOpenGame !== undefined && <button className="link-button small" onClick={onOpenGame}>去{game?.name ?? '游戏'}</button>}
+        <button className="link-button small muted" title="读错了或不关心" disabled={busy} onClick={() => void client.connection.call('games/activity/remove', { activityId: a.id }).then(onChanged, e => setError(errorText(e)))}>从日历去掉</button>
       </div>
       {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}
+      {shot !== null && <ImageViewer src={shot.src} width={shot.width} height={shot.height} name={`${a.name}.png`} onClose={() => setShot(null)} />}
     </div>
   )
 }
 
 /** The SRA public API's other games: follow one to see its events here too. */
-function CatalogPicker({ client, onChanged }: { client: AdgClient; onChanged: () => void }) {
+export function CatalogPicker({ client, onChanged }: { client: AdgClient; onChanged: () => void }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
