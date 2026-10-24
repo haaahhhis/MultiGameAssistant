@@ -27,8 +27,10 @@ import { credentialsCapability } from './credentials.ts'
 import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
+import type {} from '@deepseek-ai/dsh-tools'
 import { ErrorCode, PERMISSIONS_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
+import { skillSaveTool, userSkills } from './skill-save.ts'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
@@ -39,7 +41,7 @@ import { startServer } from './server.ts'
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
 export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
 export type { QuestionAnswerer } from './questions.ts'
-export { convertRecord } from './convert.ts'
+export { convertRecord, convertRecords } from './convert.ts'
 export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 
@@ -74,6 +76,8 @@ export interface Config {
   readonly workspaceDir?: string
   /** Where the gateway keeps its own state (the permission mode). */
   readonly dataDir?: string
+  /** The user's dsh skill folder (`<DSH_HOME>/skills`): `skill_save` writes there. Absent: no such tool. */
+  readonly userSkillsDir?: string
 }
 
 /** The slice of dsh's session and permission-preset services the mode needs. */
@@ -339,20 +343,41 @@ export class AdgGateway extends Service {
         userInvocable: s.invocation.userInvocable,
       })
       const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
+      // The user's skill folder is read by each agent preset, not the host catalog: list it here too.
+      const mine = async (): Promise<Array<SkillInfo & { content: string }>> => config.userSkillsDir === undefined ? [] : (await userSkills(config.userSkillsDir)).map(s => ({
+        ...s, source: 'user-dsh', provider: 'filesystem', modelInvocable: true, userInvocable: true,
+      }))
       scoped.effect(() => this.registry.register({
         id: SKILLS_CAPABILITY,
         version: 1,
         methods: {
-          'skills/list': async (_params, call) => ({ skills: (await scoped.skills.list(options(call.signal))).map(info) }),
+          'skills/list': async (_params, call) => {
+            const host = (await scoped.skills.list(options(call.signal))).map(info)
+            const own = (await mine()).filter(s => !host.some(h => h.name === s.name)).map(({ content: _c, ...s }) => s)
+            return { skills: [...host, ...own] }
+          },
           'skills/get': async (params, call) => {
             const { name } = params as RequestParams<'skills/get'>
             const skill = await scoped.skills.get(name, options(call.signal))
-            if (skill === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
-            return { ...info(skill), content: skill.content }
+            if (skill !== undefined) return { ...info(skill), content: skill.content }
+            const own = (await mine()).find(s => s.name === name)
+            if (own === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
+            return own
           },
         },
       }), 'adg-gateway capability skills')
     })
+
+    // The agent saving what it just worked out as a skill (the UI offers it after a new multi-step job).
+    if (config.userSkillsDir !== undefined) {
+      const dir = config.userSkillsDir
+      ctx.inject(['tools', 'skills'], scoped => {
+        scoped.tools.register(skillSaveTool({
+          dir,
+          taken: async () => (await scoped.skills.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) })).filter(s => s.source !== 'user-dsh').map(s => s.name),
+        }))
+      })
+    }
 
     // Session list deltas come from the controller's own lifecycle events.
     ctx.on('api-session/added', summary => {

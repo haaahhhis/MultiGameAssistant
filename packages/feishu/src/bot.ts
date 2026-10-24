@@ -5,14 +5,14 @@
  * like "停止" acts on a notice, anything else goes to the agent).
  */
 import type { ApprovalRequested, ChannelCheck, ChannelStatus, FeishuPending, FeishuSettings, QuestionAnswerItem, QuestionRequested } from '@adg/protocol'
-import type { Actor, Channel, Notice, NoticePatch, QuestionProgress } from '@adg/notify'
+import { replyMarkdown, replyPlain, type Actor, type Channel, type Notice, type NoticePatch, type QuestionProgress, type Reply } from '@adg/notify'
 import type { CardAction, CardActionResponse, ConnectionState, FeishuApi, InboundMessage, Target } from './api.ts'
 import { approvalCard, noticeCard, OUTCOME, QUESTION_OUTCOME, questionCard } from './cards.ts'
 
 /** What the bot needs from `@adg/notify`. */
 export interface NotifyPort {
   act(noticeId: string, actionId: string, actor: Actor): Promise<string>
-  inbound(message: { actor: Actor; text: string; replyTo?: string | undefined }): Promise<string>
+  inbound(message: { actor: Actor; text: string; replyTo?: string | undefined }): Promise<Reply>
   respondApproval(approvalId: string, decision: 'allow-once' | 'reject', actor: Actor): boolean
   /** One of the agent's questions answered from a card button. @returns undefined when it was answered elsewhere. */
   answerQuestion(questionId: string, item: QuestionAnswerItem, actor: Actor): QuestionProgress | undefined
@@ -417,10 +417,10 @@ export class FeishuBot implements Channel {
       const replyTo = event.parentId === undefined ? undefined : this.#byMessage.get(event.parentId)
       const reply = await notify.inbound({ actor: this.#actor(event.senderOpenId), text: event.text, replyTo })
       answered = true
-      // The agent writes markdown: rich text shows it formatted; plain text if Feishu refuses that.
-      await api.replyMarkdown(event.messageId, reply).catch(error => {
+      // The reply is channel-neutral: rendered as markdown (rich text); plain text if Feishu refuses that.
+      await api.replyMarkdown(event.messageId, replyMarkdown(reply)).catch(error => {
         this.#options.log.warn(`markdown reply refused, sending plain text: ${message(error)}`)
-        return api.replyText(event.messageId, reply)
+        return api.replyText(event.messageId, replyPlain(reply))
       })
     } catch (error) {
       answered = true

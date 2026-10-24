@@ -34,6 +34,7 @@ const paths = {
   refresh: 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4',
   calendar: 'M5 5.5h14a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6.5a1 1 0 0 1 1-1ZM4 10h16M8 3.5v4M16 3.5v4M8 14h2M14 14h2M8 17h2',
   send: 'M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4 17-6.5Z',
+  power: 'M12 3.5v8M7.2 6.5a7 7 0 1 0 9.6 0',
 } as const
 
 export type IconName = keyof typeof paths

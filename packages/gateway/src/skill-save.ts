@@ -1,0 +1,94 @@
+/**
+ * `skill_save`: the agent writes what it just worked out as a skill, so the
+ * next time the same thing is asked it follows the steps instead of finding
+ * them again (fewer model calls). Skills go to the user's dsh skill folder
+ * (`<DSH_HOME>/skills/<name>/SKILL.md`), which dsh watches: the skill is
+ * available at once, in every session, and shows on the 技能 page.
+ */
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { z } from 'zod'
+
+const Args = z.object({
+  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, '小写字母、数字和短横线，例如 maa-daily-check').max(48),
+  description: z.string().min(10).max(400),
+  content: z.string().min(20).max(20_000),
+  replace: z.boolean().nullish(),
+})
+
+export interface SkillSaveDeps {
+  /** The user's skill folder. */
+  readonly dir: string
+  /** Names of skills that come from elsewhere (packs, the app): not to be shadowed. */
+  readonly taken: () => Promise<readonly string[]>
+}
+
+export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
+  return {
+    name: 'skill_save',
+    description: [
+      '把刚做成的一件事保存成技能（SKILL.md），下次同样的请求直接照着做，不用重新摸索、少调用模型。',
+      'content 写浓缩后的做法：什么时候用；一步一步的操作（用到的工具、命令、路径、参数照实写）；判断成功的方法；踩过的坑和注意事项。不写这次对话的闲聊和失败的尝试过程，只写最后走通的路。',
+      'description 一两句话写清楚「做什么、用户说什么时用」，agent 靠它决定什么时候调用。已有同名技能时先用 replace=true 才会覆盖。',
+    ].join(''),
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '技能名：小写字母、数字、短横线，例如 maa-daily-check。' },
+        description: { type: 'string', description: '做什么、什么时候用（10–400 字）。' },
+        content: { type: 'string', description: 'Markdown 正文：适用场景、步骤、成功标准、注意事项。' },
+        replace: { type: 'boolean', description: '覆盖已有的同名技能（可选）。' },
+      },
+      required: ['name', 'description', 'content'],
+      additionalProperties: false,
+    },
+    output: { schema: {}, render: (_args, value): ContentBlock[] => [{ type: 'text', text: JSON.stringify(value, null, 1) }] },
+    timeoutMs: 30_000,
+    isConcurrencySafe: () => false,
+    execute: async args => {
+      const parsed = Args.safeParse(args)
+      if (!parsed.success) throw new Error(`参数无效：${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`)
+      const { name, description, content, replace } = parsed.data
+      if ((await deps.taken()).includes(name)) throw new Error(`「${name}」是脚本包或软件自带的技能，换一个名字`)
+      const folder = join(deps.dir, name)
+      const file = join(folder, 'SKILL.md')
+      const existing = await readFile(file, 'utf8').catch(() => undefined)
+      if (existing !== undefined && replace !== true) throw new Error(`已经有技能「${name}」（${file}）。要更新它就加 replace=true，或者换一个名字`)
+      await mkdir(folder, { recursive: true })
+      // JSON strings are valid YAML scalars: no quoting surprises in the description.
+      await writeFile(file, `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s+/g, ' ').trim())}\n---\n\n${content.trim()}\n`)
+      return { saved: file, replaced: existing !== undefined, note: '已保存，所有会话马上就能用；在「技能」页可以看到' } as never
+    },
+    presentCall: args => ({ card: 'generic', title: `保存技能：${String((args as Record<string, unknown> | undefined)?.['name'] ?? '')}`, kind: 'other' }),
+  }
+}
+
+/**
+ * The skills in the user's folder, for the 技能 page. In this composition
+ * each agent preset reads that folder itself (the host's own skill catalog
+ * does not), so the gateway reads it too to show what the agent will see.
+ */
+export async function userSkills(dir: string): Promise<Array<{ name: string; description: string; path: string; content: string }>> {
+  const { readdir } = await import('node:fs/promises')
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const out: Array<{ name: string; description: string; path: string; content: string }> = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const path = join(dir, entry.name, 'SKILL.md')
+    const text = await readFile(path, 'utf8').catch(() => undefined)
+    const match = text === undefined ? null : /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text)
+    if (match === null) continue
+    const field = (key: string) => {
+      const raw = new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(match[1]!)?.[1]?.trim()
+      if (raw === undefined || raw === '') return undefined
+      try { return raw.startsWith('"') ? String(JSON.parse(raw)) : raw.replace(/^'(.*)'$/, '$1') } catch { return raw }
+    }
+    const name = field('name') ?? entry.name
+    const description = field('description')
+    if (description === undefined) continue
+    out.push({ name, description, path, content: match[2]!.trim() })
+  }
+  return out
+}

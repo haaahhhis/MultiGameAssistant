@@ -28,6 +28,12 @@ const NodeBase = {
   /** Canvas position. */
   position: z.object({ x: z.number(), y: z.number() }).optional(),
   onFailure: FailurePolicy.optional(),
+  /**
+   * Start only once every node not after this one has finished (succeeded,
+   * failed or skipped), not just the ones whose edges lead here — a barrier
+   * for parallel branches. Its own edges still decide whether it runs.
+   */
+  waitForAll: z.boolean().optional(),
 }
 
 export const PipelineNode = z.discriminatedUnion('kind', [
@@ -105,6 +111,14 @@ export const PipelineSchedule = z.object({
 })
 export type PipelineSchedule = z.infer<typeof PipelineSchedule>
 
+/**
+ * What the computer does once a pipeline has ended and nothing else is
+ * running: after a countdown that can be cancelled (UI, Feishu). Not after a
+ * run started by hand in the UI, nor one the user cancelled.
+ */
+export const PowerAction = z.enum(['none', 'sleep', 'hibernate', 'shutdown'])
+export type PowerAction = z.infer<typeof PowerAction>
+
 export const Pipeline = z.object({
   id: PipelineId,
   name: z.string().min(1).max(60),
@@ -116,6 +130,10 @@ export const Pipeline = z.object({
   schedule: PipelineSchedule.default({ enabled: false, times: [], days: [], catchUpMinutes: 10 }),
   /** Shut the emulator down when the pipeline ends (if it used one). */
   stopEmulatorAfter: z.boolean().default(false),
+  /** Close the games its script tasks played when the pipeline ends (PC programs, apps in the emulator). */
+  closeGameAfter: z.boolean().default(false),
+  /** Then sleep, hibernate or shut down (see PowerAction). */
+  powerAfter: PowerAction.default('none'),
   /** Written by the agent and not yet saved by the user: never runs on a schedule. */
   draft: z.boolean().optional(),
   createdAt: z.number().optional(),
@@ -201,6 +219,10 @@ export const ScheduleSettings = z.object({
   skipIfRanToday: z.boolean(),
   /** Run the on-start pipelines only on the app's first start of the day. */
   firstStartOnly: z.boolean().default(false),
+  /** Wake the computer from sleep (or hibernation) just before scheduled times (a Task Scheduler task). */
+  wakeToRun: z.boolean().default(false),
+  /** Seconds between announcing a sleep / hibernate / shutdown and doing it. */
+  powerCountdownSeconds: z.number().int().min(10).max(600).default(60),
 })
 export type ScheduleSettings = z.infer<typeof ScheduleSettings>
 
@@ -215,6 +237,14 @@ export const ScheduleEntry = z.object({
 })
 export type ScheduleEntry = z.infer<typeof ScheduleEntry>
 
+export const PowerStatus = z.object({
+  /** Sleep is held off while pipelines or scripts run. */
+  awake: z.boolean(),
+  /** A sleep / hibernate / shutdown on its way: `at` once counting down, absent while other tasks still run. */
+  pending: z.object({ action: PowerAction.exclude(['none']), pipelineName: z.string(), at: z.number().optional() }).optional(),
+})
+export type PowerStatus = z.infer<typeof PowerStatus>
+
 const ScheduleStatus = z.object({
   settings: ScheduleSettings,
   autostart: z.object({
@@ -225,6 +255,15 @@ const ScheduleStatus = z.object({
   }),
   /** This start was an automatic one (at logon). */
   autostarted: z.boolean(),
+  wake: z.object({
+    /** Only the desktop app can register it (it is what the task starts). */
+    available: z.boolean(),
+    registered: z.boolean(),
+    /** The next wake-up registered. */
+    next: z.number().optional(),
+    detail: z.string().optional(),
+  }),
+  power: PowerStatus,
   upcoming: z.array(z.object({ pipelineId: z.string(), pipelineName: z.string(), at: z.number() })),
   history: z.array(ScheduleEntry),
 })
@@ -289,6 +328,17 @@ export const PipelineRequests = {
     params: ScheduleSettings.partial(),
     result: ScheduleStatus,
   },
+  'schedule/power': {
+    capability: SCHEDULE_CAPABILITY,
+    params: z.object({}),
+    result: PowerStatus,
+  },
+  /** Call off the sleep / hibernate / shutdown on its way. */
+  'schedule/power/cancel': {
+    capability: SCHEDULE_CAPABILITY,
+    params: z.object({}),
+    result: PowerStatus,
+  },
 } as const
 
 export const PipelineNotifications = {
@@ -297,4 +347,6 @@ export const PipelineNotifications = {
   /** A pipeline run started or changed. */
   'pipelines/run': PipelineRun,
   'schedule/changed': z.object({}),
+  /** Keeping awake started or stopped; a sleep / shutdown was asked for, began counting down, was cancelled or done. */
+  'schedule/power': PowerStatus,
 } as const

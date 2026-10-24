@@ -16,8 +16,12 @@
  *   the desktop shell restarts a crashed dsh), the chosen pipelines run after
  *   a delay — optionally only on the first start of the day, and skipping
  *   those that already succeeded today.
+ * - Timed wake (optional): the upcoming times, a little early, are handed to
+ *   the wake port (a Task Scheduler task that wakes the computer from sleep);
+ *   kept current once a minute, so edited pipelines are picked up.
  */
 import type { Pipeline, PipelineRun, PipelineTrigger, ScheduleEntry, ScheduleSettings } from '@adg/protocol'
+import type { WakePort } from './windows.ts'
 
 export interface SavedState {
   settings: ScheduleSettings
@@ -51,6 +55,8 @@ export interface SchedulerDeps {
   readonly lastSuccessDay: (pipelineId: string) => string | undefined
   readonly store: ScheduleStore
   readonly autostart: AutostartPort
+  /** Waking from sleep for scheduled times; absent: not offered. */
+  readonly wake?: WakePort
   /** This process was started at logon. */
   readonly autostarted: boolean
   /** The app was just started (not dsh restarted after a crash): run the on-start pipelines. */
@@ -62,7 +68,7 @@ export interface SchedulerDeps {
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
-export const DEFAULT_SETTINGS: ScheduleSettings = { autostart: false, autostartPipelines: [], autostartDelaySeconds: 60, skipIfRanToday: true, firstStartOnly: false }
+export const DEFAULT_SETTINGS: ScheduleSettings = { autostart: false, autostartPipelines: [], autostartDelaySeconds: 60, skipIfRanToday: true, firstStartOnly: false, wakeToRun: false, powerCountdownSeconds: 60 }
 /** Wait after a start by hand (the user is there; the network is up). */
 const MANUAL_START_DELAY_MS = 10_000
 
@@ -72,6 +78,10 @@ const KEEP_HISTORY = 100
 const MIN_GRACE_MS = 90_000
 /** Never look back further than this, however long the program was off. */
 const MAX_LOOKBACK_MS = 2 * 24 * 3_600_000
+/** Wake the computer this long before a scheduled time (the app may have to start first). */
+export const WAKE_LEAD_MS = 2 * 60_000
+/** At most this many wake-ups registered at once (Task Scheduler allows 48 triggers). */
+const WAKE_SLOTS = 32
 
 export class Scheduler {
   readonly #deps: SchedulerDeps
@@ -80,6 +90,10 @@ export class Scheduler {
   #timer: ReturnType<typeof setInterval> | undefined
   #autostartTimer: ReturnType<typeof setTimeout> | undefined
   #lastSaved = 0
+  /** The wake-up times last handed to the wake port, and when that was checked. */
+  #wakeSynced: string | undefined
+  #wakeChecked = 0
+  #wakeError: string | undefined
 
   constructor(deps: SchedulerDeps) {
     this.#deps = deps
@@ -157,6 +171,42 @@ export class Scheduler {
     this.#state.lastCheck = now
     void this.#save(changed)
     if (changed) this.#deps.changed()
+    if (now - this.#wakeChecked >= 60_000) void this.syncWake().catch(() => {})
+  }
+
+  /** Give the wake port the upcoming times (none when timed wake is off). @throws Error when registering failed. */
+  async syncWake(force = false): Promise<void> {
+    const wake = this.#deps.wake
+    if (wake === undefined || !wake.available()) return
+    const now = this.#now()
+    this.#wakeChecked = now
+    const times = this.#state.settings.wakeToRun
+      ? [...new Set(this.upcoming(WAKE_SLOTS).map(u => u.at - WAKE_LEAD_MS).filter(t => t > now + 30_000))]
+      : []
+    const key = times.join(',')
+    if (!force && key === this.#wakeSynced) return
+    this.#wakeSynced = key
+    try {
+      if (times.length > 0) await wake.sync(times)
+      else await wake.remove()
+      this.#wakeError = undefined
+    } catch (error) {
+      this.#wakeSynced = undefined
+      this.#wakeError = error instanceof Error ? error.message : String(error)
+      this.#deps.log.warn(`timed wake: ${this.#wakeError}`)
+      throw error
+    } finally {
+      this.#deps.changed()
+    }
+  }
+
+  /** Whether the wake-ups are registered, and the next one. */
+  async wakeStatus(): Promise<{ available: boolean; registered: boolean; next?: number; detail?: string }> {
+    const wake = this.#deps.wake
+    if (wake === undefined || !wake.available()) return { available: false, registered: false, detail: '用浏览器或开发模式打开时不能设置；请用桌面版' }
+    const status = await wake.status().catch(error => ({ registered: false, detail: error instanceof Error ? error.message : String(error) }))
+    const detail = this.#wakeError ?? status.detail
+    return { available: true, ...status, ...(detail === undefined ? {} : { detail }) }
   }
 
   /** A pipeline finished: start the ones chained after it. */
@@ -204,7 +254,10 @@ export class Scheduler {
       autostartDelaySeconds: patch.autostartDelaySeconds ?? this.#state.settings.autostartDelaySeconds,
       skipIfRanToday: patch.skipIfRanToday ?? this.#state.settings.skipIfRanToday,
       firstStartOnly: patch.firstStartOnly ?? this.#state.settings.firstStartOnly,
+      wakeToRun: patch.wakeToRun ?? this.#state.settings.wakeToRun,
+      powerCountdownSeconds: patch.powerCountdownSeconds ?? this.#state.settings.powerCountdownSeconds,
     }
+    if (next.wakeToRun && !this.#state.settings.wakeToRun && this.#deps.wake?.available() !== true) throw new Error('只有桌面版能设置定时唤醒（用浏览器打开界面时不行）')
     if (patch.autostart !== undefined && patch.autostart !== this.#state.settings.autostart) {
       if (patch.autostart) {
         if (!this.#deps.autostart.available()) throw new Error('只有桌面版能设置开机自启（用浏览器打开界面时不行）')
@@ -213,9 +266,21 @@ export class Scheduler {
         await this.#deps.autostart.unregister()
       }
     }
+    const wakeChanged = next.wakeToRun !== this.#state.settings.wakeToRun
     this.#state.settings = next
     await this.#save(true)
     this.#deps.changed()
+    if (wakeChanged) {
+      try {
+        await this.syncWake(true)
+      } catch (error) {
+        if (next.wakeToRun) {
+          this.#state.settings = { ...next, wakeToRun: false }
+          await this.#save(true)
+          throw error
+        }
+      }
+    }
     return next
   }
 

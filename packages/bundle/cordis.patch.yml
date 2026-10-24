@@ -24,6 +24,8 @@
         staticDir: !!js "process.env.ADG_UI_DIR || undefined"
         workspaceDir: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        # skill_save writes the user's skills where dsh looks for them.
+        userSkillsDir: !!js "dshHomePath('skills')"
         validateResults: true
 
     # M1: script library — packs, GitHub installs, local imports, versions,
@@ -98,10 +100,12 @@
       config:
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
 
-    # M4: timetables, chained pipelines, starting at logon; the `schedule` capability.
+    # M4: timetables, chained pipelines, starting at logon; M7: keeping awake,
+    # sleep / shutdown after a pipeline, timed wake; the `schedule` capability.
     #   ADG_LAUNCH_COMMAND   JSON array that starts the desktop app (set by it)
     #   ADG_AUTOSTARTED      1 when the desktop app was started at logon
     #   ADG_APP_START        1 on the desktop app's first dsh start (0 after a crash restart)
+    #   ADG_POWER_DRY_RUN    1: count down and notify, but do not sleep or shut down (trying it out)
     - id: adg-scheduler
       name: '@adg/scheduler'
       config:
@@ -109,6 +113,7 @@
         launchCommand: !!js "process.env.ADG_LAUNCH_COMMAND || undefined"
         autostarted: !!js "process.env.ADG_AUTOSTARTED === '1'"
         appStart: !!js "process.env.ADG_APP_START === '1'"
+        powerDryRun: !!js "process.env.ADG_POWER_DRY_RUN === '1'"
 
     # M6: game information — Game Packs, the event calendar (data sites read
     # without a model, the agent reading the game screen), the daily report;

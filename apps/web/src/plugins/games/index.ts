@@ -6,5 +6,5 @@ export const gamesPlugin: UiPlugin = {
   title: '游戏看板',
   milestone: 'M6',
   requires: ['games'],
-  pages: [{ id: 'games', title: '游戏', icon: 'gamepad', order: 40, component: GamesPage }],
+  pages: [{ id: 'games', title: '游戏', icon: 'gamepad', order: -10, component: GamesPage }],
 }

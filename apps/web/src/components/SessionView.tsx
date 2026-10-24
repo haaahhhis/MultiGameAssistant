@@ -38,7 +38,7 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
       <header className="session-header">
         <div className="session-heading">
           <div className="breadcrumb"><span>会话</span><span className="breadcrumb-divider">/</span>
-            <SessionTitle title={state.title} cwd={state.header?.cwd} onRename={title => client.renameSession(session.id, title)} />
+            <SessionTitle title={state.title} onRename={title => client.renameSession(session.id, title)} />
           </div>
           <div className="session-meta">
             <RunState running={state.running} />
@@ -110,7 +110,7 @@ function PoppedSession({ client, session, view }: {
 }
 
 /** The conversation's name; the pencil (or a double-click) edits it in place. Enter saves, Esc cancels. */
-function SessionTitle({ title, cwd, onRename }: { title: string | null; cwd: string | undefined; onRename: (title: string) => Promise<void> }) {
+function SessionTitle({ title, onRename }: { title: string | null; onRename: (title: string) => Promise<void> }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const shown = title ?? '新会话'
@@ -141,7 +141,7 @@ function SessionTitle({ title, cwd, onRename }: { title: string | null; cwd: str
   }
   return (
     <span className="session-title">
-      <h1 title={cwd === undefined ? '双击改名' : `双击改名 · 工作文件夹：${cwd}`} onDoubleClick={() => setEditing(shown)}>{shown}</h1>
+      <h1 title="双击改名" onDoubleClick={() => setEditing(shown)}>{shown}</h1>
       <button type="button" className="icon-button rename-button" title="改名" aria-label="给这个会话改名" onClick={() => setEditing(shown)}><Icon name="pencil" /></button>
     </span>
   )

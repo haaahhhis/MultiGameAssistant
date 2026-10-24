@@ -1,10 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
+import { summarizeToolArgs } from '@adg/protocol'
 import { Markdown } from '../../components/Markdown.tsx'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
+import { SkillOffer } from './SkillOffer.tsx'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 80
@@ -71,6 +73,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
           ? <Turn key={row.id} header={row.header}><ToolGroup tools={row.tools} /></Turn>
           : <Turn key={row.item.id} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
+        {!state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
     </ImageClient.Provider>
@@ -199,7 +202,7 @@ const STATUS_LABEL: Record<string, string> = { running: '运行中', ok: '完成
 
 function ToolRow({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false)
-  const summary = useMemo(() => summarizeArgs(item.arguments), [item.arguments])
+  const summary = useMemo(() => summarizeToolArgs(item.arguments), [item.arguments])
   useEffect(() => {
     if (item.status === 'error') setOpen(true)
   }, [item.status])
@@ -247,16 +250,3 @@ function approvalLabel(state: string): string {
 }
 
 /** One-line digest of the most telling argument (command, path, query…). */
-function summarizeArgs(args: string): string {
-  try {
-    const value = JSON.parse(args) as Record<string, unknown>
-    for (const key of ['command', 'cmd', 'path', 'file_path', 'pattern', 'query', 'url', 'description', 'prompt']) {
-      const v = value[key]
-      if (typeof v === 'string' && v !== '') return v.split('\n')[0]!.slice(0, 160)
-    }
-    const first = Object.values(value).find(v => typeof v === 'string')
-    return typeof first === 'string' ? first.slice(0, 160) : ''
-  } catch {
-    return args.slice(0, 160)
-  }
-}

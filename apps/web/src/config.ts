@@ -29,6 +29,8 @@ export function gatewayUrl(token: string): string {
 
 /** What the main area shows; kept in the hash so a reload returns to it. */
 export type Route =
+  /** Just opened (no address): the games page when there is one, else the chat home. */
+  | { readonly kind: 'start' }
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
@@ -44,8 +46,9 @@ export function readRoute(): Route {
   if (popped !== null) return { kind: 'window', view: decodeURIComponent(popped[1]!), sessionId: decodeURIComponent(popped[2]!) }
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
+  if (location.hash === '#/chat') return { kind: 'home' }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
-  return match === null ? { kind: 'home' } : { kind: 'session', id: decodeURIComponent(match[1]!) }
+  return match === null ? { kind: 'start' } : { kind: 'session', id: decodeURIComponent(match[1]!) }
 }
 
 /**
@@ -57,7 +60,8 @@ export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): voi
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
-      : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`) : ''
+      : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)
+        : route.kind === 'home' ? '#/chat' : ''
   if (location.hash === hash) return
   const url = `${location.pathname}${location.search}${hash}`
   if (mode === 'replace') history.replaceState(history.state, '', url)

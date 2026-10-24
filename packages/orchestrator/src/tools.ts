@@ -5,7 +5,7 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { ClockTime, Pipeline, PipelineId, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { ClockTime, Pipeline, PipelineId, PowerAction, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
 import { systemInfo } from './system.ts'
 import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
@@ -81,6 +81,7 @@ const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
         text: { type: 'string', description: 'notify / gate：文字。' },
         retries: { type: 'integer', description: '失败后重试几次（可选）。' },
         then: { type: 'string', enum: ['continue', 'stop'], description: '仍失败时（可选）。' },
+        wait_for_all: { type: 'boolean', description: '等前面（不在它之后）的节点全部结束再开始，不只看连进来的线；用来让并行的几条分支汇合（可选）。' },
       },
       required: ['id', 'kind'],
       additionalProperties: false,
@@ -99,6 +100,8 @@ const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
   retries: { type: 'integer', description: '整条流水线的默认重试次数（可选）。' },
   then: { type: 'string', enum: ['continue', 'stop'], description: '整条流水线的默认失败处理（可选）。' },
   stop_emulator_after: { type: 'boolean', description: '结束后关闭模拟器（可选）。' },
+  close_game_after: { type: 'boolean', description: '结束后关闭这些任务玩过的游戏（可选）。' },
+  power_after: { type: 'string', enum: ['none', 'sleep', 'hibernate', 'shutdown'], description: '结束后（且没有别的任务在跑时）电脑睡眠 / 休眠 / 关机，先倒计时、可以取消；界面里手动运行时不执行。只有用户明确要求时才设置（可选）。' },
 }
 
 const DraftArgs = z.object({
@@ -118,11 +121,14 @@ const DraftArgs = z.object({
     text: z.string().nullish(),
     retries: z.number().int().nullish(),
     then: z.enum(['continue', 'stop']).nullish(),
+    wait_for_all: z.boolean().nullish(),
   })).max(60),
   edges: z.array(z.object({ from: z.string(), to: z.string(), when: z.enum(['success', 'failure', 'always']).nullish() })).max(200).nullish(),
   retries: z.number().int().nullish(),
   then: z.enum(['continue', 'stop']).nullish(),
   stop_emulator_after: z.boolean().nullish(),
+  close_game_after: z.boolean().nullish(),
+  power_after: PowerAction.nullish(),
 })
 
 const given = <T>(v: T | null | undefined): v is T => v !== null && v !== undefined
@@ -138,6 +144,7 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
         id: n.id,
         ...(given(n.title) ? { title: n.title } : {}),
         ...(given(n.retries) || given(n.then) ? { onFailure: { retries: n.retries ?? 0, then: n.then ?? 'continue' } } : {}),
+        ...(n.wait_for_all === true ? { waitForAll: true } : {}),
       }
       switch (n.kind) {
         case 'script-task': {
@@ -155,6 +162,8 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
     edges: (args.edges ?? []).map(e => ({ from: e.from, to: e.to, when: e.when ?? 'success' })),
     ...(given(args.retries) || given(args.then) ? { onFailure: { retries: args.retries ?? 0, then: args.then ?? 'continue' } } : {}),
     ...(given(args.stop_emulator_after) ? { stopEmulatorAfter: args.stop_emulator_after } : {}),
+    ...(given(args.close_game_after) ? { closeGameAfter: args.close_game_after } : {}),
+    ...(given(args.power_after) ? { powerAfter: args.power_after } : {}),
   })
 }
 

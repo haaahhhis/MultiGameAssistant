@@ -167,6 +167,16 @@ function GameDetail({ client, game, activities, settings, now, busy, onRefresh, 
             <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>
           </div>
         </div>
+        {game.version !== undefined && (
+          <div className="game-version">
+            <span className="badge ok">版本 {game.version.name}</span>
+            {game.version.title !== undefined && <strong>{game.version.title}</strong>}
+            {game.version.startsAt !== undefined && game.version.endsAt !== undefined && (
+              <span className="muted small">{when(game.version.startsAt, game.timezone)} – {when(game.version.endsAt, game.timezone)}{game.version.endsAt > now ? `，还有 ${left(game.version.endsAt, now).big} ${left(game.version.endsAt, now).unit}` : ''}</span>
+            )}
+            <span className="muted small">来自{game.version.source}</span>
+          </div>
+        )}
         <div className="source-row">
           {game.sources.map(s => (
             <span key={s.id} className="source-chip" title={s.auto ? '自动读取（不用模型）' : '由 agent 用网页工具读取'}>
@@ -249,6 +259,7 @@ function ActivityCard({ client, activity: a, timeZone, soonDays, now, onRemove, 
       <div className="activity-main">
         <div className="activity-title">
           <h4>{a.url === undefined ? a.name : <a href={a.url} target="_blank" rel="noreferrer">{a.name}</a>}</h4>
+          {a.kind !== undefined && <span className="badge kind">{a.kind}</span>}
           <span className="spacer" />
           {a.site !== undefined && <span className="badge" title={`${relativeTime(a.site.at, now)}读取`}>{a.site.name}</span>}
           {a.screen !== undefined && <span className="badge ok" title={`agent ${relativeTime(a.screen.at, now)}在游戏里看到`}>游戏内 {relativeTime(a.screen.at, now)}</span>}
@@ -260,6 +271,7 @@ function ActivityCard({ client, activity: a, timeZone, soonDays, now, onRemove, 
           {a.shopEndsAt !== undefined && <span>商店开到 {when(a.shopEndsAt, timeZone)}</span>}
           {a.endsAt === undefined && a.screen?.remaining !== undefined && <span>游戏里显示「{a.screen.remaining}」</span>}
         </div>
+        {a.description !== undefined && <p className="activity-description" title={a.description}>{a.description}</p>}
         {elapsed !== undefined && (
           <div className="timeline" aria-hidden="true">
             <div className="timeline-fill" style={{ width: `${elapsed * 100}%` }} />

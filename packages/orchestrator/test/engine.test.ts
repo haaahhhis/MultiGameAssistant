@@ -9,7 +9,7 @@ import { parseManifest, type ScriptManifest } from '@adg/pack-schema'
 import { Pipeline, type PipelineInput, type PipelineRun, type ScriptInfo } from '@adg/protocol'
 import { Runner } from '@adg/runner'
 import { checkPipeline } from '../src/check.ts'
-import { Engine, type EngineNotice } from '../src/engine.ts'
+import { Engine, waitsFor, type EngineNotice } from '../src/engine.ts'
 
 const CLI = fileURLToPath(new URL('../../test-kit/src/fake-script-cli.ts', import.meta.url))
 
@@ -331,5 +331,52 @@ test('a run restarted after it failed (the monitor, the agent, 重试) is follow
   assert.equal(run.nodes['a']!.runIds.length, 2, 'followed to the rerun')
   const rerun = runner.get(run.nodes['a']!.runIds[1]!)
   assert.ok(run.nodes['b']!.startedAt! >= rerun.endedAt!, 'b waited for the rerun')
+  engine.dispose()
+})
+
+test('closing games afterwards: each game where it played, none in an emulator that is shut down anyway', async () => {
+  const maa = script('maa', 'adb', { daily: ok(200) })
+  const m7 = script('m7', 'desktop', { main: ok(200) })
+  for (const stopEmulatorAfter of [false, true]) {
+    const { runner, engine } = setup([maa, m7])
+    const closed: string[] = []
+    runner.closeGame = async (scriptId, where) => { closed.push(`${scriptId} ${where}`); return ['已关闭'] }
+    const p = pipeline({
+      nodes: [{ id: 'maa', kind: 'script-task', scriptId: 'maa', taskId: 'daily' }, { id: 'm7', kind: 'script-task', scriptId: 'm7', taskId: 'main' }],
+      closeGameAfter: true,
+      stopEmulatorAfter,
+    })
+    const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+    assert.equal(run.state, 'succeeded', run.outcome)
+    assert.deepEqual(closed.sort(), stopEmulatorAfter ? ['m7 pc'] : ['m7 pc', 'maa emulator'])
+    engine.dispose()
+  }
+})
+
+test('a "wait for all" node starts only once every node not after it has finished, other branches too', async () => {
+  const a = script('a', 'none', { t: ok(100) })
+  const b = script('b', 'none', { t: ok(600) })
+  const c = script('c', 'none', { t: ok(100) })
+  const { runner, engine } = setup([a, b, c])
+  // a → c, and b on its own branch: c waits for b as well.
+  const p = pipeline({
+    nodes: [
+      { id: 'a', kind: 'script-task', scriptId: 'a', taskId: 't' },
+      { id: 'b', kind: 'script-task', scriptId: 'b', taskId: 't' },
+      { id: 'c', kind: 'script-task', scriptId: 'c', taskId: 't', waitForAll: true },
+      { id: 'x', kind: 'notify', text: 'after c' },
+    ],
+    edges: [{ from: 'a', to: 'c' }, { from: 'c', to: 'x' }],
+  })
+  assert.deepEqual(waitsFor(p, 'c').sort(), ['a', 'b'])
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+  assert.equal(run.state, 'succeeded', run.outcome)
+  const [, bEnd] = window(runner, run, 'b')
+  const [cStart] = window(runner, run, 'c')
+  assert.ok(cStart >= bEnd, 'c started after b ended')
+  // Two of them side by side do not wait for each other.
+  const twin = pipeline({ nodes: [{ id: 'p', kind: 'notify', text: 'p', waitForAll: true }, { id: 'q', kind: 'notify', text: 'q', waitForAll: true }, { id: 'r', kind: 'notify', text: 'r' }], edges: [] })
+  assert.deepEqual(waitsFor(twin, 'p'), ['r'])
+  assert.equal((await engine.finished(engine.start(twin, { kind: 'manual' }).id)).state, 'succeeded')
   engine.dispose()
 })

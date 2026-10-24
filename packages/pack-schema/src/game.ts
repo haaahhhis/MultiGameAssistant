@@ -40,14 +40,29 @@ export const SmwSource = z.object({
 })
 export type SmwSource = z.infer<typeof SmwSource>
 
+/**
+ * The StarRailAssistant public API (https://starrailassistant.top/reference/public-api/):
+ * free, no key, JSON — the current version and its events (with a kind and a
+ * description) for many games, kept by its community from official notices.
+ */
+export const SraSource = z.object({
+  /** The API's game id: `ak` 明日方舟, `end` 终末地, `sr` 星穹铁道, `ys` 原神, `zzz` 绝区零… */
+  game: z.string().regex(/^[a-z0-9-]+$/),
+  /** A language tag such as `en-US`; the default language (Chinese) when absent. */
+  locale: z.string().regex(/^[a-z]{2}-[A-Z]{2}$/).optional(),
+  api: Url.default('https://starrailassistant.top/api/v1'),
+})
+export type SraSource = z.infer<typeof SraSource>
+
 export const GameSource = z.object({
   id: Id,
   name: z.string().min(1),
   /** Where a person (or the agent, with web_fetch) reads it. */
   homepage: Url.optional(),
-  /** Read by the plugin itself; without it the source is only for the agent. */
+  /** Read by the plugin itself (smw or sra); without either the source is only for the agent. */
   smw: SmwSource.optional(),
-})
+  sra: SraSource.optional(),
+}).refine(s => s.smw === undefined || s.sra === undefined, 'smw 和 sra 只能写一个')
 export type GameSource = z.infer<typeof GameSource>
 
 export const GameManifest = z.object({

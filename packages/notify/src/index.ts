@@ -13,11 +13,13 @@ import type {} from '@adg/gateway'
 import { NOTIFY_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { sessionConversations } from './conversations.ts'
+import type { Reply } from './reply.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
 export { sessionConversations } from './conversations.ts'
+export { finalText, replyMarkdown, replyPlain, textReply, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -126,7 +128,7 @@ export class AdgNotify extends Service {
     return this.notify.sendToSession(sessionId, notice)
   }
 
-  async inbound(message: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<string> {
+  async inbound(message: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<Reply> {
     await this.ready
     return this.notify.inbound(message)
   }

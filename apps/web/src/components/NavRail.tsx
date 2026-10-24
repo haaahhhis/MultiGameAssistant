@@ -9,7 +9,7 @@ export type RailTarget = { readonly kind: 'chat' } | { readonly kind: 'page'; re
 /**
  * The first column: product areas. Chat is always present; every other entry
  * comes from a UI plugin page, so an area appears exactly when the host serves
- * the capabilities behind it.
+ * the capabilities behind it. Pages ordered below 0 come before chat (游戏).
  */
 export function NavRail({ client, pages, current, onChat, onPage, onSettings }: {
   client: AdgClient
@@ -28,8 +28,12 @@ export function NavRail({ client, pages, current, onChat, onPage, onSettings }: 
         <AdgMark />
       </button>
       <div className="rail-items">
+        {pages.filter(page => page.order < 0).map(page => (
+          <RailItem key={page.id} icon={page.icon} label={page.title}
+            active={current.kind === 'page' && current.id === page.id} onClick={() => onPage(page.id)} />
+        ))}
         <RailItem icon="chat" label="对话" active={current.kind === 'chat'} onClick={onChat} badge={approvals.length + questions.length} />
-        {pages.map(page => (
+        {pages.filter(page => page.order >= 0).map(page => (
           <RailItem key={page.id} icon={page.icon} label={page.title}
             active={current.kind === 'page' && current.id === page.id} onClick={() => onPage(page.id)} />
         ))}

@@ -11,7 +11,7 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 
 1. `game_activities` 看日历。某个游戏的 refreshed 超过半天，先 `game_sites_refresh` 再看。
 2. 照日历回答：活动名、还剩几天、商店开到什么时候、还没做完的事。有 `mismatch` 的说明以数据站为准。
-3. 游戏包里没有可直接读的数据站（`game_list` 里 auto 都是 false，例如终末地）：用 `web_fetch` 读官网公告页（或 `web_search`），找到活动名和起止时间后 `game_record`（source=site，带上 `url`）。
+3. 游戏包里没有可直接读的数据站（`game_list` 里 auto 都是 false）：按技能 web-reading 的顺序查（先公开 API，如 SRA 公共 API，再 Wiki 接口，最后官网公告页），找到活动名和起止时间后 `game_record`（source=site，带上 `url`）。
 
 ## 进游戏读进度
 

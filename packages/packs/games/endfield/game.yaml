@@ -1,6 +1,7 @@
-# 明日方舟：终末地 (Arknights: Endfield, CN server). No wiki keeps its event
-# dates in a form the plugin can read by itself yet, so the agent reads the
-# official news (web_fetch / web_search) and the game screen (GAME.md).
+# 明日方舟：终末地 (Arknights: Endfield, CN server). Event dates, the version
+# and each event's kind and description come from the StarRailAssistant
+# public API (no model needed); for anything it lacks the agent reads the
+# official news (web_fetch / web_search), and the game screen (GAME.md).
 id: endfield
 name: 明日方舟：终末地
 aliases: [终末地, Endfield]
@@ -10,6 +11,12 @@ dailyReset: '04:00'
 screen:
   target: window
 sources:
+  # The only source the plugin reads by itself.
+  - id: sra
+    name: SRA 公共 API
+    homepage: https://starrailassistant.top/reference/public-api/
+    sra:
+      game: end
   - id: official
     name: 官网新闻
     homepage: https://endfield.hypergryph.com/news

@@ -22,7 +22,7 @@ import { PipelineStore } from './store.ts'
 import { pipelineTools } from './tools.ts'
 
 export { checkPipeline, graph, nodeLabel, topoOrder, type CheckLibrary } from './check.ts'
-export { Engine, untilMs, type EngineDeps, type EngineNotice } from './engine.ts'
+export { Engine, untilMs, waitsFor, type EngineDeps, type EngineNotice } from './engine.ts'
 export { Pipelines, localDay } from './pipelines.ts'
 export { PipelineStore } from './store.ts'
 export { draftToPipeline, pipelineTools } from './tools.ts'

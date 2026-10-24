@@ -1,6 +1,7 @@
 # 明日方舟 (Arknights, CN server). Event dates come from PRTS, the players'
-# wiki, over its Semantic MediaWiki API (no model needed); progress inside
-# the game is read from the emulator screen by the agent (GAME.md).
+# wiki, over its Semantic MediaWiki API, and the StarRailAssistant public API
+# (the version, each event's kind and description); no model needed. Progress
+# inside the game is read from the emulator screen by the agent (GAME.md).
 id: arknights
 name: 明日方舟
 aliases: [方舟, Arknights]
@@ -10,6 +11,12 @@ dailyReset: '04:00'
 screen:
   target: emulator
 sources:
+  # First: PRTS, read after it, has the last word on dates and the shop end.
+  - id: sra
+    name: SRA 公共 API
+    homepage: https://starrailassistant.top/reference/public-api/
+    sra:
+      game: ak
   - id: prts
     name: PRTS
     homepage: https://prts.wiki/w/活动一览

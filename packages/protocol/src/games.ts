@@ -19,6 +19,10 @@ export const Activity = z.object({
   /** The event's shop stays open until then (Arknights: 兑换结束). */
   shopEndsAt: z.number().optional(),
   url: z.string().optional(),
+  /** What kind of event, as the data site says ("SideStory", "挑战活动"). */
+  kind: z.string().optional(),
+  /** What it is about, from the data site. */
+  description: z.string().optional(),
   /** Seen on a data site: its dates are the ones that count. */
   site: z.object({ source: z.string(), name: z.string(), at: z.number() }).optional(),
   /** Read from the game screen by the agent. */
@@ -58,6 +62,15 @@ export const GameInfo = z.object({
   screen: z.object({ target: z.enum(['emulator', 'window']), window: z.string().optional() }).optional(),
   sources: z.array(GameSourceInfo),
   builtin: z.boolean(),
+  /** The game's current version, from a data site that knows it. */
+  version: z.object({
+    name: z.string(),
+    title: z.string().optional(),
+    startsAt: z.number().optional(),
+    endsAt: z.number().optional(),
+    source: z.string(),
+    at: z.number(),
+  }).optional(),
   /** The last data-site refresh. */
   refreshed: z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() }).optional(),
   /** The last time the agent read the game screen. */

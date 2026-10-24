@@ -9,7 +9,7 @@ import { Calendar, DEFAULT_SETTINGS } from '../src/calendar.ts'
 import { DailyReport } from '../src/daily.ts'
 import { sameEvent } from '../src/names.ts'
 import { buildReport } from '../src/report.ts'
-import { parseAsk, readSmw, smwQuery, type Fetch } from '../src/sources.ts'
+import { parseAsk, parseSra, readSmw, smwQuery, type Fetch } from '../src/sources.ts'
 import { leftText, parseDateText, parseRemaining, zonedTime } from '../src/time.ts'
 
 const TZ = 'Asia/Shanghai'
@@ -200,4 +200,30 @@ test('the report goes out once a day at its time, late after a missed time, neve
   assert.deepEqual(sent, ['2026-10-20', '2026-10-21'])
   assert.equal(clock.pending, 1, 'one timer: tomorrow')
   daily.stop()
+})
+
+test('SRA public API: the version, and events still ahead with their kind and description, in server time', () => {
+  const now = Date.UTC(2026, 9, 24, 12) // 2026-10-24 20:00 in Shanghai
+  const body = {
+    version: '1.6', versionName: '丹青渡', startTime: '2026-10-15T12:00:00', endTime: '2026-11-26T06:00:00',
+    activities: [
+      { name: '「丰碑留名·刻影」限时挑战', kind: '挑战活动', description: '完成挑战领取奖励', startTime: '2026-10-05T12:00:00', endTime: '2026-10-19T04:00:00', cover: '' },
+      { name: '丹青渡·版本活动', kind: '版本活动', description: '', startTime: '2026-10-15T12:00:00', endTime: '2026-11-05T03:59:59' },
+      { name: '没有结束时间', startTime: '2026-10-15T12:00:00' },
+    ],
+  }
+  const read = parseSra(body, 'Asia/Shanghai', now)
+  assert.deepEqual(read.version, { name: '1.6', title: '丹青渡', startsAt: Date.UTC(2026, 9, 15, 4), endsAt: Date.UTC(2026, 10, 25, 22) })
+  assert.equal(read.events.length, 1, 'ended and undated ones are left out')
+  assert.deepEqual(read.events[0], { name: '丹青渡·版本活动', aliases: [], endsAt: Date.UTC(2026, 10, 4, 19, 59), startsAt: Date.UTC(2026, 9, 15, 4), kind: '版本活动' })
+  assert.deepEqual(parseSra('not json', 'Asia/Shanghai', now), { events: [] })
+})
+
+test('the built-in game packs parse, and SRA comes before the wikis so their dates have the last word', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { parseGameManifest } = await import('@adg/pack-schema')
+  for (const id of ['arknights', 'endfield', 'starrail']) {
+    const manifest = parseGameManifest(readFileSync(new URL(`../../packs/games/${id}/game.yaml`, import.meta.url), 'utf8'))
+    assert.equal(manifest.sources[0]?.sra?.api, 'https://starrailassistant.top/api/v1', id)
+  }
 })

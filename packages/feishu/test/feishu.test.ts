@@ -6,6 +6,7 @@ import { startFakeFeishu } from '../../test-kit/src/fake-feishu.ts'
 import { parseCardAction, parseMessage, sdkApi, type CardAction, type CardActionResponse, type ConnectionState, type FeishuApi, type InboundMessage, type Target } from '../src/api.ts'
 import { DEFAULT_FEISHU, FeishuBot, type FeishuState, type NotifyPort } from '../src/bot.ts'
 import { markdownPost, toFeishuMarkdown } from '../src/markdown.ts'
+import { replyMarkdown, textReply } from '@adg/notify'
 
 interface Sent { to?: Target; replyTo?: string; card?: object; text?: string; markdown?: boolean; id: string }
 
@@ -45,7 +46,7 @@ function setup(settings: Partial<FeishuSettings> = {}, options: { tokenError?: s
   const gate = new Promise<void>(resolve => { release = resolve })
   const port: NotifyPort = {
     act: async (id, action, actor) => { acted.push(`${id}:${action}:${actor.userId}`); if (action === 'stop') await delay(50); return '已停止' },
-    inbound: async m => { inbound.push({ text: m.text, replyTo: m.replyTo, userId: m.actor.userId }); if (m.text === '慢') await gate; return `收到：${m.text}` },
+    inbound: async m => { inbound.push({ text: m.text, replyTo: m.replyTo, userId: m.actor.userId }); if (m.text === '慢') await gate; return textReply(`收到：${m.text}`) },
     respondApproval: (id, decision) => { answered.push(`${id}:${decision}`); return answered.length === 1 },
     answerQuestion: (id, item) => { questions.push(`${id}:${item.selected.join()}`); return questions.length === 1 ? { done: true } : undefined },
   }
@@ -260,7 +261,7 @@ test('the real SDK over the long connection: messages in, replies out, a card cl
     save: async () => {},
     notify: () => ({
       act: async (_id, action) => `已${action === 'stop' ? '停止' : '处理'}`,
-      inbound: async m => { inbound.push(m.text); return `收到：${m.text}` },
+      inbound: async m => { inbound.push(m.text); return textReply(`收到：${m.text}`) },
       respondApproval: () => true,
     }),
     changed: () => {},

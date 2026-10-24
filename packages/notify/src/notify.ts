@@ -7,7 +7,9 @@
  * - Replies: a person's message that is just a button label ("停止") acts on
  *   the notice it replies to, or on the only open notice offering it.
  * - Conversation: anything else goes to the agent in a dsh session kept per
- *   person, and the agent's final answer is the reply.
+ *   person; the reply is the whole turn, channel-neutral (reply.ts): what the
+ *   agent said and the steps between, as the app shows it. A session whose
+ *   folder is gone (renamed, moved) is replaced, its last messages carried over.
  * - Approvals and the agent's questions (ask_user_question): a chat
  *   conversation's go to its person only, on its channel; other sessions' go
  *   to channels that take them (Feishu's 「软件里的会话」 setting). A reply
@@ -18,6 +20,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { ApprovalRequested, ChannelStatus, QuestionAnswerItem, QuestionItem, QuestionRequested } from '@adg/protocol'
+import { textReply, type Reply } from './reply.ts'
 
 export interface NoticeAction {
   readonly id: string
@@ -97,9 +100,14 @@ export interface QuestionProgress {
 export interface Conversations {
   /** Send `text` (and PNG images) as a message in `sessionId` and resolve with the agent's final answer. */
   ask(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
+  /** The same, resolving with the whole turn (what the agent said and did). Absent: the final answer only. */
+  converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<Reply>
   /** A new session; `defaultModel`: use the default model (else the one last used in the UI). */
   create(title: string, options?: { defaultModel?: boolean }): Promise<string>
+  /** False also when the session cannot work any more (its folder is gone). */
   exists(sessionId: string): Promise<boolean>
+  /** The session's last few messages as text, to carry into a new one. */
+  recent?(sessionId: string): Promise<string | undefined>
 }
 
 export interface NotifyOptions {
@@ -219,30 +227,40 @@ export class Notify {
   /**
    * A message from an allowed person. Button labels act on notices;
    * anything else is a conversation with the agent.
-   * @returns the reply to send back.
+   * @returns the reply to send back, for the channel to render.
    */
-  async inbound(message_: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<string> {
+  async inbound(message_: { actor: Actor; text: string; replyTo?: string | undefined; signal?: AbortSignal }): Promise<Reply> {
     const text = message_.text.trim()
     // The agent is waiting for this person's answer: the message is it.
     const key = `${message_.actor.channel}:${message_.actor.userId}`
     const waiting = [...this.#questions.entries()].find(([, q]) => q.key === key)
-    if (waiting !== undefined && text !== '') return this.#replyToQuestion(waiting[0], text, message_.actor)
+    if (waiting !== undefined && text !== '') return textReply(await this.#replyToQuestion(waiting[0], text, message_.actor))
     const target = this.#noticeFor(text, message_.replyTo)
     if (target !== undefined) {
       try {
-        return await this.act(target.notice.id, target.action, message_.actor)
+        return textReply(await this.act(target.notice.id, target.action, message_.actor))
       } catch (error) {
-        return `没能完成：${message(error)}`
+        return textReply(`没能完成：${message(error)}`)
       }
     }
     const conversations = this.#options.conversations()
-    if (conversations === undefined) return 'agent 现在不可用（会话服务没有加载）。'
+    if (conversations === undefined) return textReply('agent 现在不可用（会话服务没有加载）。')
     let sessionId = this.#options.sessions.get(key)
+    let prompt = text
+    let note: string | undefined
     if (sessionId === undefined || !(await conversations.exists(sessionId))) {
+      // The old one can no longer work (deleted, or its folder renamed): start again with its last messages.
+      const earlier = sessionId === undefined ? undefined : await conversations.recent?.(sessionId).catch(() => undefined)
       sessionId = await conversations.create(`${message_.actor.channel === 'feishu' ? '飞书' : message_.actor.channel}：${message_.actor.name ?? message_.actor.userId}`)
       await this.#options.sessions.set(key, sessionId)
+      if (earlier !== undefined) {
+        prompt = `（之前的对话没法继续了，换成了这个新对话。下面是之前最后几条消息，供参考：）\n${earlier}\n\n（现在的消息：）\n${text}`
+        note = '（之前的对话没法继续了：被删掉了，或者它所在的文件夹改了名、挪了地方。已经换成新对话，带上了最近几条消息。）'
+      }
     }
-    return conversations.ask(sessionId, text, message_.signal ?? AbortSignal.timeout(20 * 60_000))
+    const signal = message_.signal ?? AbortSignal.timeout(20 * 60_000)
+    const reply = conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
+    return note === undefined ? reply : { blocks: [{ kind: 'text', text: note }, ...reply.blocks] }
   }
 
   /** The notice a short reply like "停止" means, if it means one. */

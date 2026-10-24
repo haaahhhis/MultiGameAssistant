@@ -3,8 +3,13 @@ import type { ApprovalRequested, QuestionAnswerItem, QuestionItem, QuestionReque
 import type { AdgClient } from '@adg/client-core'
 import { useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
+import { PowerCard, usePowerStatus } from './PowerCard.tsx'
 
-/** Pending approvals and the agent's questions: the current session's in full, others as a count. */
+/**
+ * Pending approvals and the agent's questions: the current session's in full,
+ * others as a count; and a sleep or shutdown on its way after a pipeline, on
+ * every page.
+ */
 export function ApprovalDock({ client, sessionId, onSelect }: {
   client: AdgClient
   sessionId: string | null
@@ -12,13 +17,15 @@ export function ApprovalDock({ client, sessionId, onSelect }: {
 }) {
   const approvals = useStore(client.approvals)
   const questions = useStore(client.questions)
-  if (approvals.length === 0 && questions.length === 0) return null
+  const pending = usePowerStatus(client)?.pending
+  if (approvals.length === 0 && questions.length === 0 && pending === undefined) return null
   const here = approvals.filter(a => a.sessionId === sessionId)
   const asked = questions.filter(q => q.sessionId === sessionId)
   const elsewhere = [...approvals, ...questions].filter(a => a.sessionId !== sessionId)
   const waiting = elsewhere.some(e => 'approvalId' in e) ? (elsewhere.some(e => 'questionId' in e) ? '审批或回答' : '审批') : '回答'
   return (
     <div className="approval-dock">
+      {pending !== undefined && <PowerCard client={client} pending={pending} />}
       {asked.map(request => <QuestionCard key={request.questionId} client={client} request={request} />)}
       {here.map(request => <ApprovalCard key={request.approvalId} client={client} request={request} />)}
       {elsewhere.length > 0 && (

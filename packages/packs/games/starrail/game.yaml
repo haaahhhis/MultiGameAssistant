@@ -1,5 +1,6 @@
 # 崩坏：星穹铁道 (Honkai: Star Rail, CN server). Event dates come from the
-# Bilibili wiki's Semantic MediaWiki API, where they are stored as text in
+# StarRailAssistant public API (with the version, kinds and descriptions) and
+# the Bilibili wiki's Semantic MediaWiki API, where they are stored as text in
 # server time; progress is read from the PC window by the agent (GAME.md).
 id: starrail
 name: 崩坏：星穹铁道
@@ -11,6 +12,12 @@ screen:
   target: window
   window: 崩坏：星穹铁道
 sources:
+  # First: the wiki, read after it, has the last word on dates.
+  - id: sra
+    name: SRA 公共 API
+    homepage: https://starrailassistant.top/reference/public-api/
+    sra:
+      game: sr
   - id: biligame
     name: 星穹铁道 WIKI（哔哩哔哩）
     homepage: https://wiki.biligame.com/sr/活动一览

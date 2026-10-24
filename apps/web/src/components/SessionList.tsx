@@ -90,7 +90,7 @@ export function SessionList({ client, selected, onSelect, onNew }: {
     const counts: Record<Tab, number> = { chats: 0, remote: 0, auto: 0, archived: 0 }
     for (const item of all) counts[archived.has(item.id) ? 'archived' : kindOf(item)]++
     const visible = all.filter(item => (tab === 'archived' ? archived.has(item.id) : !archived.has(item.id) && kindOf(item) === tab)
-      && (needle === '' || sessionTitle(item).toLowerCase().includes(needle) || (item.cwd ?? '').toLowerCase().includes(needle)))
+      && (needle === '' || sessionTitle(item).toLowerCase().includes(needle)))
     return { groups: groupByDay(visible, now), counts }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions.items, query, now, tab, archived, remote, selected])
@@ -175,7 +175,7 @@ export function SessionList({ client, selected, onSelect, onNew }: {
                     aria-current={item.id === selected ? 'page' : undefined}
                     onClick={() => onSelect(item.id)}
                     onDoubleClick={() => setRenaming({ id: item.id, value: sessionTitle(item) })}
-                    title={item.cwd === undefined ? '双击改名' : `双击改名 · ${item.cwd}`}
+                    title="双击改名"
                   >
                     {tab === 'remote' && <span className="channel-badge">{CHANNEL[who?.channel ?? 'feishu'] ?? who?.channel}</span>}
                     <span className="nav-item-label">{tab === 'remote' ? sessionTitle(item).replace(/^(飞书|feishu)：/, '') : sessionTitle(item)}</span>

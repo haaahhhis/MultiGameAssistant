@@ -9,7 +9,7 @@ import { writeFileAtomic } from '@adg/protocol/node'
 import { GamesSettings, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
-import type { SiteEvent } from './sources.ts'
+import type { SiteEvent, SiteVersion } from './sources.ts'
 import { MS, leftText, parseDateText, parseRemaining, shortDate } from './time.ts'
 
 /** An event that ended this long ago is dropped. */
@@ -45,6 +45,7 @@ const StoredSchema = z.object({
   refreshed: z.record(z.string(), z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })).default({}),
   readings: z.record(z.string(), z.object({ state: z.enum(['running', 'done', 'failed']), at: z.number(), sessionId: z.string().optional(), summary: z.string().optional() })).default({}),
   report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional() }).default({}),
+  versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), source: z.string(), at: z.number() })).default({}),
   settings: z.object({ report: GamesSettings.shape.report.partial().default({}) }).default({ report: {} }),
 })
 type Saved = z.infer<typeof StoredSchema>
@@ -52,7 +53,7 @@ type Saved = z.infer<typeof StoredSchema>
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {} } }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {} }, versions: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -66,7 +67,7 @@ export class Calendar {
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
       this.#items = saved.activities.map(a => ({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] }) as Stored)
-      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings }
+      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions }
     } catch {
       // first start, or unreadable: start empty
     }
@@ -111,6 +112,12 @@ export class Calendar {
     return this.#saved.readings[game]
   }
 
+  version(game: string): GameInfo['version'] {
+    const v = this.#saved.versions[game]
+    // A version that ended a while ago is old news until a source says what came next.
+    return v !== undefined && (v.endsAt === undefined || v.endsAt > Date.now() - KEEP_ENDED_MS) ? v : undefined
+  }
+
   // ── writing ──
 
   async configure(patch: { [K in keyof GamesSettings['report']]?: GamesSettings['report'][K] | undefined }): Promise<GamesSettings> {
@@ -148,6 +155,8 @@ export class Calendar {
       if (event.shopEndsAt !== undefined) item.shopEndsAt = event.shopEndsAt
       else delete item.shopEndsAt
       if (event.url !== undefined) item.url = event.url
+      if (event.kind !== undefined) item.kind = event.kind
+      if (event.description !== undefined) item.description = event.description
       item.site = { source: source.id, name: source.name, at: now }
       this.#crossCheck(item, timeZone)
     }
@@ -155,6 +164,13 @@ export class Calendar {
     for (const item of this.#items) if (item.game === game && !seen.has(item) && item.site?.source === source.id) delete item.site
     this.#prune(now)
     this.#saved.refreshed[game] = { at: now, ok: true, count: events.length }
+    await this.save()
+  }
+
+  /** After every source of a game was read: the total, and the version if one said. */
+  async refreshDone(game: string, count: number, now: number, version?: { source: string } & SiteVersion): Promise<void> {
+    this.#saved.refreshed[game] = { at: now, ok: true, count }
+    if (version !== undefined) this.#saved.versions[game] = { ...version, at: now }
     await this.save()
   }
 

@@ -1,11 +1,11 @@
 ---
 name: game-endfield
-description: 明日方舟：终末地的活动和进度：从官网新闻和游戏画面读活动、剩余时间和没做完的事。用户问终末地有什么活动、还剩几天时使用。
+description: 明日方舟：终末地的活动和进度：活动时间来自 SRA 公共 API（必要时看官网新闻），游戏画面读剩余时间和没做完的事。用户问终末地有什么活动、还剩几天时使用。
 ---
 
 # 明日方舟：终末地（官服）
 
-- 没有能直接读的数据站：活动时间用 `web_fetch` 看官网新闻 https://endfield.hypergryph.com/news （或 `web_search`「终末地 活动 时间」），从公告里找活动名和起止时间，用 `game_record` 记下（source=site，写明 `url`）。
+- 活动时间、版本和每个活动的说明由插件每天从 SRA 公共 API 读（`game_sites_refresh` 可以马上刷新），不用模型。那里没有的（比如刚发的公告），再用 `web_fetch` 看官网新闻 https://endfield.hypergryph.com/news ，从公告里找活动名和起止时间，用 `game_record` 记下（source=site，写明 `url`）。
 - 游戏可能是 PC 窗口，也可能在模拟器里（看 MaaEnd 的实例用的是哪个控制器）。PC 版先 `window_list` 找窗口；MaaEnd 正在跑时先等它结束。
 
 ## 进到活动页（只看，不花东西）

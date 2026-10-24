@@ -37,6 +37,7 @@ function StepCard({ data, selected }: NodeProps<StepNode>) {
       <div className="step-kind">
         <span>{KIND[data.node.kind]}</span>
         {data.input !== '' && <span className="badge">{data.input}</span>}
+        {data.node.waitForAll === true && <span className="badge" title="等前面的节点全部结束再开始">等全部</span>}
         {state !== undefined && <span className={`step-state ${state}`}>{NODE_STATE[state]}{(data.state?.attempts ?? 0) > 1 ? ` · 第 ${data.state!.attempts} 次` : ''}</span>}
       </div>
       <div className="step-title">{data.label}</div>
@@ -314,6 +315,14 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
             : <input className="text-input plain" type="time" value={node.until} onChange={e => onChange({ ...node, until: e.target.value })} />}
         </div>
       )}
+
+      <label className="check-label">
+        <input type="checkbox" checked={node.waitForAll === true} onChange={e => {
+          const { waitForAll: _w, ...rest } = node
+          onChange((e.target.checked ? { ...rest, waitForAll: true } : rest) as PipelineNode)
+        }} />等前面的节点全部结束再开始
+      </label>
+      <p className="muted small">不只等连进来的线：画布上不在它后面的节点（其他分支也算）都结束了（成功、失败、跳过都算）才开始。用来让并行的几条分支汇合。</p>
 
       {node.kind !== 'gate' && node.kind !== 'notify' && (
         <>

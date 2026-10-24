@@ -22,13 +22,13 @@ import { z } from 'zod'
 import { Calendar, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport } from './report.ts'
-import { readSmw, type Fetch } from './sources.ts'
+import { readSmw, readSra, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
 import { gameTools } from './tools.ts'
 
 export { Calendar, DEFAULT_SETTINGS, type ReadEvent } from './calendar.ts'
 export { DailyReport, localDay, realClock, type Clock, type DailyDeps } from './daily.ts'
 export { buildReport, type ReportGame } from './report.ts'
-export { parseAsk, readSmw, readValue, smwQuery, type Fetch, type SiteEvent } from './sources.ts'
+export { parseAsk, parseSra, readSmw, readSra, readValue, smwQuery, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
 export { gameTools, type GameToolDeps } from './tools.ts'
 export { daysLeft, leftText, parseDateText, parseRemaining, shortDate, wallClock, zonedTime } from './time.ts'
 export { idKey, nameKey, sameEvent } from './names.ts'
@@ -48,6 +48,8 @@ const ConfigSchema = z.object({
 export type Config = z.input<typeof ConfigSchema>
 
 const SKILL = new URL('../skills/game-intel.md', import.meta.url)
+/** How to look things up on the web: public APIs first, then wiki query APIs, pages last. */
+const WEB_SKILL = new URL('../skills/web-reading.md', import.meta.url)
 /** An agent reading of the game gives up after this long. */
 const READ_TIMEOUT_MS = 20 * 60_000
 
@@ -98,13 +100,15 @@ export class AdgGameIntel extends Service {
     })()
     ctx.effect(() => () => this.daily.stop(), 'adg-game-intel daily report')
 
-    // ── skills: the general guide and each game's GAME.md ──
+    // ── skills: the general guide, reading the web, and each game's GAME.md ──
     ctx.inject(['skills'], scoped => {
       const disposers: Array<() => void> = []
       void (async () => {
         await this.ready
         const guide = parseFrontmatter(await readFile(SKILL, 'utf8'))
         if (guide !== undefined) disposers.push(scoped.skills.register({ ...guide, source: 'bundled' }))
+        const web = parseFrontmatter(await readFile(WEB_SKILL, 'utf8'))
+        if (web !== undefined) disposers.push(scoped.skills.register({ ...web, source: 'bundled' }))
         for (const game of this.games) {
           if (game.guide === undefined) continue
           const skill = parseFrontmatter(game.guide)
@@ -223,13 +227,15 @@ export class AdgGameIntel extends Service {
     return this.games.map(({ manifest: m, builtin }) => {
       const refreshed = this.calendar.refreshed(m.id)
       const reading = this.calendar.reading(m.id)
+      const version = this.calendar.version(m.id)
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
-        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined })),
+        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined })),
         builtin,
         ...(refreshed === undefined ? {} : { refreshed }),
         ...(reading === undefined ? {} : { reading }),
+        ...(version === undefined ? {} : { version }),
       }
     })
   }
@@ -241,17 +247,25 @@ export class AdgGameIntel extends Service {
     const games = gameId === undefined ? this.games : [this.game(gameId)]
     const results: Array<{ game: string; ok: boolean; count: number; detail?: string }> = []
     for (const { manifest } of games) {
-      const sources = manifest.sources.filter(s => s.smw !== undefined)
+      const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined)
       if (sources.length === 0) {
         results.push({ game: manifest.id, ok: false, count: 0, detail: `没有能直接读的数据站：用 web_fetch 看 ${manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'}，再用 game_record（source=site）记下` })
         continue
       }
       const failures: string[] = []
       let count = 0
+      let version: ({ source: string } & SiteVersion) | undefined
       for (const source of sources) {
         const now = this.clock.now()
         try {
-          const events = await readSmw(source.smw!, manifest, now, this.fetch)
+          let events: SiteEvent[]
+          if (source.sra !== undefined) {
+            const read = await readSra(source.sra, manifest, now, this.fetch)
+            events = read.events
+            if (read.version !== undefined) version ??= { source: source.name, ...read.version }
+          } else {
+            events = await readSmw(source.smw!, manifest, now, this.fetch)
+          }
           await this.calendar.applySite(manifest.id, { id: source.id, name: source.name }, events, now, manifest.timezone)
           count += events.length
         } catch (error) {
@@ -259,6 +273,7 @@ export class AdgGameIntel extends Service {
         }
       }
       if (failures.length > 0 && count === 0) await this.calendar.refreshFailed(manifest.id, failures.join('；'), this.clock.now())
+      else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.site !== undefined && a.site.source !== 'agent').length, this.clock.now(), version)
       results.push({ game: manifest.id, ok: failures.length === 0 || count > 0, count, ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
       this.changed(manifest.id)
     }

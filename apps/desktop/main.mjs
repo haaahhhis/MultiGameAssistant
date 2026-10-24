@@ -9,8 +9,10 @@
  *
  * Unattended use (docs/PLAN.zh.md §5.9): closing the window keeps the app in
  * the tray so schedules keep running; `--auto-start` (the logon task the
- * scheduler registers) starts hidden in the tray; dsh is restarted when it
- * dies, and the scheduler picks up where it left off.
+ * scheduler registers) starts hidden in the tray; `--wake` (the task that
+ * wakes the computer for a scheduled time) does too, without running the
+ * on-start pipelines, and is ignored when the app already runs; dsh is
+ * restarted when it dies, and the scheduler picks up where it left off.
  */
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
@@ -60,6 +62,7 @@ const LOG_TAIL_LINES = 40
 const MAX_RESTARTS = 5
 const RESTART_WINDOW_MS = 10 * 60_000
 const autoStarted = process.argv.includes('--auto-start')
+const woken = process.argv.includes('--wake')
 /** How the logon task starts this app again: the packaged exe, or Electron with this app's folder. */
 const launchCommand = app.isPackaged ? [process.execPath, '--auto-start'] : [process.execPath, here, '--auto-start']
 
@@ -83,7 +86,8 @@ const logTail = []
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => showWindow())
+  // The logon and wake tasks starting it again are not someone asking for the window.
+  app.on('second-instance', (_event, argv) => { if (!argv.includes('--wake') && !argv.includes('--auto-start')) showWindow() })
   app.whenReady().then(start)
 }
 
@@ -182,7 +186,7 @@ async function start() {
   })
   win.on('closed', () => { win = null })
   windowChrome(win.webContents)
-  win.once('ready-to-show', () => { if (!autoStarted) win?.show() })
+  win.once('ready-to-show', () => { if (!autoStarted && !woken) win?.show() })
   await showSplash({ step: 'env', title: '正在准备运行环境' })
 
   if (!existsSync(join(paths.uiDir, 'index.html'))) {
@@ -292,7 +296,7 @@ function logDir() {
 
 function createTray() {
   tray = new Tray(nativeImage.createFromBuffer(trayIconPng(32)))
-  tray.setToolTip(autoStarted ? 'AutoDailyGamePlay（开机自动启动）' : 'AutoDailyGamePlay')
+  tray.setToolTip(autoStarted ? 'AutoDailyGamePlay（开机自动启动）' : woken ? 'AutoDailyGamePlay（定时唤醒）' : 'AutoDailyGamePlay')
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开 AutoDailyGamePlay', click: () => showWindow() },
     { type: 'separator' },
@@ -324,7 +328,7 @@ function launchHost() {
       ADG_UI_DIR: paths.uiDir,
       ADG_LAUNCH_COMMAND: JSON.stringify(launchCommand),
       ADG_AUTOSTARTED: autoStarted && !everReady ? '1' : '0',
-      ADG_APP_START: everReady ? '0' : '1',
+      ADG_APP_START: everReady || woken ? '0' : '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

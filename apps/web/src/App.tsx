@@ -13,6 +13,9 @@ import { readRoute, writeRoute, type Route } from './config.ts'
 import { readDraft, saveDraft } from './drafts.ts'
 import { useCredentials, useModelCatalog, useNow, usePages, useStore } from './hooks.ts'
 
+/** The page the app opens on. */
+const START_PAGE = 'games'
+
 /** A first message typed on the home page, sent once its new session opens. */
 type Handoff = { readonly sessionId: string; readonly text: string }
 
@@ -51,16 +54,24 @@ export function App({ client }: { client: AdgClient }) {
     return () => clearTimeout(timer)
   }, [route, sessions])
 
+  // Just opened: the games page is the main one; chat when this connection has no games.
+  useEffect(() => {
+    if (route.kind !== 'start' || status.state !== 'open') return
+    replacing.current = true
+    setRoute(pages.some(p => p.id === START_PAGE) ? { kind: 'page', id: START_PAGE } : { kind: 'home' })
+  }, [route, status.state, pages])
+
   const openSession = (id: string) => setRoute({ kind: 'session', id })
   const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
   const goHome = () => setRoute({ kind: 'home' })
   const selected = route.kind === 'session' ? route.id : null
-  const page = route.kind === 'page' ? pages.find(p => p.id === route.id) : undefined
+  const shown: Route = route.kind === 'start' ? { kind: 'page', id: START_PAGE } : route
+  const page = shown.kind === 'page' ? pages.find(p => p.id === shown.id) : undefined
 
   if (route.kind === 'window') return <PoppedView client={client} viewId={route.view} sessionId={route.sessionId} />
 
-  const rail: RailTarget = route.kind === 'page' ? { kind: 'page', id: route.id } : route.kind === 'settings' ? { kind: 'settings' } : { kind: 'chat' }
+  const rail: RailTarget = shown.kind === 'page' ? { kind: 'page', id: shown.id } : route.kind === 'settings' ? { kind: 'settings' } : { kind: 'chat' }
   const chatArea = route.kind === 'home' || route.kind === 'session'
 
   return (
@@ -68,9 +79,9 @@ export function App({ client }: { client: AdgClient }) {
       <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={() => openSettings()} />
       {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={route.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
       {chatArea && <SessionList client={client} selected={selected} onSelect={openSession} onNew={goHome} />}
-      {route.kind === 'page' && (page === undefined
+      {shown.kind === 'page' && (page === undefined
         ? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>
-        : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={route.kind === 'page' ? route.arg : undefined} />)}
+        : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />)}
       {route.kind === 'home' && (
         <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession}
           onStart={(sessionId, text) => { setHandoff({ sessionId, text }); openSession(sessionId) }} />
@@ -186,7 +197,7 @@ function Home({ client, onSettings, onOpen, onStart }: {
           <div className="resume">
             <div className="resume-head"><span className="sidebar-label">继续上次</span></div>
             {recent.map(item => (
-              <button key={item.id} className="resume-item" title={item.cwd === undefined ? undefined : `工作文件夹：${item.cwd}`} onClick={() => onOpen(item.id)}>
+              <button key={item.id} className="resume-item" onClick={() => onOpen(item.id)}>
                 <span className="resume-text">
                   <span className="resume-title">{sessionTitle(item)}</span>
                 </span>

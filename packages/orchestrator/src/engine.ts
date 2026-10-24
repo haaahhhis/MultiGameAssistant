@@ -26,7 +26,7 @@ export interface EngineNotice {
 }
 
 export interface EngineDeps {
-  readonly runner: Pick<Runner, 'start' | 'check' | 'stop' | 'finished' | 'watch' | 'successor'> & Partial<Pick<Runner, 'held'>>
+  readonly runner: Pick<Runner, 'start' | 'check' | 'stop' | 'finished' | 'watch' | 'successor'> & Partial<Pick<Runner, 'held' | 'get' | 'closeGame'>>
   readonly library: CheckLibrary
   readonly notices: () => { send(notice: EngineNotice): Promise<readonly string[]>; update(id: string, patch: { done?: string }): Promise<void> } | undefined
   readonly conversations: () => Conversations | undefined
@@ -206,6 +206,7 @@ export class Engine {
       // 结束 waits for everything else, whatever its edges say; it is never skipped.
       if (node.kind === 'end' && pipeline.nodes.some(n => n.id !== node.id && !final(run.nodes[n.id]!.state))) continue
       if (incoming.some(e => !final(run.nodes[e.from]!.state))) continue
+      if (node.waitForAll === true && waitsFor(pipeline, node.id).some(id => !final(run.nodes[id]!.state))) continue
       const blocked = node.kind === 'end' ? undefined : incoming.find(e => !active.passed.has(e.from) && !satisfied(e.when, run.nodes[e.from]!.state))
       if (blocked !== undefined) {
         const from = pipeline.nodes.find(n => n.id === blocked.from)!
@@ -363,6 +364,7 @@ export class Engine {
     run.endedAt = this.#now()
     this.#active.delete(run.id)
     this.#deps.log.info(`pipeline run ${run.id} ${run.state}: ${run.outcome}`)
+    if (pipeline.closeGameAfter) await this.#closeGames(active)
     if (pipeline.stopEmulatorAfter && active.usedEmulator) {
       await this.#deps.emulators()?.stop().catch(error => this.#deps.log.warn(`stopping the emulator failed: ${message(error)}`))
     }
@@ -379,6 +381,31 @@ export class Engine {
     active.resolve(snapshot)
     for (const listener of this.#ended) {
       try { listener(snapshot) } catch { /* the listener's problem */ }
+    }
+  }
+
+  /** Close the games the run's script tasks played, where they played them (not in an emulator about to be shut down). */
+  async #closeGames(active: Active): Promise<void> {
+    const { runner } = this.#deps
+    if (runner.get === undefined || runner.closeGame === undefined) return
+    const games = new Map<string, { scriptId: string; where: 'emulator' | 'pc' }>()
+    for (const node of active.pipeline.nodes) {
+      if (node.kind !== 'script-task') continue
+      for (const runId of active.run.nodes[node.id]!.runIds) {
+        let resources: readonly string[]
+        try { resources = runner.get(runId).resources } catch { continue }
+        const where = resources.some(r => r.startsWith('adb:')) ? 'emulator' : resources.includes('desktop') ? 'pc' : undefined
+        if (where === undefined || (where === 'emulator' && active.pipeline.stopEmulatorAfter)) continue
+        games.set(`${node.scriptId} ${where}`, { scriptId: node.scriptId, where })
+      }
+    }
+    for (const { scriptId, where } of games.values()) {
+      try {
+        const lines = await runner.closeGame(scriptId, where, AbortSignal.timeout(120_000))
+        this.#deps.log.info(`closed the game of ${scriptId} (${where}): ${lines.join('; ')}`)
+      } catch (error) {
+        this.#deps.log.warn(`closing the game of ${scriptId} failed: ${message(error)}`)
+      }
     }
   }
 
@@ -399,6 +426,31 @@ export class Engine {
 const TRIGGER: Readonly<Record<PipelineTrigger['kind'], string>> = { manual: '手动', schedule: '定时', autostart: '开机后', agent: 'agent ', after: '接续' }
 const STATE_WORD: Readonly<Record<NodeRun['state'], string>> = {
   pending: '还没运行', waiting: '在等待', running: '在运行', succeeded: '成功了', failed: '失败了', skipped: '被跳过', cancelled: '被取消',
+}
+
+/**
+ * What a "wait for all" node waits for: every node that is not after it and
+ * is not 结束 — but not another "wait for all" node that is not before it,
+ * or two such nodes side by side would wait for each other.
+ */
+export function waitsFor(pipeline: Pick<Pipeline, 'nodes' | 'edges'>, nodeId: string): string[] {
+  const reach = (from: string, forward: boolean) => {
+    const seen = new Set<string>()
+    const todo = [from]
+    while (todo.length > 0) {
+      const id = todo.pop()!
+      for (const e of pipeline.edges) {
+        const [a, b] = forward ? [e.from, e.to] : [e.to, e.from]
+        if (a === id && !seen.has(b)) { seen.add(b); todo.push(b) }
+      }
+    }
+    return seen
+  }
+  const after = reach(nodeId, true)
+  const before = reach(nodeId, false)
+  return pipeline.nodes
+    .filter(n => n.id !== nodeId && n.kind !== 'end' && !after.has(n.id) && (n.waitForAll !== true || before.has(n.id)))
+    .map(n => n.id)
 }
 
 function final(state: NodeRun['state']): boolean {

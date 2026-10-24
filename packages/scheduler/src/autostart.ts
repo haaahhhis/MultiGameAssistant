@@ -121,16 +121,16 @@ export function joinArgs(args: readonly string[]): string {
   return args.map(a => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(' ')
 }
 
-function escape(text: string): string {
+export function escape(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function unescape(text: string): string {
+export function unescape(text: string): string {
   return text.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
 }
 
 /** schtasks prints UTF-16 for /XML on some systems and the console code page otherwise. */
-function decode(bytes: Buffer): string {
+export function decode(bytes: Buffer): string {
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString('utf16le')
   if (bytes.length >= 4 && bytes[1] === 0 && bytes[3] === 0) return bytes.toString('utf16le')
   try {

@@ -20,6 +20,8 @@ const blank = (): Pipeline => ({
   onFailure: { retries: 0, then: 'continue' },
   schedule: { enabled: false, times: [], days: [], catchUpMinutes: 10 },
   stopEmulatorAfter: false,
+  closeGameAfter: false,
+  powerAfter: 'none',
 })
 
 /** Pipelines: the list, the canvas editor, runs. */
@@ -288,6 +290,7 @@ function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onCh
 }
 
 const DAYS = ['日', '一', '二', '三', '四', '五', '六']
+const POWER_WORD = { sleep: '睡眠', hibernate: '休眠', shutdown: '关机' } as const
 
 function ScheduleCard({ pipeline, others, onChange, startup, onStartup }: {
   pipeline: Pipeline; others: PipelineSummary[]; onChange: (p: Pipeline) => void
@@ -346,7 +349,19 @@ function ScheduleCard({ pipeline, others, onChange, startup, onStartup }: {
           <option value="stop">然后停止流水线</option>
         </select>
       </div>
-      <label className="check-label"><input type="checkbox" checked={pipeline.stopEmulatorAfter} onChange={e => onChange({ ...pipeline, stopEmulatorAfter: e.target.checked })} />结束后关闭模拟器</label>
+      <div className="field-label">结束后</div>
+      <label className="check-label"><input type="checkbox" checked={pipeline.closeGameAfter} onChange={e => onChange({ ...pipeline, closeGameAfter: e.target.checked })} />关闭游戏（任务玩过的电脑游戏和模拟器里的游戏）</label>
+      <label className="check-label"><input type="checkbox" checked={pipeline.stopEmulatorAfter} onChange={e => onChange({ ...pipeline, stopEmulatorAfter: e.target.checked })} />关闭模拟器</label>
+      <label className="field-label" htmlFor="pl-power">然后电脑</label>
+      <select id="pl-power" className="text-input plain" value={pipeline.powerAfter} onChange={e => onChange({ ...pipeline, powerAfter: e.target.value as Pipeline['powerAfter'] })}>
+        <option value="none">保持开着</option>
+        <option value="sleep">睡眠</option>
+        <option value="hibernate">休眠</option>
+        <option value="shutdown">关机</option>
+      </select>
+      {pipeline.powerAfter !== 'none' && (
+        <p className="muted small">等其他任务都结束后先倒计时{startup === null ? '' : ` ${startup.powerCountdownSeconds} 秒`}，界面和飞书里都可以取消；15 分钟内还有定时任务就不{POWER_WORD[pipeline.powerAfter]}。在这里手动点运行、或运行被取消时不会{POWER_WORD[pipeline.powerAfter]}。{pipeline.powerAfter === 'shutdown' ? '关机会强制关闭所有程序。' : '想让电脑按时醒来跑定时任务，在「设置 → 定时与自启」打开定时唤醒。'}</p>
+      )}
     </section>
   )
 }

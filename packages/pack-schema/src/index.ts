@@ -12,7 +12,7 @@ export {
 } from './manifest.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'
 export { PackError, parseManifest } from './parse.ts'
-export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, type GameManifestInput } from './game.ts'
+export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, SraSource, type GameManifestInput } from './game.ts'
 export { chooseAsset, expand, globToRegExp, versionOfTag, type AssetChoice } from './match.ts'
 
 /** File names inside a pack directory. */
