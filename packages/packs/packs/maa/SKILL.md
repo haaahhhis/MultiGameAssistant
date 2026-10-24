@@ -17,7 +17,7 @@ description: MAA（MaaAssistantArknights，明日方舟小助手）的安装、�
 
 ## 设置
 
-- 配置分两份：原项目里的配置（用户自己打开脚本时用）和 AutoDailyGamePlay 的**本地副本**（通过 agent 运行时用）。agent 只改本地副本，原项目配置不变。
+- 配置分两份：原项目里的配置（用户自己打开脚本时用）和本软件的**本地副本**（通过 agent 运行时用）。agent 只改本地副本，原项目配置不变。
 - 配置文件：`config/gui.json`、`config/gui.new.json`。用 `script_config_get` 查看、`script_config_set` 修改本地副本；`script_config_status` 能看出用户是否在 MAA 里改过原项目设置，需要时经用户同意用 `script_config_import` 导入。不要直接写脚本目录里的文件。
 - 安装、更新、回滚、检查环境用 `script_*` 工具；不要修改 MAA 的程序文件。
 

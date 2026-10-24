@@ -65,10 +65,12 @@ function line(a: Activity, timeZone: string, soonDays: number, now: number): str
     parts.push('结束时间未知')
   }
   const end = a.endsAt !== undefined && a.endsAt > now ? a.endsAt : a.shopEndsAt
-  const soon = end !== undefined && daysLeft(end, now) < soonDays
+  // The user said they are done: no warning, nothing left to list.
+  const soon = a.finished === undefined && end !== undefined && daysLeft(end, now) < soonDays
   let text = `${soon ? '⚠ ' : ''}${a.name}：${parts.join('，')}`
-  if (a.todo.length > 0) text += ` · 还没做：${a.todo.join('、')}`
-  else if (a.screen !== undefined && a.done.length > 0) text += ' · 都做完了'
+  if (a.finished !== undefined) text += ' · 已做完'
+  else if (a.todo.length > 0) text += ` · 还没做：${a.todo.join('、')}`
+  else if (a.done.length > 0) text += ' · 都做完了'
   if (a.progress !== undefined) text += `（${a.progress}）`
   if (a.mismatch !== undefined) text += `\n  注意：${a.mismatch}`
   return text

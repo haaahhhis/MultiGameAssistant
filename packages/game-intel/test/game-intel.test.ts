@@ -227,3 +227,33 @@ test('the built-in game packs parse, and SRA comes before the wikis so their dat
     assert.equal(manifest.sources[0]?.sra?.api, 'https://starrailassistant.top/api/v1', id)
   }
 })
+
+test('progress the user keeps: ticking moves an item to done, finished marks the whole event, both survive a reload', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-progress-'))
+  const calendar = new Calendar(dir)
+  await calendar.applySite('endfield', { id: 'sra', name: 'SRA 公共 API' }, [{ name: '丹青渡·版本活动', aliases: [], endsAt: NOW + 10 * DAY }], NOW, TZ)
+  const id = calendar.list('endfield')[0]!.id
+  await calendar.progress(id, { todo: ['剧情通关', '商店换完', ' '] }, NOW)
+  const ticked = await calendar.progress(id, { todo: ['剧情通关', '商店换完'], done: ['剧情通关'] }, NOW)
+  assert.deepEqual([ticked?.todo, ticked?.done], [['商店换完'], ['剧情通关']], 'a ticked item is no longer to do')
+  await calendar.progress(id, { finished: true }, NOW + HOUR)
+  const again = new Calendar(dir)
+  await again.load()
+  assert.deepEqual(again.get(id)?.finished, { at: NOW + HOUR })
+  await again.progress(id, { finished: false }, NOW)
+  assert.equal(again.get(id)?.finished, undefined)
+  assert.equal(await again.progress('endfield/none', { finished: true }, NOW), undefined)
+})
+
+test('following an SRA game without a pack, and stopping, which forgets its events', async () => {
+  const { followedManifest, SRA_GAMES } = await import('../src/sra-games.ts')
+  const ys = followedManifest(SRA_GAMES.find(g => g.sra === 'ys')!)
+  assert.equal(ys.id, 'sra-ys')
+  assert.equal(ys.sources[0]?.sra?.game, 'ys')
+  const calendar = new Calendar(mkdtempSync(join(tmpdir(), 'adg-follow-')))
+  await calendar.follow('ys', true, 'sra-ys')
+  assert.deepEqual(calendar.settings.followed, ['ys'])
+  await calendar.applySite('sra-ys', { id: 'sra', name: 'SRA 公共 API' }, [{ name: '海灯节', aliases: [], endsAt: NOW + DAY }], NOW, TZ)
+  await calendar.follow('ys', false, 'sra-ys')
+  assert.deepEqual([calendar.settings.followed, calendar.list('sra-ys')], [[], []])
+})

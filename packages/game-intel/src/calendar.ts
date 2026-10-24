@@ -19,7 +19,7 @@ const KEEP_UNDATED_MS = 14 * MS.DAY
 /** Screen and site may disagree by this much before it is called a mismatch (the game rounds to days). */
 const MISMATCH_MS = 30 * MS.HOUR
 
-export const DEFAULT_SETTINGS: GamesSettings = { report: { enabled: true, at: '09:00', games: [], soonDays: 3 } }
+export const DEFAULT_SETTINGS: GamesSettings = { report: { enabled: true, at: '09:00', games: [], soonDays: 3 }, followed: [] }
 
 /** What the agent read from the game screen (or a web page) for one event. */
 export interface ReadEvent {
@@ -46,14 +46,14 @@ const StoredSchema = z.object({
   readings: z.record(z.string(), z.object({ state: z.enum(['running', 'done', 'failed']), at: z.number(), sessionId: z.string().optional(), summary: z.string().optional() })).default({}),
   report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional() }).default({}),
   versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), source: z.string(), at: z.number() })).default({}),
-  settings: z.object({ report: GamesSettings.shape.report.partial().default({}) }).default({ report: {} }),
+  settings: z.object({ report: GamesSettings.shape.report.partial().default({}), followed: z.array(z.string()).default([]) }).default({ report: {}, followed: [] }),
 })
 type Saved = z.infer<typeof StoredSchema>
 
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {} }, versions: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -97,7 +97,7 @@ export class Calendar {
 
   get settings(): GamesSettings {
     const saved = Object.fromEntries(Object.entries(this.#saved.settings.report).filter(([, v]) => v !== undefined))
-    return { report: { ...DEFAULT_SETTINGS.report, ...saved } }
+    return { report: { ...DEFAULT_SETTINGS.report, ...saved }, followed: [...this.#saved.settings.followed] }
   }
 
   get report(): Saved['report'] {
@@ -124,6 +124,35 @@ export class Calendar {
     this.#saved.settings.report = { ...this.#saved.settings.report, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) }
     await this.save()
     return this.settings
+  }
+
+  /** Follow or stop following an SRA game; stopping forgets its events. */
+  async follow(sra: string, follow: boolean, gameId: string): Promise<void> {
+    const list = this.#saved.settings.followed.filter(id => id !== sra)
+    this.#saved.settings.followed = follow ? [...list, sra] : list
+    if (!follow) {
+      this.#items = this.#items.filter(a => a.game !== gameId)
+      delete this.#saved.refreshed[gameId]
+      delete this.#saved.versions[gameId]
+    }
+    await this.save()
+  }
+
+  /**
+   * The user's own progress: the checklist as they keep it, or done as a whole.
+   * @returns the event, or undefined when there is none with that id.
+   */
+  async progress(id: string, patch: { todo?: readonly string[] | undefined; done?: readonly string[] | undefined; finished?: boolean | undefined }, now: number): Promise<Activity | undefined> {
+    const item = this.#items.find(a => a.id === id)
+    if (item === undefined) return undefined
+    if (patch.todo !== undefined) item.todo = unique(patch.todo.map(t => t.trim()).filter(Boolean))
+    if (patch.done !== undefined) item.done = unique(patch.done.map(t => t.trim()).filter(Boolean))
+    // Something ticked off is no longer to do.
+    item.todo = item.todo.filter(t => !item.done.includes(t))
+    if (patch.finished === true) item.finished = { at: now }
+    else if (patch.finished === false) delete item.finished
+    await this.save()
+    return this.get(id)
   }
 
   async setReport(info: Saved['report']): Promise<void> {

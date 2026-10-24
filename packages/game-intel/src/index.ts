@@ -23,6 +23,7 @@ import { Calendar, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport } from './report.ts'
 import { readSmw, readSra, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
+import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
 
 export { Calendar, DEFAULT_SETTINGS, type ReadEvent } from './calendar.ts'
@@ -58,6 +59,8 @@ interface LoadedGame {
   readonly dir: string
   readonly builtin: boolean
   readonly guide?: string
+  /** An SRA game followed without a pack. */
+  readonly followed?: boolean
 }
 
 export class AdgGameIntel extends Service {
@@ -178,6 +181,35 @@ export class AdgGameIntel extends Service {
             if (calendar.get(id)?.screen?.evidence !== true) throw new Error('这个活动没有保存截图')
             return { mediaType: 'image/png', data: (await readFile(this.evidenceFile(id))).toString('base64') }
           },
+          'games/catalog': async () => {
+            await this.ready
+            const followed = new Set(calendar.settings.followed)
+            return {
+              games: SRA_GAMES.map(g => {
+                const pack = this.games.find(l => !l.followed && l.manifest.sources.some(s => s.sra?.game === g.sra))?.manifest.id
+                return { sra: g.sra, name: g.name, followed: followed.has(g.sra), ...(pack === undefined ? {} : { pack }) }
+              }),
+            }
+          },
+          'games/follow': async params => {
+            await this.ready
+            const { sra, follow } = params as RequestParams<'games/follow'>
+            if (!SRA_GAMES.some(g => g.sra === sra)) throw new Error(`SRA 公共 API 没有游戏 ${sra}`)
+            await calendar.follow(sra, follow, followedId(sra))
+            await this.loadGames(log)
+            changed()
+            // Its events, now rather than tomorrow morning.
+            if (follow && this.games.some(g => g.manifest.id === followedId(sra))) void this.refresh(followedId(sra)).catch(() => [])
+            return {}
+          },
+          'games/activity/progress': async params => {
+            await this.ready
+            const { activityId, ...patch } = params as RequestParams<'games/activity/progress'>
+            const activity = await calendar.progress(activityId, patch, this.clock.now())
+            if (activity === undefined) throw new Error('没有这个活动（可能已经结束被清掉了）')
+            changed(activity.game)
+            return activity
+          },
           'games/activity/remove': async params => {
             await this.ready
             await calendar.remove((params as RequestParams<'games/activity/remove'>).activityId)
@@ -214,6 +246,13 @@ export class AdgGameIntel extends Service {
         }
       }
     }
+    // SRA games followed without a pack (one a pack already reads is not added twice).
+    const covered = new Set([...found.values()].flatMap(g => g.manifest.sources.map(s => s.sra?.game).filter((s): s is string => s !== undefined)))
+    for (const sra of this.calendar.settings.followed) {
+      const game = SRA_GAMES.find(g => g.sra === sra)
+      if (game === undefined || covered.has(sra) || found.has(followedId(sra))) continue
+      found.set(followedId(sra), { manifest: followedManifest(game), dir: '', builtin: true, followed: true })
+    }
     this.games = [...found.values()]
   }
 
@@ -224,7 +263,7 @@ export class AdgGameIntel extends Service {
   }
 
   infos(): GameInfo[] {
-    return this.games.map(({ manifest: m, builtin }) => {
+    return this.games.map(({ manifest: m, builtin, followed }) => {
       const refreshed = this.calendar.refreshed(m.id)
       const reading = this.calendar.reading(m.id)
       const version = this.calendar.version(m.id)
@@ -233,6 +272,7 @@ export class AdgGameIntel extends Service {
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
         sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined })),
         builtin,
+        ...(followed === true ? { followed: true } : {}),
         ...(refreshed === undefined ? {} : { refreshed }),
         ...(reading === undefined ? {} : { reading }),
         ...(version === undefined ? {} : { version }),

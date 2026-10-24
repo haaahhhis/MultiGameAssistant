@@ -68,7 +68,10 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       ends: a.endsAt === undefined ? '未知' : `${shortDate(a.endsAt, timeZone)}（${leftText(a.endsAt, now)}）`,
       ...(a.shopEndsAt === undefined ? {} : { shop_ends: shortDate(a.shopEndsAt, timeZone) }),
       dates_from: a.site?.name ?? (a.screen !== undefined ? '游戏画面' : '未知'),
-      ...(a.screen === undefined ? {} : { read_in_game: shortDate(a.screen.at, timeZone), todo: a.todo, done: a.done, ...(a.progress === undefined ? {} : { progress: a.progress }) }),
+      ...(a.screen === undefined ? {} : { read_in_game: shortDate(a.screen.at, timeZone), ...(a.progress === undefined ? {} : { progress: a.progress }) }),
+      // The checklist (from the game screen or kept by the user on the board), and the user's own "done".
+      ...(a.todo.length + a.done.length === 0 ? {} : { todo: a.todo, done: a.done }),
+      ...(a.finished === undefined ? {} : { finished_by_user: true }),
       ...(a.mismatch === undefined ? {} : { mismatch: a.mismatch }),
       ...(a.url === undefined ? {} : { url: a.url }),
     }

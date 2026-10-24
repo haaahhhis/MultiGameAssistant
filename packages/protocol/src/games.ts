@@ -39,6 +39,8 @@ export const Activity = z.object({
   todo: z.array(z.string()),
   done: z.array(z.string()),
   progress: z.string().optional(),
+  /** The user said they are done with it (or took it back): their word beats the lists. */
+  finished: z.object({ at: z.number() }).optional(),
   /** The game and the data site disagree on when it ends. */
   mismatch: z.string().optional(),
 })
@@ -62,6 +64,8 @@ export const GameInfo = z.object({
   screen: z.object({ target: z.enum(['emulator', 'window']), window: z.string().optional() }).optional(),
   sources: z.array(GameSourceInfo),
   builtin: z.boolean(),
+  /** Followed from the SRA public API without a Game Pack (no scripts, no screen reading): can be unfollowed. */
+  followed: z.boolean().optional(),
   /** The game's current version, from a data site that knows it. */
   version: z.object({
     name: z.string(),
@@ -94,6 +98,8 @@ export const GamesSettings = z.object({
     /** An event ending within this many days is called out. */
     soonDays: z.number().int().min(1).max(30),
   }),
+  /** SRA game ids followed besides the Game Packs (`ys`, `zzz`…), see `games/catalog`. */
+  followed: z.array(z.string()),
 })
 export type GamesSettings = z.infer<typeof GamesSettings>
 
@@ -145,6 +151,29 @@ export const GamesRequests = {
     capability: GAMES_CAPABILITY,
     params: z.object({ activityId: z.string() }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
+  },
+  /** Every game the SRA public API knows, and whether it is shown (a Game Pack reads it, or it is followed). */
+  'games/catalog': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({}),
+    result: z.object({ games: z.array(z.object({ sra: z.string(), name: z.string(), followed: z.boolean(), pack: z.string().optional() })) }),
+  },
+  /** Follow (or stop following) an SRA game that has no Game Pack: its events come in with the daily refresh. */
+  'games/follow': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ sra: z.string(), follow: z.boolean() }),
+    result: z.object({}),
+  },
+  /** The user's own progress on an event: its checklist, or done as a whole. */
+  'games/activity/progress': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({
+      activityId: z.string(),
+      todo: z.array(z.string().min(1).max(80)).max(30).optional(),
+      done: z.array(z.string().min(1).max(80)).max(30).optional(),
+      finished: z.boolean().optional(),
+    }),
+    result: Activity,
   },
   /** Forget an event (wrongly read, or no longer wanted). */
   'games/activity/remove': {

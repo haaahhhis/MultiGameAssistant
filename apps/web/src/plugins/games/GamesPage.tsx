@@ -7,6 +7,7 @@ import { ImageViewer } from '../../components/ImageViewer.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { Overview, progressOf } from './Overview.tsx'
 import './games.css'
 
 type Listing = RequestResult<'games/list'>
@@ -28,7 +29,7 @@ function left(end: number, now: number): { big: string; unit: string } {
   return { big: String(Math.floor(ms / DAY)), unit: '天' }
 }
 
-/** The game board: every game's events from the data sites and the game screen, and the daily report. */
+/** The game board: all events at a glance (Overview), each game's events from the data sites and the game screen, and the daily report. */
 export function GamesPage({ client, openSession, openSettings, openPage, arg }: PageProps) {
   const status = useStore(client.connection.status)
   const now = useNow(60_000)
@@ -50,8 +51,10 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
   }, [client, status.state, revision])
 
   const games = data?.games ?? []
-  const current = selected === 'report' ? undefined : games.find(g => g.id === selected) ?? games[0]
   const showReport = selected === 'report'
+  const current = showReport ? undefined : games.find(g => g.id === selected)
+  // Nothing (or a game that is gone) selected: everything at a glance.
+  const showOverview = !showReport && current === undefined
 
   const act = async (key: string, fn: () => Promise<string | void>) => {
     setBusy(key)
@@ -83,7 +86,7 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
       <button key={g.id} className={`script-row ${current?.id === g.id && !showReport ? 'active' : ''}`} onClick={() => { setSelected(g.id); setMessage(null) }}>
         <span className="script-row-main">
           <span className="script-row-name">{g.name}</span>
-          <span className="muted small">{mine.length === 0 ? '还没有活动' : `${mine.length} 个活动`}{g.refreshed === undefined ? '' : ` · ${relativeTime(g.refreshed.at, now)}刷新`}</span>
+          <span className="muted small">{mine.length === 0 ? '还没有活动' : `${mine.length} 个活动${mine.some(a => progressOf(a).state !== 'unknown') ? `，做完 ${mine.filter(a => progressOf(a).state === 'finished').length} 个` : ''}`}{g.refreshed === undefined ? '' : ` · ${relativeTime(g.refreshed.at, now)}刷新`}{g.followed === true ? ' · 关注' : ''}</span>
         </span>
         {soon > 0 && <span className="badge warn">{soon} 个快结束</span>}
       </button>
@@ -100,6 +103,13 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
       </header>
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="游戏列表">
+          <button className={`script-row ${showOverview ? 'active' : ''}`} onClick={() => { setSelected(''); setMessage(null) }}>
+            <span className="script-row-main">
+              <span className="script-row-name">全部活动</span>
+              <span className="muted small">{data === null ? '' : `${data.activities.filter(a => (a.startsAt ?? 0) <= now && (a.endsAt ?? Infinity) > now).length} 个进行中 · 按时间排在一起`}</span>
+            </span>
+          </button>
+          <div className="list-divider" />
           {games.map(row)}
           <div className="list-divider" />
           <button className={`script-row ${showReport ? 'active' : ''}`} onClick={() => { setSelected('report'); setMessage(null) }}>
@@ -114,6 +124,10 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
             {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
             {message !== null && <div className="notice info left small"><Icon name="info" /><span>{message}</span></div>}
             {data !== null && games.length === 0 && <div className="empty"><Icon name="gamepad" /><p>没有游戏包。</p></div>}
+            {data !== null && showOverview && games.length > 0 && (
+              <Overview client={client} games={games} activities={data.activities} now={now} soonDays={data.settings.report.soonDays}
+                onOpenGame={id => { setSelected(id); setMessage(null) }} onChanged={() => setRevision(r => r + 1)} />
+            )}
             {data !== null && showReport && <ReportCard client={client} data={data} games={games} now={now} openSettings={openSettings} onChanged={() => setRevision(r => r + 1)} />}
             {data !== null && current !== undefined && !showReport && (
               <GameDetail
@@ -122,6 +136,12 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
                 onRead={() => void act(`read:${current.id}`, async () => {
                   const { sessionId } = await client.connection.call('games/read', { game: current.id })
                   openSession(sessionId)
+                })}
+                onUnfollow={() => void act(`unfollow:${current.id}`, async () => {
+                  // A followed game's id is sra-<the API's id> (game-intel's followedId).
+                  await client.connection.call('games/follow', { sra: current.id.replace(/^sra-/, ''), follow: false })
+                  setSelected('')
+                  return `不再关注${current.name}`
                 })}
                 onRemove={id => void act(`remove:${id}`, async () => { await client.connection.call('games/activity/remove', { activityId: id }) })}
                 openSession={openSession} openPage={openPage}
@@ -134,7 +154,7 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
   )
 }
 
-function GameDetail({ client, game, activities, settings, now, busy, onRefresh, onRead, onRemove, openSession, openPage }: {
+function GameDetail({ client, game, activities, settings, now, busy, onRefresh, onRead, onUnfollow, onRemove, openSession, openPage }: {
   client: AdgClient
   game: GameInfo
   activities: Activity[]
@@ -143,6 +163,7 @@ function GameDetail({ client, game, activities, settings, now, busy, onRefresh, 
   busy: string | null
   onRefresh: () => void
   onRead: () => void
+  onUnfollow: () => void
   onRemove: (id: string) => void
   openSession: (id: string) => void
   openPage: (id: string) => void
@@ -164,7 +185,9 @@ function GameDetail({ client, game, activities, settings, now, busy, onRefresh, 
           </div>
           <div className="game-actions">
             <button className="small-button" disabled={busy !== null || !auto} title={auto ? '从数据站读取活动时间，不用模型' : '这个游戏没有能直接读的数据站，让 agent 去读'} onClick={onRefresh}><Icon name="refresh" />{busy === `refresh:${game.id}` ? '刷新中…' : '刷新数据站'}</button>
-            <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>
+            {game.followed === true
+              ? <button className="small-button" disabled={busy !== null} title="不再显示这个游戏的活动" onClick={onUnfollow}>取消关注</button>
+              : <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
           </div>
         </div>
         {game.version !== undefined && (

@@ -6,7 +6,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync,
+  existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -24,10 +24,20 @@ const BUNDLE = '@adg/bundle'
 export function prepareAdgProfile({ home, bundleDir, dshBin, node = process.execPath, env = {} }) {
   const profile = join(home, 'profiles', 'adg')
   if (!existsSync(join(profile, 'package.json'))) {
-    execFileSync(node, [dshBin, 'adg', '--from-default-profile', 'web', '--help'], {
-      env: { ...process.env, ...env, DSH_HOME: home },
-      stdio: 'ignore',
-    })
+    // Left half-made by an earlier start that did not finish: dsh refuses an existing folder, so move it aside.
+    if (existsSync(profile)) renameSync(profile, `${profile}.unfinished-${Date.now()}`)
+    try {
+      execFileSync(node, [dshBin, 'adg', '--from-default-profile', 'web', '--help'], {
+        env: { ...process.env, ...env, DSH_HOME: home },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        windowsHide: true,
+      })
+    } catch (error) {
+      // Say why: dsh's own last words, not just "Command failed".
+      const said = `${error?.stderr ?? ''}\n${error?.stdout ?? ''}`.split(/\r?\n/).filter(line => line.trim() !== '' && !/^\s+at /.test(line)).slice(-8).join('\n')
+      throw new Error(`创建 dsh 配置（${profile}）失败：${said || String(error)}`, { cause: error })
+    }
   }
 
   const manifestPath = join(profile, 'package.json')

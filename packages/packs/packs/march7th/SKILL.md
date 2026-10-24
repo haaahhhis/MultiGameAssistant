@@ -24,7 +24,7 @@ description: 三月七小助手（March7thAssistant，崩坏：星穹铁道自�
 | redemption | 兑换码 | |
 | game_update | 更新游戏 | 更新星铁 |
 
-- 配置分两份：原项目里的配置（用户自己打开脚本时用）和 AutoDailyGamePlay 的**本地副本**（通过 agent 运行时用）。agent 只改本地副本，原项目配置不变。
+- 配置分两份：原项目里的配置（用户自己打开脚本时用）和本软件的**本地副本**（通过 agent 运行时用）。agent 只改本地副本，原项目配置不变。
 - 刷哪个副本、用多少体力等在 `config.yaml` 里：用 `script_config_get` 读、`script_config_set` 改本地副本，不要直接写文件。
 - 第一次运行前通常要完成初始设置（游戏路径等）：用 `script_settings` 打开三月七的设置界面（March7th Launcher）让用户设置，关掉后存进本地配置。
 - `--list-workflows` 能列出用户自建的流程（可用 `script_help` 查看）。
