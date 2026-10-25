@@ -4,7 +4,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { EnvReport, InstallSettings, ProjectProbe, ScriptFamily, ScriptSource } from '@adg/protocol'
+import { EnvReport, InstallSettings, LocalVersion, ProjectProbe, ScriptFamily, ScriptSource } from '@adg/protocol'
 import { z } from 'zod'
 
 export const StoredVersion = z.object({
@@ -14,6 +14,19 @@ export const StoredVersion = z.object({
   asset: z.object({ name: z.string(), size: z.number() }).optional(),
 })
 export type StoredVersion = z.infer<typeof StoredVersion>
+
+export const LocalBackup = z.object({
+  dir: z.string(),
+  /** Version before the update, when it was known. */
+  from: z.string().optional(),
+  to: z.string(),
+  at: z.number(),
+  /** Relative paths (`/`) the update created: undoing deletes them. */
+  added: z.array(z.string()),
+  /** Relative paths it overwrote or deleted: their old copies are in `files/`. */
+  saved: z.array(z.string()),
+})
+export type LocalBackup = z.infer<typeof LocalBackup>
 
 export const StoredScript = z.object({
   id: z.string(),
@@ -27,6 +40,12 @@ export const StoredScript = z.object({
   probe: ProjectProbe.optional(),
   update: z.object({ latest: z.string(), available: z.boolean(), checkedAt: z.number() }).optional(),
   addedAt: z.number(),
+  /** A local import's update source (`owner/repo`); undefined uses its pack's. `null`: the user turned it off. */
+  updateFrom: z.string().nullable().optional(),
+  /** The version found in a local import's directory, and where it was read. */
+  localVersion: LocalVersion.optional(),
+  /** Files a local update replaced or removed, newest last; `dir` holds them under `files/`. */
+  backups: z.array(LocalBackup).optional(),
 })
 export type StoredScript = z.infer<typeof StoredScript>
 

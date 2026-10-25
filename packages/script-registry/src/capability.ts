@@ -32,6 +32,11 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
         const p = params as RequestParams<'scripts/rollback'>
         return library.rollback(p.id, p.version)
       },
+      'scripts/source/set': params => {
+        const p = params as RequestParams<'scripts/source/set'>
+        return library.setUpdateSource(p.id, p.repo)
+      },
+      'scripts/restore': params => library.restore((params as RequestParams<'scripts/restore'>).id),
       'scripts/import': params => {
         const p = params as RequestParams<'scripts/import'>
         return library.import({ path: p.path, id: p.id, name: p.name, packId: p.packId })

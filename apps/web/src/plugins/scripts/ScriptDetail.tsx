@@ -6,6 +6,7 @@ import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText, FAMILY_LABEL, isActive } from './data.ts'
 import { JobProgress } from './JobProgress.tsx'
+import { LocalUpdate } from './LocalUpdate.tsx'
 import { GuardCard, PackCard } from './PackCards.tsx'
 import { ConfigCard } from './ConfigCard.tsx'
 import { GameCard } from './GameCard.tsx'
@@ -111,7 +112,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
             </div>
           </>
         ) : (
-          <p className="muted small">本地导入的脚本原地使用，由你自己维护版本；MultiGameAssistant 不会改动这个目录。</p>
+          <LocalUpdate client={client} script={script} disabled={running || busy !== null} busy={busy} now={now} act={act} />
         )}
       </section>
 

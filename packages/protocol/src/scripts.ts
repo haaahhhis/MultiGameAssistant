@@ -77,6 +77,10 @@ export const ProjectProbe = z.object({
 })
 export type ProjectProbe = z.infer<typeof ProjectProbe>
 
+/** Which version an imported directory holds, and where that was read (`interface.json`, `MAA.exe 的文件属性`, `更新`…). */
+export const LocalVersion = z.object({ version: z.string(), from: z.string() })
+export type LocalVersion = z.infer<typeof LocalVersion>
+
 export const ScriptInfo = z.object({
   id: z.string(),
   name: z.string(),
@@ -93,6 +97,14 @@ export const ScriptInfo = z.object({
   env: EnvReport.optional(),
   probe: ProjectProbe.optional(),
   update: z.object({ latest: z.string(), available: z.boolean(), checkedAt: z.number() }).optional(),
+  /** A local import's update source (`owner/repo`): what the user set, else its pack's. */
+  updateFrom: z.string().optional(),
+  /** Whether `updateFrom` came from the pack (false: the user set it). */
+  updateFromPack: z.boolean().optional(),
+  /** The version found in a local import's directory; absent when it could not be read. */
+  localVersion: LocalVersion.optional(),
+  /** The last in-place update of a local import, which can be undone. */
+  undo: z.object({ from: z.string().optional(), to: z.string(), at: z.number() }).optional(),
   /** Job currently working on this script. */
   jobId: z.string().optional(),
   addedAt: z.number(),
@@ -210,17 +222,38 @@ export const ScriptRequests = {
     }),
     result: z.object({ jobId: z.string(), scriptId: z.string() }),
   },
-  /** Compare the current version with the latest release. */
+  /**
+   * Compare the current version with the latest release (Mirror酱 with a CDK,
+   * else GitHub). A local import is compared by the version found in its
+   * directory, against its update source.
+   */
   'scripts/checkUpdate': {
     capability: SCRIPTS_CAPABILITY,
     params: ById,
     result: z.object({ current: z.string().optional(), latest: z.string(), available: z.boolean() }),
   },
-  /** Install the latest release next to the current one, carrying the pack's config files over. */
+  /**
+   * Install the latest release next to the current one, carrying the pack's
+   * config files over. A local import is updated in its own directory: the
+   * files it replaces or removes are backed up first (`scripts/restore`
+   * puts them back) and the pack's existing config files are left alone.
+   */
   'scripts/update': {
     capability: SCRIPTS_CAPABILITY,
     params: ById,
     result: z.object({ jobId: z.string().optional(), upToDate: z.boolean() }),
+  },
+  /** Set where a local import updates from (`owner/repo`); `null` turns updates off, omitted goes back to its pack's. */
+  'scripts/source/set': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: ScriptId, repo: GitHubRepo.nullable().optional() }),
+    result: ScriptInfo,
+  },
+  /** Undo a local import's last in-place update: the old files back, the new ones removed. */
+  'scripts/restore': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: ScriptInfo,
   },
   /** Make another installed version current; default: the one before the current. */
   'scripts/rollback': {

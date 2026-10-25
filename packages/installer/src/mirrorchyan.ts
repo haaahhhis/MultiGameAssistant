@@ -122,33 +122,42 @@ export interface MirrorChanges {
 }
 
 /**
+ * What `changes.json` in `dir` says went away, as paths relative to `dir`
+ * (`/`-separated); a path that would leave `dir` is refused. `prefix`: the
+ * package's top folder that was lifted off (its paths start with it).
+ * @returns undefined when there is no (readable) `changes.json`.
+ */
+export async function readMirrorChanges(dir: string, prefix?: string): Promise<string[] | undefined> {
+  let changes: MirrorChanges
+  try { changes = JSON.parse(await readFile(join(dir, 'changes.json'), 'utf8')) as MirrorChanges } catch { return undefined }
+  const root = resolve(dir)
+  const lifted = (path: string) => (prefix !== undefined && path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : path)
+  return [...(changes.deleted ?? []), ...(changes.deleted_dir ?? [])].map(lifted).map(path => {
+    const refused = new Error(`changes.json 里的路径不在安装目录里：${path}`)
+    if (isAbsolute(path) || path.split('/').includes('..')) throw refused
+    const rel = relative(root, resolve(root, ...path.split('/')))
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || rel.split(sep).includes('..')) throw refused
+    return rel.split(sep).join('/')
+  })
+}
+
+/**
  * After an incremental package was copied over a copy of the previous
  * version in `dir`: delete what `changes.json` says went away, then the file
- * itself. A path that would leave `dir` is refused. `prefix`: the package's
- * top folder that was lifted off when installing (its paths start with it).
+ * itself (see {@link readMirrorChanges}).
  * @returns how many files and folders were removed.
  */
 export async function applyMirrorChanges(dir: string, prefix?: string): Promise<number> {
-  const file = join(dir, 'changes.json')
-  let changes: MirrorChanges
-  try { changes = JSON.parse(await readFile(file, 'utf8')) as MirrorChanges } catch { return 0 }
-  const root = resolve(dir)
-  const inside = (path: string): string => {
-    if (isAbsolute(path) || path.split('/').includes('..')) throw new Error(`changes.json 里的路径不在安装目录里：${path}`)
-    const full = resolve(root, ...path.split('/'))
-    const rel = relative(root, full)
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || rel.split(sep).includes('..')) throw new Error(`changes.json 里的路径不在安装目录里：${path}`)
-    return full
-  }
-  const lifted = (path: string) => (prefix !== undefined && path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : path)
-  const targets = [...(changes.deleted ?? []), ...(changes.deleted_dir ?? [])].map(lifted).map(inside)
+  const gone = await readMirrorChanges(dir, prefix)
+  if (gone === undefined) return 0
   let removed = 0
-  for (const target of targets) {
+  for (const path of gone) {
+    const target = join(dir, ...path.split('/'))
     if (await stat(target).then(() => true, () => false)) {
       await rm(target, { recursive: true, force: true })
       removed++
     }
   }
-  await rm(file, { force: true })
+  await rm(join(dir, 'changes.json'), { force: true })
   return removed
 }

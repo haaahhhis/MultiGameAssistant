@@ -13,6 +13,9 @@ source:
   mirrorchyan:
     rid: MAA
 install:
+  # An imported MAA's version: MAA.exe's file properties.
+  version:
+    exe: MAA.exe
   requires:
     # The release bundles its own .NET (runtimeconfig "includedFrameworks"); only the VC++ runtime is needed.
     - kind: vcredist

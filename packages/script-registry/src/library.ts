@@ -10,18 +10,18 @@
  *
  * Nothing here names a particular script: behaviour comes from Script Packs.
  */
-import { copyFile, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, applyMirrorChanges, archiveKind, checkEnvironment, compareVersions, download, extract, GitHubClient, matchesDetect, mirrorLatest, probeProject, systemHost,
-  type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest,
+  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorLatest, probeProject, readMirrorChanges, systemHost,
+  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
 import type { EnvReport, InstallSettings, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
 import { mirrorResourceFor } from './mirror-resources.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
-import { DEFAULT_SETTINGS, StateStore, type LibraryState, type StoredScript, type StoredVersion } from './state.ts'
+import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type StoredScript, type StoredVersion } from './state.ts'
 
 export interface LibraryOptions {
   readonly toolsDir: string
@@ -234,39 +234,105 @@ export class ScriptLibrary {
     return this.#jobs.start(existing === undefined ? 'install' : 'update', scriptId, ctl => this.#installJob(scriptId, request, ctl))
   }
 
+  /**
+   * Compare the current version with the latest release. A local import is
+   * compared by the version found in its directory (read again each time:
+   * the script may have updated itself), against its update source.
+   */
   async checkUpdate(id: string, signal?: AbortSignal): Promise<{ current?: string; latest: string; available: boolean }> {
     const script = this.#script(id)
-    if (script.source.kind !== 'github') throw new Error('本地导入的脚本没有发布来源，无法检查更新')
     const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
-    const version = await this.#latestVersion(script.source.repo, pack, signal)
-    const available = script.current === undefined || compareVersions(version, script.current) > 0 || (compareVersions(version, script.current) === 0 && version !== script.current)
+    let current = script.current
+    let repo: string
+    if (script.source.kind === 'github') {
+      repo = script.source.repo
+    } else {
+      const source = this.#updateSource(script)
+      if (source === undefined) throw new Error('这个本地脚本还没有更新来源：在脚本页填写它的 GitHub 仓库（owner/repo）后再检查')
+      repo = source.repo
+      const found = await this.#detectVersion(script)
+      if (found !== undefined) script.localVersion = found
+      current = script.localVersion?.version
+    }
+    const version = await this.#latestVersion(repo, pack, signal)
+    const available = current === undefined || compareVersions(version, current) > 0 || (script.source.kind === 'github' && compareVersions(version, current) === 0 && version !== current)
     script.update = { latest: version, available, checkedAt: this.#now() }
     await this.#save()
     this.#options.onChanged(id)
-    return { ...(script.current === undefined ? {} : { current: script.current }), latest: version, available }
+    return { ...(current === undefined ? {} : { current }), latest: version, available }
   }
 
+  /**
+   * Update to the latest release. An installed script gets it beside the
+   * current version; a local import is updated in its own directory, with
+   * what it replaces backed up first (see {@link restore}).
+   */
   async update(id: string, signal?: AbortSignal): Promise<{ upToDate: true } | { upToDate: false; job: ScriptJob; done: Promise<ScriptJob> }> {
     const script = this.#script(id)
     const check = await this.checkUpdate(id, signal)
     if (!check.available) return { upToDate: true }
-    const source = script.source as { kind: 'github'; repo: string }
-    return { upToDate: false, ...this.install({ repo: source.repo, id }) }
+    if (script.source.kind === 'local') {
+      const repo = this.#updateSource(script)!.repo
+      return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#localUpdateJob(script, repo, ctl)) }
+    }
+    return { upToDate: false, ...this.install({ repo: script.source.repo, id }) }
+  }
+
+  /** Where a local import updates from (`null`: no updates); an installed script always follows its repository. */
+  async setUpdateSource(id: string, repo: string | null | undefined): Promise<ScriptInfo> {
+    const script = this.#script(id)
+    if (script.source.kind !== 'local') throw new Error('从 GitHub 安装的脚本跟随它安装时的仓库更新')
+    if (repo === undefined) delete script.updateFrom
+    else script.updateFrom = repo
+    delete script.update
+    await this.#save()
+    this.#options.onChanged(id)
+    return this.#info(script)
   }
 
   async #installJob(scriptId: string, request: InstallRequest, ctl: JobControl): Promise<string> {
     const pack = packForRepo(this.#packs, request.repo)
     let script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
-    const fetched = await this.#fromMirror(scriptId, request, pack, previous, ctl) ?? await this.#fromGitHub(scriptId, request, pack, ctl)
-    const { version, versionDir } = fetched
-    if (script?.versions.some(v => v.version === version) === true) {
+    const have = (version: string) => script?.versions.some(v => v.version === version) === true
+    const fetched = (request.tag === undefined && request.asset === undefined ? await this.#fromMirror(scriptId, request.repo, pack, previous?.version, ctl, have) : undefined)
+      ?? await this.#fromGitHub(scriptId, request, pack, ctl, have)
+    const { version, archive } = fetched
+    if (archive === undefined && script !== undefined) {
       script.current = version
       await this.#save()
       this.#options.onChanged(scriptId)
       ctl.phase('done', { message: `${version} 已安装，已切换为当前版本` })
       return version
     }
+    const versionDir = join(this.toolsDir, scriptId, dirName(version))
+    const root = pack?.manifest.install.root
+    ctl.phase('extracting', { message: fetched.incremental ? `在 ${previous!.version} 的基础上更新到 ${version}` : `解压到 ${versionDir}` })
+    await rm(versionDir, { recursive: true, force: true })
+    if (!fetched.incremental) {
+      await extract(archive!, versionDir, { signal: ctl.signal, ...(root === undefined ? {} : { root }) })
+    } else {
+      // A copy of the installed version, the changed files over it, then what changes.json says went away.
+      const patch = `${versionDir}.patch`
+      await rm(patch, { recursive: true, force: true })
+      await extract(archive!, patch, { signal: ctl.signal })
+      try {
+        await cp(previous!.dir, versionDir, { recursive: true })
+        const prefix = await patchPrefix(patch, previous!.dir, root)
+        const from = prefix === undefined ? patch : join(patch, prefix)
+        await cp(from, versionDir, { recursive: true, force: true })
+        if (from === patch) await rm(join(versionDir, 'changes.json'), { force: true })
+        const gone = await readMirrorChanges(patch, prefix) ?? []
+        for (const rel of gone) await rm(join(versionDir, ...rel.split('/')), { recursive: true, force: true })
+        if (gone.length > 0) this.#options.log.info(`${scriptId}: the incremental package removed ${gone.length} path(s)`)
+      } catch (error) {
+        await rm(versionDir, { recursive: true, force: true })
+        throw error
+      } finally {
+        await rm(patch, { recursive: true, force: true })
+      }
+    }
+    await rm(archive!, { force: true })
     if (previous !== undefined && pack !== undefined) {
       const carried = await carryConfig(pack, previous.dir, versionDir)
       if (carried.length > 0) this.#options.log.info(`${scriptId}: carried ${carried.length} config file(s) from ${previous.version}`)
@@ -300,8 +366,140 @@ export class ScriptLibrary {
     return version
   }
 
-  /** The release's file from GitHub (through the download mirror), unpacked into its version's folder. */
-  async #fromGitHub(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, ctl: JobControl): Promise<Fetched> {
+  /**
+   * Update a local import where it is. The release is unpacked aside; every
+   * file it would overwrite or delete is first copied to
+   * `<toolsDir>/<id>/.local-backup/<time>/files/`; the pack's config files
+   * (and the usual user-data folders) that exist are left as they are. A
+   * failure part way (a file in use) puts the old files back.
+   */
+  async #localUpdateJob(script: StoredScript, repo: string, ctl: JobControl): Promise<string> {
+    const target = (script.source as { path: string }).path
+    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
+    const fetched = await this.#fromMirror(script.id, repo, pack, script.localVersion?.version, ctl) ?? await this.#fromGitHub(script.id, { repo }, pack, ctl)
+    const { version } = fetched
+    const archive = fetched.archive!
+    const root = pack?.manifest.install.root
+    const staging = join(this.toolsDir, script.id, '.staging')
+    try {
+      ctl.phase('extracting', { message: `解压 ${fetched.asset.name}` })
+      await rm(staging, { recursive: true, force: true })
+      await extract(archive, staging, { signal: ctl.signal, ...(fetched.incremental || root === undefined ? {} : { root }) })
+      const prefix = fetched.incremental ? await patchPrefix(staging, target, root) : undefined
+      const from = prefix === undefined ? staging : join(staging, prefix)
+      const keep = await keptFiles(pack, target)
+      const writes = (await listFiles(from)).filter(rel => !keep.has(rel.toLowerCase()) && !(fetched.incremental && from === staging && rel === 'changes.json'))
+      const removes: string[] = []
+      for (const rel of fetched.incremental ? await readMirrorChanges(staging, prefix) ?? [] : []) {
+        if (!keep.has(rel.toLowerCase()) && await exists(join(target, ...rel.split('/')))) removes.push(rel)
+      }
+
+      const at = this.#now()
+      const dir = join(this.toolsDir, script.id, '.local-backup', String(at))
+      const backup: LocalBackup = { dir, to: version, at, added: [], saved: [], ...(script.localVersion === undefined ? {} : { from: script.localVersion.version }) }
+      ctl.phase('running', { message: `备份将被替换的文件（${target}）` })
+      for (const rel of writes) {
+        const path = join(target, ...rel.split('/'))
+        if (await exists(path)) {
+          await saveCopy(path, join(dir, 'files', ...rel.split('/')))
+          backup.saved.push(rel)
+        } else {
+          backup.added.push(rel)
+        }
+      }
+      for (const rel of removes) {
+        await saveCopy(join(target, ...rel.split('/')), join(dir, 'files', ...rel.split('/')))
+        backup.saved.push(rel)
+      }
+      await writeFile(join(dir, 'manifest.json'), `${JSON.stringify({ script: script.id, target, ...backup }, null, 2)}\n`)
+
+      ctl.phase('running', { message: `更新 ${target} 到 ${version}` })
+      let doing = ''
+      try {
+        for (const rel of writes) {
+          doing = rel
+          const path = join(target, ...rel.split('/'))
+          await mkdir(dirname(path), { recursive: true })
+          await copyFile(join(from, ...rel.split('/')), path)
+        }
+        for (const rel of removes) {
+          doing = rel
+          await rm(join(target, ...rel.split('/')), { recursive: true, force: true })
+        }
+      } catch (error) {
+        const back = await putBack(target, backup).then(() => '已改回更新前的文件', e => `改回时也出错了（${errorText(e)}），备份在 ${dir}`)
+        await rm(dir, { recursive: true, force: true }).catch(() => {})
+        const code = (error as NodeJS.ErrnoException).code
+        throw new Error(code === 'EBUSY' || code === 'EPERM' || code === 'EACCES'
+          ? `${doing} 正被占用或没有写入权限，请先关闭脚本再更新；${back}`
+          : `更新 ${doing} 时出错：${errorText(error)}；${back}`)
+      }
+
+      script.backups = [...(script.backups ?? []), backup]
+      const keepBackups = this.#state.settings.keepVersions
+      for (const old of script.backups.slice(0, -keepBackups)) await rm(old.dir, { recursive: true, force: true })
+      script.backups = script.backups.slice(-keepBackups)
+      script.localVersion = { version, from: '更新' }
+      delete script.update
+      script.probe = await probeProject(target)
+      await this.#save()
+      this.#options.onChanged(script.id)
+      this.#options.log.info(`${script.id}: updated ${target} in place to ${version} (${backup.saved.length} replaced, ${backup.added.length} added)`)
+      return version
+    } finally {
+      await rm(staging, { recursive: true, force: true })
+      await rm(archive, { force: true })
+    }
+  }
+
+  /** Undo a local import's last in-place update: the files it replaced or removed back, the ones it added deleted. */
+  async restore(id: string): Promise<ScriptInfo> {
+    const script = this.#script(id)
+    if (script.source.kind !== 'local') throw new Error('从 GitHub 安装的脚本请用回滚切换版本')
+    if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请稍后再撤销`)
+    const backup = script.backups?.at(-1)
+    if (backup === undefined) throw new Error('没有可以撤销的更新')
+    if (!(await exists(join(backup.dir, 'manifest.json')))) throw new Error(`备份已不存在：${backup.dir}`)
+    try {
+      await putBack(script.source.path, backup)
+    } catch (error) {
+      throw new Error(`撤销失败（${errorText(error)}）：可能有文件正被占用，请先关闭脚本再试`)
+    }
+    await rm(backup.dir, { recursive: true, force: true })
+    script.backups = script.backups!.slice(0, -1)
+    const found = await this.#detectVersion(script)
+    if (found !== undefined) script.localVersion = found
+    else if (backup.from !== undefined) script.localVersion = { version: backup.from, from: '撤销更新' }
+    else delete script.localVersion
+    delete script.update
+    await this.#save()
+    this.#options.onChanged(id)
+    return this.#info(script)
+  }
+
+  /** A local import's update source: what the user set, else its pack's repository. */
+  #updateSource(script: StoredScript): { repo: string; fromPack: boolean } | undefined {
+    if (script.source.kind === 'github') return { repo: script.source.repo, fromPack: false }
+    if (script.updateFrom === null) return undefined
+    if (script.updateFrom !== undefined) return { repo: script.updateFrom, fromPack: false }
+    const repo = script.packId === undefined ? undefined : this.#packs.get(script.packId)?.manifest.source.github
+    return repo === undefined ? undefined : { repo, fromPack: true }
+  }
+
+  /** The version in a local import's directory: where its pack says, else the usual places and its main program's file version. */
+  #detectVersion(script: StoredScript): Promise<DetectedVersion | undefined> {
+    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
+    const top = (script.probe?.executables ?? []).filter(e => !/[\\/]/.test(e) && !/unins|update|crash|adb|setup|helper/i.test(e))
+    const executables = [...(pack?.manifest.launch?.exe === undefined ? [] : [pack.manifest.launch.exe]), ...top]
+    return detectVersion((script.source as { path: string }).path, {
+      spec: pack?.manifest.install.version,
+      executables: [...new Set(executables)],
+      host: this.#options.envHost ?? systemHost,
+    })
+  }
+
+  /** The release's file from GitHub (through the download mirror); no download when `have` says the version is already there. */
+  async #fromGitHub(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
     const settings = this.#state.settings
     ctl.phase('resolving', { message: `读取 ${request.repo} 的发布信息` })
     const github = this.#github()
@@ -316,8 +514,7 @@ export class ScriptLibrary {
       })()
       : release.assets.find(a => a.name === request.asset) ?? (() => { throw new Error(`${release.tag} 里没有文件 ${request.asset}`) })()
     const version = versionOfTag(release.tag)
-    const versionDir = join(this.toolsDir, scriptId, dirName(version))
-    if (this.#state.scripts.find(s => s.id === scriptId)?.versions.some(v => v.version === version) === true) return { version, versionDir, asset: { name: asset.name, size: asset.size } }
+    if (have?.(version) === true) return { version, asset: { name: asset.name, size: asset.size }, incremental: false }
 
     const archive = join(this.toolsDir, scriptId, '.downloads', asset.name)
     ctl.phase('downloading', { message: asset.name, received: 0, total: asset.size })
@@ -332,23 +529,19 @@ export class ScriptLibrary {
       onProgress: (received, total) => ctl.phase('downloading', { message: asset.name, received, ...(total === undefined ? {} : { total }) }),
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
     })
-    ctl.phase('extracting', { message: `解压到 ${versionDir}` })
-    await rm(versionDir, { recursive: true, force: true })
-    await extract(archive, versionDir, { signal: ctl.signal, ...(pack?.manifest.install.root === undefined ? {} : { root: pack.manifest.install.root }) })
-    await rm(archive, { force: true })
-    return { version, versionDir, asset: { name: asset.name, size: asset.size } }
+    return { version, archive, asset: { name: asset.name, size: asset.size }, incremental: false }
   }
 
   /**
-   * With the user's CDK and a script published on Mirror酱 (installing or
-   * updating to the latest): download it from there, as an incremental
-   * package over the current version when Mirror酱 has one.
-   * @returns undefined to use GitHub instead (no CDK, a specific release
-   * asked for, nothing on Mirror酱, a CDK problem — said in the job's message).
+   * With the user's CDK and a script published on Mirror酱: the latest
+   * release from there, as an incremental package over `from` (the version
+   * there now) when Mirror酱 has one.
+   * @returns undefined to use GitHub instead (no CDK, nothing on Mirror酱,
+   * a CDK problem — said in the job's message).
    */
-  async #fromMirror(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, previous: StoredVersion | undefined, ctl: JobControl): Promise<Fetched | undefined> {
-    const resource = mirrorResourceFor(pack, request.repo)
-    if (resource === undefined || request.tag !== undefined || request.asset !== undefined) return undefined
+  async #fromMirror(scriptId: string, repo: string, pack: LoadedPack | undefined, from: string | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched | undefined> {
+    const resource = mirrorResourceFor(pack, repo)
+    if (resource === undefined) return undefined
     const cdk = await this.#options.credential(this.#state.settings.cdkRef)
     if (cdk === undefined || cdk === '') return undefined
     const options = this.#mirrorOptions(cdk, ctl.signal)
@@ -356,10 +549,10 @@ export class ScriptLibrary {
     try {
       ctl.phase('resolving', { message: `从 Mirror酱 查询 ${resource.rid} 的最新版本` })
       latest = await mirrorLatest(resource, options)
-      // Asked again from the version installed: Mirror酱 then hands out only what changed.
-      if (previous !== undefined && compareVersions(versionOfTag(latest.version), previous.version) > 0) {
-        const from = latest.version.startsWith('v') ? `v${previous.version}` : previous.version
-        const incremental = await mirrorLatest(resource, { ...options, currentVersion: from }).catch(() => undefined)
+      // Asked again from the version there now: Mirror酱 then hands out only what changed.
+      if (from !== undefined && compareVersions(versionOfTag(latest.version), from) > 0) {
+        const current = latest.version.startsWith('v') ? `v${from}` : from
+        const incremental = await mirrorLatest(resource, { ...options, currentVersion: current }).catch(() => undefined)
         if (incremental?.url !== undefined && incremental.version === latest.version) latest = incremental
       }
     } catch (error) {
@@ -369,17 +562,15 @@ export class ScriptLibrary {
       return undefined
     }
     const version = versionOfTag(latest.version)
-    const versionDir = join(this.toolsDir, scriptId, dirName(version))
-    const name = `Mirror酱 ${latest.updateType === 'incremental' ? '增量包' : '完整包'} ${latest.version}`
-    if (this.#state.scripts.find(s => s.id === scriptId)?.versions.some(v => v.version === version) === true) return { version, versionDir, asset: { name, size: latest.size ?? 0 } }
+    const incremental = latest.updateType === 'incremental' && from !== undefined
+    const name = `Mirror酱 ${incremental ? '增量包' : '完整包'} ${latest.version}`
+    if (have?.(version) === true) return { version, asset: { name, size: latest.size ?? 0 }, incremental: false }
     if (latest.url === undefined) {
       ctl.phase('resolving', { message: 'Mirror酱 没有给出下载地址；改从 GitHub 下载' })
       return undefined
     }
 
-    const incremental = latest.updateType === 'incremental' && previous !== undefined
-    const file = mirrorFileName(latest.url, resource.rid, latest.version)
-    const archive = join(this.toolsDir, scriptId, '.downloads', file)
+    const archive = join(this.toolsDir, scriptId, '.downloads', mirrorFileName(latest.url, resource.rid, latest.version))
     ctl.phase('downloading', { message: `${name}（Mirror酱）`, received: 0, ...(latest.size === undefined ? {} : { total: latest.size }) })
     await download({
       url: latest.url,
@@ -390,36 +581,7 @@ export class ScriptLibrary {
       onProgress: (received, total) => ctl.phase('downloading', { message: `${name}（Mirror酱）`, received, ...(total === undefined ? {} : { total }) }),
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
     })
-    ctl.phase('extracting', { message: incremental ? `在 ${previous.version} 的基础上更新到 ${version}` : `解压到 ${versionDir}` })
-    await rm(versionDir, { recursive: true, force: true })
-    const root = pack?.manifest.install.root
-    if (!incremental) {
-      await extract(archive, versionDir, { signal: ctl.signal, ...(root === undefined ? {} : { root }) })
-    } else {
-      // A copy of the installed version, the changed files over it, then what changes.json says went away.
-      const patch = `${versionDir}.patch`
-      await rm(patch, { recursive: true, force: true })
-      await extract(archive, patch, { signal: ctl.signal })
-      try {
-        await cp(previous.dir, versionDir, { recursive: true })
-        // The files may sit under the package's top folder, which the full install lifted off (or under the pack's root).
-        const entries = (await readdir(patch, { withFileTypes: true })).filter(e => e.name !== 'changes.json')
-        const top = entries.length === 1 && entries[0]!.isDirectory() && !(await stat(join(previous.dir, entries[0]!.name)).then(() => true, () => false)) ? entries[0]!.name : undefined
-        const prefix = root !== undefined && await stat(join(patch, root)).then(() => true, () => false) ? root : top
-        const from = prefix === undefined ? patch : join(patch, prefix)
-        await cp(from, versionDir, { recursive: true, force: true })
-        if (from !== patch && await stat(join(patch, 'changes.json')).then(() => true, () => false)) await copyFile(join(patch, 'changes.json'), join(versionDir, 'changes.json'))
-        const removed = await applyMirrorChanges(versionDir, prefix?.replace(/\\/g, '/'))
-        if (removed > 0) this.#options.log.info(`${scriptId}: the incremental package removed ${removed} file(s)`)
-      } catch (error) {
-        await rm(versionDir, { recursive: true, force: true })
-        throw error
-      } finally {
-        await rm(patch, { recursive: true, force: true })
-      }
-    }
-    await rm(archive, { force: true })
-    return { version, versionDir, asset: { name, size: latest.size ?? 0 } }
+    return { version, archive, asset: { name, size: latest.size ?? 0 }, incremental }
   }
 
   /** The newest version where the update will come from: Mirror酱 with a CDK (for a script published there), else GitHub. */
@@ -461,7 +623,7 @@ export class ScriptLibrary {
 
   async rollback(id: string, version?: string): Promise<ScriptInfo> {
     const script = this.#script(id)
-    if (script.source.kind !== 'github') throw new Error('本地导入的脚本只有一个目录，无法回滚')
+    if (script.source.kind !== 'github') throw new Error('本地导入的脚本只有一个目录，无法回滚；在这里更新过的可以「撤销上次更新」')
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请稍后再回滚`)
     const ordered = [...script.versions].sort((a, b) => b.installedAt - a.installedAt)
     const target = version === undefined
@@ -536,6 +698,8 @@ export class ScriptLibrary {
       ...(pack === undefined ? {} : { packId: pack.manifest.id }),
       ...(pack?.manifest.family ?? probe.family) === undefined ? {} : { family: (pack?.manifest.family ?? probe.family)! },
     }
+    const found = await this.#detectVersion(script)
+    if (found !== undefined) script.localVersion = found
     this.#state.scripts.push(script)
     await this.#save()
     this.#options.onChanged(id)
@@ -551,6 +715,8 @@ export class ScriptLibrary {
       const dir = join(this.toolsDir, id)
       if (this.#ownsDir(dir)) await rm(dir, { recursive: true, force: true })
     }
+    // A local import's own directory stays; the backups of its updates were ours.
+    if (script.source.kind === 'local') await rm(join(this.toolsDir, id, '.local-backup'), { recursive: true, force: true })
     this.#state.scripts = this.#state.scripts.filter(s => s.id !== id)
     await this.#save()
     this.#options.onChanged(id)
@@ -632,6 +798,9 @@ export class ScriptLibrary {
   #info(script: StoredScript): ScriptInfo {
     const current = currentVersion(script)
     const job = this.#jobs.active(script.id)
+    const source = this.#updateSource(script)
+    const mirror = source === undefined ? undefined : mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), source.repo)
+    const last = script.backups?.at(-1)
     return {
       id: script.id,
       name: script.name,
@@ -639,7 +808,10 @@ export class ScriptLibrary {
       versions: [...script.versions].sort((a, b) => b.installedAt - a.installedAt).map(v => ({ ...v, current: v.version === script.current })),
       addedAt: script.addedAt,
       ...(script.packId === undefined ? {} : { packId: script.packId }),
-      ...(script.source.kind === 'github' && mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), script.source.repo) !== undefined ? { mirrorchyan: mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), script.source.repo)!.rid } : {}),
+      ...(mirror === undefined ? {} : { mirrorchyan: mirror.rid }),
+      ...(script.source.kind !== 'local' || source === undefined ? {} : { updateFrom: source.repo, updateFromPack: source.fromPack }),
+      ...(script.localVersion === undefined ? {} : { localVersion: script.localVersion }),
+      ...(last === undefined ? {} : { undo: { to: last.to, at: last.at, ...(last.from === undefined ? {} : { from: last.from }) } }),
       ...(script.family === undefined ? {} : { family: script.family }),
       ...(current === undefined ? {} : { current: current.version, dir: current.dir }),
       ...(script.env === undefined ? {} : { env: script.env }),
@@ -665,11 +837,81 @@ export class ScriptLibrary {
   }
 }
 
-/** What an install job fetched and unpacked. */
+/** A release file downloaded for an install or update. */
 interface Fetched {
   readonly version: string
-  readonly versionDir: string
+  /** Undefined when that version was already there and nothing was downloaded. */
+  readonly archive?: string
   readonly asset: { name: string; size: number }
+  /** A Mirror酱 incremental package: only what changed, and changes.json. */
+  readonly incremental: boolean
+}
+
+/**
+ * Where an incremental package's files sit: under the pack's root, or under
+ * the package's top folder that the install lifted off (one the directory
+ * being updated does not have itself); undefined at the package root.
+ */
+async function patchPrefix(patch: string, baseDir: string, root: string | undefined): Promise<string | undefined> {
+  if (root !== undefined && await exists(join(patch, root))) return root.replace(/\\/g, '/')
+  const entries = (await readdir(patch, { withFileTypes: true })).filter(e => e.name !== 'changes.json')
+  return entries.length === 1 && entries[0]!.isDirectory() && !(await exists(join(baseDir, entries[0]!.name))) ? entries[0]!.name : undefined
+}
+
+/** Every file under `dir` (or its `sub` folder), as `/`-separated paths relative to `dir`. */
+async function listFiles(dir: string, sub = ''): Promise<string[]> {
+  const files: string[] = []
+  for (const entry of await readdir(join(dir, sub), { withFileTypes: true })) {
+    const rel = sub === '' ? entry.name : `${sub}/${entry.name}`
+    if (entry.isDirectory()) files.push(...await listFiles(dir, rel))
+    else if (entry.isFile()) files.push(rel)
+  }
+  return files
+}
+
+/** Folders scripts usually keep the user's data in: an in-place update leaves what is there. */
+const USER_DATA = new Set(['config', 'configs', 'user', 'userdata', 'settings', 'cache', 'log', 'logs', 'debug'])
+
+/**
+ * Files an in-place update must not overwrite or delete, lowercased: the
+ * pack's config files that exist in `dir`, and everything in the usual
+ * user-data folders at its top.
+ */
+async function keptFiles(pack: LoadedPack | undefined, dir: string): Promise<Set<string>> {
+  const kept = new Set<string>()
+  for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory() && USER_DATA.has(entry.name.toLowerCase())) {
+      for (const rel of await listFiles(dir, entry.name).catch(() => [] as string[])) kept.add(rel.toLowerCase())
+    }
+  }
+  for (const file of pack?.manifest.config.files ?? []) {
+    if (file.keepOnUpdate === false) continue
+    const parts = file.path.split(/[\\/]/)
+    const last = parts.pop()!
+    const sub = parts.join('/')
+    const names = last.includes('*') || last.includes('?')
+      ? (await readdir(join(dir, sub)).catch(() => [] as string[])).filter(n => globToRegExp(last).test(n))
+      : [last]
+    for (const name of names) {
+      if (await stat(join(dir, sub, name)).then(s => s.isFile(), () => false)) kept.add((sub === '' ? name : `${sub}/${name}`).toLowerCase())
+    }
+  }
+  return kept
+}
+
+/** Copy a file or folder to `dest`, making its parent folders. */
+async function saveCopy(path: string, dest: string): Promise<void> {
+  await mkdir(dirname(dest), { recursive: true })
+  await cp(path, dest, { recursive: true, force: true })
+}
+
+/** Undo an in-place update of `target`: the files it added removed, the saved ones copied back. */
+async function putBack(target: string, backup: LocalBackup): Promise<void> {
+  for (const rel of backup.added) await rm(join(target, ...rel.split('/')), { force: true })
+  for (const rel of backup.saved) {
+    const saved = join(backup.dir, 'files', ...rel.split('/'))
+    if (await exists(saved)) await saveCopy(saved, join(target, ...rel.split('/')))
+  }
 }
 
 /** The archive's name from Mirror酱's download link, or one made up with a zip extension. */

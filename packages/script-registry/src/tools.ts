@@ -4,6 +4,8 @@
  * Asking the user first (through dsh's approval seam) when the agent:
  * - installs from a repository no built-in pack describes (downloaded code
  *   is untrusted until the user has seen where it comes from);
+ * - updates a locally imported directory in place, or changes where it
+ *   updates from;
  * - runs an official installer to fix the environment (it needs admin);
  * - deletes installed files.
  * Reading, searching, checking, importing in place, switching versions and
@@ -112,7 +114,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         const { scripts, packs, toolsDir } = library.list()
         return {
           toolsDir,
-          scripts: scripts.map(s => ({ id: s.id, name: s.name, source: s.source, version: s.current, dir: s.dir, family: s.family, versions: s.versions.map(v => v.version), env: s.env === undefined ? undefined : { ok: s.env.ok, problems: s.env.items.filter(i => i.status !== 'ok' && i.status !== 'unsupported').map(i => `${i.label}: ${i.status}`) }, update: s.update })),
+          scripts: scripts.map(s => ({ id: s.id, name: s.name, source: s.source, version: s.source.kind === 'local' ? s.localVersion?.version ?? '（认不出）' : s.current, updateFrom: s.updateFrom, dir: s.dir, family: s.family, versions: s.versions.map(v => v.version), env: s.env === undefined ? undefined : { ok: s.env.ok, problems: s.env.items.filter(i => i.status !== 'ok' && i.status !== 'unsupported').map(i => `${i.label}: ${i.status}`) }, update: s.update })),
           availablePacks: packs.filter(p => !p.installed && p.error === undefined).map(p => ({ id: p.id, name: p.name, repo: p.repo, description: p.description })),
         }
       },
@@ -167,14 +169,24 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.update,
-      description: '检查并更新脚本到最新发布版本。新版本装在旧版本旁边，脚本包声明的配置文件会被带到新版本；旧版本保留用于回滚。只更新官方发布，不修改脚本代码。',
-      properties: { id },
+      description: '检查并更新脚本到最新发布版本（填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时从那里下载，否则从 GitHub）。安装的脚本：新版本装在旧版本旁边，配置文件带过去，旧版本保留用于回滚。本地导入的脚本：在它自己的目录里更新（会先请用户确认），被替换的文件先备份，已有的配置文件不动，可用 script_rollback 撤销；没有更新来源时用 repo 指定它的 GitHub 仓库。只更新官方发布，不修改脚本代码。',
+      properties: { id, repo: { ...repo, description: '本地导入的脚本的更新来源（GitHub 仓库 owner/repo）；省略则用已设置的或脚本包的。' } },
       required: ['id'],
       timeoutMs: INSTALL_TIMEOUT_MS,
       kind: 'execute',
       title: a => `更新脚本：${String(a['id'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ id: ScriptId }), args)
+        const a = parse(z.object({ id: ScriptId, repo: opt(GitHubRepo) }), args)
+        const before = library.get(a.id)
+        if (before.source.kind === 'local') {
+          if (a.repo !== undefined && a.repo.toLowerCase() !== before.updateFrom?.toLowerCase()) {
+            await approve(exec, `把本地脚本 ${before.name} 的更新来源设为 GitHub 仓库 ${a.repo}${library.isKnownRepo(a.repo) ? '' : '（不在内置脚本包里，请确认它就是这个脚本、来源可信）'}。`)
+            await library.setUpdateSource(a.id, a.repo)
+          }
+          const check = await library.checkUpdate(a.id, exec.signal)
+          if (!check.available) return { ok: true, upToDate: true, version: check.current }
+          await approve(exec, `在 ${before.source.path} 里把 ${before.name} 从 ${check.current ?? '（认不出的版本）'} 更新到 ${check.latest}。会替换这个目录里的程序文件（先备份，可撤销），已有的配置文件不动；更新前请关闭这个脚本。`)
+        }
         const result = await library.update(a.id, exec.signal)
         if (result.upToDate) return { ok: true, upToDate: true, version: library.get(a.id).current }
         return describeJob(await followJob(library, result, exec.signal))
@@ -182,13 +194,17 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.rollback,
-      description: '把脚本切换回已安装的另一个版本（默认上一个版本）。',
-      properties: { id, version: { type: 'string', description: '目标版本；省略为上一个版本。' } },
+      description: '把脚本切换回已安装的另一个版本（默认上一个版本）。本地导入的脚本：撤销上次在它目录里的更新（换回备份的文件）。',
+      properties: { id, version: { type: 'string', description: '目标版本；省略为上一个版本。本地导入的脚本不用填。' } },
       required: ['id'],
       kind: 'other',
       title: a => `回滚脚本：${String(a['id'] ?? '')}`,
       execute: async args => {
         const a = parse(z.object({ id: ScriptId, version: opt(z.string()) }), args)
+        if (library.get(a.id).source.kind === 'local') {
+          const info = await library.restore(a.id)
+          return { ok: true, id: info.id, version: info.localVersion?.version, dir: info.dir }
+        }
         const info = await library.rollback(a.id, a.version)
         return { ok: true, id: info.id, version: info.current, dir: info.dir }
       },

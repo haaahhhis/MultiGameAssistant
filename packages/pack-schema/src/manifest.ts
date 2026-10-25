@@ -283,6 +283,16 @@ export const ScriptManifest = z.object({
     requires: z.array(Requirement).default([]),
     /** Path inside the extracted archive to treat as the install root, when the archive nests it. */
     root: z.string().optional(),
+    /**
+     * Where an imported directory's version is written, so it can be checked
+     * for updates: a file (its `json` key path, or the first group of
+     * `pattern`), or a program's file version. Without it the usual places
+     * are tried (interface.json, version.txt…, the programs' file versions).
+     */
+    version: z.union([
+      z.object({ file: RelativePath, json: z.array(z.string().min(1)).min(1).optional(), pattern: Regex.optional() }),
+      z.object({ exe: RelativePath }),
+    ]).optional(),
   }).default({ requires: [] }),
   config: z.object({ files: z.array(ConfigFile).default([]) }).default({ files: [] }),
   /** How an existing directory is recognized as this script (local import). */

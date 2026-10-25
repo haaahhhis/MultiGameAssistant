@@ -12,4 +12,5 @@ export { archiveKind, extract, type ArchiveKind, type ExtractResult } from './ex
 export { checkEnvironment, compareVersions, satisfies, systemHost, type EnvChecked, type EnvChecker, type EnvContext, type EnvHost, type ExecResult, type FixPlan } from './env.ts'
 export { applyFix, ManualFixError, runElevated, type FixDeps } from './fix.ts'
 export { matchesDetect, probeProject } from './probe.ts'
-export { applyMirrorChanges, MIRROR_USER_AGENT, MirrorChyanError, mirrorLatest, type MirrorChanges, type MirrorLatest, type MirrorOptions, type MirrorResource } from './mirrorchyan.ts'
+export { cleanVersion, detectVersion, type DetectedVersion, type VersionSpec } from './version.ts'
+export { applyMirrorChanges, readMirrorChanges, MIRROR_USER_AGENT, MirrorChyanError, mirrorLatest, type MirrorChanges, type MirrorLatest, type MirrorOptions, type MirrorResource } from './mirrorchyan.ts'
