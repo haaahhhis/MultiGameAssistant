@@ -9,7 +9,7 @@ import { errorText } from './data.ts'
 type View = RequestResult<'configs/launch'>
 type Found = RequestResult<'configs/launch/locate'>
 
-/** Who starts the game before a run: the script itself, or AutoDailyGamePlay when the script does not. */
+/** Who starts the game before a run: the script itself, or MultiGameAssistant when the script does not. */
 export function GameCard({ client, scriptId, scriptName, openSession }: { client: AdgClient; scriptId: string; scriptName: string; openSession: (sessionId: string) => void }) {
   const status = useStore(client.connection.status)
   const [view, setView] = useState<View | null>(null)

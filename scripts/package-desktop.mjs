@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build the Windows installer: `dist/desktop/AutoDailyGamePlay-Setup-<version>.exe`.
+ * Build the Windows installer: `dist/desktop/MultiGameAssistant-Setup-<version>.exe`.
  *
  * 1. `pnpm build` (skip with --skip-build).
  * 2. `pnpm deploy` the desktop app into dist/desktop/app with its production
@@ -8,7 +8,7 @@
  *    node_modules with no links, so the installer can copy it as is.
  * 3. Add the UI (apps/web/dist → web/), the startup screen's stylesheet, the
  *    icon, and installed.json (the shell reads it to know it is installed:
- *    data goes to %LOCALAPPDATA%\AutoDailyGamePlay, see apps/desktop/main.mjs).
+ *    data goes to %LOCALAPPDATA%\MultiGameAssistant, see apps/desktop/main.mjs).
  * 4. electron-builder: the Electron runtime already in node_modules (no
  *    download), no asar (dsh runs the files as a separate Node process), an
  *    NSIS installer per user (no administrator), Chinese, desktop and Start
@@ -46,7 +46,7 @@ const step = text => console.log(`\n▸ ${text}`)
 
 const version = option('--version') ?? versionFromGit()
 const commit = git(['rev-parse', '--short', 'HEAD'])
-console.log(`AutoDailyGamePlay ${version} (${commit ?? 'no git'})`)
+console.log(`MultiGameAssistant ${version} (${commit ?? 'no git'})`)
 
 if (!flag('--skip-build')) {
   step('pnpm build')
@@ -78,7 +78,7 @@ delete manifest.scripts
 // electron-builder copies what `dependencies` leads to, and does not follow peer dependencies, which dsh wires
 // most of its plugins through: list every package pnpm deploy put at the top level, so all of node_modules goes in.
 manifest.dependencies = topLevelPackages(join(staging, 'node_modules'))
-writeFileSync(join(staging, 'package.json'), `${JSON.stringify({ ...manifest, name: 'autodailygameplay', productName: 'AutoDailyGamePlay', version, author: 'AutoDailyGamePlay' }, null, 2)}\n`)
+writeFileSync(join(staging, 'package.json'), `${JSON.stringify({ ...manifest, name: 'multigameassistant', productName: 'MultiGameAssistant', version, author: 'MultiGameAssistant' }, null, 2)}\n`)
 mkdirSync(resources, { recursive: true })
 writeFileSync(join(resources, 'icon.ico'), appIconIco())
 copyFileSync(join(desktop, 'installer.nsh'), join(resources, 'installer.nsh'))
@@ -93,10 +93,12 @@ const files = await build({
   projectDir: staging,
   targets: Platform.WINDOWS.createTarget(flag('--dir') ? 'dir' : 'nsis', Arch.x64),
   config: {
+    // The id from before the rename (AutoDailyGamePlay): Windows knows the installed app by it, so a new
+    // version still replaces the old one instead of installing beside it. People never see it.
     appId: 'com.autodailygameplay.desktop',
-    productName: 'AutoDailyGamePlay',
-    executableName: 'AutoDailyGamePlay',
-    copyright: 'AutoDailyGamePlay',
+    productName: 'MultiGameAssistant',
+    executableName: 'MultiGameAssistant',
+    copyright: 'MultiGameAssistant',
     directories: { output: out, buildResources: resources },
     electronDist: join(dirname(require.resolve('electron/package.json')), 'dist'),
     electronVersion,
@@ -112,17 +114,17 @@ const files = await build({
       allowToChangeInstallationDirectory: true,
       createDesktopShortcut: true,
       createStartMenuShortcut: true,
-      shortcutName: 'AutoDailyGamePlay',
+      shortcutName: 'MultiGameAssistant',
       installerIcon: join(resources, 'icon.ico'),
       uninstallerIcon: join(resources, 'icon.ico'),
       installerLanguages: ['zh_CN'],
       language: '2052',
       deleteAppDataOnUninstall: false,
       // Starting the app from the installer goes through the new shortcut and can fail with
-      // "Windows cannot find …AutoDailyGamePlay.lnk": start it from the shortcut instead.
+      // "Windows cannot find …MultiGameAssistant.lnk": start it from the shortcut instead.
       runAfterFinish: false,
       include: join(resources, 'installer.nsh'),
-      artifactName: 'AutoDailyGamePlay-Setup-${version}.${ext}',
+      artifactName: 'MultiGameAssistant-Setup-${version}.${ext}',
     },
   },
 })

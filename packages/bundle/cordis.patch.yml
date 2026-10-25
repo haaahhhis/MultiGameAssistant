@@ -1,6 +1,6 @@
 # @adg/bundle — the profile layer above dsh-base and dsh-web-app.
 #
-# It mounts the AutoDailyGamePlay gateway next to the upstream host services it
+# It mounts the MultiGameAssistant gateway next to the upstream host services it
 # calls (sessionController, approval). Upstream rows are never edited here;
 # anything unwanted is disabled by id, so a later reorder upstream cannot
 # resurrect it. Feature plugins (installer, runner, orchestrator, …) are added

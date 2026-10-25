@@ -1,5 +1,5 @@
 /**
- * Starting AutoDailyGamePlay when the user logs on, with a Windows Task
+ * Starting MultiGameAssistant when the user logs on, with a Windows Task
  * Scheduler task rather than a Run registry key (docs/PLAN.zh.md §5.9): no
  * execution time limit, runs on battery, starts as soon as possible when a
  * logon was missed. The task belongs to the current user and runs without
@@ -33,7 +33,7 @@ export interface WindowsAutostartOptions {
 }
 
 export function windowsAutostart(options: WindowsAutostartOptions): AutostartPort {
-  const taskName = options.taskName ?? 'AutoDailyGamePlay'
+  const taskName = options.taskName ?? 'MultiGameAssistant'
   const exec = options.exec ?? systemExec
   const command = options.command
   const user = options.user ?? `${process.env['USERDOMAIN'] ?? ''}\\${process.env['USERNAME'] ?? ''}`.replace(/^\\/, '')
@@ -81,7 +81,7 @@ export function taskXml(command: readonly string[], user: string): string {
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>AutoDailyGamePlay：登录 Windows 后启动，并按设置自动运行流水线</Description>
+    <Description>MultiGameAssistant：登录 Windows 后启动，并按设置自动运行流水线</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>

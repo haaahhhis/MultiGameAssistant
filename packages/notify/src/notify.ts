@@ -381,7 +381,7 @@ export class Notify {
 
   async test(channelId?: string): Promise<{ sent: string[]; failed: { channel: string; error: string }[] }> {
     const notice: Notice = {
-      id: `test:${randomUUID()}`, scope: 'test', severity: 'info', title: 'AutoDailyGamePlay 测试消息',
+      id: `test:${randomUUID()}`, scope: 'test', severity: 'info', title: 'MultiGameAssistant 测试消息',
       text: `消息渠道工作正常。脚本出错时会这样通知你，也可以直接回复消息让 agent 干活，例如「现在什么状态」。\n${new Date(this.#now()).toLocaleString('zh-CN')}`,
     }
     const sent: string[] = []

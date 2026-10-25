@@ -108,7 +108,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
   return [
     tool({
       name: TOOL_NAMES.configGet,
-      description: '读取脚本的一个配置文件——读的是 AutoDailyGamePlay 保存的本地配置副本（运行时用的就是它），不是原项目里的文件。只能是脚本包声明的配置文件。改设置前先读，弄清楚键的位置。',
+      description: '读取脚本的一个配置文件——读的是 MultiGameAssistant 保存的本地配置副本（运行时用的就是它），不是原项目里的文件。只能是脚本包声明的配置文件。改设置前先读，弄清楚键的位置。',
       properties: { id, file: { type: 'string', description: '配置文件的相对路径，例如 config/gui.json。' } },
       required: ['id', 'file'],
       readOnly: true,
@@ -121,7 +121,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.configSet,
-      description: '修改脚本配置里的一个值。改的是本地配置副本，原项目的配置不变（用户自己打开脚本时仍是它原来的设置）；下次通过 AutoDailyGamePlay 运行时生效。只能是脚本包声明的配置文件（JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]；数组下标也写成文字，例如 "0"。value_json 是新值的 JSON 写法：字符串要带引号 "\"CE-6\""，数字 3，是否 true，对象 {"a":1}。修改前会自动备份。不要直接写脚本目录里的文件。',
+      description: '修改脚本配置里的一个值。改的是本地配置副本，原项目的配置不变（用户自己打开脚本时仍是它原来的设置）；下次通过 MultiGameAssistant 运行时生效。只能是脚本包声明的配置文件（JSON / YAML）。path 是键的数组，键里带点号时整体作为一个元素，例如 ["Configurations", "Default", "Start.RunDirectly"]；数组下标也写成文字，例如 "0"。value_json 是新值的 JSON 写法：字符串要带引号 "\"CE-6\""，数字 3，是否 true，对象 {"a":1}。修改前会自动备份。不要直接写脚本目录里的文件。',
       properties: {
         id,
         file: { type: 'string', description: '配置文件的相对路径。' },
@@ -151,7 +151,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.configImport,
-      description: '用原项目当前的配置覆盖本地配置副本（例如用户在脚本自己的界面里改了设置，想让 AutoDailyGamePlay 也用上）。会丢掉本地副本里的修改，先征得用户同意再调用。',
+      description: '用原项目当前的配置覆盖本地配置副本（例如用户在脚本自己的界面里改了设置，想让 MultiGameAssistant 也用上）。会丢掉本地副本里的修改，先征得用户同意再调用。',
       properties: { id },
       required: ['id'],
       kind: 'other',
@@ -187,7 +187,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
         id,
         task: { type: 'string', description: '任务 id。' },
         param: { type: 'string', description: '参数名，例如 instance。' },
-        name: { type: 'string', description: '新选项的名字，例如「AutoDailyGamePlay 模拟器」。' },
+        name: { type: 'string', description: '新选项的名字，例如「MultiGameAssistant 模拟器」。' },
       },
       required: ['id', 'task', 'param', 'name'],
       kind: 'other',

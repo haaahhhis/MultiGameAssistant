@@ -19,6 +19,13 @@ export const STYLE_TEXT: Readonly<Record<PersonaStyle, string>> = {
 
 export const DEFAULT_PERSONA: Persona = { style: 'default' }
 
+/** Where the agent works and what the app is called, for every agent: "本软件" means this. */
+export const IDENTITY_PROMPT = [
+  '# 本软件',
+  '你在 MultiGameAssistant（多游戏助手）里工作：它帮用户安装和运行各个游戏的日常脚本、把脚本编成定时流水线、盯着运行出的问题、查游戏活动和进度，并通过飞书通知用户。',
+  '用户说「这个软件」「本软件」「助手」指的就是 MultiGameAssistant。介绍自己时说你是 MultiGameAssistant 的 agent（用户在「回复风格」里给你起了名字就用那个名字）。',
+].join('\n')
+
 /** The system-prompt text for a persona; empty when nothing is set. */
 export function personaPrompt(p: Persona): string {
   const lines: string[] = []

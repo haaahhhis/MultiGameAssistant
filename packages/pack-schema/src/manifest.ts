@@ -99,7 +99,7 @@ export const ConfigPatch = z.object({
   /** A missing file is skipped with a warning unless required. */
   required: z.boolean().default(false),
   /**
-   * Apply only then. `emulator-managed`: AutoDailyGamePlay started the
+   * Apply only then. `emulator-managed`: MultiGameAssistant started the
    * emulator (MuMu), so the script's own "start the emulator" goes off; with a
    * manual ADB address the script keeps starting its emulator itself.
    */
@@ -215,7 +215,7 @@ export type Logs = z.infer<typeof Logs>
  * restarts). Anything not handled here is pushed to the user.
  */
 /**
- * The game a script plays, so AutoDailyGamePlay can start it for scripts that
+ * The game a script plays, so MultiGameAssistant can start it for scripts that
  * do not, and leave it alone for those that do.
  */
 export const Game = z.object({

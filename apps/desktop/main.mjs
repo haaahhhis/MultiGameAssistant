@@ -1,5 +1,5 @@
 /**
- * AutoDailyGamePlay desktop shell.
+ * MultiGameAssistant desktop shell.
  *
  * Boots dsh (profile "adg") with Electron's own Node runtime, waits for the
  * gateway's `adg gateway: <url>` line, and opens a sandboxed window on that
@@ -17,7 +17,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from './profile.mjs'
@@ -27,16 +27,18 @@ const here = dirname(fileURLToPath(import.meta.url))
 /**
  * Installed (scripts/package-desktop.mjs writes installed.json): dsh and the
  * bundle are in this folder's node_modules, the UI in web/, and the data in
- * %LOCALAPPDATA%\AutoDailyGamePlay (outside the install folder, so upgrades
+ * %LOCALAPPDATA%\MultiGameAssistant (outside the install folder, so upgrades
  * and uninstalling keep it). Otherwise this runs from the repository.
  */
 const installed = readInstalled()
+/** Before the rename (2026-10) the app and its folders were called this. */
+const LEGACY_NAME = 'AutoDailyGamePlay'
 const paths = installed !== undefined
   ? {
       dshBin: join(here, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
       bundleDir: join(here, 'node_modules', '@adg', 'bundle'),
       uiDir: join(here, 'web'),
-      home: process.env.DSH_HOME ?? join(process.env.LOCALAPPDATA ?? app.getPath('appData'), 'AutoDailyGamePlay'),
+      home: process.env.DSH_HOME ?? movedFromLegacy(join(process.env.LOCALAPPDATA ?? app.getPath('appData'), 'MultiGameAssistant')),
     }
   : (() => {
       const root = resolve(here, '..', '..') // the repository root
@@ -83,6 +85,9 @@ let failure = ''
 const restarts = []
 const logTail = []
 
+// The desktop shell's own folder (logs, theme) moves with the rename too, before anything opens a file in it.
+if (installed !== undefined) movedFromLegacy(app.getPath('userData'))
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -109,7 +114,7 @@ async function start() {
     height: 820,
     minWidth: 760,
     minHeight: 480,
-    title: 'AutoDailyGamePlay',
+    title: 'MultiGameAssistant',
     backgroundColor: background(),
     ...titleBar(),
     show: false,
@@ -181,7 +186,7 @@ async function start() {
     win?.hide()
     if (!toldAboutTray && tray !== null && process.platform === 'win32') {
       toldAboutTray = true
-      tray.displayBalloon({ title: 'AutoDailyGamePlay 仍在运行', content: '定时任务会照常执行。点托盘图标打开，右键「退出」关闭。', iconType: 'info' })
+      tray.displayBalloon({ title: 'MultiGameAssistant 仍在运行', content: '定时任务会照常执行。点托盘图标打开，右键「退出」关闭。', iconType: 'info' })
     }
   })
   win.on('closed', () => { win = null })
@@ -329,9 +334,9 @@ function logDir() {
 
 function createTray() {
   tray = new Tray(nativeImage.createFromBuffer(trayIconPng(32)))
-  tray.setToolTip(autoStarted ? 'AutoDailyGamePlay（开机自动启动）' : woken ? 'AutoDailyGamePlay（定时唤醒）' : 'AutoDailyGamePlay')
+  tray.setToolTip(autoStarted ? 'MultiGameAssistant（开机自动启动）' : woken ? 'MultiGameAssistant（定时唤醒）' : 'MultiGameAssistant')
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开 AutoDailyGamePlay', click: () => showWindow() },
+    { label: '打开 MultiGameAssistant', click: () => showWindow() },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit() } },
   ]))
@@ -530,7 +535,7 @@ async function fail(title, detail, offerRestart = false) {
   if (bridged || !offerRestart) return
   const { response } = await dialog.showMessageBox(win, {
     type: 'error',
-    title: 'AutoDailyGamePlay',
+    title: 'MultiGameAssistant',
     message: title,
     detail: failure,
     buttons: ['重新启动', '退出'],
@@ -561,4 +566,22 @@ function stopHost() {
 
 function tail() {
   return logTail.slice(-15).join('\n') || '（没有输出）'
+}
+
+/**
+ * A data folder under its new name, moved from the old name (AutoDailyGamePlay)
+ * the first time a renamed version starts: sessions, scripts and settings come
+ * along. When it cannot be moved (something has a file in it open), the old
+ * folder is used as it is and the move is tried again on the next start.
+ */
+function movedFromLegacy(folder) {
+  const legacy = join(dirname(folder), LEGACY_NAME)
+  if (existsSync(folder) || !existsSync(legacy)) return folder
+  try {
+    renameSync(legacy, folder)
+    return folder
+  } catch (error) {
+    console.warn(`could not move ${legacy} to ${folder}: ${error instanceof Error ? error.message : String(error)}`)
+    return legacy
+  }
 }

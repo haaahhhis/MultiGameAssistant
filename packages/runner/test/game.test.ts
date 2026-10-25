@@ -31,8 +31,8 @@ test('choices come from the config, filtered by a field; a new one is a copy of 
   assert.deepEqual(readChoices(CHOICES, undefined), [], 'no file yet: no choices')
   assert.deepEqual(readChoices(CHOICES, '{ broken'), [])
 
-  const { list, value } = listWithNew({ ...CHOICES, where: { field: 'controllerName', match: 'win32' } }, MXU, 'AutoDailyGamePlay')
-  assert.equal(value, 'AutoDailyGamePlay')
+  const { list, value } = listWithNew({ ...CHOICES, where: { field: 'controllerName', match: 'win32' } }, MXU, 'MultiGameAssistant')
+  assert.equal(value, 'MultiGameAssistant')
   const made = list.at(-1) as Record<string, unknown>
   assert.equal(made['controllerName'], 'Win32-Front', 'copied from a PC instance')
   assert.notEqual(made['id'], 'a')
@@ -84,7 +84,7 @@ test('the game is started only when the script will not and it is not running', 
   await ensureGame({ ...base, manifest: manifest(condition), settings: { mode: 'auto' }, input: 'adb', address: '127.0.0.1:16384', android })
   assert.deepEqual(calls, [], 'the script starts it itself this time')
   await ensureGame({ ...base, manifest: manifest(condition), settings: { mode: 'platform' }, input: 'adb', address: '127.0.0.1:16384', android })
-  assert.equal(calls.length, 2, '"always by AutoDailyGamePlay" ignores the script setting')
+  assert.equal(calls.length, 2, '"always by MultiGameAssistant" ignores the script setting')
   calls.length = 0
   await ensureGame({ ...base, manifest: manifest(condition), settings: { mode: 'off' }, input: 'adb', address: '127.0.0.1:16384', android })
   assert.deepEqual(calls, [])

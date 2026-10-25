@@ -20,12 +20,12 @@ import { windowsAutostart } from './autostart.ts'
 import { ScheduleLock } from './lock.ts'
 import { Power } from './power.ts'
 import { Scheduler, type SavedState } from './scheduler.ts'
-import { windowsPower, windowsWake } from './windows.ts'
+import { retireLegacyTasks, windowsPower, windowsWake } from './windows.ts'
 
 export { Scheduler, DEFAULT_SETTINGS, localDay, slotsBetween, type AutostartPort, type SavedState, type ScheduleStore, type SchedulerDeps } from './scheduler.ts'
 export { joinArgs, taskXml, windowsAutostart, type ExecBuffer, type WindowsAutostartOptions } from './autostart.ts'
 export { Power, POWER_WORD, type AwakeLevel, type PowerDeps, type PowerNotice, type PowerPort, type SleepAction } from './power.ts'
-export { localIso, wakeTaskXml, windowsPower, windowsWake, type WakePort, type WindowsWakeOptions } from './windows.ts'
+export { LEGACY_TASKS, localIso, retireLegacyTasks, wakeTaskXml, windowsPower, windowsWake, type WakePort, type WindowsWakeOptions } from './windows.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -41,9 +41,9 @@ const ConfigSchema = z.object({
   autostarted: z.boolean().default(false),
   /** The desktop app was just started (not dsh restarted after a crash). */
   appStart: z.boolean().default(false),
-  /** Windows task name. @default AutoDailyGamePlay */
+  /** Windows task name. @default MultiGameAssistant */
   taskName: z.string().optional(),
-  /** Windows task that wakes the computer. @default AutoDailyGamePlay Wake */
+  /** Windows task that wakes the computer. @default MultiGameAssistant Wake */
   wakeTaskName: z.string().optional(),
   /** Count down and notify, but only log the sleep / shutdown (trying it out). */
   powerDryRun: z.boolean().default(false),
@@ -118,6 +118,10 @@ export class AdgScheduler extends Service {
     let waiting: ReturnType<typeof setInterval> | undefined
     this.ready = orchestrator.ready.then(async () => {
       await scheduler.load()
+      // Tasks of a version from before the rename (AutoDailyGamePlay); only with the default task names.
+      if (spec.taskName === undefined && spec.wakeTaskName === undefined) {
+        await retireLegacyTasks({ command }).then(done => { for (const line of done) log.info(line) }, error => log.warn(`old tasks not moved: ${error instanceof Error ? error.message : String(error)}`))
+      }
       if (await lock.acquire()) { scheduler.begin(); return }
       const other = await lock.holder()
       log.warn(`another host (pid ${other?.pid ?? '?'}) runs the schedules of ${spec.dataDir}: waiting until it stops`)

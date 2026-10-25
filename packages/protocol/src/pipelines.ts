@@ -209,7 +209,7 @@ export const PipelineSummary = z.object({
 export type PipelineSummary = z.infer<typeof PipelineSummary>
 
 export const ScheduleSettings = z.object({
-  /** Start AutoDailyGamePlay when the user logs on to Windows (a Task Scheduler task). */
+  /** Start MultiGameAssistant when the user logs on to Windows (a Task Scheduler task). */
   autostart: z.boolean(),
   /** Pipelines run when the app starts (by hand or at logon). */
   autostartPipelines: z.array(PipelineId),

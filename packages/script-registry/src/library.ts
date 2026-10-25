@@ -117,7 +117,7 @@ export class ScriptLibrary {
     return packId === undefined ? undefined : this.#packs.get(packId)
   }
 
-  /** Directories AutoDailyGamePlay must not let the agent rewrite: the tools directory and every imported directory. */
+  /** Directories MultiGameAssistant must not let the agent rewrite: the tools directory and every imported directory. */
   protectedDirs(): string[] {
     return [this.toolsDir, ...this.#state.scripts.filter(s => s.source.kind === 'local').map(s => (s.source as { path: string }).path)]
   }

@@ -39,7 +39,7 @@ export interface ScheduleStore {
   save(state: SavedState): Promise<void>
 }
 
-/** Starting AutoDailyGamePlay at logon (a Windows Task Scheduler task). */
+/** Starting MultiGameAssistant at logon (a Windows Task Scheduler task). */
 export interface AutostartPort {
   available(): boolean
   status(): Promise<{ registered: boolean; detail?: string }>

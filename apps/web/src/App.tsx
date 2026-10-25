@@ -161,7 +161,7 @@ function Home({ client, onSettings, onOpen, onStart }: {
       </header>
       <div className="welcome-content">
         <div className="welcome-hero">
-          <p className="eyebrow">AUTO DAILY GAMEPLAY</p>
+          <p className="eyebrow">MULTI GAME ASSISTANT</p>
           <h1>今天要跑点什么？</h1>
           <p className="welcome-description">安装脚本、读懂它怎么用、编排多个脚本一起跑，出了问题帮你看。用一句话告诉 agent 就行。</p>
         </div>
@@ -244,7 +244,7 @@ export function TokenPrompt({ onSubmit }: { onSubmit: (token: string) => void })
       <form onSubmit={e => { e.preventDefault(); if (token.trim() !== '') onSubmit(token.trim()) }}>
         <AdgMark size="lg" />
         <div className="token-heading">
-          <p className="eyebrow">AUTO DAILY GAMEPLAY</p>
+          <p className="eyebrow">MULTI GAME ASSISTANT</p>
           <h1>连接 agent</h1>
           <p className="muted">输入后端启动时打印的连接 token（<code>adg gateway: …?token=</code> 后面的部分）。</p>
         </div>

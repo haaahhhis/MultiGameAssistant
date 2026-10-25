@@ -36,7 +36,7 @@ export function noticeCard(notice: Notice, options: { imageKey?: string | undefi
               })),
             }]
           : []),
-      note(`AutoDailyGamePlay · ${new Date().toLocaleString('zh-CN', { hour12: false })}`),
+      note(`MultiGameAssistant · ${new Date().toLocaleString('zh-CN', { hour12: false })}`),
     ],
   }
 }
@@ -59,7 +59,7 @@ export function approvalCard(request: ApprovalRequested, options: { outcome?: st
               { tag: 'button', text: plain('拒绝'), type: 'danger', value: { kind: 'approval', id: request.approvalId, decision: 'reject' } },
             ],
           }]),
-      note('也可以在 AutoDailyGamePlay 界面里回答，先回答的生效'),
+      note('也可以在 MultiGameAssistant 界面里回答，先回答的生效'),
     ],
   }
 }

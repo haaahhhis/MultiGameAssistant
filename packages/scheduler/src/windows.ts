@@ -8,7 +8,7 @@
  *   the request.
  * - Sleep (`SetSuspendState`, wake timers left on), hibernate (`shutdown /h`),
  *   shut down (`shutdown /s /f`).
- * - Timed wake: a second Task Scheduler task, "AutoDailyGamePlay Wake", with a
+ * - Timed wake: a second Task Scheduler task, "MultiGameAssistant Wake", with a
  *   one-time trigger shortly before each upcoming scheduled time and "wake the
  *   computer to run this task". It starts the desktop app with `--wake`: a
  *   running app ignores it, a closed one starts in the tray (and runs nothing
@@ -19,7 +19,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { decode, escape as xml, joinArgs, systemExec, unescape as unxml, type ExecBuffer } from './autostart.ts'
+import { decode, escape as xml, joinArgs, systemExec, unescape as unxml, windowsAutostart, type ExecBuffer, type WindowsAutostartOptions } from './autostart.ts'
 import type { AwakeLevel, PowerPort, SleepAction } from './power.ts'
 
 // ES_CONTINUOUS | ES_SYSTEM_REQUIRED (| ES_DISPLAY_REQUIRED), in decimal: PowerShell 5.1 reads 0x80000001 as a negative Int32.
@@ -108,7 +108,7 @@ export interface WindowsWakeOptions {
 }
 
 export function windowsWake(options: WindowsWakeOptions): WakePort {
-  const taskName = options.taskName ?? 'AutoDailyGamePlay Wake'
+  const taskName = options.taskName ?? 'MultiGameAssistant Wake'
   const exec = options.exec ?? systemExec
   const command = options.command
   const user = options.user ?? `${process.env['USERDOMAIN'] ?? ''}\\${process.env['USERNAME'] ?? ''}`.replace(/^\\/, '')
@@ -154,7 +154,7 @@ export function wakeTaskXml(command: readonly string[], user: string, times: rea
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>AutoDailyGamePlay：在定时任务开始前把电脑从睡眠中唤醒</Description>
+    <Description>MultiGameAssistant：在定时任务开始前把电脑从睡眠中唤醒</Description>
   </RegistrationInfo>
   <Triggers>
 ${triggers}
@@ -200,4 +200,31 @@ function encoded(script: string): string {
 
 function output(result: { stdout: Buffer; stderr: Buffer }): string {
   return (decode(result.stderr) || decode(result.stdout)).trim()
+}
+
+/** What the tasks were called before the rename (2026-10). */
+export const LEGACY_TASKS = { autostart: 'AutoDailyGamePlay', wake: 'AutoDailyGamePlay Wake' } as const
+
+/**
+ * Tasks a version from before the rename left behind: its logon task comes
+ * over under the new name, starting this program; its wake task is removed
+ * (the schedule registers its own wake task). @returns what was done.
+ */
+export async function retireLegacyTasks(options: WindowsAutostartOptions): Promise<string[]> {
+  const { taskName: _name, ...shared } = options
+  const autostart = windowsAutostart(shared)
+  if (!autostart.available()) return []
+  const done: string[] = []
+  const oldLogon = windowsAutostart({ ...shared, taskName: LEGACY_TASKS.autostart })
+  if ((await oldLogon.status()).registered) {
+    if (!(await autostart.status()).registered) await autostart.register()
+    await oldLogon.unregister()
+    done.push(`moved the logon task "${LEGACY_TASKS.autostart}" to the new name`)
+  }
+  const oldWake = windowsWake({ ...shared, taskName: LEGACY_TASKS.wake })
+  if ((await oldWake.status()).registered) {
+    await oldWake.remove()
+    done.push(`removed the wake task "${LEGACY_TASKS.wake}"`)
+  }
+  return done
 }

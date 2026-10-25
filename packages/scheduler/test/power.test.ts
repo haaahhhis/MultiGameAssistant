@@ -126,11 +126,11 @@ test('not after a run by hand, a cancelled run, or with no action; the stronger 
 })
 
 test('the wake task: one-time triggers in local time that wake the computer and start the app quietly', () => {
-  const xml = wakeTaskXml(['C:\\Program Files\\ADG\\AutoDailyGamePlay.exe', '--wake'], 'PC\\me', [new Date(2026, 9, 25, 4, 28).getTime(), new Date(2026, 9, 26, 4, 28).getTime()])
+  const xml = wakeTaskXml(['C:\\Program Files\\ADG\\MultiGameAssistant.exe', '--wake'], 'PC\\me', [new Date(2026, 9, 25, 4, 28).getTime(), new Date(2026, 9, 26, 4, 28).getTime()])
   assert.equal((xml.match(/<TimeTrigger>/g) ?? []).length, 2)
   assert.match(xml, /<StartBoundary>2026-10-25T04:28:00<\/StartBoundary>/)
   assert.match(xml, /<WakeToRun>true<\/WakeToRun>/)
-  assert.match(xml, /<Command>C:\\Program Files\\ADG\\AutoDailyGamePlay.exe<\/Command>/)
+  assert.match(xml, /<Command>C:\\Program Files\\ADG\\MultiGameAssistant.exe<\/Command>/)
   assert.match(xml, /<Arguments>--wake<\/Arguments>/)
   assert.equal(localIso(new Date(2026, 0, 2, 3, 4, 5).getTime()), '2026-01-02T03:04:05')
 })
@@ -180,7 +180,7 @@ test('the scheduler keeps the wake-ups current: off removes them, on registers t
 const real = { skip: process.env['ADG_REAL_SCHTASKS'] !== '1' || process.platform !== 'win32' }
 
 test('real schtasks: the wake task registers, reads back its next time, and is removed', real, async () => {
-  const name = `AutoDailyGamePlay-wake-test-${Date.now()}`
+  const name = `MultiGameAssistant-wake-test-${Date.now()}`
   const port = windowsWake({ command: [process.execPath, '--version', '--wake'], taskName: name })
   // Far enough ahead that it never fires during the test.
   const times = [Date.now() + 30 * 86_400_000, Date.now() + 31 * 86_400_000].map(t => Math.floor(t / 60_000) * 60_000)

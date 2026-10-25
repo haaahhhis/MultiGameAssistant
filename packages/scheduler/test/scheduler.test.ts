@@ -5,6 +5,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { Pipeline, type PipelineRun, type PipelineTrigger } from '@adg/protocol'
 import { joinArgs, taskXml, windowsAutostart } from '../src/autostart.ts'
+import { retireLegacyTasks } from '../src/windows.ts'
 import { Scheduler, slotsBetween, type AutostartPort, type SavedState } from '../src/scheduler.ts'
 
 const at = (y: number, mo: number, d: number, h: number, mi: number, s = 0) => new Date(y, mo - 1, d, h, mi, s).getTime()
@@ -159,14 +160,14 @@ test('turning autostart on registers the task; upcoming lists the next times', a
 })
 
 test('the Windows task: logon trigger for this user, no time limit, the desktop command with --auto-start', async () => {
-  const command = ['C:\\Program Files\\ADG\\electron.exe', 'C:\\Users\\me\\AutoDailyGamePlay\\apps\\desktop', '--auto-start']
+  const command = ['C:\\Program Files\\ADG\\electron.exe', 'C:\\Users\\me\\MultiGameAssistant\\apps\\desktop', '--auto-start']
   const xml = taskXml(command, 'PC\\me')
   assert.match(xml, /<LogonTrigger>[\s\S]*<UserId>PC\\me<\/UserId>/)
   assert.match(xml, /<ExecutionTimeLimit>PT0S<\/ExecutionTimeLimit>/)
   assert.match(xml, /<DisallowStartIfOnBatteries>false<\/DisallowStartIfOnBatteries>/)
   assert.match(xml, /<RunLevel>LeastPrivilege<\/RunLevel>/)
   assert.match(xml, /<Command>C:\\Program Files\\ADG\\electron.exe<\/Command>/)
-  assert.equal(joinArgs(command.slice(1)), 'C:\\Users\\me\\AutoDailyGamePlay\\apps\\desktop --auto-start')
+  assert.equal(joinArgs(command.slice(1)), 'C:\\Users\\me\\MultiGameAssistant\\apps\\desktop --auto-start')
   assert.equal(joinArgs(['C:\\My Apps\\x', '--auto-start']), '"C:\\My Apps\\x" --auto-start')
 
   const calls: string[][] = []
@@ -193,7 +194,7 @@ test('the Windows task: logon trigger for this user, no time limit, the desktop 
 
 // Real Task Scheduler round trip: ADG_REAL_SCHTASKS=1 node --test packages/scheduler/test/scheduler.test.ts
 test('real schtasks: register, read back, remove', { skip: process.env['ADG_REAL_SCHTASKS'] !== '1' || process.platform !== 'win32' }, async () => {
-  const name = `AutoDailyGamePlay-test-${Date.now()}`
+  const name = `MultiGameAssistant-test-${Date.now()}`
   const port = windowsAutostart({ command: [process.execPath, '--version', '--auto-start'], taskName: name })
   try {
     await port.register()
@@ -231,4 +232,23 @@ test('on-start pipelines run when the app is started by hand too, not after a cr
   await once.make().start(0)
   await new Promise(r => setTimeout(r, 20))
   assert.equal(once.started.length, 2, 'first start of the next day')
+})
+
+test('tasks from before the rename: the logon task moves to the new name, the old wake task goes', async () => {
+  const command = ['C:\\Programs\\MultiGameAssistant\\MultiGameAssistant.exe', '--auto-start']
+  const tasks = new Map<string, string>([['AutoDailyGamePlay', taskXml(['C:\\Programs\\AutoDailyGamePlay\\AutoDailyGamePlay.exe', '--auto-start'], 'PC\\me')], ['AutoDailyGamePlay Wake', '<Task/>']])
+  const exec = async (_file: string, args: readonly string[]) => {
+    const name = args[2]!
+    const ok = (text = '') => ({ code: 0, stdout: Buffer.from(text), stderr: Buffer.alloc(0) })
+    if (args[0] === '/Query') return tasks.has(name) ? { code: 0, stdout: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(tasks.get(name)!, 'utf16le')]), stderr: Buffer.alloc(0) } : { code: 1, stdout: Buffer.alloc(0), stderr: Buffer.from('ERROR') }
+    if (args[0] === '/Create') { tasks.set(name, taskXml(command, 'PC\\me')); return ok('SUCCESS') }
+    if (args[0] === '/Delete') { tasks.delete(name); return ok() }
+    return undefined
+  }
+  const done = await retireLegacyTasks({ command, user: 'PC\\me', exec, platform: 'win32' })
+  assert.equal(done.length, 2)
+  assert.deepEqual([...tasks.keys()], ['MultiGameAssistant'])
+  assert.match(tasks.get('MultiGameAssistant')!, /MultiGameAssistant\.exe/)
+  assert.deepEqual(await retireLegacyTasks({ command, user: 'PC\\me', exec, platform: 'win32' }), [], 'nothing left the second time')
+  assert.deepEqual(await retireLegacyTasks({ command: undefined, exec, platform: 'win32' }), [], 'not the desktop app: nothing touched')
 })

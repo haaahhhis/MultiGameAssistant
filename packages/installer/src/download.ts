@@ -74,7 +74,7 @@ async function downloadFrom(url: string, options: DownloadOptions): Promise<Down
   const have = await stat(part).then(s => s.size, () => 0)
   const fetchImpl = options.fetch ?? globalThis.fetch
   const response = await fetchImpl(url, {
-    headers: { 'user-agent': options.userAgent ?? 'AutoDailyGamePlay', ...(have > 0 ? { range: `bytes=${have}-` } : {}) },
+    headers: { 'user-agent': options.userAgent ?? 'MultiGameAssistant', ...(have > 0 ? { range: `bytes=${have}-` } : {}) },
     redirect: 'follow',
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   }).catch(error => { throw new DownloadError(`连接 ${host(url)} 失败：${errorText(error)}`, { cause: error }) })

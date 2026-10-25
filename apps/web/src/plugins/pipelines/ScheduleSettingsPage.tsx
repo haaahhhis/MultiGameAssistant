@@ -49,7 +49,7 @@ export function ScheduleSettingsPage({ client }: { client: AdgClient }) {
   return (
     <div className="settings-page">
       <h2>定时与自启</h2>
-      <p>每条流水线的运行时间和结束后做什么（关游戏、关模拟器、睡眠或关机）在「编排」页里设置。这里设置电脑开机登录后是否自动启动 AutoDailyGamePlay，以及电脑睡着时要不要按时醒来。关掉窗口后程序在托盘里继续运行，定时照常执行。</p>
+      <p>每条流水线的运行时间和结束后做什么（关游戏、关模拟器、睡眠或关机）在「编排」页里设置。这里设置电脑开机登录后是否自动启动 MultiGameAssistant，以及电脑睡着时要不要按时醒来。关掉窗口后程序在托盘里继续运行，定时照常执行。</p>
 
       {data !== null && settings !== undefined && (
         <section className="card">

@@ -2,7 +2,7 @@
   "name": "@adg/bundle",
   "version": "0.1.0",
   "private": true,
-  "description": "Profile layer: keeps the dsh agent and host services, mounts the AutoDailyGamePlay gateway and feature plugins",
+  "description": "Profile layer: keeps the dsh agent and host services, mounts the MultiGameAssistant gateway and feature plugins",
   "type": "module",
   "files": [
     "cordis.patch.yml"

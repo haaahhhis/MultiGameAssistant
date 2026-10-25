@@ -92,7 +92,7 @@ export class GitHubClient {
         headers: {
           accept: 'application/vnd.github+json',
           'x-github-api-version': '2022-11-28',
-          'user-agent': this.#options.userAgent ?? 'AutoDailyGamePlay',
+          'user-agent': this.#options.userAgent ?? 'MultiGameAssistant',
           ...(token === undefined || token === '' ? {} : { authorization: `Bearer ${token}` }),
         },
         signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),

@@ -73,7 +73,7 @@ tasks:
           create:
             set: { id: '{uuid}', name: '{name}' }
     args: ['--autostart', '--instance', '{instance}', '--quit-after-run']
-    # The instance connects to the emulator AutoDailyGamePlay prepared.
+    # The instance connects to the emulator MultiGameAssistant prepared.
     patches:
       - file: config/mxu-MaaEnd.json
         set:

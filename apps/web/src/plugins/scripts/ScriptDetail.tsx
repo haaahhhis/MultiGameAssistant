@@ -110,7 +110,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
             </div>
           </>
         ) : (
-          <p className="muted small">本地导入的脚本原地使用，由你自己维护版本；AutoDailyGamePlay 不会改动这个目录。</p>
+          <p className="muted small">本地导入的脚本原地使用，由你自己维护版本；MultiGameAssistant 不会改动这个目录。</p>
         )}
       </section>
 

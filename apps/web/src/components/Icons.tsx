@@ -53,7 +53,7 @@ export function StopGlyph() {
   return <svg className="ui-icon stop-glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor" /></svg>
 }
 
-/** The AutoDailyGamePlay mark: a play triangle inside a rounded tile. */
+/** The MultiGameAssistant mark: a play triangle inside a rounded tile. */
 export function AdgMark({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   return (
     <span className={`adg-mark ${size}`} aria-hidden="true">

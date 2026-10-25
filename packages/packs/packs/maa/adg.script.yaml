@@ -61,7 +61,7 @@ tasks:
             value: true
           - path: [Configurations, Default, Gui, ConnectSettings, Address]
             value: '{adb}'
-      # AutoDailyGamePlay started MuMu already: MAA must not start an emulator too.
+      # MultiGameAssistant started MuMu already: MAA must not start an emulator too.
       # With a manual ADB address MAA keeps starting its emulator itself.
       - file: config/gui.json
         when: emulator-managed

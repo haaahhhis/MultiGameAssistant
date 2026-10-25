@@ -24,7 +24,7 @@ export function NavRail({ client, pages, current, onChat, onPage, onSettings }: 
   const questions = useStore(client.questions)
   return (
     <nav className="rail" aria-label="功能区">
-      <button className="rail-brand" onClick={onChat} title="AutoDailyGamePlay">
+      <button className="rail-brand" onClick={onChat} title="MultiGameAssistant">
         <AdgMark />
       </button>
       <div className="rail-items">

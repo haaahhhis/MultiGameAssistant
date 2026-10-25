@@ -9,7 +9,7 @@ import { MANIFEST_FILE, parseManifest, SKILL_FILE, type ScriptManifest } from '@
 
 export interface PackDir {
   readonly dir: string
-  /** Shipped with AutoDailyGamePlay. */
+  /** Shipped with MultiGameAssistant. */
   readonly builtin: boolean
 }
 

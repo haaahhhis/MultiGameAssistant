@@ -50,7 +50,7 @@ export function BootScreen({ client }: { client: AdgClient }) {
             </svg>
           </span>
         </div>
-        <h1 className="boot-name">AutoDailyGamePlay</h1>
+        <h1 className="boot-name">MultiGameAssistant</h1>
         <p className="boot-stage" role="status" aria-live="polite"><span>{stage}</span></p>
         <ol className="boot-steps">
           {STEPS.map((label, i) => <li key={label} className={i < 3 ? 'done' : 'now'}><i /><span>{label}</span></li>)}

@@ -31,7 +31,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { areaOf, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
-import { PersonaStore, personaPrompt } from './persona.ts'
+import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
@@ -378,6 +378,11 @@ export class AdgGateway extends Service {
           },
         },
       }), 'adg-gateway capability skills')
+    })
+
+    // What the app is called, so the agent names it right (just before the reply style, which may give it a name of its own).
+    ctx.inject(['systemPrompt'], scoped => {
+      scoped.effect(() => scoped.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }), 'adg-gateway identity section')
     })
 
     // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.

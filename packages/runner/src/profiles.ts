@@ -1,5 +1,5 @@
 /**
- * Local config profiles, the AUTO-MAS way: AutoDailyGamePlay keeps its own
+ * Local config profiles, the AUTO-MAS way: MultiGameAssistant keeps its own
  * copy of a script's declared config files and never changes the original
  * project's configuration for good.
  *

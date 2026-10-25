@@ -45,7 +45,7 @@ export function ParamInput({ client, scriptId, taskId, name, spec, value, onChan
   if (spec.choices !== undefined) {
     const known = spec.choices.some(c => c.value === value)
     input = (
-      <select className="text-input plain" aria-label={name} value={known ? value : ''} onChange={e => { if (e.target.value === '\u0000new') setNaming(n => n ?? 'AutoDailyGamePlay'); else onChange(e.target.value) }}>
+      <select className="text-input plain" aria-label={name} value={known ? value : ''} onChange={e => { if (e.target.value === '\u0000new') setNaming(n => n ?? 'MultiGameAssistant'); else onChange(e.target.value) }}>
         <option value="" disabled>{spec.choices.length === 0 ? '本地配置里还没有，先新建或在脚本里建一个' : '请选择'}</option>
         {spec.choices.map(c => <option key={c.value} value={c.value}>{c.label}{c.detail === undefined ? '' : `（${c.detail}）`}</option>)}
         {spec.canCreate === true && <option value={'\u0000new'}>＋ 新建…</option>}

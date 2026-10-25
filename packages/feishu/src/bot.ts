@@ -194,7 +194,7 @@ export class FeishuBot implements Channel {
     await this.#options.save(this.#state)
     this.#setCheck('users', true)
     this.#options.changed()
-    await this.#api?.sendText({ openId }, '你已被允许使用 AutoDailyGamePlay 机器人：脚本出问题时我会通知你，也可以直接让我干活，例如「现在什么状态」「跑一下方舟日常」。').catch(() => {})
+    await this.#api?.sendText({ openId }, '你已被允许使用 MultiGameAssistant 机器人：脚本出问题时我会通知你，也可以直接让我干活，例如「现在什么状态」「跑一下方舟日常」。').catch(() => {})
   }
 
   /** Take someone off the list, or dismiss them from the pending ones. */
@@ -384,7 +384,7 @@ export class FeishuBot implements Channel {
     if (api === undefined) return
     if (!this.#allowed(event.senderOpenId)) {
       void this.#rememberStranger(event)
-      void api.replyText(event.messageId, `你还没有被允许使用这个机器人。\n你的 open_id：${event.senderOpenId}\n请在 AutoDailyGamePlay 的「设置 → 飞书」里允许你自己。`).catch(() => {})
+      void api.replyText(event.messageId, `你还没有被允许使用这个机器人。\n你的 open_id：${event.senderOpenId}\n请在 MultiGameAssistant 的「设置 → 飞书」里允许你自己。`).catch(() => {})
       return
     }
     if (event.messageType !== 'text' && event.messageType !== 'post') {

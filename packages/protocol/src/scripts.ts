@@ -18,7 +18,7 @@ export const ScriptId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/, 'use low
 export const GitHubRepo = z.string().trim().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'use owner/repo')
 
 export const ScriptSource = z.discriminatedUnion('kind', [
-  /** Installed by AutoDailyGamePlay into the tools directory. */
+  /** Installed by MultiGameAssistant into the tools directory. */
   z.object({ kind: z.literal('github'), repo: z.string() }),
   /** A directory the user already had; used in place, never moved or deleted. */
   z.object({ kind: z.literal('local'), path: z.string() }),
@@ -104,7 +104,7 @@ export const PackSummary = z.object({
   description: z.string().optional(),
   repo: z.string().optional(),
   family: ScriptFamily.optional(),
-  /** Shipped with AutoDailyGamePlay (false: in the user's pack directory). */
+  /** Shipped with MultiGameAssistant (false: in the user's pack directory). */
   builtin: z.boolean(),
   /** A script with this pack is in the library. */
   installed: z.boolean(),
@@ -123,7 +123,7 @@ export const ReleaseInfo = z.object({
   publishedAt: z.string().optional(),
   url: z.string().optional(),
   assets: z.array(ReleaseAsset),
-  /** Asset AutoDailyGamePlay would pick for this machine. */
+  /** Asset MultiGameAssistant would pick for this machine. */
   suggestedAsset: z.string().optional(),
 })
 export type ReleaseInfo = z.infer<typeof ReleaseInfo>

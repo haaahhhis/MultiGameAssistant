@@ -10,7 +10,7 @@ import { errorText } from './data.ts'
 type Status = RequestResult<'configs/status'>
 
 /**
- * The script's local config copy: what AutoDailyGamePlay runs with. The
+ * The script's local config copy: what MultiGameAssistant runs with. The
  * original project config stays as the user left it; changes made in the
  * script's own window show up here as drift to import.
  */
