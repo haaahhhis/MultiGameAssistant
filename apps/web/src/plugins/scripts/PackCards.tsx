@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
+import { Select } from '../../components/Select.tsx'
 
 /** Pack drafts the agent proposed for this script, to accept or reject; plus asking the agent to analyze it. */
 export function PackCard({ client, script, openSession }: { client: AdgClient; script: ScriptInfo; openSession: (id: string) => void }) {
@@ -107,9 +108,8 @@ export function GuardCard({ client, script }: { client: AdgClient; script: Scrip
       {activeGrant === undefined ? (
         <div className="key-actions">
           <label className="check-label">允许 agent 修改
-            <select className="text-input plain inline-select" value={minutes} onChange={e => setMinutes(Number(e.target.value))}>
-              {[15, 30, 60, 120].map(m => <option key={m} value={m}>{m} 分钟</option>)}
-            </select>
+            <Select inline aria-label="允许多久" value={String(minutes)} onChange={m => setMinutes(Number(m))}
+              options={[15, 30, 60, 120].map(m => ({ value: String(m), label: `${m} 分钟` }))} />
           </label>
           <span className="spacer" />
           <button className="small-button" onClick={() => call(() => client.connection.call('guard/grant', { scriptId: script.id, minutes }))}>临时允许</button>

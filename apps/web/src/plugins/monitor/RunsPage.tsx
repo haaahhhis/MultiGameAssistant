@@ -8,6 +8,7 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { RunLog, RUN_STATE } from '../scripts/RunsCard.tsx'
 import { errorText } from '../scripts/data.ts'
+import { Select } from '../../components/Select.tsx'
 
 /** The agent's interventions by incident, and opening its session, for the incident rows. */
 const Agent = createContext<{ byIncident: ReadonlyMap<string, Intervention>; openSession: (id: string) => void }>({ byIncident: new Map(), openSession: () => {} })
@@ -259,11 +260,11 @@ function MonitorSettingsCard({ client }: { client: AdgClient }) {
           <label className="check-label"><input type="checkbox" checked={settings.screenshot} onChange={e => void set({ screenshot: e.target.checked })} />出错时截图（模拟器画面或桌面）并随通知发送</label>
           <label className="check-label"><input type="checkbox" checked={settings.notifyWarnings} onChange={e => void set({ notifyWarnings: e.target.checked })} />警告也推送（默认只推送出错、失败、卡住）</label>
           <label className="field-label" htmlFor="intervene-mode">自动处理解决不了的问题，先交给 agent（需要能看图的模型）</label>
-          <select id="intervene-mode" className="text-input plain" value={settings.intervene} onChange={e => void set({ intervene: e.target.value as MonitorSettings['intervene'] })}>
-            <option value="act">诊断并处理：暂停脚本，agent 看屏幕、点击和输入来解决（推荐）</option>
-            <option value="diagnose">只诊断：agent 看截图说明原因，由你决定</option>
-            <option value="off">关闭：直接通知我</option>
-          </select>
+          <Select id="intervene-mode" value={settings.intervene} onChange={mode => void set({ intervene: mode as MonitorSettings['intervene'] })} options={[
+            { value: 'act', label: '诊断并处理（推荐）', hint: '暂停脚本，agent 看屏幕、点击和输入来解决' },
+            { value: 'diagnose', label: '只诊断', hint: 'agent 看截图说明原因，由你决定' },
+            { value: 'off', label: '关闭', hint: '直接通知我' },
+          ]} />
           <label className="field-label" htmlFor="intervene-cap">每天最多交给 agent 几次（控制模型费用）</label>
           <input id="intervene-cap" className="text-input plain" type="number" min={0} max={200} defaultValue={settings.interventionsPerDay}
             onBlur={e => void set({ interventionsPerDay: Math.max(0, Math.min(200, Math.round(Number(e.target.value) || 0))) })} />

@@ -3,6 +3,7 @@ import type { AdgClient } from '@adg/client-core'
 import type { CredentialInfo } from '@adg/protocol'
 import { useCredentials, useModelCatalog, useStore } from '../../hooks.ts'
 import { ProvidersSection } from '../providers/ProvidersPage.tsx'
+import { Select } from '../../components/Select.tsx'
 
 const SOURCE_LABEL: Record<string, string> = {
   file: 'dsh 凭据文件',
@@ -175,14 +176,10 @@ function DefaultModel({ client }: { client: AdgClient }) {
       {error !== null && <div className="error small">{error}</div>}
       {catalog === null && error === null && <div className="muted small">读取中…</div>}
       {catalog !== null && (
-        <select className="text-input plain" aria-label="默认模型" value={current} disabled={busy || !capabilities.has('model-default')} onChange={e => void choose(e.target.value)}>
-          {!known && <option value={current}>{catalog.default.provider} / {catalog.default.model}（不可用）</option>}
-          {catalog.groups.map(group => (
-            <optgroup key={group.id} label={group.name}>
-              {group.models.map(model => <option key={model.id} value={`${group.id}/${model.id}`}>{model.name}</option>)}
-            </optgroup>
-          ))}
-        </select>
+        <Select aria-label="默认模型" value={current} disabled={busy || !capabilities.has('model-default')} onChange={next => void choose(next)} options={[
+          ...(known ? [] : [{ value: current, label: `${catalog.default.provider} / ${catalog.default.model}`, hint: '不可用：这个模型服务没有配好', disabled: true }]),
+          ...catalog.groups.flatMap(group => group.models.map(model => ({ value: `${group.id}/${model.id}`, label: model.name, group: group.name }))),
+        ]} />
       )}
       {catalog?.failures.map(f => <div key={f.id} className="error small">{f.name}：{f.message}</div>)}
       {message !== null && <div className="muted small">{message}</div>}

@@ -598,15 +598,37 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .field-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .text-input.plain { font-family: var(--font); }
 .text-input.plain-mono { margin-top: 0; }
-/* Dropdowns: our own chevron instead of the system arrow; the open list follows the theme where the platform allows. */
-select.text-input, select.text-input.plain, select.inline-select {
-  appearance: none; cursor: pointer; padding-right: 32px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-  background-position: calc(100% - 17px) 52%, calc(100% - 12px) 52%;
-  background-size: 5px 5px; background-repeat: no-repeat;
+/* Dropdowns (components/Select.tsx): a field-looking button, and a themed list drawn over the page. */
+.select-trigger {
+  position: relative; display: flex; align-items: center; min-width: 0; text-align: left; font-weight: 400; cursor: pointer;
+  padding-right: 34px; font-family: var(--font);
 }
-select.text-input:hover:not(:disabled) { border-color: var(--accent-line); }
-select option { background: var(--raised); color: var(--text); font-family: var(--font); }
+.select-trigger::after {
+  content: ""; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px; margin-top: -5px;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform .15s var(--ease), margin .15s var(--ease);
+}
+.select-trigger.open::after { transform: rotate(-135deg); margin-top: -1px; }
+.select-trigger:hover:not(:disabled), .select-trigger.open { border-color: var(--accent-line); }
+.select-trigger.open { box-shadow: 0 0 0 3px var(--accent-soft); }
+.select-trigger.inline { display: inline-flex; width: auto; margin: 0 0 0 6px; padding: 4px 30px 4px 10px; }
+.select-trigger.inline::after { right: 11px; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-value.placeholder { color: var(--muted); }
+.select-list {
+  position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none; overflow-y: auto; outline: none;
+  border: 1px solid var(--border-strong); border-radius: var(--r-lg); background: var(--raised); color: var(--text);
+  box-shadow: var(--shadow-pop); font-size: 13px; animation: select-in .12s var(--ease);
+}
+@keyframes select-in { from { opacity: 0; transform: translateY(-3px); } }
+.select-group { padding: 8px 10px 4px; font-size: 11px; font-weight: 500; letter-spacing: .04em; color: var(--muted); }
+.select-option { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+.select-option.active { background: var(--accent-soft); }
+.select-option.selected { font-weight: 500; }
+.select-option.disabled { opacity: .45; cursor: default; }
+.select-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.select-hint { font-size: 11.5px; font-weight: 400; color: var(--muted); line-height: 1.45; }
+.select-check { width: 15px; height: 15px; flex-shrink: 0; color: var(--accent); }
+.select-empty { padding: 8px 10px; color: var(--muted); }
 .endpoint-preview code { word-break: break-all; }
 .mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .mode-option { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; text-align: left; border-color: var(--border); border-radius: var(--r-md); }

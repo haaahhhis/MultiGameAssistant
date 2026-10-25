@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { errorText } from './data.ts'
+import { Select } from '../../components/Select.tsx'
 
 type View = RequestResult<'configs/launch'>
 type Found = RequestResult<'configs/launch/locate'>
@@ -104,11 +105,11 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
         </div>
       </div>
       <label className="field-label" htmlFor={`launch-mode-${scriptId}`}>运行前由谁启动游戏</label>
-      <select id={`launch-mode-${scriptId}`} className="text-input plain" value={settings.mode} disabled={busy} onChange={e => void set({ mode: e.target.value as 'auto' | 'platform' | 'off' })}>
-        <option value="auto">自动：脚本不会启动时由本应用启动（推荐）</option>
-        <option value="platform">总是由本应用启动（游戏没开时）</option>
-        <option value="off">不启动，交给脚本或我自己</option>
-      </select>
+      <Select id={`launch-mode-${scriptId}`} value={settings.mode} disabled={busy} onChange={mode => void set({ mode: mode as 'auto' | 'platform' | 'off' })} options={[
+        { value: 'auto', label: '自动（推荐）', hint: '脚本自己不会启动游戏时，由本应用启动' },
+        { value: 'platform', label: '总是由本应用启动', hint: '游戏没开时先打开它' },
+        { value: 'off', label: '不启动', hint: '交给脚本或我自己' },
+      ]} />
       {settings.mode !== 'off' && uses.adb && (
         <>
           <label className="field-label" htmlFor={`launch-pkg-${scriptId}`}>模拟器里的游戏包名（模拟器任务）</label>

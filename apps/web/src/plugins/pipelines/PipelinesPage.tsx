@@ -6,7 +6,8 @@ import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
-import { PipelineEditor } from './PipelineEditor.tsx'
+import { PipelineEditor, RETRIES, THEN } from './PipelineEditor.tsx'
+import { Select } from '../../components/Select.tsx'
 
 const RUN_STATE: Readonly<Record<PipelineRun['state'], [string, string]>> = {
   running: ['', '运行中'], succeeded: ['ok', '成功'], failed: ['warn', '有失败'], cancelled: ['', '已取消'],
@@ -335,30 +336,20 @@ function ScheduleCard({ pipeline, others, onChange, startup, onStartup }: {
       <label className="field-label" htmlFor="pl-catchup">错过多少分钟以内还补跑（睡眠、刚开机）</label>
       <input id="pl-catchup" className="text-input plain" type="number" min={0} max={720} value={s.catchUpMinutes} onChange={e => set({ catchUpMinutes: Math.max(0, Math.min(720, Math.round(Number(e.target.value) || 0))) })} />
       <label className="field-label" htmlFor="pl-after">另一条流水线成功后接着运行</label>
-      <select id="pl-after" className="text-input plain" value={s.after ?? ''} onChange={e => { const { after: _a, ...rest } = s; onChange({ ...pipeline, schedule: e.target.value === '' ? rest : { ...rest, after: e.target.value } }) }}>
-        <option value="">不接续</option>
-        {others.filter(o => o.id !== pipeline.id).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-      </select>
+      <Select id="pl-after" value={s.after ?? ''} onChange={after => { const { after: _a, ...rest } = s; onChange({ ...pipeline, schedule: after === '' ? rest : { ...rest, after } }) }}
+        options={[{ value: '', label: '不接续' }, ...others.filter(o => o.id !== pipeline.id).map(o => ({ value: o.id, label: o.name }))]} />
       <label className="field-label" htmlFor="pl-fail">节点失败时（节点自己没设置时）</label>
       <div className="select-stack">
-        <select id="pl-fail" className="text-input plain" aria-label="重试次数" value={pipeline.onFailure.retries} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, retries: Number(e.target.value) } })}>
-          {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 0 ? '不重试' : `重试 ${n} 次`}</option>)}
-        </select>
-        <select className="text-input plain" aria-label="仍失败时" value={pipeline.onFailure.then} onChange={e => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, then: e.target.value as 'continue' | 'stop' } })}>
-          <option value="continue">然后继续其他分支</option>
-          <option value="stop">然后停止流水线</option>
-        </select>
+        <Select id="pl-fail" aria-label="重试次数" value={String(pipeline.onFailure.retries)} options={RETRIES} onChange={retries => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, retries: Number(retries) } })} />
+        <Select aria-label="仍失败时" value={pipeline.onFailure.then} options={THEN} onChange={then => onChange({ ...pipeline, onFailure: { ...pipeline.onFailure, then: then as 'continue' | 'stop' } })} />
       </div>
       <div className="field-label">结束后</div>
       <label className="check-label"><input type="checkbox" checked={pipeline.closeGameAfter} onChange={e => onChange({ ...pipeline, closeGameAfter: e.target.checked })} />关闭游戏（任务玩过的电脑游戏和模拟器里的游戏）</label>
       <label className="check-label"><input type="checkbox" checked={pipeline.stopEmulatorAfter} onChange={e => onChange({ ...pipeline, stopEmulatorAfter: e.target.checked })} />关闭模拟器</label>
       <label className="field-label" htmlFor="pl-power">然后电脑</label>
-      <select id="pl-power" className="text-input plain" value={pipeline.powerAfter} onChange={e => onChange({ ...pipeline, powerAfter: e.target.value as Pipeline['powerAfter'] })}>
-        <option value="none">保持开着</option>
-        <option value="sleep">睡眠</option>
-        <option value="hibernate">休眠</option>
-        <option value="shutdown">关机</option>
-      </select>
+      <Select id="pl-power" value={pipeline.powerAfter} onChange={power => onChange({ ...pipeline, powerAfter: power as Pipeline['powerAfter'] })} options={[
+        { value: 'none', label: '保持开着' }, { value: 'sleep', label: '睡眠' }, { value: 'hibernate', label: '休眠', hint: '断电也不丢失进度，唤醒比睡眠慢' }, { value: 'shutdown', label: '关机' },
+      ]} />
       {pipeline.powerAfter !== 'none' && (
         <p className="muted small">等其他任务都结束后先倒计时{startup === null ? '' : ` ${startup.powerCountdownSeconds} 秒`}，界面和飞书里都可以取消；15 分钟内还有定时任务就不{POWER_WORD[pipeline.powerAfter]}。在这里手动点运行、或运行被取消时不会{POWER_WORD[pipeline.powerAfter]}。{pipeline.powerAfter === 'shutdown' ? '关机会强制关闭所有程序。' : '想让电脑按时醒来跑定时任务，在「设置 → 定时与自启」打开定时唤醒。'}</p>
       )}

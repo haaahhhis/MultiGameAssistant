@@ -3,6 +3,7 @@ import type { AdgClient } from '@adg/client-core'
 import type { MirrorLookup, MirrorSearchItem, ReleaseInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { errorText, formatBytes, PHASE_LABEL } from './data.ts'
+import { Select } from '../../components/Select.tsx'
 
 /**
  * Install from a GitHub release: pick the repository, then the release and
@@ -93,14 +94,13 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
       {loaded !== null && loaded.releases.length > 0 && (
         <>
           <label className="field-label" htmlFor="release-select">版本{loaded.packId !== undefined && <span className="chip subtle">内置脚本包 {loaded.packId}</span>}</label>
-          <select id="release-select" className="text-input plain" value={tag} disabled={busy} onChange={e => {
-            setTag(e.target.value)
-            setAsset(loaded.releases.find(r => r.tag === e.target.value)?.suggestedAsset ?? '')
-          }}>
-            {loaded.releases.map(r => (
-              <option key={r.tag} value={r.tag}>{r.tag}{r.prerelease ? '（预发布）' : ''}{r.publishedAt === undefined ? '' : ` · ${r.publishedAt.slice(0, 10)}`}</option>
-            ))}
-          </select>
+          <Select id="release-select" value={tag} disabled={busy} onChange={next => {
+            setTag(next)
+            setAsset(loaded.releases.find(r => r.tag === next)?.suggestedAsset ?? '')
+          }} options={loaded.releases.map(r => ({
+            value: r.tag, label: `${r.tag}${r.prerelease ? '（预发布）' : ''}`,
+            ...(r.publishedAt === undefined ? {} : { hint: `${r.publishedAt.slice(0, 10)} 发布` }),
+          }))} />
           {release !== undefined && (
             <fieldset className="asset-list" disabled={busy}>
               <legend className="field-label">下载文件</legend>

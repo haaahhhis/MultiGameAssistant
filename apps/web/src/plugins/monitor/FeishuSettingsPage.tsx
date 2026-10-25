@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { Select } from '../../components/Select.tsx'
 
 type View = RequestResult<'feishu/settings'>
 
@@ -121,11 +122,9 @@ export function FeishuSettingsPage({ client }: { client: AdgClient }) {
         <section className="card">
           <h3>应用凭证</h3>
           <label className="field-label" htmlFor="feishu-domain">平台</label>
-          <select id="feishu-domain" className="text-input plain" value={settings.domain} disabled={busy !== null}
-            onChange={e => void act('domain', () => client.connection.call('feishu/settings/set', { domain: e.target.value as 'feishu' | 'lark' }))}>
-            <option value="feishu">飞书（open.feishu.cn）</option>
-            <option value="lark">Lark 国际版（open.larksuite.com）</option>
-          </select>
+          <Select id="feishu-domain" value={settings.domain} disabled={busy !== null}
+            onChange={domain => void act('domain', () => client.connection.call('feishu/settings/set', { domain: domain as 'feishu' | 'lark' }))}
+            options={[{ value: 'feishu', label: '飞书', hint: 'open.feishu.cn' }, { value: 'lark', label: 'Lark 国际版', hint: 'open.larksuite.com' }]} />
           <label className="field-label" htmlFor="feishu-app-id">App ID</label>
           <input id="feishu-app-id" className="text-input" value={appId} onChange={e => setAppId(e.target.value)} placeholder="cli_xxxxxxxx" spellCheck={false} />
           <label className="field-label" htmlFor="feishu-secret">App Secret {view?.secretConfigured === true && <span className="badge ok">已保存</span>}</label>

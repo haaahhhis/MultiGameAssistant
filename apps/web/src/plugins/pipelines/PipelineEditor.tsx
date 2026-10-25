@@ -10,6 +10,11 @@ import { errorText } from '../scripts/data.ts'
 import { ParamInput } from '../scripts/ParamInput.tsx'
 import { ProfileSelect } from '../scripts/Profiles.tsx'
 import { useScriptTasks } from './data.ts'
+import { Select } from '../../components/Select.tsx'
+
+/** Choices shared with the pipeline's own failure setting. */
+export const RETRIES = [0, 1, 2, 3, 4, 5].map(r => ({ value: String(r), label: r === 0 ? '不重试' : `重试 ${r} 次` }))
+export const THEN = [{ value: 'continue', label: '然后继续其他分支' }, { value: 'stop', label: '然后停止流水线' }]
 
 const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '控制节点', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }
 const NODE_STATE: Readonly<Record<NodeRun['state'], string>> = {
@@ -237,12 +242,9 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
             <h4>连线</h4>
             <p className="muted small">「{pipeline.nodes.find(n => n.id === edge.from)?.title ?? edge.from}」→「{pipeline.nodes.find(n => n.id === edge.to)?.title ?? edge.to}」</p>
             <label className="field-label" htmlFor="edge-when">什么时候运行下一步</label>
-            <select id="edge-when" className="text-input plain" value={edge.when}
-              onChange={e => onChange({ ...pipeline, edges: pipeline.edges.map((x, i) => (i === selectedEdge ? { ...x, when: e.target.value as PipelineEdge['when'] } : x)) })}>
-              <option value="success">上一步成功后</option>
-              <option value="failure">上一步失败后</option>
-              <option value="always">上一步结束后（不管成败）</option>
-            </select>
+            <Select id="edge-when" value={edge.when}
+              onChange={when => onChange({ ...pipeline, edges: pipeline.edges.map((x, i) => (i === selectedEdge ? { ...x, when: when as PipelineEdge['when'] } : x)) })}
+              options={[{ value: 'success', label: '上一步成功后' }, { value: 'failure', label: '上一步失败后' }, { value: 'always', label: '上一步结束后', hint: '不管成败' }]} />
             <button className="danger-outline small-button" onClick={() => { onChange({ ...pipeline, edges: pipeline.edges.filter((_x, i) => i !== selectedEdge) }); setSelectedEdge(null) }}>删除连线</button>
           </section>
         )}
@@ -320,10 +322,9 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
       )}
       {node.kind === 'wait' && (
         <div className="key-input">
-          <select className="text-input plain" aria-label="等待方式" value={node.minutes !== undefined ? 'minutes' : 'until'}
-            onChange={e => onChange(e.target.value === 'minutes' ? { id: node.id, kind: 'wait', minutes: 10, ...(node.title === undefined ? {} : { title: node.title }), ...(node.position === undefined ? {} : { position: node.position }) } : { id: node.id, kind: 'wait', until: '05:00', ...(node.title === undefined ? {} : { title: node.title }), ...(node.position === undefined ? {} : { position: node.position }) })}>
-            <option value="minutes">等几分钟</option><option value="until">等到某个时间</option>
-          </select>
+          <Select aria-label="等待方式" value={node.minutes !== undefined ? 'minutes' : 'until'}
+            options={[{ value: 'minutes', label: '等几分钟' }, { value: 'until', label: '等到某个时间' }]}
+            onChange={how => onChange(how === 'minutes' ? { id: node.id, kind: 'wait', minutes: 10, ...(node.title === undefined ? {} : { title: node.title }), ...(node.position === undefined ? {} : { position: node.position }) } : { id: node.id, kind: 'wait', until: '05:00', ...(node.title === undefined ? {} : { title: node.title }), ...(node.position === undefined ? {} : { position: node.position }) })} />
           {node.minutes !== undefined
             ? <input className="text-input plain" type="number" min={1} max={1440} value={node.minutes} onChange={e => onChange({ ...node, minutes: Math.max(1, Math.min(1440, Math.round(Number(e.target.value) || 1))) })} />
             : <input className="text-input plain" type="time" value={node.until} onChange={e => onChange({ ...node, until: e.target.value })} />}
@@ -342,20 +343,15 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
         <>
           <label className="field-label" htmlFor="node-retries">失败时</label>
           <div className="select-stack">
-            <select id="node-retries" className="text-input plain" aria-label="重试次数" value={policy === undefined ? 'inherit' : String(policy.retries)}
-              onChange={e => {
+            <Select id="node-retries" aria-label="重试次数" value={policy === undefined ? 'inherit' : String(policy.retries)}
+              options={[{ value: 'inherit', label: '按流水线的设置' }, ...RETRIES]}
+              onChange={retries => {
                 const { onFailure: _f, ...rest } = node
-                if (e.target.value === 'inherit') return onChange(rest as PipelineNode)
-                onChange({ ...rest, onFailure: { retries: Number(e.target.value), then: policy?.then ?? pipeline.onFailure.then } } as PipelineNode)
-              }}>
-              <option value="inherit">按流水线的设置</option>
-              {[0, 1, 2, 3, 4, 5].map(r => <option key={r} value={r}>{r === 0 ? '不重试' : `重试 ${r} 次`}</option>)}
-            </select>
-            <select className="text-input plain" aria-label="仍失败时" disabled={policy === undefined} value={(policy ?? pipeline.onFailure).then}
-              onChange={e => onChange({ ...node, onFailure: { retries: policy?.retries ?? pipeline.onFailure.retries, then: e.target.value as 'continue' | 'stop' } } as PipelineNode)}>
-              <option value="continue">然后继续其他分支</option>
-              <option value="stop">然后停止流水线</option>
-            </select>
+                if (retries === 'inherit') return onChange(rest as PipelineNode)
+                onChange({ ...rest, onFailure: { retries: Number(retries), then: policy?.then ?? pipeline.onFailure.then } } as PipelineNode)
+              }} />
+            <Select aria-label="仍失败时" disabled={policy === undefined} value={(policy ?? pipeline.onFailure).then} options={THEN}
+              onChange={then => onChange({ ...node, onFailure: { retries: policy?.retries ?? pipeline.onFailure.retries, then: then as 'continue' | 'stop' } } as PipelineNode)} />
           </div>
           {policy === undefined && <p className="muted small">流水线的设置：{pipeline.onFailure.retries > 0 ? `重试 ${pipeline.onFailure.retries} 次，` : '不重试，'}然后{pipeline.onFailure.then === 'stop' ? '停止流水线' : '继续其他分支'}</p>}
         </>

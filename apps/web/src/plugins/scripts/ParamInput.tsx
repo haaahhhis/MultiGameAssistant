@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { TaskInfo } from '@adg/protocol'
 import { errorText } from './data.ts'
+import { Select } from '../../components/Select.tsx'
 
 type Spec = TaskInfo['params'][string]
 
@@ -47,23 +48,20 @@ export function ParamInput({ client, scriptId, taskId, name, spec, value, onChan
   if (spec.choices !== undefined) {
     const known = spec.choices.some(c => c.value === value)
     input = (
-      <select className="text-input plain" aria-label={name} value={known ? value : ''} onChange={e => { if (e.target.value === '\u0000new') setNaming(n => n ?? 'MultiGameAssistant'); else onChange(e.target.value) }}>
-        <option value="" disabled>{spec.choices.length === 0 ? '本地配置里还没有，先新建或在脚本里建一个' : '请选择'}</option>
-        {spec.choices.map(c => <option key={c.value} value={c.value}>{c.label}{c.detail === undefined ? '' : `（${c.detail}）`}</option>)}
-        {spec.canCreate === true && <option value={'\u0000new'}>＋ 新建…</option>}
-      </select>
+      <Select aria-label={name} value={known ? value : ''} placeholder={spec.choices.length === 0 ? '本地配置里还没有，先新建或在脚本里建一个' : '请选择'}
+        onChange={next => { if (next === '\u0000new') setNaming(n => n ?? 'MultiGameAssistant'); else onChange(next) }}
+        options={[
+          ...spec.choices.map(c => ({ value: c.value, label: c.label, ...(c.detail === undefined ? {} : { hint: c.detail }) })),
+          ...(spec.canCreate === true ? [{ value: '\u0000new', label: '＋ 新建…' }] : []),
+        ]} />
     )
   } else if (spec.type === 'boolean') {
     input = (
-      <select className="text-input plain" aria-label={name} value={value} onChange={e => onChange(e.target.value)}>
-        <option value="true">是</option><option value="false">否</option>
-      </select>
+      <Select aria-label={name} value={value} onChange={onChange} options={[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]} />
     )
   } else if (spec.enum !== undefined) {
     input = (
-      <select className="text-input plain" aria-label={name} value={value} onChange={e => onChange(e.target.value)}>
-        {spec.enum.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
-      </select>
+      <Select aria-label={name} value={value} onChange={onChange} options={spec.enum.map(option => ({ value: String(option), label: String(option) }))} />
     )
   } else {
     input = <input className="text-input plain" aria-label={name} value={value} placeholder={spec.default === undefined ? '必填' : String(spec.default)} inputMode={spec.type === 'string' ? 'text' : 'numeric'} onChange={e => onChange(e.target.value)} />

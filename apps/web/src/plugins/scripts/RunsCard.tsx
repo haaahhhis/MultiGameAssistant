@@ -8,6 +8,7 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
 import { ParamInput } from './ParamInput.tsx'
 import { ProfileSelect, useProfiles } from './Profiles.tsx'
+import { Select } from '../../components/Select.tsx'
 
 export const RUN_STATE: Readonly<Record<RunInfo['state'], [string, string]>> = {
   starting: ['', '启动中'], running: ['', '运行中'], stopping: ['warn', '停止中'],
@@ -88,9 +89,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
       {tasks !== null && tasks.tasks.length > 0 && (
         <div className="run-form">
           <label className="field-label" htmlFor="task-select">任务</label>
-          <select id="task-select" className="text-input plain" value={taskId} onChange={e => setTaskId(e.target.value)}>
-            {tasks.tasks.map(t => <option key={t.id} value={t.id}>{t.title}（{t.id}）</option>)}
-          </select>
+          <Select id="task-select" value={taskId} onChange={setTaskId} options={tasks.tasks.map(t => ({ value: t.id, label: t.title, hint: t.id }))} />
           {task !== undefined && (
             <div className="task-facts muted small">
               <span className="badge">{INPUT[task.input]}</span>
