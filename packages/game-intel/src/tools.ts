@@ -141,7 +141,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       title: () => '游戏列表',
       execute: async () => ({
         games: deps.games().map(g => ({
-          id: g.id, name: g.name, aliases: g.aliases, scripts: g.scripts, skill: `game-${g.id}`,
+          id: g.id, name: g.name, aliases: g.aliases, scripts: g.scripts, skill: `game-${g.id}（这个游戏的技能；没有的话可能要先从技能库下载，见 skill_hub_list）`,
           screen: g.screen === undefined ? '未设置' : g.screen.target === 'emulator' ? 'target=emulator' : `target=window${g.screen.window === undefined ? '（先 window_list 找窗口）' : `，window=${g.screen.window}`}`,
           sources: g.sources.map(s => ({ name: s.name, auto: s.auto, ...(s.homepage === undefined ? {} : { homepage: s.homepage }) })),
           ...(g.refreshed === undefined ? {} : { refreshed: { at: new Date(g.refreshed.at).toISOString(), ok: g.refreshed.ok, count: g.refreshed.count, ...(g.refreshed.detail === undefined ? {} : { detail: g.refreshed.detail }) } }),

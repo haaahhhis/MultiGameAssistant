@@ -33,7 +33,7 @@ export function buildReport(games: readonly ReportGame[], activities: readonly A
     const long = running.filter(a => isLong(a) && a.todo.length === 0 && daysLeft(a.endsAt!, now) >= settings.soonDays)
     const lines = running.filter(a => !long.includes(a)).map(a => {
       count++
-      if (a.site !== undefined && a.site.source !== 'agent') sources.add(a.site.name)
+      for (const s of a.sources ?? []) if (!s.web) sources.add(s.name)
       if (a.screen !== undefined) lastRead = Math.max(lastRead ?? 0, a.screen.at)
       return `· ${line(a, game.timezone, settings.soonDays, now)}`
     })

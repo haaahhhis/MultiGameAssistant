@@ -89,7 +89,16 @@ function normalize(text: string): string {
 }
 
 /** Message the agent receives, telling it what to do instead. */
+/** The protected entry for the app's own files (core skills, built-in script and game packs). */
+export const APP_FILES = '_app'
+
 export function denialReason(verdict: Verdict, scriptName: string): string {
+  if (verdict.scriptId === APP_FILES) {
+    return [
+      `已拦截：这是 MultiGameAssistant 自带的文件（内置技能、脚本包、游戏包），不能修改（${verdict.target}）。`,
+      '软件更新时会整体替换它们。要补充做法，用 skill_save 另存一个自己的技能；技能库下载的技能在数据目录里，可以改，更新时不会被覆盖。',
+    ].join('')
+  }
   return [
     `已拦截：${scriptName} 的脚本目录受保护（${verdict.target}）。`,
     '没有用户的明确授权时，不能修改脚本自己的文件。',

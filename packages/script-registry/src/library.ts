@@ -228,6 +228,23 @@ export class ScriptLibrary {
     }
   }
 
+  /** Download a file from GitHub through the download mirror the user set (the skills repository uses it). */
+  async downloadFromGitHub(url: string, dest: string, signal?: AbortSignal): Promise<void> {
+    const settings = this.#state.settings
+    await download({
+      url, dest,
+      mirror: settings.downloadMirror,
+      mirrorFallback: settings.mirrorFallback,
+      ...(signal === undefined ? {} : { signal }),
+      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+    })
+  }
+
+  /** Unpack an archive safely into a new folder (a single top folder lifted). */
+  unpack(archive: string, dest: string, signal?: AbortSignal): Promise<unknown> {
+    return extract(archive, dest, signal === undefined ? {} : { signal })
+  }
+
   /** Whether `repo` is described by a pack this installation ships (curated). */
   isKnownRepo(repo: string): boolean {
     return packForRepo(this.#packs, repo)?.builtin === true

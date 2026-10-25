@@ -36,3 +36,13 @@ test('reading, listing, running and harmless redirects stay allowed', () => {
   assert.equal(blocked('pwsh', { command: 'Set-Content C:\\temp\\out.txt hi' }), undefined)
   assert.equal(blocked('pwsh', { command: 'Set-Content D:\\adg\\tools\\maa\\6.19.0\\a.txt hi' }, ['D:\\adg\\tools\\maa\\6.19.0']), undefined, 'granted')
 })
+
+test('the app’s own files are refused with their own reason, wherever the app is installed', async () => {
+  const { APP_FILES, APP_FILES_DIR, denialReason } = await import('../src/index.ts')
+  const { join } = await import('node:path')
+  const dirs: ProtectedDir[] = [...DIRS, { scriptId: APP_FILES, dir: APP_FILES_DIR }]
+  const skill = join(APP_FILES_DIR, 'game-intel', 'skills', 'game-intel.md')
+  const verdict = judgeCall({ toolName: 'edit', args: { file_path: skill } }, dirs, [])
+  assert.equal(verdict?.scriptId, APP_FILES)
+  assert.match(denialReason(verdict!, '软件自带的文件'), /自带的文件.*skill_save/)
+})

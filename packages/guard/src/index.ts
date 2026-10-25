@@ -8,15 +8,27 @@
  * directory). The user lifts that for one script for a limited time from the
  * UI (`guard@1`); there is deliberately no agent tool for it. Full access
  * (设置 → 权限, served by the gateway) turns the guard off.
+ *
+ * The app's own files (its core skills and built-in packs) are protected the
+ * same way, with no grant: an update would replace any change.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@adg/gateway'
 import type {} from '@adg/script-registry'
 import { GUARD_CAPABILITY, type GuardGrant, type RequestParams } from '@adg/protocol'
-import { denialReason, judgeCall, type ProtectedDir } from './policy.ts'
+import { fileURLToPath } from 'node:url'
+import { APP_FILES, denialReason, judgeCall, type ProtectedDir } from './policy.ts'
 
-export { denialReason, judgeCall, type CallFacts, type ProtectedDir, type Verdict } from './policy.ts'
+export { APP_FILES, denialReason, judgeCall, type CallFacts, type ProtectedDir, type Verdict } from './policy.ts'
+
+/**
+ * The folder holding all of MultiGameAssistant's packages: `packages/` in a
+ * checkout, `node_modules/@adg/` once installed (no asar). Their core skills,
+ * script packs and game packs are replaced whole by an update, so the agent
+ * never writes there, and no grant lifts it.
+ */
+export const APP_FILES_DIR = fileURLToPath(new URL('../../', import.meta.url))
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -45,6 +57,7 @@ export class AdgGuard extends Service {
       }
       // Last, so a script's own entry names it; covers shared components and downloads too.
       protectedDirs.push({ scriptId: TOOLS, dir: scripts.library.toolsDir })
+      protectedDirs.push({ scriptId: APP_FILES, dir: APP_FILES_DIR })
       return { protectedDirs, allowed: [...open.values()].flatMap(g => g.dirs) }
     }
 
@@ -56,7 +69,7 @@ export class AdgGuard extends Service {
       const verdict = judgeCall({ toolName: exec.name, args: exec.arguments }, protectedDirs, allowed)
       if (verdict === undefined) return next()
       this.blocked += 1
-      const name = verdict.scriptId === TOOLS ? '工具目录' : nameOf(verdict.scriptId)
+      const name = verdict.scriptId === TOOLS ? '工具目录' : verdict.scriptId === APP_FILES ? '软件自带的文件' : nameOf(verdict.scriptId)
       log.info(`blocked ${exec.name} on ${verdict.target}`)
       ctx.get('adgGateway')?.broadcast('guard/blocked', { toolName: exec.name, target: verdict.target, at: Date.now(), ...(exec.agent === undefined ? {} : { sessionId: exec.agent.session.id }) })
       return { kind: 'deny', reason: denialReason(verdict, name) }

@@ -3,7 +3,8 @@
  *
  * Contributes, each only while its host service is mounted:
  * - agent tools `script_*` (install, update, rollback, import, env check/fix…);
- * - the `scripts@1` gateway capability for the UI's script library page.
+ * - the `scripts@1` gateway capability for the UI's script library page;
+ * - the skills repository (技能库, `skillhub@1` and `skill_hub_*` tools).
  *
  * Script Packs come from `@adg/packs` (built in) and `<dataDir>/packs` (the
  * user's, overriding built-ins by id). SKILL.md registration into the agent's
@@ -19,11 +20,14 @@ import { InstallSettings } from '@adg/protocol'
 import { z } from 'zod'
 import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
+import { startSkillHub } from './skill-hub-plugin.ts'
+import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
 export { ScriptLibrary, type InstallRequest, type LibraryOptions } from './library.ts'
 export { loadPacks, packForRepo, type LoadedPack, type PackDir } from './packs.ts'
 export { TOOL_NAMES } from './tools.ts'
+export { frontmatter, readSkills, SkillHub, type HubItem, type HubSkill } from './skill-hub.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -47,6 +51,8 @@ export type Config = z.input<typeof ConfigSchema>
 
 export class AdgScripts extends Service {
   readonly library: ScriptLibrary
+  /** The skills repository (技能库). */
+  readonly skillHub: SkillHub
   /** Settles once the library state and packs are loaded. */
   readonly ready: Promise<void>
 
@@ -100,6 +106,8 @@ export class AdgScripts extends Service {
         }])),
       })
     })
+
+    this.skillHub = startSkillHub(ctx, library, this.ready, approve, { info: message => log.info(message), warn: message => log.warn(message) })
 
     log.debug(`tools: ${Object.values(TOOL_NAMES).join(', ')}`)
   }

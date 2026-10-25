@@ -26,8 +26,10 @@ export const Activity = z.object({
   description: z.string().optional(),
   /** Its picture (an https address; fetch it with `games/image`). */
   cover: z.string().optional(),
-  /** Seen on a data site: its dates are the ones that count. */
+  /** The source whose dates are shown: a data site, else the newest web page the agent read. */
   site: z.object({ source: z.string(), name: z.string(), at: z.number() }).optional(),
+  /** Every source that lists it (data sites, web pages the agent read), with the end each gives. */
+  sources: z.array(z.object({ id: z.string(), name: z.string(), at: z.number(), web: z.boolean(), endsAt: z.number().optional() })).optional(),
   /** Read from the game screen by the agent. */
   screen: z.object({
     at: z.number(),

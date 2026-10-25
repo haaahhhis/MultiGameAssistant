@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@adg/installer": "workspace:*",
+    "@adg/notify": "workspace:*",
     "@adg/pack-schema": "workspace:*",
     "@adg/packs": "workspace:*",
     "@adg/protocol": "workspace:*",
@@ -34,8 +35,10 @@
     "@adg/gateway": "workspace:*",
     "@adg/test-kit": "workspace:*",
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-skill": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-user-approval": "0.2.1-alpha.2",
     "@types/node": "^24.13.3"

@@ -6,13 +6,15 @@ import { Markdown } from '../../components/Markdown.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { SkillHubPanel } from './SkillHubPanel.tsx'
 import './skills.css'
 
 type Skill = RequestResult<'skills/get'>
 
 /** Where a skill comes from, in the order the list shows them. */
 const GROUPS: readonly { label: string; match: (source: string) => boolean }[] = [
-  { label: '本应用自带', match: s => s === 'bundled' },
+  { label: '本应用自带 · 受保护', match: s => s === 'bundled' },
+  { label: '从技能库下载的', match: s => s === 'hub' },
   { label: '脚本包和游戏包', match: s => s === 'custom' },
   { label: '你的技能文件夹', match: s => s.startsWith('user-') },
   { label: '工作文件夹里的', match: s => s.startsWith('project-') },
@@ -27,8 +29,12 @@ function groupOf(skill: SkillInfo): string {
  * The agent's skills: what each is for, whether the agent uses it by itself
  * or it is called with /name, and its instructions.
  */
-export function SkillsPage({ client, arg }: PageProps) {
+export function SkillsPage({ client, arg, openSession }: PageProps) {
   const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  // #/p/skills/hub (or hub:<name>, from the game page) opens the skills repository.
+  const [tab, setTab] = useState<'mine' | 'hub'>(arg?.startsWith('hub') === true ? 'hub' : 'mine')
+  const focus = arg?.startsWith('hub:') === true ? arg.slice('hub:'.length) : undefined
   const [skills, setSkills] = useState<SkillInfo[] | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string>(arg ?? '')
@@ -37,13 +43,17 @@ export function SkillsPage({ client, arg }: PageProps) {
   const [revision, setRevision] = useState(0)
   const [copied, setCopied] = useState(false)
 
-  useEffect(() => { if (arg !== undefined) setSelected(arg) }, [arg])
+  useEffect(() => {
+    if (arg === undefined) return
+    if (arg.startsWith('hub')) setTab('hub')
+    else { setTab('mine'); setSelected(arg) }
+  }, [arg])
   useEffect(() => {
     if (status.state !== 'open') return
     let live = true
     client.connection.call('skills/list', {}).then(r => { if (live) { setSkills(r.skills); setError(null) } }, e => { if (live) setError(errorText(e)) })
     return () => { live = false }
-  }, [client, status.state, revision])
+  }, [client, status.state, revision, tab])
 
   const needle = query.trim().toLowerCase()
   const shown = useMemo(() => (skills ?? []).filter(s => needle === '' || `${s.name} ${s.description} ${s.whenToUse ?? ''}`.toLowerCase().includes(needle)), [skills, needle])
@@ -68,11 +78,20 @@ export function SkillsPage({ client, arg }: PageProps) {
   return (
     <section className="main scripts-page skills-page">
       <header className="page-header">
-        <div className="breadcrumb"><span>技能</span><span className="breadcrumb-divider">/</span><h1>agent 的技能</h1></div>
+        <div className="breadcrumb"><span>技能</span><span className="breadcrumb-divider">/</span><h1>{tab === 'hub' ? '技能库' : 'agent 的技能'}</h1></div>
         <div className="page-actions">
-          <button className="small-button" onClick={() => setRevision(r => r + 1)}><Icon name="refresh" />刷新</button>
+          {capabilities.has('skillhub') && (
+            <div className="tabs" role="tablist">
+              <button role="tab" aria-selected={tab === 'mine'} className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>已有的技能</button>
+              <button role="tab" aria-selected={tab === 'hub'} className={tab === 'hub' ? 'active' : ''} onClick={() => setTab('hub')}>技能库</button>
+            </div>
+          )}
+          {tab === 'mine' && <button className="small-button" onClick={() => setRevision(r => r + 1)}><Icon name="refresh" />刷新</button>}
         </div>
       </header>
+      {tab === 'hub' && capabilities.has('skillhub') ? (
+        <div className="skill-hub-body"><SkillHubPanel client={client} focus={focus} openSession={openSession} openSkill={name => { setSelected(name); setTab('mine') }} /></div>
+      ) : (
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="技能列表">
           <div className="skills-search">
@@ -103,6 +122,7 @@ export function SkillsPage({ client, arg }: PageProps) {
                 <div className="skill-head">
                   <h2>{current.name}</h2>
                   <span className="badge">{groupOf(current)}</span>
+                  {current.source === 'bundled' && <span className="badge" title="软件自带，agent 不能修改，随软件更新">受保护</span>}
                   {current.modelInvocable && <span className="badge ok" title="agent 遇到相关的事会自己读这个技能">agent 自动使用</span>}
                   {current.userInvocable && <span className="badge" title="在对话里输入 /名字 来用它">可以用 /{current.name} 调用</span>}
                 </div>
@@ -126,6 +146,7 @@ export function SkillsPage({ client, arg }: PageProps) {
           </div>
         </div>
       </div>
+      )}
     </section>
   )
 }

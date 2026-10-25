@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -8,12 +8,12 @@ import { parseGameManifest, parseManifest, renderTask } from '@adg/pack-schema'
 const DIR = fileURLToPath(new URL('../packs/', import.meta.url))
 const load = (id: string) => parseManifest(readFileSync(join(DIR, id, 'adg.script.yaml'), 'utf8'), `${id}/adg.script.yaml`)
 
-test('every built-in pack is valid and has a SKILL.md with frontmatter', () => {
+test('every built-in pack is valid; its skill is in the skills repository, not shipped', () => {
   for (const id of readdirSync(DIR)) {
     const pack = load(id)
     assert.equal(pack.id, id)
     assert.ok(pack.tasks.length > 0, `${id} has tasks`)
-    assert.match(readFileSync(join(DIR, id, 'SKILL.md'), 'utf8'), /^---\nname: [a-z0-9-]+\ndescription: .+\n---\n/, `${id}/SKILL.md frontmatter`)
+    assert.ok(!existsSync(join(DIR, id, 'SKILL.md')), `${id}/SKILL.md belongs in MultiGameAssistant/skills`)
   }
 })
 
@@ -49,14 +49,14 @@ test('log rules classify the scripts\' real messages', () => {
   assert.deepEqual(load('maa').recovery.map(r => `${r.on}→${r.do}`), ['adb-disconnected→reconnect-adb', 'adb-disconnected→restart', 'stalled→restart'])
 })
 
-test('every built-in game pack is valid, names script packs that exist, and has a GAME.md skill', () => {
+test('every built-in game pack is valid and names script packs that exist; its skill is in the skills repository', () => {
   const games = fileURLToPath(new URL('../games/', import.meta.url))
   const scripts = new Set(readdirSync(DIR))
   for (const id of readdirSync(games)) {
     const game = parseGameManifest(readFileSync(join(games, id, 'game.yaml'), 'utf8'), `${id}/game.yaml`)
     assert.equal(game.id, id)
     for (const script of game.scripts) assert.ok(scripts.has(script), `${id} plays ${script}`)
-    assert.match(readFileSync(join(games, id, 'GAME.md'), 'utf8'), new RegExp(`^---\nname: game-${id}\ndescription: .+\n---\n`), `${id}/GAME.md frontmatter`)
+    assert.ok(!existsSync(join(games, id, 'GAME.md')), `${id}/GAME.md belongs in MultiGameAssistant/skills (games/${id}/SKILL.md)`)
   }
   assert.ok(readdirSync(games).length >= 3)
 })

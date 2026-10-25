@@ -1,7 +1,15 @@
 /**
  * The event calendar: every game's current events, merged from what the data
- * sites say (dates, which count) and what the agent read in the game
- * (remaining time, what is still to do). Kept in `<data dir>/games/`.
+ * sites say (dates, which count), what the agent read on web pages, and what
+ * it read in the game (remaining time, what is still to do). Kept in
+ * `<data dir>/games/`.
+ *
+ * Each event keeps what every source said about it on its own (`facts`), and
+ * the dates shown are worked out from them: a data site's first, then the
+ * newest web page's. A refresh replaces only its own source's facts, so what
+ * the agent read on a page is never overwritten or dropped by one; an event
+ * goes when no source lists it any more (and the game screen never showed
+ * it), or when it has ended.
  */
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -35,11 +43,34 @@ export interface ReadEvent {
   readonly url?: string | undefined
   /** source=site: the event's picture in the announcement (https only). */
   readonly cover?: string | undefined
+  /** source=site: which page it was read from (a page the user added); default: "agent 查到的网页". */
+  readonly source?: { readonly id: string; readonly name: string } | undefined
 }
+
+/** What one source said about an event. */
+interface Fact {
+  /** The source's name, for the user. */
+  name: string
+  /** A web page the agent read (not a data site the plugin reads itself). */
+  web: boolean
+  at: number
+  startsAt?: number
+  endsAt?: number
+  shopEndsAt?: number
+  url?: string
+  cover?: string
+  description?: string
+  kind?: string
+}
+
+/** The agent's web reading when it does not say which page. */
+const AGENT_PAGE = { id: 'agent', name: 'agent 查到的网页' } as const
 
 interface Stored extends Activity {
   /** Every name it went by, for matching. */
   names: string[]
+  /** What each source said, by source id, in the order they first said it. */
+  facts: Record<string, Fact>
 }
 
 const StoredSchema = z.object({
@@ -71,7 +102,7 @@ export class Calendar {
   async load(): Promise<void> {
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
-      this.#items = saved.activities.map(a => ({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] }) as Stored)
+      this.#items = saved.activities.map(a => migrate({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] } as unknown as Stored))
       this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools, links: saved.links }
     } catch {
       // first start, or unreadable: start empty
@@ -90,14 +121,12 @@ export class Calendar {
     return this.#items
       .filter(a => game === undefined || a.game === game)
       .sort((a, b) => (a.endsAt ?? Infinity) - (b.endsAt ?? Infinity) || a.name.localeCompare(b.name))
-      .map(({ names: _names, ...activity }) => activity)
+      .map(a => this.#public(a))
   }
 
   get(id: string): Activity | undefined {
     const found = this.#items.find(a => a.id === id)
-    if (found === undefined) return undefined
-    const { names: _names, ...activity } = found
-    return activity
+    return found === undefined ? undefined : this.#public(found)
   }
 
   get settings(): GamesSettings {
@@ -211,32 +240,36 @@ export class Calendar {
   }
 
   /**
-   * A data site's current events for a game: their dates replace what was
-   * known; events this source listed before and no longer lists are dropped
-   * unless the game screen showed them.
+   * A data site's current events for a game: what it says now replaces what
+   * it said before; an event it no longer lists loses only its word, and goes
+   * when no other source (a web page the agent read, the game screen) has it.
    */
   async applySite(game: string, source: { id: string; name: string }, events: readonly SiteEvent[], now: number, timeZone: string): Promise<void> {
     const seen = new Set<Stored>()
     for (const event of events) {
       const names = [event.name, ...event.aliases]
-      const item = this.#match(game, names, now) ?? this.#create(game, event.name)
+      const item = this.#match(game, names, { startsAt: event.startsAt, endsAt: event.endsAt }, now, seen) ?? this.#create(game, event.name)
       seen.add(item)
-      item.name = event.name
       item.names = unique([...names, ...item.names])
-      if (event.startsAt !== undefined) item.startsAt = event.startsAt
-      else delete item.startsAt
-      item.endsAt = event.endsAt
-      if (event.shopEndsAt !== undefined) item.shopEndsAt = event.shopEndsAt
-      else delete item.shopEndsAt
-      if (event.url !== undefined) item.url = event.url
-      if (event.kind !== undefined) item.kind = event.kind
-      if (event.description !== undefined) item.description = event.description
-      if (event.cover !== undefined) item.cover = event.cover
-      item.site = { source: source.id, name: source.name, at: now }
-      this.#crossCheck(item, timeZone)
+      item.facts[source.id] = {
+        name: source.name, web: false, at: now, endsAt: event.endsAt,
+        ...(event.startsAt === undefined ? {} : { startsAt: event.startsAt }),
+        ...(event.shopEndsAt === undefined ? {} : { shopEndsAt: event.shopEndsAt }),
+        ...(event.url === undefined ? {} : { url: event.url }),
+        ...(event.cover === undefined ? {} : { cover: event.cover }),
+        ...(event.description === undefined ? {} : { description: event.description }),
+        ...(event.kind === undefined ? {} : { kind: event.kind }),
+      }
+      // A data site's name for it is the one shown.
+      item.name = event.name
+      this.#derive(item, timeZone)
     }
-    this.#items = this.#items.filter(a => a.game !== game || seen.has(a) || a.site?.source !== source.id || a.screen !== undefined)
-    for (const item of this.#items) if (item.game === game && !seen.has(item) && item.site?.source === source.id) delete item.site
+    for (const item of this.#items) {
+      if (item.game !== game || seen.has(item) || item.facts[source.id] === undefined) continue
+      delete item.facts[source.id]
+      this.#derive(item, timeZone)
+    }
+    this.#items = this.#items.filter(a => a.game !== game || Object.keys(a.facts).length > 0 || a.screen !== undefined)
     this.#prune(now)
     this.#saved.refreshed[game] = { at: now, ok: true, count: events.length }
     await this.save()
@@ -258,30 +291,35 @@ export class Calendar {
 
   /**
    * What the agent read. From the screen it adds progress (and the remaining
-   * time, checked against the site's end); from a web page (`site`) it gives
-   * dates for a game with no site the plugin can read itself.
+   * time, checked against the site's end); from a web page (`site`) it is
+   * that page's word on the event (the user's page it came from, else
+   * "agent 查到的网页"), kept beside the data sites' and used where they say
+   * nothing.
    * @returns the events written, with how each was matched.
    */
-  async applyRead(game: string, from: 'screen' | 'site', events: readonly ReadEvent[], context: { now: number; timeZone: string; sessionId?: string | undefined; evidence?: (activity: Activity) => Promise<boolean> }): Promise<Array<{ activity: Activity; matched: boolean }>> {
+  async applyRead(game: string, from: 'screen' | 'site', events: readonly ReadEvent[], context: { now: number; timeZone: string; sessionId?: string | undefined; source?: { id: string; name: string } | undefined; evidence?: (activity: Activity) => Promise<boolean> }): Promise<Array<{ activity: Activity; matched: boolean }>> {
     const { now, timeZone } = context
     const written: Array<{ activity: Activity; matched: boolean }> = []
     for (const event of events) {
-      const existing = this.#match(game, [event.name], now)
-      const item = existing ?? this.#create(game, event.name)
-      item.names = unique([event.name, ...item.names])
       const explicit = event.endsAt === undefined ? undefined : parseDateText(event.endsAt, timeZone, now) ?? undefined
       const remaining = event.remaining === undefined ? undefined : parseRemaining(event.remaining)
       const end = explicit ?? (remaining === undefined ? undefined : now + remaining)
+      const start = event.startsAt === undefined ? undefined : parseDateText(event.startsAt, timeZone, now) ?? undefined
+      const existing = this.#match(game, [event.name], { startsAt: start, endsAt: end }, now)
+      const item = existing ?? this.#create(game, event.name)
+      item.names = unique([event.name, ...item.names])
       if (from === 'site') {
-        // The agent read a web page: its dates stand in for a data site's, unless one already gave them.
-        if (item.site === undefined || item.site.source === 'agent') {
-          if (end !== undefined) item.endsAt = end
-          const start = event.startsAt === undefined ? undefined : parseDateText(event.startsAt, timeZone, now) ?? undefined
-          if (start !== undefined) item.startsAt = start
-          item.site = { source: 'agent', name: 'agent 查到的网页', at: now }
+        const page = event.source ?? context.source ?? AGENT_PAGE
+        // Read again from the same page: what it says now, and what it said before where it says nothing now.
+        const before = item.facts[page.id]
+        item.facts[page.id] = {
+          ...before,
+          name: page.name, web: true, at: now,
+          ...(end === undefined ? {} : { endsAt: end }),
+          ...(start === undefined ? {} : { startsAt: start }),
+          ...(event.url === undefined ? {} : { url: event.url }),
+          ...(event.cover !== undefined && /^https:\/\/\S+$/.test(event.cover) ? { cover: event.cover } : {}),
         }
-        if (event.url !== undefined) item.url = event.url
-        if (event.cover !== undefined && /^https:\/\/\S+$/.test(event.cover) && item.cover === undefined) item.cover = event.cover
       } else {
         item.screen = {
           at: now,
@@ -290,14 +328,13 @@ export class Calendar {
           evidence: false,
           ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
         }
-        if (item.site === undefined && end !== undefined) item.endsAt = end
         if (event.todo !== undefined) item.todo = [...event.todo]
         if (event.done !== undefined) item.done = [...event.done]
         if (event.progress !== undefined) item.progress = event.progress
         else delete item.progress
-        if (context.evidence !== undefined) item.screen.evidence = await context.evidence(this.#public(item)).catch(() => false)
       }
-      this.#crossCheck(item, timeZone)
+      this.#derive(item, timeZone)
+      if (from === 'screen' && context.evidence !== undefined) item.screen!.evidence = await context.evidence(this.#public(item)).catch(() => false)
       written.push({ activity: this.#public(item), matched: existing !== undefined })
     }
     this.#prune(now)
@@ -315,13 +352,18 @@ export class Calendar {
 
   // ── internals ──
 
-  /** The same event: an exact name first, then one name inside the other (running events preferred). */
-  #match(game: string, names: readonly string[], now: number): Stored | undefined {
+  /**
+   * The same event: an exact name first, then one name inside the other
+   * whose dates overlap (running events preferred). `taken`: events already
+   * matched in this pass, which a loose name does not take again.
+   */
+  #match(game: string, names: readonly string[], dates: { startsAt?: number | undefined; endsAt?: number | undefined }, now: number, taken?: ReadonlySet<Stored>): Stored | undefined {
     const mine = this.#items.filter(a => a.game === game)
     const keys = new Set(names.map(idKey))
     const exact = mine.find(a => a.names.some(n => keys.has(idKey(n))))
     if (exact !== undefined) return exact
-    const loose = mine.filter(a => sameEvent(a.names, names))
+    const overlaps = (a: Stored) => (a.startsAt ?? -Infinity) <= (dates.endsAt ?? Infinity) && (dates.startsAt ?? -Infinity) <= (a.endsAt ?? Infinity)
+    const loose = mine.filter(a => taken?.has(a) !== true && sameEvent(a.names, names) && overlaps(a))
     const running = loose.find(a => (a.startsAt ?? 0) <= now && now <= (a.endsAt ?? Infinity))
     return running ?? loose[0]
   }
@@ -329,32 +371,89 @@ export class Calendar {
   #create(game: string, name: string): Stored {
     let id = `${game}/${idKey(name)}`
     for (let n = 2; this.#items.some(a => a.id === id); n++) id = `${game}/${idKey(name)}-${n}`
-    const item: Stored = { id, game, name, names: [name], todo: [], done: [] }
+    const item: Stored = { id, game, name, names: [name], facts: {}, todo: [], done: [] }
     this.#items.push(item)
     return item
   }
 
-  /** The site's end counts; say so when the game showed something else. */
-  #crossCheck(item: Stored, timeZone: string): void {
+  /**
+   * The event as shown, from what its sources said: each detail from the
+   * data sites first (the one that wrote last), then the web pages (the
+   * newest reading); the end from the game screen when no source gives one.
+   * Disagreements on the end are said: a web page against a data site, the
+   * screen against a data site (the data site counts).
+   */
+  #derive(item: Stored, timeZone: string): void {
+    const ordered = Object.entries(item.facts)
+      .map(([id, fact], index) => ({ id, fact, index }))
+      .sort((a, b) => Number(a.fact.web) - Number(b.fact.web) || b.fact.at - a.fact.at || b.index - a.index)
+    const first = <K extends keyof Fact>(key: K): Fact[K] | undefined => ordered.find(o => o.fact[key] !== undefined)?.fact[key]
+    const set = <K extends 'startsAt' | 'endsAt' | 'shopEndsAt' | 'url' | 'cover' | 'description' | 'kind'>(key: K, value: Stored[K] | undefined) => {
+      if (value === undefined) delete item[key]
+      else item[key] = value
+    }
+    const site = ordered.find(o => !o.fact.web)
+    const primary = ordered[0]
+    // A data site's dates come as a set (no start means none), a page's fill in only what is missing.
+    set('startsAt', site !== undefined ? site.fact.startsAt : first('startsAt'))
+    set('endsAt', first('endsAt') ?? item.screen?.endsAt)
+    set('shopEndsAt', site !== undefined ? site.fact.shopEndsAt : first('shopEndsAt'))
+    set('url', first('url'))
+    set('cover', first('cover'))
+    set('description', first('description'))
+    set('kind', first('kind'))
+    if (primary === undefined) delete item.site
+    else item.site = { source: primary.id, name: primary.fact.name, at: primary.fact.at }
+
     delete item.mismatch
+    const siteEnd = site?.fact.endsAt
+    if (site === undefined || siteEnd === undefined) return
+    const page = ordered.find(o => o.fact.web && o.fact.endsAt !== undefined)
+    if (page !== undefined && Math.abs(page.fact.endsAt! - siteEnd) > MISMATCH_MS) {
+      item.mismatch = `${page.fact.name}写的是 ${shortDate(page.fact.endsAt!, timeZone)} 结束，${site.fact.name} 写的是 ${shortDate(siteEnd, timeZone)}，以 ${site.fact.name} 为准`
+      return
+    }
     const screenEnd = item.screen?.endsAt
-    if (item.site === undefined || item.site.source === 'agent' || screenEnd === undefined || item.endsAt === undefined) return
-    if (Math.abs(screenEnd - item.endsAt) <= MISMATCH_MS) return
+    if (screenEnd === undefined || Math.abs(screenEnd - siteEnd) <= MISMATCH_MS) return
     const shown = item.screen?.remaining ?? shortDate(screenEnd, timeZone)
-    item.mismatch = `游戏里显示「${shown}」，${item.site.name} 写的是 ${shortDate(item.endsAt, timeZone)} 结束（${leftText(item.endsAt, item.screen!.at)}），以 ${item.site.name} 为准`
+    item.mismatch = `游戏里显示「${shown}」，${site.fact.name} 写的是 ${shortDate(siteEnd, timeZone)} 结束（${leftText(siteEnd, item.screen!.at)}），以 ${site.fact.name} 为准`
   }
 
   #prune(now: number): void {
     this.#items = this.#items.filter(a => {
-      if (a.endsAt === undefined) return (a.screen?.at ?? a.site?.at ?? now) + KEEP_UNDATED_MS > now
+      if (a.endsAt === undefined) {
+        const seen = [a.screen?.at, ...Object.values(a.facts).map(f => f.at)].filter((t): t is number => t !== undefined)
+        return (seen.length === 0 ? now : Math.max(...seen)) + KEEP_UNDATED_MS > now
+      }
       return Math.max(a.endsAt, a.shopEndsAt ?? 0) + KEEP_ENDED_MS > now
     })
   }
 
   #public(item: Stored): Activity {
-    const { names: _names, ...activity } = item
-    return structuredClone(activity)
+    const { names: _names, facts, ...activity } = item
+    const sources = Object.entries(facts).map(([id, f]) => ({ id, name: f.name, at: f.at, web: f.web, ...(f.endsAt === undefined ? {} : { endsAt: f.endsAt }) }))
+    return structuredClone({ ...activity, ...(sources.length === 0 ? {} : { sources }) })
   }
+}
+
+/** A calendar saved before sources were kept: what it had becomes the word of the source it named. */
+function migrate(item: Stored): Stored {
+  if (item.facts !== undefined && typeof item.facts === 'object') return item
+  item.facts = {}
+  const site = item.site
+  if (site !== undefined) {
+    item.facts[site.source] = {
+      name: site.name, web: site.source === AGENT_PAGE.id || /^link-\d+$/.test(site.source), at: site.at,
+      ...(item.startsAt === undefined ? {} : { startsAt: item.startsAt }),
+      ...(item.endsAt === undefined ? {} : { endsAt: item.endsAt }),
+      ...(item.shopEndsAt === undefined ? {} : { shopEndsAt: item.shopEndsAt }),
+      ...(item.url === undefined ? {} : { url: item.url }),
+      ...(item.cover === undefined ? {} : { cover: item.cover }),
+      ...(item.description === undefined ? {} : { description: item.description }),
+      ...(item.kind === undefined ? {} : { kind: item.kind }),
+    }
+  }
+  return item
 }
 
 function unique(values: readonly string[]): string[] {

@@ -13,3 +13,21 @@
 .skill-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .skill-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .skill-body { border-top: 1px solid var(--border); padding-top: 12px; min-width: 0; overflow-wrap: anywhere; }
+/* 技能库 (SkillHubPanel.tsx) */
+.skill-hub-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px 24px; }
+.skill-hub { display: flex; flex-direction: column; gap: 12px; max-width: 960px; margin: 0 auto; }
+.skill-hub .card-head { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.skill-hub .sidebar-label { justify-content: flex-start; gap: 6px; padding: 0 0 4px; }
+.hub-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; }
+.hub-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 0; border-top: 1px solid var(--border); }
+.hub-list > li:first-child { border-top: none; }
+.hub-list > li.focused { background: var(--accent-soft); border-radius: var(--r-md); padding: 10px; }
+.hub-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 320px; }
+.hub-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.hub-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.hub-repos { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.hub-repos textarea { font-family: var(--mono); resize: vertical; }
+.hub-diff { flex-basis: 100%; min-width: 0; }
+.hub-diff pre { margin: 6px 0 0; max-height: 360px; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-add { color: var(--ok); }
+.diff-del { color: var(--error); }

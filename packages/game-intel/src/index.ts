@@ -459,7 +459,7 @@ export class AdgGameIntel extends Service {
         }
       }
       if (failures.length > 0 && count === 0) await this.calendar.refreshFailed(manifest.id, failures.join('；'), this.clock.now())
-      else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.site !== undefined && a.site.source !== 'agent').length, this.clock.now(), version, pools)
+      else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.sources?.some(s => !s.web) === true).length, this.clock.now(), version, pools)
       results.push({ game: manifest.id, ok: failures.length === 0 || count > 0, count, ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
       this.changed(manifest.id)
     }
@@ -471,7 +471,14 @@ export class AdgGameIntel extends Service {
   private async record(gameId: string, from: 'screen' | 'site', events: readonly ReadEvent[], sessionId: string | undefined, keep: boolean): Promise<Array<{ activity: Activity; matched: boolean }>> {
     const { manifest } = this.game(gameId)
     const shot = from === 'screen' && keep && sessionId !== undefined ? this.ctx.get('adgIntervene')?.lastShot(sessionId) : undefined
-    const written = await this.calendar.applyRead(gameId, from, events, {
+    // Read from a page the user added (same site): that page is its source, beside the agent's other readings.
+    const links = this.calendar.links(gameId)
+    const credited = from !== 'site' || links.length === 0 ? events : events.map(event => {
+      const host = event.url === undefined || !URL.canParse(event.url) ? undefined : hostName(event.url)
+      const link = host === undefined ? undefined : links.find(l => event.url!.startsWith(l.url)) ?? links.find(l => hostName(l.url) === host)
+      return link === undefined || event.source !== undefined ? event : { ...event, source: { id: link.id, name: link.name } }
+    })
+    const written = await this.calendar.applyRead(gameId, from, credited, {
       now: this.clock.now(),
       timeZone: manifest.timezone,
       sessionId,
@@ -579,7 +586,7 @@ export class AdgGameIntel extends Service {
     this.changed(manifest.id)
     const screen = manifest.screen === undefined ? '游戏画面' : manifest.screen.target === 'emulator' ? '模拟器画面（screen_capture target=emulator）' : `游戏窗口（screen_capture target=window${manifest.screen.window === undefined ? '，先 window_list 找窗口' : `，window=${manifest.screen.window}`}）`
     const prompt = [
-      `读取「${manifest.name}」现在的活动和进度（游戏 id：${manifest.id}）。按技能 game-intel 和 game-${manifest.id}：`,
+      `读取「${manifest.name}」现在的活动和进度（游戏 id：${manifest.id}）。按技能 game-intel 和 game-${manifest.id}（这个游戏的技能；没有的话先用 skill_hub_list 看技能库里有没有，有就告诉用户可以在「技能 → 技能库」下载，这次先按 game-intel 做）：`,
       `1. game_sites_refresh（game=${manifest.id}）拿数据站的活动时间；没有能直接读的数据站就按技能看官网公告并用 game_record（source=site）记下。`,
       `2. 看${screen}。有脚本正在用它，就不要打断，说明原因后结束；游戏没开就用 game_launch（game=${manifest.id}）启动，等它进到主界面（关掉公告和更新提示，启动器要点「开始游戏」就点；要输入账号密码或验证码时停下，告诉用户）。`,
       '3. 按技能里的路线进活动页，只看不花东西；每读完一个活动就 game_record（source=screen）。',

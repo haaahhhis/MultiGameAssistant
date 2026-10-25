@@ -18,6 +18,7 @@ import { GamesNotifications, GamesRequests } from './games.ts'
 import { PermissionsNotifications, PermissionsRequests } from './permissions.ts'
 import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
 import { SkillsRequests } from './skills.ts'
+import { SkillHubNotifications, SkillHubRequests } from './skillhub.ts'
 import { PersonaRequests } from './persona.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
@@ -408,6 +409,7 @@ export const Requests = {
   ...PermissionsRequests,
   ...QuestionsRequests,
   ...SkillsRequests,
+  ...SkillHubRequests,
   ...PersonaRequests,
 } as const
 
@@ -449,6 +451,7 @@ export const Notifications = {
   /** A session's model selection changed. */
   'session/model': SessionModel.extend({ sessionId: z.string() }),
   ...ScriptNotifications,
+  ...SkillHubNotifications,
   ...RunNotifications,
   ...GuardNotifications,
   ...EmulatorNotifications,

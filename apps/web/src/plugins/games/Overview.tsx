@@ -275,7 +275,9 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
         {a.startsAt !== undefined && <span>{fmt(a.startsAt)} 开始</span>}
         {a.endsAt !== undefined && <span>{fmt(a.endsAt)} 结束</span>}
         {a.shopEndsAt !== undefined && <span>商店开到 {fmt(a.shopEndsAt)}</span>}
-        {a.site !== undefined && <span>来自{a.site.name}</span>}
+        {(a.sources?.length ?? 0) > 1
+          ? <span title={a.sources!.map(x => x.name).join('、')}>来自{a.site?.name ?? a.sources![0]!.name} 等 {a.sources!.length} 个来源</span>
+          : a.site !== undefined && <span>来自{a.site.name}</span>}
         {a.screen !== undefined && <span>agent 在游戏里看过</span>}
       </div>
       <div className="ov-checklist" role="list" aria-label="要做的事">
