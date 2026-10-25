@@ -1,6 +1,6 @@
 /**
  * `guard@1`: the user's explicit, time-limited permission for the agent to
- * change a script's own files (docs/PLAN.zh.md §5.7). Granting is only
+ * change a script's own files. Granting is only
  * possible from the UI; the agent has no tool for it. Served by `@adg/guard`.
  */
 import { z } from 'zod'

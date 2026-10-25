@@ -1,5 +1,5 @@
 /**
- * When pipelines run by themselves (docs/PLAN.zh.md §5.9).
+ * When pipelines run by themselves.
  *
  * - Times of day per pipeline (optionally only on some weekdays). Each tick
  *   looks at the interval since the previous check, so a time skipped by

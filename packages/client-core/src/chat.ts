@@ -169,17 +169,17 @@ export function buildChat(
           if (item.status === 'running') item.status = 'interrupted'
         }
         if (event.reason.kind === 'error') {
-          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'error', text: event.reason.message ?? 'The turn failed.' })
+          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'error', text: event.reason.message ?? '这一轮出错了' })
         } else if (event.reason.kind === 'aborted') {
-          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'info', text: 'Stopped.' })
+          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'info', text: '已停止' })
         } else if (event.reason.kind === 'max-tokens') {
-          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'info', text: 'The reply reached its output-token limit.' })
+          items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'info', text: '回复太长，达到了输出上限' })
         }
         break
       case 'compaction/end':
         items.push({
           kind: 'notice', id: `k:${event.seq}`, tone: event.error === undefined ? 'info' : 'error',
-          text: event.error === undefined ? 'Conversation history was compacted.' : `Compaction failed: ${event.error}`,
+          text: event.error === undefined ? '对话太长，较早的内容已压缩成摘要' : `压缩对话历史失败：${event.error}`,
         })
         break
       default:

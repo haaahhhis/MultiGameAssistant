@@ -1,6 +1,6 @@
 /**
  * Starting MultiGameAssistant when the user logs on, with a Windows Task
- * Scheduler task rather than a Run registry key (docs/PLAN.zh.md §5.9): no
+ * Scheduler task rather than a Run registry key: no
  * execution time limit, runs on battery, starts as soon as possible when a
  * logon was missed. The task belongs to the current user and runs without
  * elevation, so registering it needs no administrator rights.

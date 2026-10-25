@@ -171,7 +171,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
 
       {script.probe !== undefined && (
         <section className="card">
-          <div className="card-head"><div><h3>目录概况</h3><p className="muted small">只是快速查看；启动方式、任务和配置的完整分析请用上面的「让 agent 分析」。</p></div></div>
+          <div className="card-head"><div><h3>目录概况</h3><p className="muted small">{script.packId === undefined ? '只是快速看一眼；启动方式、任务和配置的完整分析请用上面的「让 agent 分析」。' : '导入时快速看到的文件；脚本怎么运行以脚本包为准。'}</p></div></div>
           <div className="probe-grid">
             <span className="field-label">可执行文件</span>
             <div className="chip-row">{script.probe.executables.length === 0 ? <span className="muted small">未发现</span> : script.probe.executables.map(e => <span key={e} className="chip">{e}</span>)}</div>

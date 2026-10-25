@@ -3,6 +3,8 @@ import type { AdgClient } from '@adg/client-core'
 import type { Activity, GameInfo, RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { ImageViewer } from '../../components/ImageViewer.tsx'
+import { relativeTime } from '../../components/SessionList.tsx'
+import { useNow } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 
 const DAY = 86_400_000
@@ -233,6 +235,29 @@ export function ProgressPill({ progress: p }: { progress: ReturnType<typeof prog
 }
 
 /** The event's description and dates, and its checklist: tick, untick, add, or call the whole thing done. */
+/**
+ * Where an activity's facts came from: each data site and web page keeps its own
+ * record, so refreshing a data site never removes what the agent read from a page.
+ */
+export function ActivitySources({ activity: a }: { activity: Activity }) {
+  const now = useNow(60_000)
+  const sources = a.sources ?? (a.site === undefined ? [] : [{ id: a.site.source, name: a.site.name, at: a.site.at, web: false }])
+  if (sources.length === 0 && a.screen === undefined) return null
+  const primary = a.site?.name
+  return (
+    <div className="activity-sources">
+      <span className="muted small">来源</span>
+      {sources.map(s => (
+        <span key={s.id} className={`fact-chip ${s.web ? 'web' : 'site'}`} title={s.web ? '网页上读到的；刷新数据站不会删掉它' : '数据站，每次刷新更新'}>
+          {s.name}<small>{s.web ? '网页' : '数据站'} · {relativeTime(s.at, now)}</small>
+          {sources.length > 1 && s.name === primary && <small className="fact-main">时间以它为准</small>}
+        </span>
+      ))}
+      {a.screen !== undefined && <span className="fact-chip screen" title="agent 进游戏看到的剩余时间和进度">游戏画面<small>agent 看过 · {relativeTime(a.screen.at, now)}</small></span>}
+    </div>
+  )
+}
+
 export function ActivityDetail({ client, activity: a, game, onOpenGame, onChanged, openSession }: {
   client: AdgClient
   activity: Activity
@@ -275,11 +300,8 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
         {a.startsAt !== undefined && <span>{fmt(a.startsAt)} 开始</span>}
         {a.endsAt !== undefined && <span>{fmt(a.endsAt)} 结束</span>}
         {a.shopEndsAt !== undefined && <span>商店开到 {fmt(a.shopEndsAt)}</span>}
-        {(a.sources?.length ?? 0) > 1
-          ? <span title={a.sources!.map(x => x.name).join('、')}>来自{a.site?.name ?? a.sources![0]!.name} 等 {a.sources!.length} 个来源</span>
-          : a.site !== undefined && <span>来自{a.site.name}</span>}
-        {a.screen !== undefined && <span>agent 在游戏里看过</span>}
       </div>
+      <ActivitySources activity={a} />
       <div className="ov-checklist" role="list" aria-label="要做的事">
         {a.todo.map(t => (
           <label key={`t${t}`} className="ov-check" role="listitem"><input type="checkbox" checked={false} disabled={busy} onChange={() => tick(t)} />{t}</label>

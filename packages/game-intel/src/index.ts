@@ -1,6 +1,5 @@
 /**
- * @adg/game-intel — game information (`ctx.adgGameIntel`, docs/PLAN.zh.md
- * §5.5): Game Packs, an event calendar fed by data sites (read without a
+ * @adg/game-intel — game information (`ctx.adgGameIntel`): Game Packs, an event calendar fed by data sites (read without a
  * model) and by the agent reading the game screen, and a daily report to the
  * chat channels. Contributes the `games@1` capability.
  */
@@ -472,11 +471,14 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const shot = from === 'screen' && keep && sessionId !== undefined ? this.ctx.get('adgIntervene')?.lastShot(sessionId) : undefined
     // Read from a page the user added (same site): that page is its source, beside the agent's other readings.
+    // Any other page is the agent's own find, named after its site so people can tell where it came from.
     const links = this.calendar.links(gameId)
-    const credited = from !== 'site' || links.length === 0 ? events : events.map(event => {
+    const credited = from !== 'site' ? events : events.map(event => {
+      if (event.source !== undefined) return event
       const host = event.url === undefined || !URL.canParse(event.url) ? undefined : hostName(event.url)
       const link = host === undefined ? undefined : links.find(l => event.url!.startsWith(l.url)) ?? links.find(l => hostName(l.url) === host)
-      return link === undefined || event.source !== undefined ? event : { ...event, source: { id: link.id, name: link.name } }
+      if (link !== undefined) return { ...event, source: { id: link.id, name: link.name } }
+      return host === undefined ? event : { ...event, source: { id: 'agent', name: `${host}（agent 查到）` } }
     })
     const written = await this.calendar.applyRead(gameId, from, credited, {
       now: this.clock.now(),

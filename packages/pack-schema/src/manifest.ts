@@ -1,6 +1,6 @@
 /**
  * `adg.script.yaml`: the machine-readable half of a Script Pack
- * (docs/PLAN.zh.md §3). The other half, `SKILL.md`, is prose for the agent.
+ *. The other half, `SKILL.md`, is prose for the agent.
  *
  * M1 consumes identity, source, install, config and detect. The run-time
  * sections (launch, tasks, logs, intervention, update) are validated as open
@@ -111,7 +111,7 @@ export const ConfigPatch = z.object({
 })
 export type ConfigPatch = z.infer<typeof ConfigPatch>
 
-/** What a task occupies while it runs (docs/PLAN.zh.md §3.2); the orchestrator serializes conflicts. */
+/** What a task occupies while it runs; the orchestrator serializes conflicts. */
 export const Resources = z.object({
   /** `desktop`: takes the mouse and keyboard; `window`: background window input; `adb`: an emulator; `none`. */
   input: z.enum(['desktop', 'window', 'adb', 'none']).default('none'),
@@ -209,7 +209,7 @@ export const Logs = z.object({
 export type Logs = z.infer<typeof Logs>
 
 /**
- * L0 recovery (docs/PLAN.zh.md §5.4): what the monitor does by itself when a
+ * L0 recovery: what the monitor does by itself when a
  * rule tag matches, the run stalls, or the run fails. Entries for the same
  * event run in order; `max` limits how often per run chain (a run and its
  * restarts). Anything not handled here is pushed to the user.

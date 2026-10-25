@@ -419,6 +419,7 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
         <span className="sched-top">
           <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
           {a.kind !== undefined && <span className="sched-kind">{a.kind}</span>}
+          {a.sources?.some(s => s.web) === true && <span className="sched-kind" title={`来源：${a.sources.map(s => s.name).join('、')}`}>{a.sources.every(s => s.web) ? '网页读到' : '数据站 + 网页'}</span>}
           <span className="spacer" />
           <ProgressPill progress={p} />
         </span>

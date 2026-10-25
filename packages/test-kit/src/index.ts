@@ -1,5 +1,5 @@
 /**
- * @adg/test-kit — the local simulation environment (docs/PLAN.zh.md §12).
+ * @adg/test-kit — the local simulation environment.
  *
  * The development machine cannot run games, so everything that would touch a
  * real script, GitHub, an emulator or the screen has a stand-in here. Only

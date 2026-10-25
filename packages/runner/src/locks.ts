@@ -1,5 +1,5 @@
 /**
- * What running tasks occupy (docs/PLAN.zh.md §3.2): the desktop's mouse and
+ * What running tasks occupy: the desktop's mouse and
  * keyboard, one emulator, one game account. Two runs may overlap only when
  * their resources do not. A conflicting start is refused with a BusyError;
  * the orchestrator waits and tries again.

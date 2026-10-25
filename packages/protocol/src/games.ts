@@ -1,5 +1,5 @@
 /**
- * `games@1`: game information (docs/PLAN.zh.md §5.5) — the games known from
+ * `games@1`: game information — the games known from
  * Game Packs, their events (dates from data sites, progress read from the
  * game screen), refreshing both, and the daily report. Served by
  * `@adg/game-intel`.

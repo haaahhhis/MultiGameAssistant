@@ -1,7 +1,7 @@
 /**
  * @adg/emulator — Android emulators for ADB-driven scripts (`ctx.adgEmulators`).
  *
- * Emulators are a platform concern, not each script's (docs/PLAN.zh.md §5.8):
+ * Emulators are a platform concern, not each script's:
  * the runner asks this service for a ready instance before an `adb` task, so
  * two scripts never race to start their own. MuMu is managed through
  * MuMuManager.exe; any other emulator works through a manual ADB address.

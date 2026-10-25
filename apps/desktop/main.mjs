@@ -7,7 +7,7 @@
  * The shell owns no product logic: replace it and the UI still works in any
  * browser pointed at the gateway.
  *
- * Unattended use (docs/PLAN.zh.md §5.9): closing the window keeps the app in
+ * Unattended use: closing the window keeps the app in
  * the tray so schedules keep running; `--auto-start` (the logon task the
  * scheduler registers) starts hidden in the tray; `--wake` (the task that
  * wakes the computer for a scheduled time) does too, without running the

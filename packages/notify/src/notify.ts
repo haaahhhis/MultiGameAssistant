@@ -1,5 +1,5 @@
 /**
- * The chat layer, independent of any one chat app (docs/PLAN.zh.md §5.6):
+ * The chat layer, independent of any one chat app:
  *
  * - Notices: plugins (the monitor) `send` a notice with buttons; channels
  *   render it (a Feishu card) and report clicks back through `act`, which

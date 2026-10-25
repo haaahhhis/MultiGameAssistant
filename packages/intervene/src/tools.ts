@@ -1,6 +1,6 @@
 /**
- * The screen tools (our own protocol, any image-capable model can use them,
- * docs/PLAN.zh.md §5.4): look with `screen_capture`, act with tap / swipe /
+ * The screen tools (our own protocol, any image-capable model can use them):
+ * look with `screen_capture`, act with tap / swipe /
  * scroll / key / type in that screenshot's coordinates.
  *
  * Acting needs the screen's lock: an intervention may act on the screen of

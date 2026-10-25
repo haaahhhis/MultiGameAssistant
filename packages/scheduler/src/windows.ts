@@ -1,5 +1,5 @@
 /**
- * Windows' side of power (docs/PLAN.zh.md §5.9):
+ * Windows' side of power:
  *
  * - Holding off sleep: `SetThreadExecutionState` belongs to a thread, and a
  *   Node process cannot call it, so a small hidden PowerShell process makes

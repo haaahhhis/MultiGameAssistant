@@ -113,7 +113,7 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
         <>
           <label className="field-label" htmlFor={`launch-pkg-${scriptId}`}>模拟器里的游戏包名（模拟器任务）</label>
           <div className="key-input">
-            <input id={`launch-pkg-${scriptId}`} className="text-input" value={pkg} onChange={e => setPkg(e.target.value)} placeholder={game.androidPackage ?? '例如 com.example.game；不填则不在模拟器里启动游戏'} spellCheck={false} />
+            <input id={`launch-pkg-${scriptId}`} className="text-input plain" value={pkg} onChange={e => setPkg(e.target.value)} placeholder={game.androidPackage ?? '例如 com.example.game（不填就不在模拟器里启动游戏）'} spellCheck={false} />
             <button className="small-button" disabled={busy} onClick={() => void set({ androidPackage: pkg.trim() === '' ? null : pkg.trim() })}>保存</button>
           </div>
           {game.androidPackage !== undefined && <p className="muted small">默认 {game.androidPackage}；B 服、国际服等版本的包名不同时在这里改。</p>}

@@ -7,7 +7,7 @@
  * exit (or after `done` for GUIs that stay open) restore the configs, release
  * the locks, and judge the outcome from the script's own output: a `done`
  * rule, else the exit code. The runner never decides success on its own
- * signals (the black-box rule, docs/PLAN.zh.md §3.0).
+ * signals (the black-box rule).
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -118,7 +118,7 @@ export interface LogQuery {
 
 export class Runner {
   readonly locks = new ResourceLocks()
-  /** The local config copies runs use (docs/PLAN.zh.md §5.7). */
+  /** The local config copies runs use. */
   readonly profiles: ConfigProfiles
   /** Who starts the game before runs, per script. */
   readonly launch: LaunchStore
@@ -826,8 +826,25 @@ function judge(run: ActiveRun, success: 'exit-code' | 'done-log', code: number |
   if (run.stopRequested) return { state: 'cancelled', reason: run.stopReason ?? '已按要求停止' }
   if (run.doneSeen) return { state: 'succeeded', reason: run.errorLine === undefined ? '脚本报告已完成' : `脚本报告已完成（期间出现过错误：${run.errorLine}）` }
   if (run.errorLine !== undefined) return { state: 'failed', reason: `脚本报告错误：${run.errorLine}` }
-  if (success === 'done-log') return { state: 'failed', reason: `脚本已退出（代码 ${code ?? '无'}），但没有看到完成标志` }
-  return code === 0 ? { state: 'succeeded', reason: '脚本正常退出' } : { state: 'failed', reason: `脚本退出代码 ${code ?? '无'}` }
+  if (success === 'done-log') return { state: 'failed', reason: `脚本已退出（${exitText(code)}），但没有看到完成标志` }
+  return code === 0 ? { state: 'succeeded', reason: '脚本正常退出' } : { state: 'failed', reason: `脚本退出：${exitText(code)}` }
+}
+
+/** Windows crash codes people meet with scripts, in words (the rest as they are). */
+const NTSTATUS: Readonly<Record<number, string>> = {
+  0xC0000142: '程序没能初始化（DLL 初始化失败，常见于权限受限、被沙箱拦下或运行库损坏）',
+  0xC0000135: '缺少运行需要的 DLL（可能没装 VC++ 运行库或 .NET）',
+  0xC0000005: '程序崩溃了（访问冲突）',
+  0xC0000409: '程序崩溃了（栈溢出保护）',
+  0xC000013A: '程序被关掉了（关闭窗口或 Ctrl+C）',
+  0xE0434352: '程序崩溃了（.NET 未处理的异常）',
+}
+
+export function exitText(code: number | null): string {
+  if (code === null) return '没有退出代码'
+  const unsigned = code < 0 ? code >>> 0 : code
+  const known = NTSTATUS[unsigned]
+  return known === undefined ? `代码 ${code}` : `代码 0x${unsigned.toString(16).toUpperCase()}：${known}`
 }
 
 export function parseDuration(value: string | undefined): number | undefined {

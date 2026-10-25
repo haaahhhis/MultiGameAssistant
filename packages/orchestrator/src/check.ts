@@ -1,5 +1,5 @@
 /**
- * The feasibility check before a pipeline runs (docs/PLAN.zh.md §5.3):
+ * The feasibility check before a pipeline runs:
  * structure (unknown nodes, cycles), every script task against its pack
  * (task exists, parameters render), which branches drawn in parallel will
  * take turns because they need the same resource, and a rough duration.
@@ -70,10 +70,19 @@ export function nodeLabel(node: PipelineNode, library?: CheckLibrary): string {
   return { agent: 'agent 步骤', wait: '控制节点', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }[node.kind]
 }
 
+/** The script's pack; none for a script no longer in the library (that is reported as its own issue). */
+function packOf(library: CheckLibrary, scriptId: string): ReturnType<CheckLibrary['packOf']> {
+  try {
+    return library.packOf(scriptId)
+  } catch {
+    return undefined
+  }
+}
+
 /** Resources a script task holds, as lock-like keys (an emulator task counts as `adb`). */
 function resourcesOf(node: PipelineNode, library: CheckLibrary): string[] {
   if (node.kind !== 'script-task') return []
-  const task = library.packOf(node.scriptId)?.manifest.tasks.find(t => t.id === node.taskId)
+  const task = packOf(library, node.scriptId)?.manifest.tasks.find(t => t.id === node.taskId)
   if (task === undefined) return []
   // Most telling first: a shared desktop says more than "the same script".
   return [
@@ -90,7 +99,7 @@ const describe = (key: string) => RESOURCE[key] ?? (key.startsWith('account:') ?
 function minutesOf(node: PipelineNode, library: CheckLibrary): number | undefined {
   if (node.kind === 'wait') return node.minutes
   if (node.kind !== 'script-task') return 0
-  const task = library.packOf(node.scriptId)?.manifest.tasks.find(t => t.id === node.taskId)
+  const task = packOf(library, node.scriptId)?.manifest.tasks.find(t => t.id === node.taskId)
   const ms = parseDuration(task?.expectedDuration)
   return ms === undefined ? undefined : ms / 60_000
 }

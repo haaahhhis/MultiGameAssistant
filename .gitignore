@@ -8,3 +8,6 @@ apps/*/dist/
 # Machine-specific preview config (absolute Node path).
 .claude/launch.json
 /dist/
+
+# Design notes and test checklists: kept locally, not published.
+docs/

@@ -7,7 +7,7 @@ import { z } from 'zod'
 
 export const SCRIPTS_CAPABILITY = 'scripts'
 
-/** How a script is driven (docs/PLAN.zh.md §3.0). */
+/** How a script is driven. */
 export const ScriptFamily = z.enum(['maafw-pi', 'cli', 'gui-config', 'generic-process', 'visual'])
 export type ScriptFamily = z.infer<typeof ScriptFamily>
 

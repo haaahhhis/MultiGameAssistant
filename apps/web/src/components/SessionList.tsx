@@ -11,7 +11,7 @@ const TABS: readonly [Tab, string][] = [['chats', '对话'], ['remote', '远程'
 const EMPTY: Readonly<Record<Tab, [string, string]>> = {
   chats: ['还没有会话', '新建一个，告诉 agent 今天要跑什么'],
   remote: ['还没有远程会话', '在飞书里给机器人发消息，就会在这里出现一个会话'],
-  auto: ['还没有自动会话', '异常交给 agent 处理、流水线里的 agent 步骤、进游戏读取活动会在这里'],
+  auto: ['还没有自动会话', '异常交给 agent 处理、流水线里的 agent 步骤、读取游戏活动、脚本简介等会在这里'],
   archived: ['没有归档的会话', '不要的会话点右边的归档按钮放到这里，需要时再恢复'],
 }
 const CHANNEL: Readonly<Record<string, string>> = { feishu: '飞书' }
@@ -69,7 +69,8 @@ export function SessionList({ client, selected, onSelect, onNew }: {
 
   const kindOf = (item: { id: string; title: string | null }): Exclude<Tab, 'archived'> => {
     if (remote.has(item.id) || /^(飞书|feishu)：/.test(item.title ?? '')) return 'remote'
-    if (/^(干预|编排|游戏信息)：/.test(item.title ?? '')) return 'auto'
+    // Sessions the app opens on its own (see each `conversations.create` title).
+    if (/^(干预|编排|游戏信息|游戏资讯|添加游戏|日报|合并技能|脚本介绍)：/.test(item.title ?? '')) return 'auto'
     return 'chats'
   }
 
@@ -236,8 +237,8 @@ function groupByDay<T extends { updatedAt: number }>(items: readonly T[], now: n
 export function relativeTime(time: number, now: number): string {
   const s = Math.max(0, Math.round((now - time) / 1000))
   if (s < 60) return '刚刚'
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟`
-  if (s < 86_400) return `${Math.floor(s / 3600)} 小时`
-  if (s < 86_400 * 7) return `${Math.floor(s / 86_400)} 天`
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86_400) return `${Math.floor(s / 3600)} 小时前`
+  if (s < 86_400 * 7) return `${Math.floor(s / 86_400)} 天前`
   return new Date(time).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
 }

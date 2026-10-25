@@ -1,5 +1,5 @@
 /**
- * The monitor (docs/PLAN.zh.md §5.4): watches every run through the runner's
+ * The monitor: watches every run through the runner's
  * feed and raises incidents —
  *
  *   error / warning   a log rule of that level matched (the pack's rules)

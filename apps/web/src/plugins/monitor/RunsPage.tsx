@@ -212,7 +212,8 @@ function IncidentRow({ client, incident, now, onOpen }: { client: AdgClient; inc
       <div className="incident-detail">{incident.detail}</div>
       {incident.steps.length > 0 && (
         <ul className="incident-steps">
-          {incident.steps.map((s, index) => <li key={index} className={s.ok ? 'ok' : 'failed'}>{s.ok ? '✓' : '✗'} {s.detail}</li>)}
+          {/* The agent's own conclusion is shown once, in its line below. */}
+          {incident.steps.filter(s => iv?.summary === undefined || iv.state === 'running' || !s.detail.endsWith(iv.summary)).map((s, index) => <li key={index} className={s.ok ? 'ok' : 'failed'}>{s.ok ? '✓' : '✗'} {s.detail}</li>)}
         </ul>
       )}
       {incident.status === 'resolved' && <div className="muted small">已处理：{incident.resolution}</div>}

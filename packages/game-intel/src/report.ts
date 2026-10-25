@@ -1,5 +1,5 @@
 /**
- * The daily report (docs/PLAN.zh.md §5.5): per game, the running events by
+ * The daily report: per game, the running events by
  * how soon they end, what is still to do in each, and what starts soon —
  * "昨日海还剩 2 天，活动商店还剩 3 项没换". With `ai` on, the agent writes
  * it instead from `recentDigest`, and this list is the fallback.

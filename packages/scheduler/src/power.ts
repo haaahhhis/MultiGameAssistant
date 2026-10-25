@@ -1,5 +1,5 @@
 /**
- * The computer's power around pipelines (docs/PLAN.zh.md §5.9).
+ * The computer's power around pipelines.
  *
  * - Keep awake: while a pipeline or a script runs, or a scheduled time is
  *   minutes away (a timed wake-up must not doze off again before it), Windows

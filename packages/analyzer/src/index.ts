@@ -1,5 +1,5 @@
 /**
- * @adg/analyzer — understanding scripts (docs/PLAN.zh.md §5.2).
+ * @adg/analyzer — understanding scripts.
  *
  * - `script_analyze`: the facts about a script directory (read-only);
  * - `script_help`: a program's own `--help` output (asks first for scripts no

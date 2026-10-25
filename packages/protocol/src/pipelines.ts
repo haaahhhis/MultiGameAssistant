@@ -2,7 +2,7 @@
  * `pipelines@1`: pipelines (DAGs of script tasks and other steps), their
  * feasibility check and runs — served by `@adg/orchestrator`; `schedule@1`:
  * when pipelines run by themselves and what happens at logon — served by
- * `@adg/scheduler` (docs/PLAN.zh.md §5.3, §5.9).
+ * `@adg/scheduler`.
  */
 import { z } from 'zod'
 import { ScriptId } from './scripts.ts'

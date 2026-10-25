@@ -101,6 +101,20 @@ async function snapshot(sessions: Sessions, sessionId: string, maxMessages: numb
 type Selection = { provider: string; model: string; reasoningEffort?: string }
 
 /** The model of the most recently active session that is not itself a chat-channel session. */
+/** Why a turn ended early, for people (dsh gives a kind, and for interruptions who caused it). */
+export function endReason(reason: { kind: string; message?: string | undefined }): string {
+  const BY: Readonly<Record<string, string>> = {
+    user: '被打断了（用户发了新消息或点了停止）', 'user-rpc': '被打断了（另一个窗口发了新消息或点了停止）', timeout: '超时了', shutdown: '程序退出了',
+  }
+  const KIND: Readonly<Record<string, string>> = {
+    aborted: '已停止', interrupted: '被打断了', blocked: '被拦下了', 'max-tokens': '回复太长，达到了输出上限', error: '出错了',
+  }
+  const message = reason.message?.trim()
+  if (message !== undefined && /no API key/i.test(message)) return '模型还没有填 Key：在「设置 → 模型」里添加模型服务并填好 Key'
+  if (message !== undefined && message !== '') return BY[message] ?? message
+  return KIND[reason.kind] ?? reason.kind
+}
+
 async function recentModel(sessions: Sessions): Promise<Selection | undefined> {
   const { items } = await sessions.list({}, AbortSignal.timeout(10_000))
   const recent = [...items].sort((a, b) => b.updatedAt - a.updatedAt).filter(s => !/^(飞书|feishu)：/.test(String(s.projections?.values?.['title'] ?? ''))).slice(0, 5)
@@ -156,7 +170,7 @@ async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId:
       if (at !== undefined) steps(at.block)[at.index] = { ...steps(at.block)[at.index]!, status: event.isError ? 'error' : 'ok' }
     } else if (mine && event.type === 'turn/end') {
       if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop' && finalText({ blocks }) === '') {
-        blocks.push({ kind: 'text', text: `（这一轮没有完成：${event.reason.message ?? event.reason.kind}）` })
+        blocks.push({ kind: 'text', text: `（这一轮没有完成：${endReason(event.reason)}）` })
       }
       break
     }

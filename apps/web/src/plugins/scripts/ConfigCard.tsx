@@ -130,17 +130,23 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
             <div className="profile-save">
               <label className="field-label" htmlFor="profile-name">新配置的名字</label>
               <input id="profile-name" className="text-input plain" placeholder="例如：小号、只清体力" value={saving.name} maxLength={30} autoFocus onChange={e => setSaving({ ...saving, name: e.target.value })} />
-              <label className="field-label" htmlFor="profile-source">内容</label>
-              <select id="profile-source" className="text-input plain" value={saving.source} onChange={e => setSaving({ ...saving, source: e.target.value as Source })}>
-                <option value="copy">复制「{shown.name}」</option>
-                <option value="original">读取原项目现在的配置</option>
-                <option value="folder">从别的文件夹读取（另一份同样的脚本，或存下来的配置）</option>
-              </select>
+              <fieldset className="asset-list" disabled={busy}>
+                <legend className="field-label">内容从哪里来</legend>
+                {([
+                  ['copy', `复制「${shown.name}」`, '复制后可以「打开脚本修改设置」单独改它'],
+                  ['original', '读取原项目现在的配置', '在脚本自己的界面里设好了另一套设置时用'],
+                  ['folder', '从别的文件夹读取', `另一份同样的脚本，或存下来的配置；只读 ${data?.files.map(f => f.file).join('、') || '脚本包声明的配置文件'}`],
+                ] as const).map(([value, title, hint]) => (
+                  <label key={value} className={`asset-option choice-option ${saving.source === value ? 'active' : ''}`}>
+                    <input type="radio" name="profile-source" value={value} checked={saving.source === value} onChange={() => setSaving({ ...saving, source: value })} />
+                    <span className="choice-text"><span>{title}</span><span className="muted small">{hint}</span></span>
+                  </label>
+                ))}
+              </fieldset>
               {saving.source === 'folder' && (
-                <input className="text-input plain" aria-label="文件夹" placeholder="文件夹的完整路径，里面的结构和脚本目录一样" value={saving.dir} onChange={e => setSaving({ ...saving, dir: e.target.value })} />
+                <input className="text-input plain" aria-label="文件夹" placeholder="文件夹的完整路径，例如 D:\MAA2" value={saving.dir} onChange={e => setSaving({ ...saving, dir: e.target.value })} />
               )}
               <div className="key-actions">
-                <span className="muted small">{saving.source === 'original' ? '在脚本自己的界面里设好了另一套设置时用' : saving.source === 'folder' ? `只读脚本包声明的配置文件（${data?.files.map(f => f.file).join('、') || '无'}）` : '复制后可以「打开脚本修改设置」单独改它'}</span>
                 <span className="spacer" />
                 <button className="small-button" onClick={() => setSaving(null)}>取消</button>
                 <button className="primary small-button" disabled={busy || saving.name.trim() === '' || (saving.source === 'folder' && saving.dir.trim() === '')} onClick={() => void act(async () => {

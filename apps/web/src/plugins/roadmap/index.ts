@@ -1,5 +1,5 @@
 /**
- * Product areas whose host plugins land in later milestones (docs/PLAN.zh.md §8).
+ * Product areas whose host plugins land in later milestones.
  *
  * Each declares the capability its host plugin will serve, so it stays hidden
  * until that plugin is mounted; the plugin status page lists it meanwhile.

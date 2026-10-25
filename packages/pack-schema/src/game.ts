@@ -1,5 +1,5 @@
 /**
- * The Game Pack contract (docs/PLAN.zh.md §5.5): `game.yaml` (this schema)
+ * The Game Pack contract: `game.yaml` (this schema)
  * plus `GAME.md` — how to reach the event, mission and mail pages and what
  * they look like — for the agent. Built-in packs live in
  * `@adg/packs/games/<id>/`; the user's in `<data dir>/games/<id>/` replace a

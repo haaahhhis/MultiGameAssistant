@@ -1,5 +1,5 @@
 /**
- * L1 / L2 (docs/PLAN.zh.md §5.4): what L0 recovery could not settle goes to
+ * L1 / L2: what L0 recovery could not settle goes to
  * the agent before it goes to the user.
  *
  *   1. In `act` mode the script is paused (its process tree suspended), so

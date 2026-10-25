@@ -1,6 +1,6 @@
 /**
  * `intervene@1`: the agent looking at the screen and handling what L0 could
- * not (docs/PLAN.zh.md §5.4 L1/L2), and the user taking over from it.
+ * not, and the user taking over from it.
  * Served by `@adg/intervene`.
  */
 import { z } from 'zod'

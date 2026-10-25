@@ -1,7 +1,7 @@
 /**
  * @adg/feishu — the Feishu / Lark channel for `@adg/notify` (`ctx.adgFeishu`).
  *
- * The user creates the app and grants its permissions (docs/feishu.zh.md);
+ * The user creates the app and grants its permissions;
  * this plugin only needs the App ID (settings) and the App Secret (dsh
  * credentials, `ADG_FEISHU_APP_SECRET`). Messages and card buttons arrive over
  * the long connection, so no public address is needed. Contributes the

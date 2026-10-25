@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { errorLines, WinHelper } from '../src/winhelper.ts'
 
 // Compiles and runs the real helper. Clicking and capturing need an interactive
-// desktop, so they are checked on a real machine (docs/testing/M5.md).
+// desktop, so they are checked on a real machine.
 test('the Windows helper compiles, answers, keeps Unicode, lists windows, and suspends and resumes a process tree', { skip: process.platform !== 'win32', timeout: 120_000 }, async () => {
   const helper = new WinHelper()
   try {

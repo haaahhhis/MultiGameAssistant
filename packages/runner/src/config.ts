@@ -1,6 +1,6 @@
 /**
  * The agent's way to read and change a script's settings: the local config
- * copy (docs/PLAN.zh.md §5.7), never the original project's files. Only files
+ * copy, never the original project's files. Only files
  * the pack lists under `config.files`; each write keeps the previous local
  * file under `<dataDir>/config-history/<script>/<time>/`. `profile` picks
  * one of the script's config profiles (id or name; default: the current one).

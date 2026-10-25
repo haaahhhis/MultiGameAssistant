@@ -173,7 +173,7 @@ pre { background: var(--code-bg); border: 1px solid var(--border); padding: 12px
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent; }
 :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input, textarea, select { transition: border-color .12s var(--ease), box-shadow .12s var(--ease); accent-color: var(--accent-fill); }
-input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; font-family: var(--font); }
 input:disabled, textarea:disabled, select:disabled { opacity: .6; cursor: not-allowed; }
 button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .ui-icon { display: inline-block; width: 18px; height: 18px; flex-shrink: 0; vertical-align: middle; }
@@ -550,7 +550,7 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .reminder button { flex-shrink: 0; }
 .welcome .reminder { justify-content: flex-start; border: 1px solid color-mix(in srgb, var(--warn) 24%, var(--border)); border-radius: var(--r-lg); text-align: left; }
 .welcome .reminder > span { flex: 1; }
-.small-button { padding: 4px 11px; font-size: 12px; border-radius: 8px; }
+.small-button { padding: 4px 11px; font-size: 12px; border-radius: 8px; white-space: nowrap; }
 
 /* settings content */
 .settings-content { flex: 1; min-width: 0; overflow: auto; background: var(--page); }
@@ -560,6 +560,8 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .card { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; background: var(--raised); box-shadow: var(--shadow-1); }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .card-head > div { min-width: 0; }
+/* The head's buttons keep their size; the text beside them wraps instead. */
+.card-head > button, .card-head > .key-actions { flex-shrink: 0; }
 .card-head h3 { margin: 0 0 2px; font-size: 15px; }
 .card-head code, .notice, .reminder, .approval-reason { overflow-wrap: anywhere; }
 .badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
@@ -596,6 +598,15 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .field-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .text-input.plain { font-family: var(--font); }
 .text-input.plain-mono { margin-top: 0; }
+/* Dropdowns: our own chevron instead of the system arrow; the open list follows the theme where the platform allows. */
+select.text-input, select.text-input.plain, select.inline-select {
+  appearance: none; cursor: pointer; padding-right: 32px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 17px) 52%, calc(100% - 12px) 52%;
+  background-size: 5px 5px; background-repeat: no-repeat;
+}
+select.text-input:hover:not(:disabled) { border-color: var(--accent-line); }
+select option { background: var(--raised); color: var(--text); font-family: var(--font); }
 .endpoint-preview code { word-break: break-all; }
 .mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .mode-option { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; text-align: left; border-color: var(--border); border-radius: var(--r-md); }
@@ -990,6 +1001,11 @@ button.script-row.active { background: var(--raised); box-shadow: inset 0 0 0 1p
 .asset-option { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--r-md); cursor: pointer; background: var(--sunken); }
 .asset-option.active { border-color: var(--accent-line); background: var(--accent-soft); }
 .asset-option input { accent-color: var(--accent-fill); }
+.choice-option { align-items: flex-start; }
+.choice-option input { margin-top: 3px; }
+.choice-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.profile-save .asset-option { background: var(--raised); }
+.profile-save .asset-option.active { background: var(--accent-soft); }
 .asset-name { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .version-list, .env-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .version-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }

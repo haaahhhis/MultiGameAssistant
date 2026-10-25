@@ -124,6 +124,11 @@
 .report-preview { white-space: pre-wrap; font-size: 13px; line-height: 1.75; padding: 14px 16px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); color: var(--text-2); overflow-wrap: anywhere; }
 .report-preview strong { color: var(--text); }
 .activity-dates { display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.activity-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fact-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--sunken); }
+.fact-chip small { font-size: 11px; color: var(--muted); }
+.fact-chip.web { border-color: var(--accent-line); }
+.fact-chip .fact-main { color: var(--ok); }
 
 @media (max-width: 1080px) {
   .game-view { grid-template-columns: minmax(0, 1fr); }

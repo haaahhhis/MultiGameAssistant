@@ -122,7 +122,6 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
                 <div className="skill-head">
                   <h2>{current.name}</h2>
                   <span className="badge">{groupOf(current)}</span>
-                  {current.source === 'bundled' && <span className="badge" title="软件自带，agent 不能修改，随软件更新">受保护</span>}
                   {current.modelInvocable && <span className="badge ok" title="agent 遇到相关的事会自己读这个技能">agent 自动使用</span>}
                   {current.userInvocable && <span className="badge" title="在对话里输入 /名字 来用它">可以用 /{current.name} 调用</span>}
                 </div>

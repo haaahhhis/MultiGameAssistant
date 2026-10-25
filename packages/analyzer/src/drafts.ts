@@ -1,6 +1,6 @@
 /**
  * Pack drafts: what the agent proposed, kept apart from packs in use until
- * the user accepts (docs/PLAN.zh.md §5.2 step 7). Layout:
+ * the user accepts. Layout:
  * `<dataDir>/pack-drafts/<packId>/{adg.script.yaml, SKILL.md, draft.json}`.
  * Accepting moves the draft to `<dataDir>/packs/<packId>/`, keeping the
  * previous user pack under `<dataDir>/pack-history/`.

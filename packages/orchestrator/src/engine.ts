@@ -1,5 +1,5 @@
 /**
- * Running pipelines (docs/PLAN.zh.md §5.3). A node starts when every edge
+ * Running pipelines. A node starts when every edge
  * into it is settled and satisfied (`success` / `failure` / `always`); an edge
  * that can no longer be satisfied skips the node. Script tasks whose
  * resources are busy wait ("等待资源：…") and start when the resource frees
