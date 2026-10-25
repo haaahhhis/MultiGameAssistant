@@ -62,7 +62,7 @@ export class AdgRunner extends Service {
 
     ctx.inject(['tools'], scoped => {
       for (const tool of runnerTools(runner, { library, dataDir: spec.dataDir })) {
-        scoped.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; return tool.execute(args, exec) } })
+        scoped.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
       }
     })
 

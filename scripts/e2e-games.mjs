@@ -9,14 +9,17 @@
  * 2. 「让 agent 进游戏读取」: the agent, in a session of its own, refreshes the
  *    site and records what it read on the screen; the calendar merges both
  *    and calls out where the game and the site disagree.
- * 3. The daily report lists events by how soon they end, with what is left,
- *    and goes to Feishu as a card.
+ * 3. The daily report lists events by how soon they end, with what is left;
+ *    sent, the agent summarizes only the recent ones (given to it as a
+ *    digest), and that summary goes to Feishu as a card.
+ * 4. 「让 agent 去找」 a game nobody set up: the agent adds it with game_add
+ *    (a wiki source), and its events are read at once.
  *
  *   ADG_GATEWAY_TOKEN=dev-token ADG_FEISHU_BASE_URL=http://127.0.0.1:3299 pnpm dev:host
  *   ADG_GATEWAY_TOKEN=dev-token pnpm e2e:games
  */
 import { createServer } from 'node:http'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +29,7 @@ import { connectGateway, FAKE_MODEL, FAKE_PROVIDER, removeFakeProvider, saveFake
 const here = dirname(fileURLToPath(import.meta.url))
 const dataDir = process.env.ADG_DATA_DIR ?? join(process.env.DSH_HOME ?? join(here, '..', '.dev-home'), 'adg', 'data')
 const GAME = 'e2e-game'
+const ADDED = 'e2e-added'
 const APP_ID = 'cli_a1b2c3d4e5f60718'
 const USER = 'ou_7d8a6e2e00000000000000000000e2e6'
 const SECRET_REF = 'ADG_FEISHU_APP_SECRET'
@@ -76,6 +80,7 @@ sources:
 writeFileSync(join(packDir, 'GAME.md'), `---\nname: game-${GAME}\ndescription: M6 端到端检查用的假游戏。\n---\n\n# E2E 游戏\n`)
 
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
+const SUMMARY = '【E2E 游戏】E2E 活动甲只剩 2 天，商店还差 2 项没换，记得去换；乙活动前两天刚开始，已经做完。'
 const llm = await startFakeLlm({
   models: [FAKE_MODEL],
   replies: [
@@ -85,6 +90,9 @@ const llm = await startFakeLlm({
       { name: '乙活动', remaining: '剩余 9天', done: ['关卡全部通关'] },
     ] }),
     { text: 'E2E 活动甲还剩 2 天，商店还有 2 项没换；乙活动关卡都通关了。' },
+    { text: SUMMARY },
+    call('game_add', { id: ADDED, name: 'E2E 新游戏', aliases: ['新游戏'], timezone: 'Asia/Shanghai', sources: [{ id: 'wiki', name: '假 WIKI', homepage: `${wikiUrl}/`, smw: { api: `${wikiUrl}/api.php`, conditions: '[[分类:活动]]', title: '名称', start: '开始', end: '结束', shopEnd: '商店结束' } }], guide: '活动看假 WIKI。' }),
+    { text: '加好了 E2E 新游戏，假 WIKI 能自动读。' },
   ],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
@@ -145,7 +153,7 @@ try {
   step('the agent read the game in its own session; the calendar merged it with the site', `${reading.summary}；乙：${second.mismatch}`)
 
   // 3. the report, to Feishu
-  await rpc('games/settings/set', { report: { games: [GAME] } })
+  await rpc('games/settings/set', { report: { games: [GAME], ai: true } })
   const preview = await rpc('games/report/preview', {})
   const lines = preview.text.split('\n')
   if (lines[0] !== '【E2E 游戏】' || !/^· ⚠ SideStory「E2E 活动甲」：还剩 2 天.+ · 还没做：活动商店还剩 2 项没换$/.test(lines[1] ?? '') || !/^· 乙活动：还剩 3 天.+都做完了/.test(lines[2] ?? '')) fail(`report:\n${preview.text}`)
@@ -157,10 +165,23 @@ try {
   await rpc('feishu/users/allow', { openId: USER, name: 'E2E 用户' })
   const sent = await rpc('games/report/send', {})
   if (!sent.channels.includes('飞书')) fail(`report sent to ${JSON.stringify(sent.channels)}`)
-  const card = await feishu.waitForMessage(m => m.kind === 'create' && m.msgType === 'interactive' && m.text.includes('今日活动日报') && m.text.includes('E2E 活动甲'))
+  const card = await feishu.waitForMessage(m => m.kind === 'create' && m.msgType === 'interactive' && m.text.includes('今日活动日报') && m.text.includes('记得去换'))
+  const digest = JSON.stringify(llm.requests.find(r => JSON.stringify(r.messages ?? []).includes('日报正文'))?.messages ?? [])
+  if (!digest.includes('快结束：还剩 2 天') || !digest.includes('还没做：活动商店还剩 2 项没换') || !digest.includes('新开始')) fail(`the agent was not given the recent events: ${digest.slice(0, 600)}`)
+  if (sent.text !== SUMMARY) fail(`sent text: ${sent.text}`)
   const after = await rpc('games/list', {})
-  if (after.report.lastResult !== '已发到飞书' || after.report.lastSentAt === undefined) fail(`report state: ${JSON.stringify(after.report)}`)
-  step('the daily report went to Feishu as a card', `${card.to} · ${preview.title}`)
+  if (after.report.lastResult !== '已发到飞书' || after.report.lastSentAt === undefined || after.report.lastText !== SUMMARY) fail(`report state: ${JSON.stringify(after.report)}`)
+  step('the agent summarized the recent events; the summary went to Feishu as a card', `${card.to} · ${preview.title}`)
+
+  // 4. a game nobody set up
+  const { sessionId: discoverSession } = await rpc('games/discover', { name: 'E2E 新游戏' })
+  await until('the added game and its events', async () => {
+    const list = await rpc('games/list', {})
+    return list.games.some(g => g.id === ADDED) && list.activities.some(a => a.game === ADDED && a.name === 'SideStory「E2E 活动甲」')
+  }, 120_000)
+  const added = (await rpc('games/list', {})).games.find(g => g.id === ADDED)
+  if (!existsSync(join(dataDir, 'games', ADDED, 'game.yaml')) || !existsSync(join(dataDir, 'games', ADDED, 'GAME.md'))) fail('the added pack is not in the data folder')
+  step('「让 agent 去找」: game_add made a pack and its wiki was read at once', `${added.name} · ${discoverSession}`)
 
   console.log(`\nM6 end-to-end OK (${steps.length} steps); the fake wiki answered ${asks.length} queries, the fake model ${llm.requests.length} requests`)
 } catch (error) {
@@ -168,12 +189,14 @@ try {
   process.exitCode = 1
 } finally {
   for (const a of await mine().catch(() => [])) await rpc('games/activity/remove', { activityId: a.id }).catch(() => {})
-  if (settingsBefore !== undefined) await rpc('games/settings/set', { report: { games: settingsBefore.report.games } }).catch(() => {})
+  if (settingsBefore !== undefined) await rpc('games/settings/set', { report: { games: settingsBefore.report.games, ai: settingsBefore.report.ai } }).catch(() => {})
   await rpc('feishu/users/remove', { openId: USER }).catch(() => {})
   await rpc('feishu/settings/set', { enabled: false, appId: null }).catch(() => {})
   await rpc('credentials/unset', { ref: SECRET_REF }).catch(() => {})
   await removeFakeProvider(rpc)
   rmSync(packDir, { recursive: true, force: true })
+  for (const a of (await rpc('games/list', {}).catch(() => ({ activities: [] }))).activities.filter(x => x.game === ADDED)) await rpc('games/activity/remove', { activityId: a.id }).catch(() => {})
+  rmSync(join(dataDir, 'games', ADDED), { recursive: true, force: true })
   gateway.close()
   await llm.close()
   await feishu.close()

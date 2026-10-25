@@ -37,6 +37,8 @@ export const SmwSource = z.object({
   page: z.string().includes('{page}').optional(),
   /** Pages per query. @default 100 */
   limit: z.number().int().min(1).max(500).default(100),
+  /** A wiki file named after each event's page, used as its picture; `{page}` is the page name (PRTS: `活动预告 {page} 01.jpg`). */
+  image: z.string().includes('{page}').optional(),
 })
 export type SmwSource = z.infer<typeof SmwSource>
 
@@ -83,6 +85,8 @@ export const GameManifest = z.object({
     window: z.string().min(1).optional(),
   }).optional(),
   sources: z.array(GameSource).default([]),
+  /** A picture for the game (https), shown when the data sites give none that loads. */
+  art: Url.refine(u => u.startsWith('https://'), 'https').optional(),
 })
 export type GameManifest = z.infer<typeof GameManifest>
 export type GameManifestInput = z.input<typeof GameManifest>

@@ -28,7 +28,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { areaOf, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { PersonaStore, personaPrompt } from './persona.ts'
@@ -100,6 +100,8 @@ export class AdgGateway extends Service {
   private readonly questions: QuestionBroker
   private readonly permissions: Permissions
   private readonly permissionsReady: Promise<void>
+  /** Tool calls the user already approved through guardTool: their own approval asks are not asked again. */
+  private readonly approvedCalls = new Set<string>()
   /** Resolved after the listener binds. */
   url: string | undefined
 
@@ -136,8 +138,17 @@ export class AdgGateway extends Service {
     // dsh's own remote bridge (dsh-api-remotes) holds a request for its browser
     // client even when none is attached, so answerers after it never run.
     ctx.on('approval/request', (request, next) => {
+      // An area's own setting (设置 → 权限) comes before the mode: allowed, refused, or asked even under full access.
+      const policy = this.permissions.policyFor(request.toolName)
+      if (request.callId !== undefined && this.approvedCalls.has(request.callId)) return Promise.resolve('allowed-once' as const)
+      if (policy === 'deny') return Promise.resolve('rejected' as const)
+      if (policy === 'allow') {
+        this.permissions.allowed({ at: Date.now(), sessionId: request.agent.session.id, toolName: request.toolName, ...(request.reason === undefined ? {} : { reason: request.reason }) })
+        this.broadcast('permissions/changed', this.permissions.state())
+        return Promise.resolve('allowed-once' as const)
+      }
       // Full access (设置 → 权限): the user said yes to everything in advance.
-      if (this.permissions.mode === 'full') {
+      if (this.permissions.mode === 'full' && policy !== 'ask') {
         this.permissions.allowed({ at: Date.now(), sessionId: request.agent.session.id, toolName: request.toolName, ...(request.reason === undefined ? {} : { reason: request.reason }) })
         this.broadcast('permissions/changed', this.permissions.state())
         return Promise.resolve('allowed-once' as const)
@@ -205,6 +216,15 @@ export class AdgGateway extends Service {
           await this.permissions.set((params as RequestParams<'permissions/set'>).mode)
           everySession()
           log.info(`permissions: ${this.permissions.mode}`)
+          const state = this.permissions.state()
+          this.broadcast('permissions/changed', state)
+          return state
+        },
+        'permissions/area/set': async params => {
+          await this.permissionsReady
+          const { area, policy } = params as RequestParams<'permissions/area/set'>
+          await this.permissions.setArea(area, policy)
+          log.info(`permissions: ${area} → ${policy}`)
           const state = this.permissions.state()
           this.broadcast('permissions/changed', state)
           return state
@@ -403,11 +423,12 @@ export class AdgGateway extends Service {
         }
         void register().catch(error => log.warn(`saved skills not loaded: ${String(error)}`))
         scoped.effect(() => () => { for (const dispose of registered.values()) dispose(); registered.clear() }, 'adg-gateway saved skills')
-        scoped.tools.register(skillSaveTool({
+        const save = skillSaveTool({
           dir,
           taken: async () => (await scoped.skills.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) })).filter(s => !registered.has(s.name)).map(s => s.name),
           saved: name => register(name),
-        }))
+        })
+        scoped.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } })
       })
     }
 
@@ -524,6 +545,30 @@ export class AdgGateway extends Service {
 
   /** Send one notification to every initialized client. */
   /** Where sessions work when they do not say (the agent's own folder, never the app's). */
+  /**
+   * Called by this app's tools before they act (most of them never ask for
+   * approval on their own): an area set to 不允许 refuses, one set to 先问我
+   * asks the user through dsh's approval service, even under full access.
+   * @throws Error the agent reads, saying what the user set.
+   */
+  async guardTool(exec: { readonly name: string; readonly callId?: string; readonly agent?: unknown; readonly signal?: AbortSignal }): Promise<void> {
+    await this.permissionsReady
+    const policy = this.permissions.policyFor(exec.name)
+    const area = areaOf(exec.name)
+    if (policy === 'deny') throw new Error(`用户在「设置 → 权限」里把「${area?.title ?? exec.name}」设成了不允许，这个操作没有做。需要的话请用户去那里打开。`)
+    if (policy !== 'ask') return
+    const approval = this.ctx.get('approval')
+    if (approval === undefined || exec.agent === undefined) throw new Error(`「${area?.title ?? exec.name}」设成了先问用户，但现在没有可用的审批渠道`)
+    // exec is the tool's run context (ToolRunContext): its agent and call id are what dsh's request takes.
+    const request = { agent: exec.agent, toolName: exec.name, ...(exec.callId === undefined ? {} : { callId: exec.callId }), reason: `「${area?.title ?? exec.name}」设成了每次先问你`, ...(exec.signal === undefined ? {} : { signal: exec.signal }) }
+    const outcome = await approval.request(request as Parameters<typeof approval.request>[0])
+    if (outcome !== 'allowed-once') throw new Error(outcome === 'rejected' ? '用户拒绝了这个操作' : `没有得到用户批准（${outcome}）`)
+    if (exec.callId !== undefined) {
+      this.approvedCalls.add(exec.callId)
+      while (this.approvedCalls.size > 200) this.approvedCalls.delete(this.approvedCalls.values().next().value!)
+    }
+  }
+
   workspaceDir(): string | undefined {
     return this.workspace
   }

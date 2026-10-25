@@ -132,7 +132,8 @@ export class AdgIntervene extends Service {
           return notify.sendToSession(sessionId, { id: `shot:${Date.now()}`, scope: 'intervene', title: `截图：${title}`, text: new Date().toLocaleString('zh-CN', { hour12: false }), severity: 'info', image: png })
         },
       })
-      for (const tool of tools) scoped.tools.register(tool)
+      // 设置 → 权限 decides per area (the gateway's guardTool).
+      for (const tool of tools) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
     })
 
     ctx.inject(['adgGateway'], scoped => {

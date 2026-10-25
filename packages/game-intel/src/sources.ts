@@ -138,7 +138,35 @@ export async function readSmw(smw: SmwSource, game: GameManifest, now: number, f
     if (typeof next !== 'number' || next <= offset) break
     offset = next
   }
-  return events
+  return smw.image === undefined ? events : withCovers(smw.api, smw.image, events, fetchImpl, signal)
+}
+
+/**
+ * Each event's picture from a wiki file named after its page (PRTS:
+ * `活动预告 {page} 01.jpg`, the announcement's key art), looked up in one
+ * request per 40 events. A missing file, or the lookup failing, leaves the
+ * event without one: pictures are a nicety, the dates are what count.
+ */
+async function withCovers(api: string, pattern: string, events: readonly SiteEvent[], fetchImpl: Fetch, signal?: AbortSignal): Promise<SiteEvent[]> {
+  const fileOf = (e: SiteEvent) => `File:${pattern.replace('{page}', e.aliases[0] ?? e.name)}`
+  const urls = new Map<string, string>()
+  const titles = [...new Set(events.map(fileOf))]
+  for (let i = 0; i < titles.length; i += 40) {
+    const chunk = titles.slice(i, i + 40)
+    try {
+      const timeout = AbortSignal.timeout(TIMEOUT_MS)
+      const response = await fetchImpl(`${api}?action=query&format=json&prop=imageinfo&iiprop=url&titles=${encodeURIComponent(chunk.join('|'))}`, { signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]), headers: { 'user-agent': USER_AGENT, accept: 'application/json' } })
+      if (!response.ok) continue
+      const body = await response.json() as { query?: { normalized?: { from: string; to: string }[]; pages?: Record<string, { title?: string; imageinfo?: { url?: string }[] }> } }
+      // The wiki answers under its own spelling of each title ("文件:…", spaces for underscores).
+      const asked = new Map((body.query?.normalized ?? []).map(n => [n.to, n.from]))
+      for (const page of Object.values(body.query?.pages ?? {})) {
+        const url = page.imageinfo?.[0]?.url
+        if (page.title !== undefined && typeof url === 'string' && url.startsWith('https://')) urls.set(asked.get(page.title) ?? page.title, url)
+      }
+    } catch { /* no pictures this time */ }
+  }
+  return events.map(e => { const cover = urls.get(fileOf(e)); return cover === undefined ? e : { ...e, cover } })
 }
 
 /** Turn an SRA activity file into the version (with its cover), the events still ahead, and the banners still open. */

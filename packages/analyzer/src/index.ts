@@ -88,7 +88,8 @@ export class AdgAnalyzer extends Service {
       if (outcome !== 'allowed-once') throw new Error(outcome === 'rejected' ? '用户拒绝了这个操作' : `没有得到用户批准（${outcome}）`)
     }
     ctx.inject(['tools'], scoped => {
-      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) scoped.tools.register(tool)
+      // 设置 → 权限 decides per area (the gateway's guardTool).
+      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
     })
 
     // ── capability ──

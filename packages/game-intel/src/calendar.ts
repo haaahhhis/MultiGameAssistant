@@ -19,7 +19,7 @@ const KEEP_UNDATED_MS = 14 * MS.DAY
 /** Screen and site may disagree by this much before it is called a mismatch (the game rounds to days). */
 const MISMATCH_MS = 30 * MS.HOUR
 
-export const DEFAULT_SETTINGS: GamesSettings = { report: { enabled: true, at: '09:00', games: [], soonDays: 3 }, followed: [] }
+export const DEFAULT_SETTINGS: GamesSettings = { report: { enabled: true, at: '09:00', games: [], soonDays: 3, ai: true }, followed: [] }
 
 /** What the agent read from the game screen (or a web page) for one event. */
 export interface ReadEvent {
@@ -33,6 +33,8 @@ export interface ReadEvent {
   readonly done?: readonly string[] | undefined
   readonly progress?: string | undefined
   readonly url?: string | undefined
+  /** source=site: the event's picture in the announcement (https only). */
+  readonly cover?: string | undefined
 }
 
 interface Stored extends Activity {
@@ -44,7 +46,7 @@ const StoredSchema = z.object({
   activities: z.array(z.looseObject({ id: z.string(), game: z.string(), name: z.string() })).default([]),
   refreshed: z.record(z.string(), z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })).default({}),
   readings: z.record(z.string(), z.object({ state: z.enum(['running', 'done', 'failed']), at: z.number(), sessionId: z.string().optional(), summary: z.string().optional() })).default({}),
-  report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional() }).default({}),
+  report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional(), lastText: z.string().optional() }).default({}),
   versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(), source: z.string(), at: z.number() })).default({}),
   pools: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number(), cover: z.string().optional(), up: z.array(z.string()) }))).default({}),
   settings: z.object({ report: GamesSettings.shape.report.partial().default({}), followed: z.array(z.string()).default([]) }).default({ report: {}, followed: [] }),
@@ -251,6 +253,7 @@ export class Calendar {
           item.site = { source: 'agent', name: 'agent 查到的网页', at: now }
         }
         if (event.url !== undefined) item.url = event.url
+        if (event.cover !== undefined && /^https:\/\/\S+$/.test(event.cover) && item.cover === undefined) item.cover = event.cover
       } else {
         item.screen = {
           at: now,

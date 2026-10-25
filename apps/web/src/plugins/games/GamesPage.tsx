@@ -101,7 +101,12 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
         <button role="tab" aria-selected={showReport} className={`game-tab ${showReport ? 'active' : ''}`} onClick={() => select('report')}><Icon name="send" />日报</button>
       </nav>
       <div className="games-body">
-        {catalogOpen && <section className="card"><CatalogPicker client={client} onChanged={() => setRevision(r => r + 1)} /></section>}
+        {catalogOpen && (
+          <section className="card">
+            <CatalogPicker client={client} onChanged={() => setRevision(r => r + 1)}
+              onDiscover={name => void act('discover', async () => { const { sessionId } = await client.connection.call('games/discover', { name }); openSession(sessionId) })} />
+          </section>
+        )}
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
         {message !== null && <div className="notice info left small"><Icon name="info" /><span>{message}</span></div>}
         {data !== null && games.length === 0 && <div className="empty"><Icon name="gamepad" /><p>没有游戏。点「更多游戏」关注几个。</p></div>}
@@ -117,6 +122,10 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
             onRefresh={() => void refresh(current.id)}
             onRead={() => void act(`read:${current.id}`, async () => {
               const { sessionId } = await client.connection.call('games/read', { game: current.id })
+              openSession(sessionId)
+            })}
+            onReadWeb={source => void act(`read-web:${current.id}`, async () => {
+              const { sessionId } = await client.connection.call('games/read', { game: current.id, how: 'web', ...(source === undefined ? {} : { source }) })
               openSession(sessionId)
             })}
             onUnfollow={() => void act(`unfollow:${current.id}`, async () => {
@@ -175,11 +184,12 @@ function ReportCard({ client, data, games, now, openSettings, onChanged }: {
         <div className="card-head">
           <div>
             <h3>每日日报</h3>
-            <p className="muted small">每天先读一遍数据站，再把各游戏进行中的活动、剩余天数和没做完的事发到飞书。进度来自 agent 最近一次进游戏读取（可以在编排里加一个 agent 节点，日常跑完后读一次）。</p>
+            <p className="muted small">每天先读一遍数据站，再把各游戏的活动、剩余天数和没做完的事发到飞书。进度来自 agent 最近一次进游戏读取（可以在编排里加一个 agent 节点，日常跑完后读一次）。</p>
           </div>
           <span className={`badge ${settings.enabled ? 'ok' : ''}`}>{settings.enabled ? '已开启' : '未开启'}</span>
         </div>
         <label className="check-label"><input type="checkbox" checked={settings.enabled} disabled={busy} onChange={e => void set({ enabled: e.target.checked })} />每天定时发送</label>
+        <label className="check-label"><input type="checkbox" checked={settings.ai} disabled={busy} onChange={e => void set({ ai: e.target.checked })} />用 AI 总结，只说近期的事（刚开始、快结束、即将开始）；agent 不可用时发下面的完整列表</label>
         <div className="field-row">
           <label className="field">
             <span className="field-title">发送时间</span>
@@ -207,12 +217,18 @@ function ReportCard({ client, data, games, now, openSettings, onChanged }: {
       </section>
       <section className="card">
         <div className="card-head">
-          <div><h3>今天的日报</h3><p className="muted small">发到飞书的就是这份。</p></div>
+          <div><h3>今天的日报</h3><p className="muted small">{settings.ai ? '完整列表。发送时 agent 从里面挑出近期的事写成总结，写不出来就发这份。' : '发到飞书的就是这份。'}</p></div>
           <button className="small-button primary" disabled={busy} onClick={() => void send()}><Icon name="send" />{busy ? '发送中…' : '现在发送'}</button>
         </div>
         {sent !== null && <div className="notice info left small"><Icon name="info" /><span>{sent}</span></div>}
         {preview !== null && <div className="report-preview"><strong>{preview.title}</strong>{'\n\n'}{preview.text}</div>}
       </section>
+      {data.report.lastText !== undefined && (
+        <section className="card">
+          <div className="card-head"><div><h3>上次发出的</h3>{data.report.lastSentAt !== undefined && <p className="muted small">{relativeTime(data.report.lastSentAt, now)}</p>}</div></div>
+          <div className="report-preview">{data.report.lastText}</div>
+        </section>
+      )}
     </>
   )
 }

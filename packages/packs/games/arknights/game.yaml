@@ -29,6 +29,8 @@ sources:
       shopEnd: 兑换结束时间
       dates: date
       page: https://prts.wiki/w/{page}
+      # The announcement's key art: each event's picture on the board.
+      image: '活动预告 {page} 01.jpg'
   - id: official
     name: 官网公告
     homepage: https://ak.hypergryph.com/news

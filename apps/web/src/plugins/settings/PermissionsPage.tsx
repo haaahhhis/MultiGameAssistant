@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { AreaPermissions } from './AreaPermissions.tsx'
 
 const MODES: readonly { mode: PermissionMode; title: string; text: string }[] = [
   { mode: 'ask', title: '每次确认（推荐）', text: 'agent 的命令在沙箱里运行；安装陌生仓库、操作屏幕、沙箱外的命令、修改脚本文件等，都先问你。' },
@@ -54,10 +55,11 @@ export function PermissionsPage({ client }: { client: AdgClient }) {
         )}
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
       </section>
+      {state !== null && <AreaPermissions client={client} state={state} onState={setState} />}
       {state !== null && state.recent.length > 0 && (
         <section className="card">
-          <h3>完全访问自动允许的操作</h3>
-          <p className="muted small">程序这次启动以来，最近 {state.recent.length} 条。</p>
+          <h3>没问你就允许了的操作</h3>
+          <p className="muted small">因为「完全访问」或某个范围设成了「允许」。程序这次启动以来，最近 {state.recent.length} 条。</p>
           <ul className="version-list">
             {state.recent.map((r, i) => (
               <li key={i}>

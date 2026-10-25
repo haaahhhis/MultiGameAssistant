@@ -313,8 +313,9 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
 }
 
 /** The SRA public API's other games: follow one to see its events here too. */
-export function CatalogPicker({ client, onChanged }: { client: AdgClient; onChanged: () => void }) {
+export function CatalogPicker({ client, onChanged, onDiscover }: { client: AdgClient; onChanged: () => void; onDiscover?: (name: string) => void }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [wanted, setWanted] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
@@ -348,6 +349,14 @@ export function CatalogPicker({ client, onChanged }: { client: AdgClient; onChan
           </label>
         ))}
       </div>
+      {onDiscover !== undefined && (
+        <form className="discover-row" onSubmit={e => { e.preventDefault(); const name = wanted.trim(); if (name !== '') { onDiscover(name); setWanted('') } }}>
+          <span className="field-title">列表里没有？</span>
+          <input className="text-input plain" value={wanted} maxLength={60} placeholder="输入游戏名，例如：重返未来：1999" onChange={e => setWanted(e.target.value)} />
+          <button className="small-button primary" type="submit" disabled={wanted.trim() === ''}><Icon name="search" />让 agent 去找</button>
+          <span className="muted small">agent 会找它的 Wiki、官网公告等来源，建一个游戏包加到游戏页。</span>
+        </form>
+      )}
       {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}
     </div>
   )

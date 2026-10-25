@@ -20,6 +20,8 @@ export interface GameToolDeps {
   readonly report: () => { title: string; text: string }
   readonly sendReport: () => Promise<{ channels: string[] }>
   readonly now: () => number
+  /** Write a game pack of the user's own. */
+  readonly add: (manifest: unknown, guide: string | undefined) => Promise<GameInfo>
 }
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
@@ -78,6 +80,58 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
   }
 
   return [
+    tool({
+      name: 'game_add',
+      description: '给一个还没有游戏包的游戏建一个（用户自己的游戏包），之后游戏页就能显示它的活动。来源三种：sra（SRA 公共 API 的游戏 id）、smw（Semantic MediaWiki 的 api.php 查询，能读到活动起止时间）、只有 homepage（官网公告等，由 agent 读）。能自动读的会马上读一次。用户说「加一个 XX 游戏」或游戏页让你找来源时用。',
+      properties: {
+        id: { type: 'string', description: '小写英文、数字和短横线，例如 wuthering-waves。' },
+        name: { type: 'string', description: '中文正式名。' },
+        aliases: { type: 'array', items: { type: 'string' }, description: '常见简称、英文名（可选）。' },
+        timezone: { type: 'string', description: '服务器时区，例如 Asia/Shanghai（默认）、Asia/Tokyo。' },
+        daily_reset: { type: 'string', description: '每日刷新时间 HH:mm（默认 04:00）。' },
+        sources: {
+          type: 'array',
+          description: '来源，可以多个；能自动读的放前面。',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: '来源 id，小写英文，例如 official、wiki。' },
+              name: { type: 'string', description: '给人看的名字，例如「官网新闻」。' },
+              homepage: { type: 'string', description: '人能打开的页面地址。' },
+              sra_game: { type: 'string', description: 'SRA 公共 API 的游戏 id（可选）。' },
+              smw: { type: 'object', description: 'Semantic MediaWiki 查询（可选）：{ api, conditions, title?, start, end, shopEnd?, dates: date|text, page? }。' },
+            },
+            required: ['id', 'name'],
+            additionalProperties: false,
+          },
+        },
+        guide: { type: 'string', description: 'GAME.md 正文（可选）：哪些来源看什么、公告页怎么找活动。' },
+      },
+      required: ['id', 'name', 'sources'],
+      kind: 'other',
+      title: a => `添加游戏：${String(a['name'] ?? a['id'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({
+          id: z.string(), name: z.string(), aliases: z.array(z.string()).nullish(), timezone: z.string().nullish(), daily_reset: z.string().nullish(),
+          sources: z.array(z.object({ id: z.string(), name: z.string(), homepage: z.string().nullish(), sra_game: z.string().nullish(), smw: z.record(z.string(), z.unknown()).nullish() })).min(1),
+          guide: z.string().nullish(),
+        }), args)
+        const manifest = {
+          id: a.id, name: a.name,
+          ...(a.aliases == null ? {} : { aliases: a.aliases }),
+          ...(a.timezone == null ? {} : { timezone: a.timezone }),
+          ...(a.daily_reset == null ? {} : { dailyReset: a.daily_reset }),
+          sources: a.sources.map(s => ({
+            id: s.id, name: s.name,
+            ...(s.homepage == null ? {} : { homepage: s.homepage }),
+            ...(s.sra_game == null ? {} : { sra: { game: s.sra_game } }),
+            ...(s.smw == null ? {} : { smw: s.smw }),
+          })),
+        }
+        const game = await deps.add(manifest, a.guide ?? undefined)
+        return { added: game.id, name: game.name, sources: game.sources.map(s => `${s.name}（${s.auto ? '自动读' : 'agent 读'}）`), note: '已加到游戏页；能自动读的来源正在读取' }
+      },
+    }),
     tool({
       name: 'game_list',
       description: '列出已知的游戏（游戏包）：玩它的脚本、怎么看游戏画面、有哪些数据站（auto=true 的用 game_sites_refresh 直接读，其余用 web_fetch 看），以及上次刷新和上次进游戏读取的时间。读某个游戏的界面前先加载它的技能 game-<id>。',
@@ -143,6 +197,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
               done: { type: 'array', items: { type: 'string' }, description: '已经做完的事。' },
               progress: { type: 'string', description: '进度，例如「代币 1200」「每日实训 300/500」。' },
               url: { type: 'string', description: 'source=site：读到的网页地址。' },
+              cover: { type: 'string', description: 'source=site：公告里这个活动的配图地址（https，可选），游戏页的活动卡片用它当背景。' },
             },
             required: ['name'],
             additionalProperties: false,
@@ -166,6 +221,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
             done: z.array(z.string()).nullish(),
             progress: z.string().nullish(),
             url: z.string().nullish(),
+            cover: z.string().nullish(),
           })).min(1),
           keep_screenshot: z.boolean().nullish(),
         }), args)
@@ -179,6 +235,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
           done: x.done ?? undefined,
           progress: x.progress ?? undefined,
           url: x.url ?? undefined,
+          cover: x.cover ?? undefined,
         }))
         const sessionId = exec.agent?.session.id as string | undefined
         const written = await deps.record(game.id, a.source, events, sessionId, a.keep_screenshot !== false)

@@ -1271,3 +1271,23 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .persona-style .small { line-height: 1.55; }
 .persona-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .persona-prompt { margin: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); font-family: var(--font); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; color: var(--text-2); }
+/* slash commands above the chat box (Composer, commands.ts) */
+.slash-menu { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); animation: rise .15s var(--ease) both; }
+.slash-item { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; row-gap: 2px; align-items: baseline; padding: 8px 10px; border: none; border-radius: var(--r-md); background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.slash-item.active { background: var(--accent-soft); }
+.slash-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); }
+.slash-title { font-size: 13px; color: var(--text); }
+.slash-arg { grid-column: 2; font-size: 12px; color: var(--muted); }
+.slash-foot { display: flex; align-items: center; gap: 4px; padding: 4px 10px 2px; }
+.slash-pending { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 6px 4px 0; color: var(--text-2); }
+/* 设置 → 权限 → 按范围设置 (AreaPermissions) */
+.area-list { display: flex; flex-direction: column; }
+.area-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.area-row:first-child { border-top: none; padding-top: 4px; }
+.area-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
+.area-text strong { font-size: 13.5px; }
+.area-choice { flex: none; margin: 0; }
+.area-choice button { padding: 0 12px; }
+.area-choice button.active.allow { color: var(--ok); }
+.area-choice button.active.ask { color: var(--warn); }
+.area-choice button.active.deny { color: var(--error); }

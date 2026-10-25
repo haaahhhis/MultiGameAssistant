@@ -1,7 +1,8 @@
 /**
  * The daily report (docs/PLAN.zh.md §5.5): per game, the running events by
  * how soon they end, what is still to do in each, and what starts soon —
- * "昨日海还剩 2 天，活动商店还剩 3 项没换".
+ * "昨日海还剩 2 天，活动商店还剩 3 项没换". With `ai` on, the agent writes
+ * it instead from `recentDigest`, and this list is the fallback.
  */
 import type { Activity, GamesSettings } from '@adg/protocol'
 import { MS, daysLeft, leftText, shortDate, wallClock } from './time.ts'
@@ -49,6 +50,39 @@ export function buildReport(games: readonly ReportGame[], activities: readonly A
     lastRead === undefined ? '进度还没在游戏里读过' : `进度是 agent ${shortDate(lastRead, Intl.DateTimeFormat().resolvedOptions().timeZone)} 在游戏里看到的`,
   ].filter(Boolean).join('；')
   return { title, text: `${sections.join('\n\n')}\n\n${footer}。`, count }
+}
+
+/** Started this recently, an event is news. */
+const RECENT_MS = 3 * MS.DAY
+
+/**
+ * What the agent summarizes for the AI report: only what is recent — events
+ * that just started, end (or close their shop) within `soonDays` and are not
+ * done, or start soon. Season-long modes and quiet mid-run events are left
+ * out. @returns undefined when nothing is recent.
+ */
+export function recentDigest(games: readonly ReportGame[], activities: readonly Activity[], settings: GamesSettings['report'], now: number): string | undefined {
+  const chosen = settings.games.length === 0 ? games : games.filter(g => settings.games.includes(g.id))
+  const sections: string[] = []
+  for (const game of chosen) {
+    const lines: string[] = []
+    for (const a of activities.filter(x => x.game === game.id)) {
+      const end = a.endsAt !== undefined && a.endsAt > now ? a.endsAt : a.shopEndsAt !== undefined && a.shopEndsAt > now ? a.shopEndsAt : undefined
+      const started = a.startsAt === undefined || a.startsAt <= now
+      const tags: string[] = []
+      if (!started && a.startsAt! - now <= UPCOMING_MS) tags.push(`即将开始（${shortDate(a.startsAt!, game.timezone)}）`)
+      if (started && a.startsAt !== undefined && now - a.startsAt <= RECENT_MS && end !== undefined) tags.push(`新开始（${shortDate(a.startsAt, game.timezone)}）`)
+      if (started && end !== undefined && a.finished === undefined && daysLeft(end, now) < settings.soonDays) tags.push(end === a.endsAt ? `快结束：${leftText(end, now)}（${shortDate(end, game.timezone)}）` : `活动已结束，商店${leftText(end, now)}`)
+      if (tags.length === 0) continue
+      let text = `· ${a.name}：${tags.join('；')}`
+      if (a.finished !== undefined) text += '；用户说已做完'
+      else if (a.todo.length > 0) text += `；还没做：${a.todo.join('、')}`
+      if (a.progress !== undefined) text += `；进度 ${a.progress}`
+      lines.push(text)
+    }
+    if (lines.length > 0) sections.push(`【${game.name}】\n${lines.join('\n')}`)
+  }
+  return sections.length === 0 ? undefined : sections.join('\n\n')
 }
 
 /** "⚠ 昨日海：还剩 2 天（10/23 03:59 结束），商店开到 10/29 · 还没做：活动商店还剩 3 项没换". */

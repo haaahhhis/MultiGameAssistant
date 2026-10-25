@@ -8,7 +8,7 @@ import { ManualClock } from '../../test-kit/src/clock.ts'
 import { Calendar, DEFAULT_SETTINGS } from '../src/calendar.ts'
 import { DailyReport } from '../src/daily.ts'
 import { sameEvent } from '../src/names.ts'
-import { buildReport } from '../src/report.ts'
+import { buildReport, recentDigest } from '../src/report.ts'
 import { parseAsk, parseSra, readSmw, smwQuery, type Fetch } from '../src/sources.ts'
 import { leftText, parseDateText, parseRemaining, zonedTime } from '../src/time.ts'
 
@@ -159,6 +159,19 @@ test('the daily report: by how soon each ends, with what is left to do', async (
   assert.match(report.text, /活动时间来自 PRTS；进度是 agent .+ 在游戏里看到的。$/)
   assert.equal(report.count, 4)
   assert.match(buildReport(games, [], DEFAULT_SETTINGS.report, NOW).text, /今天没有进行中的活动/)
+})
+
+test('the AI report sees only recent events: ending soon and not done, just started, starting soon', async () => {
+  const calendar = new Calendar(mkdtempSync(join(tmpdir(), 'adg-games-')))
+  await calendar.applySite('arknights', { id: 'prts', name: 'PRTS' }, parseAsk(PRTS_RESULTS, prts, TZ, NOW), NOW, TZ)
+  await calendar.applyRead('arknights', 'screen', [{ name: '昨日海', remaining: '剩余 2天10小时', todo: ['活动商店还剩 3 项没换'] }], { now: NOW, timeZone: TZ })
+  const games = [{ id: 'arknights', name: '明日方舟', timezone: TZ }]
+  const digest = recentDigest(games, calendar.list(), DEFAULT_SETTINGS.report, NOW) ?? ''
+  assert.match(digest, /^【明日方舟】/)
+  assert.match(digest, /昨日海」：快结束：还剩 2 天（10\/23 03:59）；还没做：活动商店还剩 3 项没换/)
+  assert.match(digest, /拟生态」：活动已结束，商店还剩 2 天/)
+  assert.ok(!digest.includes('集成战略') && !digest.includes('恒远津梁'), 'a season and a quiet mid-run event are not news')
+  assert.equal(recentDigest(games, [], DEFAULT_SETTINGS.report, NOW), undefined)
 })
 
 test('the report goes out once a day at its time, late after a missed time, never in a failing loop', async () => {

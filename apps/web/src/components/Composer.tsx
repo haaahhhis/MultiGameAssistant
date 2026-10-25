@@ -5,6 +5,7 @@ import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../draft
 import { usePermissionMode, useStore } from '../hooks.ts'
 import { ModelPicker } from './ModelPicker.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
+import { COMMANDS, parseCommand, suggest, type SlashCommand } from './commands.ts'
 
 export function Composer({ client, session, running, disabled, initialPrompt, onInitialSent }: {
   client: AdgClient
@@ -28,6 +29,12 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   useEffect(() => saveDraftImages(session.id, images), [session.id, images])
   const permission = usePermissionMode(client)
   const [dragging, setDragging] = useState(false)
+  // Slash commands (commands.ts): what matches what is typed, the highlighted one, and Esc closing the list.
+  const [pick, setPick] = useState(0)
+  const [closed, setClosed] = useState(false)
+  const options = closed ? [] : suggest(text)
+  const command = parseCommand(text)
+  useEffect(() => { setPick(0); setClosed(false) }, [text.split(/\s/)[0]])
 
   const addFiles = async (files: readonly File[]) => {
     const pictures = files.filter(f => f.type.startsWith('image/'))
@@ -66,7 +73,10 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   }, [initialPrompt, disabled, session, onInitialSent])
 
   const send = () => {
-    const value = text.trim()
+    const typed = text.trim()
+    // A command goes out as its full instruction, headed by the command so the conversation shows what was asked.
+    const parsed = parseCommand(typed)
+    const value = parsed === undefined ? typed : `${typed}\n\n${parsed.command.expand(parsed.arg)}`
     if ((value === '' && images.length === 0) || disabled) return
     const sending = images.map(({ url: _url, ...image }) => image)
     setText('')
@@ -77,11 +87,41 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     area.current?.focus()
   }
 
+  const complete = (c: SlashCommand) => {
+    setText(`/${c.name} `)
+    setClosed(true)
+    area.current?.focus()
+  }
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (options.length > 0 && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        setPick(p => (p + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length)
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        const chosen = options[Math.min(pick, options.length - 1)]!
+        // A command that takes nothing more is sent at once on Enter.
+        if (e.key === 'Enter' && chosen.arg === undefined) { sendCommand(chosen); return }
+        complete(chosen)
+        return
+      }
+      if (e.key === 'Escape') { e.preventDefault(); setClosed(true); return }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       send()
     }
+  }
+
+  /** Send a command that takes no argument straight from the list. */
+  const sendCommand = (c: SlashCommand) => {
+    if (disabled) return
+    setText('')
+    setError(null)
+    session.prompt(`/${c.name}\n\n${c.expand('')}`, running && steer ? 'steer' : 'queue').catch(e => setError(e instanceof Error ? e.message : String(e)))
+    area.current?.focus()
   }
 
   // A waiting message taken back comes back into the box, unless something new is being typed.
@@ -108,6 +148,19 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
               <button type="button" className="small-button" title="撤回这条消息" onClick={() => withdraw(item)}>撤回</button>
             </div>
           ))}
+        </div>
+      )}
+      {options.length > 0 && (
+        <div className="slash-menu" role="listbox" aria-label="命令">
+          {options.map((c, i) => (
+            <button key={c.name} type="button" role="option" aria-selected={i === pick} className={`slash-item ${i === pick ? 'active' : ''}`}
+              onMouseEnter={() => setPick(i)} onMouseDown={e => e.preventDefault()} onClick={() => (c.arg === undefined ? sendCommand(c) : complete(c))}>
+              <span className="slash-name">/{c.name}</span>
+              <span className="slash-title">{c.title}</span>
+              {c.arg !== undefined && <span className="slash-arg">{c.arg}</span>}
+            </button>
+          ))}
+          <div className="slash-foot muted small"><kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Tab</kbd> 补全 · <kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 关闭</div>
         </div>
       )}
       <div className={`composer-box ${dragging ? 'dragging' : ''}`}
@@ -155,7 +208,10 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           <button className="send-button" aria-label="发送" title="发送（Enter）" onClick={send} disabled={disabled || (text.trim() === '' && images.length === 0)}><Icon name="arrow" /></button>
         </div>
       </div>
-      <div className="composer-hint"><span><kbd>Enter</kbd> 发送</span><span><kbd>Shift+Enter</kbd> 换行</span><span><kbd>Ctrl+V</kbd> 粘贴图片</span></div>
+      {command !== undefined && options.length === 0 && (
+        <div className="slash-pending small"><span className="slash-name">/{command.command.name}</span>{command.command.title}{command.arg === '' && command.command.arg !== undefined ? <span className="muted">（可以接着写：{command.command.arg}）</span> : null}</div>
+      )}
+      <div className="composer-hint"><span><kbd>/</kbd> 命令（{COMMANDS.map(c => c.name).join('、')}）</span><span><kbd>Enter</kbd> 发送</span><span><kbd>Shift+Enter</kbd> 换行</span><span><kbd>Ctrl+V</kbd> 粘贴图片</span></div>
     </div>
   )
 }

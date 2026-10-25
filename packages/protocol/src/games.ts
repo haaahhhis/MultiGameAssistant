@@ -66,6 +66,8 @@ export const GameInfo = z.object({
   screen: z.object({ target: z.enum(['emulator', 'window']), window: z.string().optional() }).optional(),
   sources: z.array(GameSourceInfo),
   builtin: z.boolean(),
+  /** The game pack's own picture (https; fetch it with `games/image`). */
+  art: z.string().optional(),
   /** Followed from the SRA public API without a Game Pack (no scripts, no screen reading): can be unfollowed. */
   followed: z.boolean().optional(),
   /** The game's current version, from a data site that knows it. */
@@ -97,6 +99,13 @@ export const GameInfo = z.object({
     sessionId: z.string().optional(),
     summary: z.string().optional(),
   }).optional(),
+  /** The last time the agent read the web for it (official news, wikis — the sources the plugin cannot read itself). */
+  webReading: z.object({
+    state: z.enum(['running', 'done', 'failed']),
+    at: z.number(),
+    sessionId: z.string().optional(),
+    summary: z.string().optional(),
+  }).optional(),
 })
 export type GameInfo = z.infer<typeof GameInfo>
 
@@ -110,6 +119,8 @@ export const GamesSettings = z.object({
     games: z.array(z.string()),
     /** An event ending within this many days is called out. */
     soonDays: z.number().int().min(1).max(30),
+    /** The agent writes the report from the recent events (just started, ending soon, starting soon); off, or when it cannot: the plain list. */
+    ai: z.boolean(),
   }),
   /** SRA game ids followed besides the Game Packs (`ys`, `zzz`…), see `games/catalog`. */
   followed: z.array(z.string()),
@@ -122,6 +133,8 @@ export const ReportInfo = z.object({
   /** The day (YYYY-MM-DD, local) it was for. */
   lastDay: z.string().optional(),
   lastResult: z.string().optional(),
+  /** What went out last time (the agent's summary, or the plain list). */
+  lastText: z.string().optional(),
   /** The next time it will go out. */
   next: z.number().optional(),
 })
@@ -139,9 +152,14 @@ export const GamesRequests = {
     result: z.object({ results: z.array(z.object({ game: z.string(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })) }),
   },
   /** Ask the agent to read the game screen; it works in a session of its own. */
+  /**
+   * Ask the agent to read the game (`screen`, the default: its activity pages
+   * in the game) or the web (`web`: official news, wikis; one `source` of the
+   * game pack, or all it cannot read itself). It works in a session of its own.
+   */
   'games/read': {
     capability: GAMES_CAPABILITY,
-    params: z.object({ game: z.string() }),
+    params: z.object({ game: z.string(), how: z.enum(['screen', 'web']).optional(), source: z.string().optional() }),
     result: z.object({ sessionId: z.string() }),
   },
   'games/report/preview': {
@@ -174,6 +192,12 @@ export const GamesRequests = {
     capability: GAMES_CAPABILITY,
     params: z.object({ url: z.string().url() }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
+  },
+  /** Ask the agent to find where a game's events can be read and add it (a game pack of the user's own). */
+  'games/discover': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ name: z.string().min(1).max(60) }),
+    result: z.object({ sessionId: z.string() }),
   },
   /** Every game the SRA public API knows, and whether it is shown (a Game Pack reads it, or it is followed). */
   'games/catalog': {

@@ -110,7 +110,7 @@ export class AdgOrchestrator extends Service {
 
     ctx.inject(['tools'], scoped => {
       for (const tool of pipelineTools(pipelines, engine, library)) {
-        scoped.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; return tool.execute(args, exec) } })
+        scoped.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
       }
     })
 

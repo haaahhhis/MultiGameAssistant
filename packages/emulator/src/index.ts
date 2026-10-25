@@ -96,7 +96,8 @@ export class AdgEmulators extends Service {
     })
 
     ctx.inject(['tools'], scoped => {
-      for (const tool of this.tools()) scoped.tools.register(tool)
+      // 设置 → 权限 decides per area (the gateway's guardTool).
+      for (const tool of this.tools()) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
     })
 
     ctx.inject(['adgGateway'], scoped => {

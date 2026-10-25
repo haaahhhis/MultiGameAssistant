@@ -28,6 +28,8 @@ if (args.includes('--electron')) {
     process.exit(1)
   }
   const result = spawnSync(exe, [fileURLToPath(import.meta.url), ...args.filter(a => a !== '--electron')], { stdio: 'inherit', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
+  if (result.error !== undefined) console.log(`Electron did not start (${exe}): ${result.error.message}`)
+  else if (result.status !== 0 && result.status !== 1) console.log(`Electron exited with ${result.status ?? result.signal} before checking anything (${exe})`)
   process.exit(result.status ?? 1)
 }
 
@@ -65,6 +67,9 @@ for (const name of names) {
     failed++
     const lines = String(error?.stack ?? error).split('\n').slice(0, 6).join('\n    ')
     console.log(`✗ ${name}\n    ${lines}`)
+    // Node looks for index.js only when the package has no package.json: its folder is there, its files are not.
+    const gone = /Cannot find package '(.+?)[\\/]index\.js'/.exec(String(error?.message ?? ''))?.[1]
+    if (gone !== undefined && !existsSync(join(gone, 'package.json'))) console.log(`    → ${gone} 只剩文件夹，里面的文件没了（被删掉或没装完整）`)
   }
 }
 console.log(failed === 0 ? '\nall load: the problem is elsewhere' : `\n${failed} failed: send these lines; \`pnpm install --force\` usually repairs a broken node_modules`)

@@ -5,7 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
-import { useRemoteImage } from './images.ts'
+import { useFirstImage, useRemoteImage } from './images.ts'
 import { ActivityDetail, ProgressPill, progressOf } from './Overview.tsx'
 
 const DAY = 86_400_000
@@ -47,7 +47,7 @@ function zoneLabel(timeZone: string, at: number): string {
  * on each event, what is ending undone, the agent's last look in the game,
  * and the pipelines that play it on a timetable).
  */
-export function GameView({ client, game, activities, color, now, soonDays, busy, onRefresh, onRead, onUnfollow, onChanged, openSession, openScripts }: {
+export function GameView({ client, game, activities, color, now, soonDays, busy, onRefresh, onRead, onReadWeb, onUnfollow, onChanged, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   activities: readonly Activity[]
@@ -57,6 +57,8 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   busy: string | null
   onRefresh: () => void
   onRead: () => void
+  /** The agent reads the web: one source of the game pack, or all it cannot read itself. */
+  onReadWeb: (source?: string) => void
   onUnfollow: () => void
   onChanged: () => void
   openSession: (id: string) => void
@@ -90,8 +92,8 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
       <div className="game-main">
-        <VersionHero client={client} game={game} now={now} />
-        <StatusCard client={client} game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onUnfollow={onUnfollow} openSession={openSession} openScripts={openScripts} />
+        <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover)} />
+        <StatusCard client={client} game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onUnfollow={onUnfollow} openSession={openSession} openScripts={openScripts} />
         {(game.pools?.length ?? 0) > 0 && (
           <section className="card pools-card">
             <h3>卡池</h3>
@@ -100,9 +102,12 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
         )}
         <div className="game-sources">
           {game.sources.map(s => (
-            <span key={s.id} className="source-chip" title={s.auto ? '自动读取（不用模型）' : '由 agent 用网页工具读取'}>
-              <span className={`source-dot ${s.auto ? 'auto' : ''}`} />
-              {s.homepage === undefined ? s.name : <a href={s.homepage} target="_blank" rel="noreferrer">{s.name}</a>}
+            <span key={s.id} className={`source-chip ${s.auto ? 'auto' : 'agent'}`}>
+              {/* Read by the plugin each day, or by the agent when asked: the name does that; the arrow opens the page. */}
+              {s.auto
+                ? <span className="source-name" title="每天自动读取（不用模型）"><span className="source-dot auto" />{s.name}</span>
+                : <button className="source-name" disabled={busy !== null || game.webReading?.state === 'running'} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
+              {s.homepage !== undefined && <a className="source-open" href={s.homepage} target="_blank" rel="noreferrer" title="在浏览器里打开" aria-label={`打开${s.name}`}><Icon name="popout" /></a>}
             </span>
           ))}
           {game.refreshed !== undefined && <span className="muted small">{relativeTime(game.refreshed.at, now)}刷新</span>}
@@ -147,9 +152,10 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
  * picture, and under it a strip with the version's span as a track — how far
  * through it is, and the time left at its end.
  */
-function VersionHero({ client, game, now }: { client: AdgClient; game: GameInfo; now: number }) {
+function VersionHero({ client, game, now, covers }: { client: AdgClient; game: GameInfo; now: number; covers: readonly (string | undefined)[] }) {
   const v = game.version
-  const art = useRemoteImage(client, v?.cover)
+  // The version's art when it loads; else the pack's own picture; else an event's cover.
+  const art = useFirstImage(client, [v?.cover, game.art, ...covers])
   const span = v?.startsAt !== undefined && v.endsAt !== undefined ? v.endsAt - v.startsAt : undefined
   const through = span === undefined || span <= 0 ? undefined : Math.min(1, Math.max(0, (now - v!.startsAt!) / span))
   const day = (at: number) => new Date(at).toLocaleDateString('zh-CN', { timeZone: game.timezone, month: 'numeric', day: 'numeric' })
@@ -184,7 +190,7 @@ function VersionHero({ client, game, now }: { client: AdgClient; game: GameInfo;
 }
 
 /** Where the user stands in this game, and what runs it by itself. */
-function StatusCard({ client, game, running, soon, now, busy, onRead, onUnfollow, openSession, openScripts }: {
+function StatusCard({ client, game, running, soon, now, busy, onRead, onReadWeb, onUnfollow, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   running: readonly Activity[]
@@ -192,6 +198,7 @@ function StatusCard({ client, game, running, soon, now, busy, onRead, onUnfollow
   now: number
   busy: string | null
   onRead: () => void
+  onReadWeb: (source?: string) => void
   onUnfollow: () => void
   openSession: (id: string) => void
   openScripts: () => void
@@ -206,6 +213,9 @@ function StatusCard({ client, game, running, soon, now, busy, onRead, onUnfollow
       <div className="card-head">
         <div><h3>我的状态</h3><p className="muted small">进度来自你在活动卡片里勾的，和 agent 进游戏读到的。</p></div>
         <div className="game-actions">
+          <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title="agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历" onClick={() => onReadWeb()}>
+            <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : '让 agent 上网查活动'}
+          </button>
           {game.followed === true
             ? <button className="small-button" disabled={busy !== null} title="不再显示这个游戏" onClick={onUnfollow}>取消关注</button>
             : <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
@@ -223,15 +233,27 @@ function StatusCard({ client, game, running, soon, now, busy, onRead, onUnfollow
           {soon.slice(0, 4).map(a => <li key={a.id}><span className="tone-warn">{countdown(a.endsAt!, now)}</span><span>{a.name}</span>{a.todo.length > 0 && <span className="muted small">还没做：{a.todo.slice(0, 3).join('、')}</span>}</li>)}
         </ul>
       )}
-      {reading !== undefined && (
-        <div className={`reading ${reading.state}`}>
-          <span className={`badge ${reading.state === 'done' ? 'ok' : reading.state === 'failed' ? 'warn' : ''}`}>{reading.state === 'running' ? '读取中' : reading.state === 'done' ? '上次进游戏' : '没读完'}</span>
-          <span className="reading-text">{relativeTime(reading.at, now)}{reading.summary === undefined ? '' : `：${reading.summary}`}</span>
-          {reading.sessionId !== undefined && <button className="link-button" onClick={() => openSession(reading.sessionId!)}>查看对话</button>}
-        </div>
-      )}
+      {reading !== undefined && <ReadingLine what="进游戏" reading={reading} now={now} openSession={openSession} />}
+      {game.webReading !== undefined && <ReadingLine what="上网查" reading={game.webReading} now={now} openSession={openSession} />}
       <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
     </section>
+  )
+}
+
+/** What the agent did last (in the game, or on the web): when, how it went, its summary, and its conversation. */
+function ReadingLine({ what, reading, now, openSession }: { what: string; reading: NonNullable<GameInfo['reading']>; now: number; openSession: (id: string) => void }) {
+  // The summary is the agent's last words, markdown and all: plain text here.
+  const summary = reading.summary?.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim()
+  return (
+    <div className={`reading ${reading.state}`}>
+      <div className="reading-head">
+        <span className={`badge ${reading.state === 'done' ? 'ok' : reading.state === 'failed' ? 'warn' : ''}`}>{reading.state === 'running' ? `正在${what}` : reading.state === 'done' ? `上次${what}` : `${what}没完成`}</span>
+        <span className="muted small">{relativeTime(reading.at, now)}</span>
+        <span className="spacer" />
+        {reading.sessionId !== undefined && <button className="link-button small reading-open" onClick={() => openSession(reading.sessionId!)}>查看对话<Icon name="chevron" /></button>}
+      </div>
+      {summary !== undefined && summary !== '' && <p className="reading-summary" title={summary}>{summary}</p>}
+    </div>
   )
 }
 
