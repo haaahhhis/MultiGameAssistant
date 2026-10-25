@@ -10,15 +10,16 @@
  *
  * Nothing here names a particular script: behaviour comes from Script Packs.
  */
-import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, checkEnvironment, compareVersions, download, extract, GitHubClient, matchesDetect, probeProject, systemHost,
-  type EnvChecker, type EnvHost, type FixPlan,
+  applyFix, applyMirrorChanges, archiveKind, checkEnvironment, compareVersions, download, extract, GitHubClient, matchesDetect, mirrorLatest, probeProject, systemHost,
+  type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
 import type { EnvReport, InstallSettings, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
+import { mirrorResourceFor } from './mirror-resources.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
 import { DEFAULT_SETTINGS, StateStore, type LibraryState, type StoredScript, type StoredVersion } from './state.ts'
 
@@ -36,6 +37,8 @@ export interface LibraryOptions {
   readonly envHost?: EnvHost
   readonly runElevated?: (file: string, args: readonly string[]) => Promise<number>
   readonly fetch?: typeof globalThis.fetch
+  /** Mirror酱's address (tests point it at a fake). @default https://mirrorchyan.com */
+  readonly mirrorchyanBase?: string
   readonly now?: () => number
   readonly onChanged: (id?: string) => void
   readonly onJob: (job: ScriptJob) => void
@@ -155,8 +158,27 @@ export class ScriptLibrary {
     if (!this.#jobs.cancel(jobId)) throw new Error('任务不存在或已结束')
   }
 
-  async settings(): Promise<InstallSettings & { tokenConfigured: boolean }> {
-    return { ...this.#state.settings, tokenConfigured: await this.#options.credentialConfigured(this.#state.settings.tokenRef) }
+  async settings(): Promise<InstallSettings & { tokenConfigured: boolean; cdkConfigured: boolean }> {
+    return {
+      ...this.#state.settings,
+      tokenConfigured: await this.#options.credentialConfigured(this.#state.settings.tokenRef),
+      cdkConfigured: await this.#options.credentialConfigured(this.#state.settings.cdkRef),
+    }
+  }
+
+  /** Ask Mirror酱 with the CDK (for a script it carries) whether the CDK works, and until when. */
+  async checkMirrorCdk(signal?: AbortSignal): Promise<{ ok: boolean; message: string; expiresAt?: number }> {
+    const cdk = await this.#options.credential(this.#state.settings.cdkRef)
+    if (cdk === undefined || cdk === '') return { ok: false, message: '还没有填写 Mirror酱 CDK' }
+    const resource = [...this.#packs.values()].map(p => p.manifest.source.mirrorchyan).find(r => r !== undefined)
+    if (resource === undefined) return { ok: false, message: '没有在 Mirror酱 发布的脚本包，无法检查' }
+    try {
+      const latest = await mirrorLatest(resource, this.#mirrorOptions(cdk, signal))
+      const until = latest.cdkExpiresAt === undefined ? '' : `，到 ${new Date(latest.cdkExpiresAt).toLocaleDateString('zh-CN')} 到期`
+      return { ok: true, message: `CDK 可用${until}`, ...(latest.cdkExpiresAt === undefined ? {} : { expiresAt: latest.cdkExpiresAt }) }
+    } catch (error) {
+      return { ok: false, message: errorText(error) }
+    }
   }
 
   async setSettings(patch: { [K in keyof InstallSettings]?: InstallSettings[K] | undefined }): Promise<InstallSettings> {
@@ -216,8 +238,7 @@ export class ScriptLibrary {
     const script = this.#script(id)
     if (script.source.kind !== 'github') throw new Error('本地导入的脚本没有发布来源，无法检查更新')
     const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
-    const latest = await this.#github().latest(script.source.repo, { includePrereleases: this.#prereleases(pack), ...(signal === undefined ? {} : { signal }) })
-    const version = versionOfTag(latest.tag)
+    const version = await this.#latestVersion(script.source.repo, pack, signal)
     const available = script.current === undefined || compareVersions(version, script.current) > 0 || (compareVersions(version, script.current) === 0 && version !== script.current)
     script.update = { latest: version, available, checkedAt: this.#now() }
     await this.#save()
@@ -234,27 +255,11 @@ export class ScriptLibrary {
   }
 
   async #installJob(scriptId: string, request: InstallRequest, ctl: JobControl): Promise<string> {
-    const settings = this.#state.settings
     const pack = packForRepo(this.#packs, request.repo)
-    ctl.phase('resolving', { message: `读取 ${request.repo} 的发布信息` })
-    const github = this.#github()
-    const release = request.tag === undefined
-      ? await github.latest(request.repo, { includePrereleases: this.#prereleases(pack), signal: ctl.signal })
-      : await github.release(request.repo, request.tag, ctl.signal)
-    const asset = request.asset === undefined
-      ? (() => {
-        const choice = chooseAsset(release.assets, { ...globsOf(pack), tag: release.tag })
-        if (choice.asset === undefined) throw new Error(`${choice.reason}。可选文件：${release.assets.map(a => a.name).join('、') || '（无）'}`)
-        return choice.asset
-      })()
-      : release.assets.find(a => a.name === request.asset) ?? (() => { throw new Error(`${release.tag} 里没有文件 ${request.asset}`) })()
-
-    const version = versionOfTag(release.tag)
-    const scriptDir = join(this.toolsDir, scriptId)
-    const versionDir = join(scriptDir, dirName(version))
     let script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
-
+    const fetched = await this.#fromMirror(scriptId, request, pack, previous, ctl) ?? await this.#fromGitHub(scriptId, request, pack, ctl)
+    const { version, versionDir } = fetched
     if (script?.versions.some(v => v.version === version) === true) {
       script.current = version
       await this.#save()
@@ -262,25 +267,6 @@ export class ScriptLibrary {
       ctl.phase('done', { message: `${version} 已安装，已切换为当前版本` })
       return version
     }
-
-    const archive = join(scriptDir, '.downloads', asset.name)
-    ctl.phase('downloading', { message: asset.name, received: 0, total: asset.size })
-    await download({
-      url: asset.downloadUrl,
-      dest: archive,
-      mirror: settings.downloadMirror,
-      mirrorFallback: settings.mirrorFallback,
-      expectedSize: asset.size,
-      ...(asset.digest === undefined ? {} : { digest: asset.digest }),
-      signal: ctl.signal,
-      onProgress: (received, total) => ctl.phase('downloading', { message: asset.name, received, ...(total === undefined ? {} : { total }) }),
-      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
-    })
-
-    ctl.phase('extracting', { message: `解压到 ${versionDir}` })
-    await rm(versionDir, { recursive: true, force: true })
-    await extract(archive, versionDir, { signal: ctl.signal, ...(pack?.manifest.install.root === undefined ? {} : { root: pack.manifest.install.root }) })
-    await rm(archive, { force: true })
     if (previous !== undefined && pack !== undefined) {
       const carried = await carryConfig(pack, previous.dir, versionDir)
       if (carried.length > 0) this.#options.log.info(`${scriptId}: carried ${carried.length} config file(s) from ${previous.version}`)
@@ -298,7 +284,7 @@ export class ScriptLibrary {
       }
       this.#state.scripts.push(script)
     }
-    script.versions.push({ version, dir: versionDir, installedAt: this.#now(), asset: { name: asset.name, size: asset.size } })
+    script.versions.push({ version, dir: versionDir, installedAt: this.#now(), asset: fetched.asset })
     script.current = version
     delete script.update
     script.probe = await probeProject(versionDir)
@@ -312,6 +298,153 @@ export class ScriptLibrary {
       await this.envCheck(scriptId)
     }
     return version
+  }
+
+  /** The release's file from GitHub (through the download mirror), unpacked into its version's folder. */
+  async #fromGitHub(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, ctl: JobControl): Promise<Fetched> {
+    const settings = this.#state.settings
+    ctl.phase('resolving', { message: `读取 ${request.repo} 的发布信息` })
+    const github = this.#github()
+    const release = request.tag === undefined
+      ? await github.latest(request.repo, { includePrereleases: this.#prereleases(pack), signal: ctl.signal })
+      : await github.release(request.repo, request.tag, ctl.signal)
+    const asset = request.asset === undefined
+      ? (() => {
+        const choice = chooseAsset(release.assets, { ...globsOf(pack), tag: release.tag })
+        if (choice.asset === undefined) throw new Error(`${choice.reason}。可选文件：${release.assets.map(a => a.name).join('、') || '（无）'}`)
+        return choice.asset
+      })()
+      : release.assets.find(a => a.name === request.asset) ?? (() => { throw new Error(`${release.tag} 里没有文件 ${request.asset}`) })()
+    const version = versionOfTag(release.tag)
+    const versionDir = join(this.toolsDir, scriptId, dirName(version))
+    if (this.#state.scripts.find(s => s.id === scriptId)?.versions.some(v => v.version === version) === true) return { version, versionDir, asset: { name: asset.name, size: asset.size } }
+
+    const archive = join(this.toolsDir, scriptId, '.downloads', asset.name)
+    ctl.phase('downloading', { message: asset.name, received: 0, total: asset.size })
+    await download({
+      url: asset.downloadUrl,
+      dest: archive,
+      mirror: settings.downloadMirror,
+      mirrorFallback: settings.mirrorFallback,
+      expectedSize: asset.size,
+      ...(asset.digest === undefined ? {} : { digest: asset.digest }),
+      signal: ctl.signal,
+      onProgress: (received, total) => ctl.phase('downloading', { message: asset.name, received, ...(total === undefined ? {} : { total }) }),
+      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+    })
+    ctl.phase('extracting', { message: `解压到 ${versionDir}` })
+    await rm(versionDir, { recursive: true, force: true })
+    await extract(archive, versionDir, { signal: ctl.signal, ...(pack?.manifest.install.root === undefined ? {} : { root: pack.manifest.install.root }) })
+    await rm(archive, { force: true })
+    return { version, versionDir, asset: { name: asset.name, size: asset.size } }
+  }
+
+  /**
+   * With the user's CDK and a script published on Mirror酱 (installing or
+   * updating to the latest): download it from there, as an incremental
+   * package over the current version when Mirror酱 has one.
+   * @returns undefined to use GitHub instead (no CDK, a specific release
+   * asked for, nothing on Mirror酱, a CDK problem — said in the job's message).
+   */
+  async #fromMirror(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, previous: StoredVersion | undefined, ctl: JobControl): Promise<Fetched | undefined> {
+    const resource = mirrorResourceFor(pack, request.repo)
+    if (resource === undefined || request.tag !== undefined || request.asset !== undefined) return undefined
+    const cdk = await this.#options.credential(this.#state.settings.cdkRef)
+    if (cdk === undefined || cdk === '') return undefined
+    const options = this.#mirrorOptions(cdk, ctl.signal)
+    let latest: MirrorLatest
+    try {
+      ctl.phase('resolving', { message: `从 Mirror酱 查询 ${resource.rid} 的最新版本` })
+      latest = await mirrorLatest(resource, options)
+      // Asked again from the version installed: Mirror酱 then hands out only what changed.
+      if (previous !== undefined && compareVersions(versionOfTag(latest.version), previous.version) > 0) {
+        const from = latest.version.startsWith('v') ? `v${previous.version}` : previous.version
+        const incremental = await mirrorLatest(resource, { ...options, currentVersion: from }).catch(() => undefined)
+        if (incremental?.url !== undefined && incremental.version === latest.version) latest = incremental
+      }
+    } catch (error) {
+      if (ctl.signal.aborted) throw error
+      this.#options.log.warn(`${scriptId}: Mirror酱: ${errorText(error)}`)
+      ctl.phase('resolving', { message: `${errorText(error)}；改从 GitHub 下载` })
+      return undefined
+    }
+    const version = versionOfTag(latest.version)
+    const versionDir = join(this.toolsDir, scriptId, dirName(version))
+    const name = `Mirror酱 ${latest.updateType === 'incremental' ? '增量包' : '完整包'} ${latest.version}`
+    if (this.#state.scripts.find(s => s.id === scriptId)?.versions.some(v => v.version === version) === true) return { version, versionDir, asset: { name, size: latest.size ?? 0 } }
+    if (latest.url === undefined) {
+      ctl.phase('resolving', { message: 'Mirror酱 没有给出下载地址；改从 GitHub 下载' })
+      return undefined
+    }
+
+    const incremental = latest.updateType === 'incremental' && previous !== undefined
+    const file = mirrorFileName(latest.url, resource.rid, latest.version)
+    const archive = join(this.toolsDir, scriptId, '.downloads', file)
+    ctl.phase('downloading', { message: `${name}（Mirror酱）`, received: 0, ...(latest.size === undefined ? {} : { total: latest.size }) })
+    await download({
+      url: latest.url,
+      dest: archive,
+      ...(latest.size === undefined ? {} : { expectedSize: latest.size }),
+      ...(latest.sha256 === undefined ? {} : { digest: `sha256:${latest.sha256}` }),
+      signal: ctl.signal,
+      onProgress: (received, total) => ctl.phase('downloading', { message: `${name}（Mirror酱）`, received, ...(total === undefined ? {} : { total }) }),
+      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+    })
+    ctl.phase('extracting', { message: incremental ? `在 ${previous.version} 的基础上更新到 ${version}` : `解压到 ${versionDir}` })
+    await rm(versionDir, { recursive: true, force: true })
+    const root = pack?.manifest.install.root
+    if (!incremental) {
+      await extract(archive, versionDir, { signal: ctl.signal, ...(root === undefined ? {} : { root }) })
+    } else {
+      // A copy of the installed version, the changed files over it, then what changes.json says went away.
+      const patch = `${versionDir}.patch`
+      await rm(patch, { recursive: true, force: true })
+      await extract(archive, patch, { signal: ctl.signal })
+      try {
+        await cp(previous.dir, versionDir, { recursive: true })
+        // The files may sit under the package's top folder, which the full install lifted off (or under the pack's root).
+        const entries = (await readdir(patch, { withFileTypes: true })).filter(e => e.name !== 'changes.json')
+        const top = entries.length === 1 && entries[0]!.isDirectory() && !(await stat(join(previous.dir, entries[0]!.name)).then(() => true, () => false)) ? entries[0]!.name : undefined
+        const prefix = root !== undefined && await stat(join(patch, root)).then(() => true, () => false) ? root : top
+        const from = prefix === undefined ? patch : join(patch, prefix)
+        await cp(from, versionDir, { recursive: true, force: true })
+        if (from !== patch && await stat(join(patch, 'changes.json')).then(() => true, () => false)) await copyFile(join(patch, 'changes.json'), join(versionDir, 'changes.json'))
+        const removed = await applyMirrorChanges(versionDir, prefix?.replace(/\\/g, '/'))
+        if (removed > 0) this.#options.log.info(`${scriptId}: the incremental package removed ${removed} file(s)`)
+      } catch (error) {
+        await rm(versionDir, { recursive: true, force: true })
+        throw error
+      } finally {
+        await rm(patch, { recursive: true, force: true })
+      }
+    }
+    await rm(archive, { force: true })
+    return { version, versionDir, asset: { name, size: latest.size ?? 0 } }
+  }
+
+  /** The newest version where the update will come from: Mirror酱 with a CDK (for a script published there), else GitHub. */
+  async #latestVersion(repo: string, pack: LoadedPack | undefined, signal?: AbortSignal): Promise<string> {
+    const resource = mirrorResourceFor(pack, repo)
+    const cdk = resource === undefined ? undefined : await this.#options.credential(this.#state.settings.cdkRef)
+    if (resource !== undefined && cdk !== undefined && cdk !== '') {
+      try {
+        return versionOfTag((await mirrorLatest(resource, this.#mirrorOptions(undefined, signal))).version)
+      } catch (error) {
+        if (signal?.aborted === true) throw error
+        this.#options.log.warn(`${repo}: Mirror酱: ${errorText(error)}; asking GitHub`)
+      }
+    }
+    const latest = await this.#github().latest(repo, { includePrereleases: this.#prereleases(pack), ...(signal === undefined ? {} : { signal }) })
+    return versionOfTag(latest.tag)
+  }
+
+  #mirrorOptions(cdk: string | undefined, signal: AbortSignal | undefined) {
+    return {
+      ...(cdk === undefined ? {} : { cdk }),
+      ...(signal === undefined ? {} : { signal }),
+      ...(this.#options.mirrorchyanBase === undefined ? {} : { base: this.#options.mirrorchyanBase }),
+      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+    }
   }
 
   /** Keep the newest `keepVersions` versions, always including the current one. */
@@ -506,6 +639,7 @@ export class ScriptLibrary {
       versions: [...script.versions].sort((a, b) => b.installedAt - a.installedAt).map(v => ({ ...v, current: v.version === script.current })),
       addedAt: script.addedAt,
       ...(script.packId === undefined ? {} : { packId: script.packId }),
+      ...(script.source.kind === 'github' && mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), script.source.repo) !== undefined ? { mirrorchyan: mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), script.source.repo)!.rid } : {}),
       ...(script.family === undefined ? {} : { family: script.family }),
       ...(current === undefined ? {} : { current: current.version, dir: current.dir }),
       ...(script.env === undefined ? {} : { env: script.env }),
@@ -529,6 +663,22 @@ export class ScriptLibrary {
   #save(): Promise<void> {
     return this.#store.save(this.#state)
   }
+}
+
+/** What an install job fetched and unpacked. */
+interface Fetched {
+  readonly version: string
+  readonly versionDir: string
+  readonly asset: { name: string; size: number }
+}
+
+/** The archive's name from Mirror酱's download link, or one made up with a zip extension. */
+function mirrorFileName(url: string, rid: string, version: string): string {
+  try {
+    const name = basename(new URL(url).pathname)
+    if (archiveKind(name) !== undefined) return name
+  } catch { /* a made-up name below */ }
+  return `mirrorchyan-${rid}-${version}.zip`.replace(/[\\/:*?"<>|]/g, '_')
 }
 
 function currentVersion(script: StoredScript): StoredVersion | undefined {
@@ -585,4 +735,8 @@ async function carryConfig(pack: LoadedPack, fromDir: string, toDir: string): Pr
     }
   }
   return copied
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

@@ -11,6 +11,10 @@ source:
   homepage: https://m7a.top
   release:
     asset: ['March7thAssistant_full.zip', 'March7thAssistant_full.7z']
+  # Uploaded once for every platform: asked without os and arch.
+  mirrorchyan:
+    rid: March7thAssistant
+    platform: false
 config:
   files:
     - path: config.yaml

@@ -1,18 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { ReleaseInfo } from '@adg/protocol'
+import type { ReleaseInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
-import { errorText, formatBytes } from './data.ts'
+import { errorText, formatBytes, PHASE_LABEL } from './data.ts'
 
 /**
  * Install from a GitHub release: pick the repository, then the release and
  * file (the suggested file is preselected). Starting the install is the user's
- * explicit confirmation of where the code comes from.
+ * explicit confirmation of where the code comes from. The panel then follows
+ * the install (steps, bytes, speed) until it is done, failed or cancelled.
  */
-export function InstallPanel({ client, initialRepo, onStarted, onClose }: {
+export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
   client: AdgClient
   initialRepo?: string
-  onStarted: (scriptId: string) => void
+  /** The library's jobs by script id (useScriptJobs). */
+  jobs: ReadonlyMap<string, ScriptJob>
+  /** Show the installed script. */
+  onDone: (scriptId: string) => void
   onClose: () => void
 }) {
   const [repo, setRepo] = useState(initialRepo ?? '')
@@ -21,6 +25,7 @@ export function InstallPanel({ client, initialRepo, onStarted, onClose }: {
   const [asset, setAsset] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [started, setStarted] = useState<{ jobId: string; scriptId: string; tag: string; asset: string; size?: number | undefined } | null>(null)
 
   const load = async (value = repo) => {
     const target = value.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$|\/$/g, '')
@@ -57,12 +62,21 @@ export function InstallPanel({ client, initialRepo, onStarted, onClose }: {
     setBusy(true)
     setError(null)
     try {
-      const { scriptId } = await client.connection.call('scripts/install', { repo: loaded.repo, tag: release.tag, asset })
-      onStarted(scriptId)
+      const { jobId, scriptId } = await client.connection.call('scripts/install', { repo: loaded.repo, tag: release.tag, asset })
+      setStarted({ jobId, scriptId, tag: release.tag, asset, size: release.assets.find(a => a.name === asset)?.size })
     } catch (e) {
       setError(errorText(e))
+    } finally {
       setBusy(false)
     }
+  }
+
+  if (started !== null && loaded !== null) {
+    const job = jobs.get(started.scriptId)
+    return (
+      <InstallProgress client={client} repo={loaded.repo} {...started} job={job?.id === started.jobId ? job : undefined}
+        onDone={() => onDone(started.scriptId)} onRetry={() => setStarted(null)} onClose={onClose} />
+    )
   }
 
   return (
@@ -111,6 +125,111 @@ export function InstallPanel({ client, initialRepo, onStarted, onClose }: {
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </section>
   )
+}
+
+const STEPS: readonly ScriptJob['phase'][] = ['resolving', 'downloading', 'verifying', 'extracting', 'checking', 'done']
+
+/** An install under way: where it comes from, each step, and while downloading how much, how fast and how long is left. */
+function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry, onClose }: {
+  client: AdgClient
+  repo: string
+  tag: string
+  asset: string
+  size?: number | undefined
+  job: ScriptJob | undefined
+  onDone: () => void
+  onRetry: () => void
+  onClose: () => void
+}) {
+  const phase = job?.phase ?? 'queued'
+  const running = job === undefined || job.endedAt === undefined
+  const speed = useSpeed(job?.received)
+  const total = job?.total ?? size
+  const ratio = total !== undefined && total > 0 && job?.received !== undefined ? Math.min(1, job.received / total) : undefined
+  // The furthest step reached: a failed or cancelled job stops there.
+  const reached = useRef(-1)
+  const at = STEPS.indexOf(phase)
+  if (at > reached.current) reached.current = at
+  const title = phase === 'done' ? '安装完成' : phase === 'failed' ? '安装失败' : phase === 'cancelled' ? '已取消安装' : '正在安装'
+  const stepState = (i: number): string => {
+    if (phase === 'done' || i < reached.current) return 'done'
+    if (i === reached.current) return running ? 'active' : 'stopped'
+    return 'todo'
+  }
+  return (
+    <section className="card panel-card install-progress" aria-live="polite">
+      <div className="card-head">
+        <div>
+          <h3>{title}</h3>
+          <p className="muted small">{repo} · {tag}</p>
+        </div>
+        <button className="icon-button" aria-label="关闭" title={running ? '关掉面板，安装在后台继续（左边列表里能看到进度）' : '关闭'} onClick={onClose}><Icon name="close" /></button>
+      </div>
+      <div className="install-file"><Icon name="package" /><span className="asset-name">{asset}</span>{size !== undefined && <span className="muted small">{formatBytes(size)}</span>}</div>
+
+      <ol className="install-steps">
+        {STEPS.slice(0, -1).map((step, i) => {
+          const state = stepState(i)
+          return (
+            <li key={step} className={`install-step ${state}`}>
+              <span className="install-step-mark">{state === 'done' ? <Icon name="check" /> : state === 'stopped' ? <Icon name="close" /> : i + 1}</span>
+              <span>{PHASE_LABEL[step]}</span>
+            </li>
+          )
+        })}
+      </ol>
+
+      {running && (
+        <div className="install-bar">
+          <div className={`progress ${phase === 'downloading' && ratio !== undefined ? '' : 'indeterminate'}`} aria-hidden="true">
+            <span style={phase === 'downloading' && ratio !== undefined ? { width: `${(ratio * 100).toFixed(1)}%` } : undefined} />
+          </div>
+          <div className="install-numbers muted small">
+            <span>{job === undefined ? '等待开始…' : job.message ?? PHASE_LABEL[phase]}</span>
+            {phase === 'downloading' && job?.received !== undefined && (
+              <span className="install-bytes">
+                {formatBytes(job.received)}{total !== undefined ? ` / ${formatBytes(total)}` : ''}
+                {ratio !== undefined ? ` · ${Math.floor(ratio * 100)}%` : ''}
+                {speed !== undefined ? ` · ${formatBytes(Math.round(speed))}/s` : ''}
+                {speed !== undefined && speed > 0 && total !== undefined ? ` · 还要 ${duration((total - job.received) / speed)}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {job?.error !== undefined && <div className="notice error left"><Icon name="alert" /><span>{job.error}</span></div>}
+
+      <div className="key-actions">
+        <span className="muted small">{running ? '可以关掉这个面板，安装会在后台继续。' : phase === 'done' ? `已安装 ${job?.version ?? tag}。` : ''}</span>
+        <span className="spacer" />
+        {running && job !== undefined && <button className="small-button" onClick={() => void client.connection.call('scripts/jobs/cancel', { jobId: job.id }).catch(() => {})}>取消安装</button>}
+        {(phase === 'failed' || phase === 'cancelled') && <button className="small-button" onClick={onRetry}>重新选择</button>}
+        {phase === 'done' && <button className="primary small-button" onClick={onDone}>查看脚本</button>}
+      </div>
+    </section>
+  )
+}
+
+/** Bytes per second over the last few seconds of a growing count. */
+function useSpeed(received: number | undefined): number | undefined {
+  const samples = useRef<{ at: number; bytes: number }[]>([])
+  const [speed, setSpeed] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    if (received === undefined) return
+    const now = Date.now()
+    const list = [...samples.current.filter(s => now - s.at <= 4000 && s.bytes <= received), { at: now, bytes: received }]
+    samples.current = list
+    const first = list[0]!
+    if (now - first.at >= 500) setSpeed((received - first.bytes) / ((now - first.at) / 1000))
+  }, [received])
+  return speed
+}
+
+/** "12 秒", "3 分 5 秒". */
+function duration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} 秒`
+  return `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`
 }
 
 /** Register a directory the user already has, in place. */

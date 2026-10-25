@@ -1305,3 +1305,20 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .inspector-section .slash-list { width: 100%; max-height: 240px; }
 .inspector-section .slash-tip { position: static; width: auto; margin-top: 6px; }
 .inspector-section .slash-anchor > p { margin: 6px 0 0; }
+/* the install panel following an install (scripts/InstallPanel.tsx) */
+.install-file { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); font-size: 13px; }
+.install-file .asset-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.install-steps { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+.install-step { display: inline-flex; align-items: center; gap: 6px; }
+.install-step-mark { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); font-size: 11px; }
+.install-step-mark .ui-icon { width: 11px; height: 11px; }
+.install-step.active { color: var(--text); font-weight: 500; }
+.install-step.active .install-step-mark { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.install-step.done { color: var(--text-2); }
+.install-step.done .install-step-mark { border-color: var(--ok); background: var(--ok); color: var(--raised); }
+.install-step.stopped { color: var(--error); }
+.install-step.stopped .install-step-mark { border-color: var(--error); color: var(--error); }
+.install-bar { display: flex; flex-direction: column; gap: 6px; }
+.install-bar .progress { height: 6px; }
+.install-numbers { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.install-bytes { font-family: var(--mono); font-size: 12px; }

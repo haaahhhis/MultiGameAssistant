@@ -324,7 +324,7 @@ function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; g
   return (
     <div className="game-schedule-runs">
       <div className="field-title">日程</div>
-      {game.scripts.length === 0 && <p className="muted small">这个游戏没有脚本，只看活动。</p>}
+      {game.scripts.length === 0 && <p className="muted small">还没有玩它的脚本。在<button className="link-button" onClick={openScripts}>脚本页</button>安装或导入后，名字或仓库里提到这个游戏的脚本会自动对上。</p>}
       {game.scripts.length > 0 && (
         <p className="muted small">
           玩它的脚本：{game.scripts.map((s, i) => <span key={s}>{i > 0 ? '、' : ''}<button className="link-button" onClick={openScripts}>{s}</button></span>)}

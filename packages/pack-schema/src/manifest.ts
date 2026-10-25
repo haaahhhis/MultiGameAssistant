@@ -269,6 +269,15 @@ export const ScriptManifest = z.object({
       asset: z.union([z.string(), z.array(z.string()).min(1)]).optional(),
       channel: z.enum(['stable', 'prerelease']).default('stable'),
     }).optional(),
+    /**
+     * The project's resource on Mirror酱 (mirrorchyan.com): with the user's
+     * CDK, updates download from there (incremental when possible) instead of GitHub.
+     */
+    mirrorchyan: z.object({
+      rid: z.string().min(1).max(100),
+      /** Uploaded per system and architecture (asked with os=windows, arch=x64). */
+      platform: z.boolean().default(true),
+    }).optional(),
   }).default({}),
   install: z.object({
     requires: z.array(Requirement).default([]),

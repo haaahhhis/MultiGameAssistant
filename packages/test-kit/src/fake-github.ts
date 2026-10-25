@@ -36,6 +36,8 @@ export interface FakeRelease {
 export interface FakeGitHubOptions {
   /** `owner/repo` → releases. */
   readonly repos: Readonly<Record<string, readonly FakeRelease[]>>
+  /** Send downloads at this speed, like a slow connection (default: at once). */
+  readonly bytesPerSecond?: number
 }
 
 export type FakeFault =
@@ -74,6 +76,21 @@ export async function startFakeGitHub(options: FakeGitHubOptions): Promise<FakeG
     route(path, req, res)
   })
 
+  /** A download body, all at once or at `bytesPerSecond` in tenths of a second. */
+  function send(res: ServerResponse, body: Buffer): void {
+    const rate = options.bytesPerSecond
+    if (rate === undefined || rate <= 0) { res.end(body); return }
+    const chunk = Math.max(1, Math.floor(rate / 10))
+    let at = 0
+    const timer = setInterval(() => {
+      if (res.destroyed) { clearInterval(timer); return }
+      const next = Math.min(body.length, at + chunk)
+      res.write(body.subarray(at, next))
+      at = next
+      if (at >= body.length) { clearInterval(timer); res.end() }
+    }, 100)
+  }
+
   function route(path: string, req: IncomingMessage, res: ServerResponse): void {
     if (req.method !== 'GET') return json(res, 405, { message: 'Method Not Allowed' })
     const download = /^\/download\/([^/]+\/[^/]+)\/([^/]+)\/([^/]+)$/.exec(path)
@@ -91,11 +108,11 @@ export async function startFakeGitHub(options: FakeGitHubOptions): Promise<FakeG
           return
         }
         res.writeHead(206, { 'content-type': asset.contentType ?? 'application/octet-stream', 'content-length': body.length - start, 'content-range': `bytes ${start}-${body.length - 1}/${body.length}` })
-        res.end(body.subarray(start))
+        send(res, body.subarray(start))
         return
       }
       res.writeHead(200, { 'content-type': asset.contentType ?? 'application/octet-stream', 'content-length': body.length })
-      res.end(body)
+      send(res, body)
       return
     }
     if (path === '/search/repositories') {

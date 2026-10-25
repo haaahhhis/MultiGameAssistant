@@ -61,6 +61,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
             <span className="chip">{script.id}</span>
             {script.family !== undefined && <span className="badge">{FAMILY_LABEL[script.family] ?? script.family}</span>}
             {script.packId !== undefined ? <span className="badge ok">脚本包 {script.packId}</span> : <span className="badge warn">无脚本包</span>}
+            {script.mirrorchyan !== undefined && <span className="badge" title="填了 Mirror酱 CDK 后从 Mirror酱 更新（增量）">Mirror酱 {script.mirrorchyan}</span>}
             <span className="muted small">{github ? `GitHub · ${script.source.kind === 'github' ? script.source.repo : ''}` : '本地导入'}</span>
           </div>
         </div>

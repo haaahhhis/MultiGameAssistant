@@ -56,6 +56,7 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
       },
       'scripts/settings': () => library.settings(),
       'scripts/settings/set': params => library.setSettings(params as RequestParams<'scripts/settings/set'>),
+      'scripts/mirrorchyan/check': (_params, call) => library.checkMirrorCdk(call.signal),
     },
   }
 }

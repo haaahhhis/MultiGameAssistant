@@ -10,6 +10,8 @@ source:
   homepage: https://maa.plus
   release:
     asset: 'MAA-v{version}-win-x64.zip'
+  mirrorchyan:
+    rid: MAA
 install:
   requires:
     # The release bundles its own .NET (runtimeconfig "includedFrameworks"); only the VC++ runtime is needed.

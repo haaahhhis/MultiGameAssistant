@@ -15,6 +15,7 @@ import type {} from '@adg/gateway'
 import type {} from '@adg/intervene'
 import type {} from '@adg/notify'
 import type {} from '@adg/runner'
+import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
 import { GAMES_DIR } from '@adg/packs'
@@ -25,6 +26,7 @@ import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
 import { readSmw, readSra, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
+import { matchScripts } from './script-match.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
 
@@ -329,6 +331,38 @@ export class AdgGameIntel extends Service {
     this.changed(gameId)
   }
 
+  /**
+   * The scripts that play each game: the ones its pack lists, and installed
+   * scripts whose id, name, repository or pack names it (script-match.ts),
+   * so a script installed from any repository finds its game (ok-ww → 鸣潮).
+   */
+  private scriptsByGame(): Map<string, string[]> {
+    const out = new Map(this.games.map(g => [g.manifest.id, [...g.manifest.scripts]]))
+    const library = this.ctx.get('adgScripts')?.library
+    if (library === undefined) return out
+    const scripts = library.list().scripts.map(s => {
+      const pack = library.packOf(s.id)?.manifest
+      const folder = s.source.kind === 'local' ? s.source.path.split(/[\\/]/).filter(Boolean).at(-1) : undefined
+      const texts = [s.id, s.name, s.source.kind === 'github' ? s.source.repo : folder, pack?.name, pack?.game?.name, pack?.source.github]
+      return { id: s.id, texts: texts.filter((t): t is string => t !== undefined && t !== '') }
+    })
+    const games = this.games.map(({ manifest: m }) => ({
+      id: m.id,
+      words: [m.name, ...m.aliases, ...(m.id.startsWith('sra-') ? [] : [m.id]), ...m.sources.flatMap(s => SRA_GAMES.find(g => g.sra === s.sra?.game)?.words ?? [])],
+    }))
+    for (const [script, ids] of matchScripts(scripts, games)) {
+      for (const id of ids) {
+        const list = out.get(id)!
+        if (!list.includes(script)) list.push(script)
+      }
+    }
+    return out
+  }
+
+  private scriptsOf(gameId: string): string[] {
+    return this.scriptsByGame().get(gameId) ?? []
+  }
+
   private game(id: string): LoadedGame {
     const game = this.games.find(g => g.manifest.id === id)
     if (game === undefined) throw new Error(`没有游戏「${id}」`)
@@ -336,6 +370,7 @@ export class AdgGameIntel extends Service {
   }
 
   infos(): GameInfo[] {
+    const scripts = this.scriptsByGame()
     return this.games.map(({ manifest: m, builtin, followed }) => {
       const refreshed = this.calendar.refreshed(m.id)
       const reading = this.calendar.reading(m.id)
@@ -343,7 +378,7 @@ export class AdgGameIntel extends Service {
       const version = this.calendar.version(m.id)
       const pools = this.calendar.pools(m.id, this.clock.now())
       return {
-        id: m.id, name: m.name, aliases: m.aliases, scripts: m.scripts, timezone: m.timezone,
+        id: m.id, name: m.name, aliases: m.aliases, scripts: scripts.get(m.id) ?? m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
         sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
         builtin,
@@ -536,8 +571,9 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const runner = this.ctx.get('adgRunner')?.runner
     if (runner === undefined) throw new Error('运行插件没有加载，不能启动游戏')
-    const script = manifest.scripts.find(id => runner.hasPack(id))
-    if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本（${manifest.scripts.join('、') || '游戏包里没写'}），不知道怎么启动它；请用户先打开游戏，或先安装脚本并在脚本页设置「启动游戏」`)
+    const scripts = this.scriptsOf(manifest.id)
+    const script = scripts.find(id => runner.hasPack(id))
+    if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本（${scripts.join('、') || '游戏包里没写，也没有认出是玩它的脚本'}），不知道怎么启动它；请用户先打开游戏，或先安装脚本并在脚本页设置「启动游戏」`)
     const lines = await runner.startGame(script, manifest.screen?.target === 'emulator' ? 'emulator' : 'pc', signal)
     return { script, lines }
   }
@@ -551,7 +587,7 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const runner = this.ctx.get('adgRunner')?.runner
     if (runner === undefined) throw new Error('运行插件没有加载，不能关闭游戏')
-    const script = manifest.scripts.find(id => runner.hasPack(id))
+    const script = this.scriptsOf(manifest.id).find(id => runner.hasPack(id))
     if (script === undefined) throw new Error(`还没有安装玩${manifest.name}的脚本，不知道怎么找到它的进程；请用户自己关掉游戏`)
     const lines = await runner.closeGame(script, manifest.screen?.target === 'emulator' ? 'emulator' : 'pc', signal)
     return { script, lines }

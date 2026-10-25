@@ -83,6 +83,8 @@ export const ScriptInfo = z.object({
   source: ScriptSource,
   /** Script Pack describing it, when one matches. */
   packId: z.string().optional(),
+  /** Its resource id on Mirror酱: with a CDK, updates come from there. */
+  mirrorchyan: z.string().optional(),
   family: ScriptFamily.optional(),
   /** Current version and its directory; local imports use `local`. */
   current: z.string().optional(),
@@ -162,6 +164,8 @@ export const InstallSettings = z.object({
   keepVersions: z.number().int().min(1).max(10),
   /** Offer pre-releases when no stable release exists. */
   includePrereleases: z.boolean(),
+  /** Credential holding the user's Mirror酱 CDK: scripts published there update from it (incremental when possible). */
+  cdkRef: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
 })
 export type InstallSettings = z.infer<typeof InstallSettings>
 
@@ -270,7 +274,13 @@ export const ScriptRequests = {
   'scripts/settings': {
     capability: SCRIPTS_CAPABILITY,
     params: Empty,
-    result: InstallSettings.extend({ tokenConfigured: z.boolean() }),
+    result: InstallSettings.extend({ tokenConfigured: z.boolean(), cdkConfigured: z.boolean() }),
+  },
+  /** Try the Mirror酱 CDK: whether it works, and until when. */
+  'scripts/mirrorchyan/check': {
+    capability: SCRIPTS_CAPABILITY,
+    params: Empty,
+    result: z.object({ ok: z.boolean(), message: z.string(), expiresAt: z.number().optional() }),
   },
   'scripts/settings/set': {
     capability: SCRIPTS_CAPABILITY,

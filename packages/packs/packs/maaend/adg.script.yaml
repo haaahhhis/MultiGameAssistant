@@ -9,6 +9,8 @@ source:
   github: MaaEnd/MaaEnd
   release:
     asset: 'MaaEnd-win-x86_64-v{version}.zip'
+  mirrorchyan:
+    rid: MaaEnd
 install:
   requires:
     - kind: vcredist

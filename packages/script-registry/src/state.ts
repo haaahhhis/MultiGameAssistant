@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: InstallSettings = {
   tokenRef: 'GITHUB_TOKEN',
   keepVersions: 3,
   includePrereleases: false,
+  cdkRef: 'MIRRORCHYAN_CDK',
 }
 
 const StateFile = z.object({
