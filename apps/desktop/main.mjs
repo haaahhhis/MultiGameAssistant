@@ -399,7 +399,11 @@ async function launchHost() {
       reported = true
       clearTimeout(timer)
       stopHost()
-      void fail('agent 服务的网关没有启动', `${why}\n\n（脚本插件可能已经先启动了；网关等的服务没出现，界面就连不上。）`, true)
+      // "failed to import": dsh's own packages do not load — a broken install, not a setting.
+      const next = !/failed to import/.test(why) ? '' : installed === undefined
+        ? '\n\n有 dsh 的插件加载失败（failed to import），一般是 node_modules 坏了：在项目目录运行 pnpm check:dsh 看具体原因，pnpm install --force 通常能修好。'
+        : '\n\n有 dsh 的插件加载失败（failed to import），一般是安装不完整：重新运行安装程序（数据不会丢）。'
+      void fail('agent 服务的网关没有启动', `${why}\n\n（脚本插件可能已经先启动了；网关等的服务没出现，界面就连不上。）${next}`, true)
       return
     }
     const match = /adg gateway: (http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/.exec(line)
