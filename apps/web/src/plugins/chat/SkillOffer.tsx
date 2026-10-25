@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ChatItem, SessionHandle } from '@adg/client-core'
+import { SAVE_SKILL_PROMPT } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 
 /** A turn with at least this many successful steps worked something out worth keeping. */
@@ -9,14 +10,6 @@ const AUTOMATIC = /^(编排|游戏信息|干预)[：:]/
 const OFF_KEY = 'adg:skill-offer:off'
 const dismissedKey = (sessionId: string) => `adg:skill-offer:${sessionId}`
 
-/** What the agent is asked to do when the offer is taken. */
-export const SAVE_SKILL_PROMPT = [
-  '把这次走通的做法保存成技能（用 skill_save），让下次同样的事可以直接照着做、少调用模型。要求：',
-  '- 只写最后成功的路径，不写失败的尝试和闲聊；',
-  '- 写清楚适用场景（用户会怎么说）、一步一步的操作（用到的工具、命令、路径、参数照实写，会变的写成「把 X 换成…」）、怎样算成功、注意事项和踩过的坑；',
-  '- 名字用简短的英文小写加短横线，description 一两句话说清楚做什么、什么时候用；',
-  '- 保存后告诉我技能名，以及以后我说什么时会用到它。',
-].join('\n')
 
 function read(key: string): string | null {
   try { return localStorage.getItem(key) } catch { return null }

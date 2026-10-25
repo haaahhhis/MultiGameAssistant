@@ -71,6 +71,13 @@ export class AdgOrchestrator extends Service {
         const sessions = ctx.get('sessionController')
         return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
       },
+      skills: async () => {
+        const registry = ctx.get('skills')
+        if (registry === undefined) return []
+        const workspace = ctx.get('adgGateway')?.workspaceDir()
+        const list = await registry.list({ ...(workspace === undefined ? {} : { cwd: workspace }), signal: AbortSignal.timeout(10_000) })
+        return list.filter(s => s.invocation.userInvocable).map(s => ({ name: s.name, description: s.description }))
+      },
       emulators: () => {
         const emulators = ctx.get('adgEmulators') as { stop?: (index?: number) => Promise<void> } | undefined
         return emulators?.stop === undefined ? undefined : { stop: () => emulators.stop!() }

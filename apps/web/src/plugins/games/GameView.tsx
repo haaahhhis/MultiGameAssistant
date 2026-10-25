@@ -108,8 +108,10 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
                 ? <span className="source-name" title="每天自动读取（不用模型）"><span className="source-dot auto" />{s.name}</span>
                 : <button className="source-name" disabled={busy !== null || game.webReading?.state === 'running'} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
               {s.homepage !== undefined && <a className="source-open" href={s.homepage} target="_blank" rel="noreferrer" title="在浏览器里打开" aria-label={`打开${s.name}`}><Icon name="popout" /></a>}
+              {s.added === true && <button className="source-open" title="不再读这个网址" aria-label={`删除${s.name}`} onClick={() => void client.connection.call('games/source/remove', { game: game.id, source: s.id }).then(onChanged, () => {})}><Icon name="close" /></button>}
             </span>
           ))}
+          <AddLink client={client} game={game} onAdded={onChanged} />
           {game.refreshed !== undefined && <span className="muted small">{relativeTime(game.refreshed.at, now)}刷新</span>}
           {game.refreshed !== undefined && !game.refreshed.ok && <span className="tone-error small">上次没读到：{game.refreshed.detail}</span>}
         </div>
@@ -190,6 +192,36 @@ function VersionHero({ client, game, now, covers }: { client: AdgClient; game: G
 }
 
 /** Where the user stands in this game, and what runs it by itself. */
+/** 「添加网址」: a page about the game (news, a wiki page, a post) the agent reads now and on 「agent 读」 later. */
+function AddLink({ client, game, onAdded }: { client: AdgClient; game: GameInfo; onAdded: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  if (!open) return <button className="source-add" onClick={() => setOpen(true)} title="添加一个关于这个游戏的网页，agent 会去读它"><Icon name="plus" />添加网址</button>
+  const add = async () => {
+    const value = url.trim()
+    if (value === '') return
+    setBusy(true)
+    setError(null)
+    try {
+      await client.connection.call('games/source/add', { game: game.id, url: /^https?:\/\//.test(value) ? value : `https://${value}` })
+      setUrl('')
+      setOpen(false)
+      onAdded()
+    } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  }
+  return (
+    <form className="source-form" onSubmit={e => { e.preventDefault(); void add() }}>
+      <input className="text-input plain" autoFocus type="text" inputMode="url" placeholder="https://… 官网公告、Wiki 页面、帖子" value={url} disabled={busy}
+        onChange={e => setUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }} />
+      <button className="small-button primary" type="submit" disabled={busy || url.trim() === ''}>{busy ? '添加中…' : '添加并读取'}</button>
+      <button className="small-button" type="button" onClick={() => { setOpen(false); setError(null) }}>取消</button>
+      {error !== null && <span className="tone-error small">{error}</span>}
+    </form>
+  )
+}
+
 function StatusCard({ client, game, running, soon, now, busy, onRead, onReadWeb, onUnfollow, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo

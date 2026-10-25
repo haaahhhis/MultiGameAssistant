@@ -11,7 +11,7 @@
  * Pure apart from the injected runner, chat and agent ports; tests drive it
  * with fake scripts.
  */
-import { isMarker, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
+import { expandSlash, isMarker, type SlashSkill, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
 import type { Conversations } from '@adg/notify'
 import { BusyError, type Runner } from '@adg/runner'
 import { checkPipeline, nodeLabel, type CheckLibrary } from './check.ts'
@@ -30,6 +30,8 @@ export interface EngineDeps {
   readonly library: CheckLibrary
   readonly notices: () => { send(notice: EngineNotice): Promise<readonly string[]>; update(id: string, patch: { done?: string }): Promise<void> } | undefined
   readonly conversations: () => Conversations | undefined
+  /** The skills an agent step can call with `/name` (none: only the app's commands expand). */
+  readonly skills?: () => Promise<readonly SlashSkill[]>
   readonly emulators: () => { stop(index?: number): Promise<void> } | undefined
   readonly onRun: (run: PipelineRun) => void
   readonly now?: () => number
@@ -289,7 +291,9 @@ export class Engine {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
         active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`)
-        const answer = await conversations.ask(active.agentSession, `${node.prompt}\n\n${NO_QUESTIONS}`, signal)
+        // `/command` or `/skill` heads the step's instruction as in the chat box (protocol commands.ts).
+        const prompt = node.prompt.trimStart().startsWith('/') ? expandSlash(node.prompt, await this.#deps.skills?.().catch(() => []) ?? []) : node.prompt
+        const answer = await conversations.ask(active.agentSession, `${prompt}\n\n${NO_QUESTIONS}`, signal)
         const clipped = answer.length > 300 ? `${answer.slice(0, 300)}…` : answer
         return answer.startsWith('（这一轮没有完成') ? { ok: false, detail: clipped } : { ok: true, detail: clipped }
       }

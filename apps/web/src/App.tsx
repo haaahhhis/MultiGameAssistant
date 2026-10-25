@@ -7,6 +7,7 @@ import { NavRail, type RailTarget } from './components/NavRail.tsx'
 import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { ModelPicker } from './components/ModelPicker.tsx'
+import { useSlash } from './components/SlashMenu.tsx'
 import { SessionList, relativeTime, sessionTitle } from './components/SessionList.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
@@ -125,8 +126,11 @@ function Home({ client, onSettings, onOpen, onStart }: {
   const recent = sessions.items.filter(item => item.origin !== 'subagent' && !item.blank).slice(0, 4)
   const disabled = status.state !== 'open'
 
-  const start = async () => {
-    const value = text.trim()
+  // Slash commands and skills, as in the chat box (SlashMenu.tsx); the list opens below, the page continues under it.
+  const slash = useSlash({ client, text, setText, area, placement: 'below', submit: typed => void start(typed) })
+
+  const start = async (typed = text) => {
+    const value = slash.expand(typed)
     if (value === '' || disabled || busy) return
     setBusy(true)
     setError(null)
@@ -143,6 +147,7 @@ function Home({ client, onSettings, onOpen, onStart }: {
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       void start()
@@ -161,6 +166,8 @@ function Home({ client, onSettings, onOpen, onStart }: {
           <p className="welcome-description">安装脚本、读懂它怎么用、编排多个脚本一起跑，出了问题帮你看。用一句话告诉 agent 就行。</p>
         </div>
 
+        <div className="slash-anchor">
+        {slash.menu}
         <div className="composer-box hero-composer">
           <textarea
             ref={area}
@@ -176,11 +183,12 @@ function Home({ client, onSettings, onOpen, onStart }: {
             {capabilities.has('models') && <ModelPicker client={client} disabled={disabled || busy} value={model} onChange={setModel} />}
             {error !== null && <span className="error small">{error}</span>}
             <span className="spacer" />
-            <span className="composer-kbd"><kbd>Enter</kbd> 开始</span>
+            <span className="composer-kbd"><kbd>/</kbd> 命令和技能 · <kbd>Enter</kbd> 开始</span>
             <button className="send-button" aria-label="开始会话" onClick={() => void start()} disabled={disabled || busy || text.trim() === ''}>
               <Icon name="arrow" />
             </button>
           </div>
+        </div>
         </div>
 
         <div className="starters">

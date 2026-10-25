@@ -14,6 +14,8 @@
  *    digest), and that summary goes to Feishu as a card.
  * 4. 「让 agent 去找」 a game nobody set up: the agent adds it with game_add
  *    (a wiki source), and its events are read at once.
+ * 5. 「添加网址」: a page added to a game becomes a source the agent reads at
+ *    once (its own session); it can be removed again.
  *
  *   ADG_GATEWAY_TOKEN=dev-token ADG_FEISHU_BASE_URL=http://127.0.0.1:3299 pnpm dev:host
  *   ADG_GATEWAY_TOKEN=dev-token pnpm e2e:games
@@ -182,6 +184,18 @@ try {
   const added = (await rpc('games/list', {})).games.find(g => g.id === ADDED)
   if (!existsSync(join(dataDir, 'games', ADDED, 'game.yaml')) || !existsSync(join(dataDir, 'games', ADDED, 'GAME.md'))) fail('the added pack is not in the data folder')
   step('「让 agent 去找」: game_add made a pack and its wiki was read at once', `${added.name} · ${discoverSession}`)
+
+  // 5. a page added on the game page
+  const page = `${wikiUrl}/news/2026`
+  const linked = await rpc('games/source/add', { game: GAME, url: page })
+  const withLink = (await rpc('games/list', {})).games.find(g => g.id === GAME)
+  const chip = withLink.sources.find(s => s.id === linked.source)
+  if (chip?.homepage !== page || chip.added !== true || chip.auto) fail(`the added page: ${JSON.stringify(withLink.sources)}`)
+  if (withLink.webReading?.sessionId !== linked.sessionId) fail(`the agent is not reading it: ${JSON.stringify(withLink.webReading)}`)
+  await until('the agent to be asked about the page', () => llm.requests.some(r => JSON.stringify(r.messages ?? []).includes(page)), 60_000)
+  await rpc('games/source/remove', { game: GAME, source: linked.source })
+  if ((await rpc('games/list', {})).games.find(g => g.id === GAME).sources.some(s => s.id === linked.source)) fail('the page is still a source after removing it')
+  step('「添加网址」: the page became a source the agent read at once; removed again', `${chip.name} · ${linked.sessionId}`)
 
   console.log(`\nM6 end-to-end OK (${steps.length} steps); the fake wiki answered ${asks.length} queries, the fake model ${llm.requests.length} requests`)
 } catch (error) {

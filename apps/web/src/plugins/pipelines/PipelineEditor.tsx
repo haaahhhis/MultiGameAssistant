@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Background, Controls, Handle, Position, ReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { AdgClient } from '@adg/client-core'
+import { useSlash } from '../../components/SlashMenu.tsx'
 import { isMarker, type NodeRun, type Pipeline, type PipelineCheck, type PipelineEdge, type PipelineNode, type PipelineRun } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useTheme } from '../../theme.ts'
@@ -252,6 +253,20 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
   )
 }
 
+/** An agent step's instruction; `/` lists the commands and skills, expanded when the step runs (orchestrator). */
+function AgentPrompt({ client, value, onChange }: { client: AdgClient; value: string; onChange: (value: string) => void }) {
+  const area = useRef<HTMLTextAreaElement>(null)
+  const slash = useSlash({ client, text: value, setText: onChange, area, placement: 'below' })
+  return (
+    <div className="slash-anchor">
+      <textarea id="node-prompt" ref={area} className="text-input plain" rows={4} value={value} placeholder="例如：/game-arknights 看看活动商店还剩什么没换"
+        onChange={e => onChange(e.target.value)} onKeyDown={e => { slash.onKeyDown(e) }} />
+      {slash.menu}
+      <p className="muted small">输入 / 可以选命令或技能，运行时展开成完整的指令。</p>
+    </div>
+  )
+}
+
 function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemove, onTasksChanged, runFrom }: {
   client: AdgClient; node: PipelineNode; pipeline: Pipeline; run: PipelineRun | undefined
   scripts: ReturnType<typeof useScriptTasks>; onChange: (n: PipelineNode) => void; onRemove: () => void; onTasksChanged: () => void
@@ -291,7 +306,7 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
       ))}
       {node.kind === 'agent' && (
         <><label className="field-label" htmlFor="node-prompt">让 agent 做什么</label>
-          <textarea id="node-prompt" className="text-input plain" rows={4} value={node.prompt} onChange={e => onChange({ ...node, prompt: e.target.value })} /></>
+          <AgentPrompt client={client} value={node.prompt} onChange={prompt => onChange({ ...node, prompt })} /></>
       )}
       {(node.kind === 'notify' || node.kind === 'gate') && (
         <><label className="field-label" htmlFor="node-text">{node.kind === 'notify' ? '消息内容' : '确认时显示的话'}</label>

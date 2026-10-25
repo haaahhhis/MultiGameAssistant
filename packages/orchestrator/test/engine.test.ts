@@ -56,6 +56,7 @@ function setup(scripts: ReturnType<typeof script>[]) {
     library,
     notices: () => ({ send: async n => { notices.push(n); return ['飞书'] }, update: async (id, p) => { updates.push(`${id}:${p.done}`) } }),
     conversations: () => ({ create: async () => 's-1', exists: async () => true, ask: async (_s, text) => `agent 看了：${text}` }),
+    skills: async () => [{ name: 'game-arknights', description: '明日方舟的活动和进度' }],
     emulators: () => ({ stop: async () => { emulatorStops++ } }),
     onRun: run => runs.push(run),
     retryWaitingMs: 100,
@@ -213,6 +214,14 @@ test('cancel stops what is running; agent and wait nodes work', async () => {
   assert.match(run.nodes['ask']!.detail ?? '', /^agent 看了：活动还剩几天\n\n（这是编排里的自动步骤.*不要用 ask_user_question 提问/, 'the agent is told nobody may be there to answer')
   assert.equal(run.nodes['w']!.state, 'cancelled')
   assert.equal(runner.get(run.nodes['s']!.runIds[0]!).state, 'cancelled')
+  engine.dispose()
+})
+
+test('an agent step starting with /skill or /command runs as the full instruction', async () => {
+  const { engine } = setup([])
+  const run = await engine.finished(engine.start(pipeline({ nodes: [{ id: 'a', kind: 'agent', prompt: '/game-arknights 看看商店还剩什么' }, { id: 'b', kind: 'agent', prompt: '/资讯 明日方舟' }] }), { kind: 'manual' }).id)
+  assert.match(run.nodes['a']!.detail ?? '', /^agent 看了：\/game-arknights 看看商店还剩什么\n\n使用技能「game-arknights」：先用 skill 工具加载它，再按它的说明做：看看商店还剩什么/)
+  assert.match(run.nodes['b']!.detail ?? '', /^agent 看了：\/资讯 明日方舟\n\n上网查「明日方舟」最近的资讯/)
   engine.dispose()
 })
 

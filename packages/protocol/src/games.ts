@@ -54,6 +54,8 @@ export const GameSourceInfo = z.object({
   homepage: z.string().optional(),
   /** Read by the plugin itself (no model); otherwise only the agent reads it. */
   auto: z.boolean(),
+  /** A page the user added on the game page (`games/source/add`); it can be removed there. */
+  added: z.boolean().optional(),
 })
 
 export const GameInfo = z.object({
@@ -198,6 +200,22 @@ export const GamesRequests = {
     capability: GAMES_CAPABILITY,
     params: z.object({ name: z.string().min(1).max(60) }),
     result: z.object({ sessionId: z.string() }),
+  },
+  /**
+   * A page about the game the user wants read (official news, a wiki page, a
+   * forum post): kept with the game as a source only the agent reads, and
+   * read by the agent at once. @returns the reading session.
+   */
+  'games/source/add': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string(), url: z.string().url().refine(u => /^https?:\/\//.test(u), '只能是 http 或 https 网址'), name: z.string().max(30).optional() }),
+    result: z.object({ source: z.string(), sessionId: z.string() }),
+  },
+  /** Remove a page the user added. */
+  'games/source/remove': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string(), source: z.string() }),
+    result: z.object({}),
   },
   /** Every game the SRA public API knows, and whether it is shown (a Game Pack reads it, or it is followed). */
   'games/catalog': {

@@ -1271,23 +1271,37 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .persona-style .small { line-height: 1.55; }
 .persona-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .persona-prompt { margin: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); font-family: var(--font); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; color: var(--text-2); }
-/* slash commands above the chat box (Composer, commands.ts) */
-.slash-menu { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); animation: rise .15s var(--ease) both; }
-.slash-item { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; row-gap: 2px; align-items: baseline; padding: 8px 10px; border: none; border-radius: var(--r-md); background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
-.slash-item.active { background: var(--accent-soft); }
-.slash-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); }
-.slash-title { font-size: 13px; color: var(--text); }
-.slash-arg { grid-column: 2; font-size: 12px; color: var(--muted); }
-.slash-foot { display: flex; align-items: center; gap: 4px; padding: 4px 10px 2px; }
-.slash-pending { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 6px 4px 0; color: var(--text-2); }
+/* slash menu: commands and skills floating over the chat box (SlashMenu.tsx) */
+.slash-anchor { position: relative; }
+.slash-pop { position: absolute; left: max(12px, calc((100% - 760px) / 2 + 12px)); bottom: calc(100% + 6px); z-index: 40; animation: rise .12s var(--ease) both; }
+.slash-pop.below { bottom: auto; top: calc(100% + 6px); left: 12px; }
+.slash-list { position: relative; width: 260px; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-pop); scrollbar-width: thin; }
+.slash-group { padding: 6px 10px 3px; font-size: 11.5px; color: var(--faint); }
+.slash-item { display: block; width: 100%; padding: 5px 10px; border: none; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.5; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.slash-item.active { background: var(--hover); }
+.slash-tip { position: absolute; left: calc(260px + 8px); width: 260px; display: flex; flex-direction: column; gap: 4px; padding: 8px 11px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12.5px; line-height: 1.55; box-shadow: var(--shadow-pop); pointer-events: none; }
+.slash-tip-kind { font-size: 11px; opacity: .65; }
+.slash-tip-arg { font-size: 11.5px; opacity: .7; }
+@media (max-width: 720px) { .slash-tip { display: none; } }
+.slash-expansion { margin-top: 6px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
+.slash-expansion summary { cursor: pointer; list-style: none; font-size: 12px; }
+.slash-expansion summary::-webkit-details-marker { display: none; }
+.slash-expansion summary::before { content: '▸ '; }
+.slash-expansion[open] summary::before { content: '▾ '; }
 /* 设置 → 权限 → 按范围设置 (AreaPermissions) */
 .area-list { display: flex; flex-direction: column; }
 .area-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .area-row:first-child { border-top: none; padding-top: 4px; }
 .area-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
 .area-text strong { font-size: 13.5px; }
-.area-choice { flex: none; margin: 0; }
-.area-choice button { padding: 0 12px; }
+/* Every row's choices line up at the same width; a button never shrinks below its label. */
+.area-choice { flex: none; width: 300px; max-width: 100%; margin: 0; }
+.area-choice button { flex: 1 0 auto; padding: 0 10px; }
 .area-choice button.active.allow { color: var(--ok); }
 .area-choice button.active.ask { color: var(--warn); }
 .area-choice button.active.deny { color: var(--error); }
+/* in the pipeline inspector the list opens below and the description sits under it (no room beside) */
+.inspector-section .slash-pop.below { left: 0; right: 0; }
+.inspector-section .slash-list { width: 100%; max-height: 240px; }
+.inspector-section .slash-tip { position: static; width: auto; margin-top: 6px; }
+.inspector-section .slash-anchor > p { margin: 6px 0 0; }

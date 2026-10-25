@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { summarizeToolArgs } from '@adg/protocol'
+import { splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { Markdown } from '../../components/Markdown.tsx'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
@@ -125,13 +125,25 @@ function Turn({ header, children }: { header: TurnHeader | null; children: React
   )
 }
 
+/** A slash command shows as typed; the instruction it carried folds away below. */
+function UserText({ text }: { text: string }) {
+  const slash = splitSlash(text)
+  if (slash === undefined) return <>{text}</>
+  return (
+    <>
+      {slash.typed}
+      <details className="slash-expansion"><summary>发给 agent 的完整指令</summary>{slash.expansion}</details>
+    </>
+  )
+}
+
 const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
   switch (item.kind) {
     case 'user':
       return (
         <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
           <div className="bubble">
-            {item.text}
+            <UserText text={item.text} />
             {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
             {(item.images > item.imageRefs.length || item.files > 0) && (
               <div className="attachments">

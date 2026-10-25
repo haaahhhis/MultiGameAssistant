@@ -195,6 +195,17 @@ export class AdgGameIntel extends Service {
             await this.ready
             return this.picture((params as RequestParams<'games/image'>).url)
           },
+          'games/source/add': async params => {
+            await this.ready
+            const p = params as RequestParams<'games/source/add'>
+            return this.addLink(p.game, p.url, p.name)
+          },
+          'games/source/remove': async params => {
+            await this.ready
+            const p = params as RequestParams<'games/source/remove'>
+            await this.removeLink(p.game, p.source)
+            return {}
+          },
           'games/discover': async params => {
             await this.ready
             return { sessionId: await this.discover((params as RequestParams<'games/discover'>).name) }
@@ -296,7 +307,26 @@ export class AdgGameIntel extends Service {
       if (game === undefined || covered.has(sra) || found.has(followedId(sra))) continue
       found.set(followedId(sra), { manifest: followedManifest(game), dir: '', builtin: true, followed: true })
     }
-    this.games = [...found.values()]
+    // Pages the user added on the game page: sources only the agent reads.
+    this.games = [...found.values()].map(g => {
+      const links = this.calendar.links(g.manifest.id)
+      return links.length === 0 ? g : { ...g, manifest: { ...g.manifest, sources: [...g.manifest.sources, ...links.map(l => ({ id: l.id, name: l.name, homepage: l.url }))] } }
+    })
+  }
+
+  /** Keep a page about a game as a source and have the agent read it now. @returns its id and the reading session. */
+  async addLink(gameId: string, url: string, name?: string): Promise<{ source: string; sessionId: string }> {
+    this.game(gameId)
+    const source = await this.calendar.addLink(gameId, { name: name?.trim() || hostName(url), url, at: this.clock.now() })
+    await this.loadGames(this.log)
+    this.changed(gameId)
+    return { source, sessionId: await this.readWeb(gameId, source) }
+  }
+
+  async removeLink(gameId: string, source: string): Promise<void> {
+    if (!(await this.calendar.removeLink(gameId, source))) throw new Error('这个来源不是在游戏页添加的网址，不能在这里删除')
+    await this.loadGames(this.log)
+    this.changed(gameId)
   }
 
   private game(id: string): LoadedGame {
@@ -315,7 +345,7 @@ export class AdgGameIntel extends Service {
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
-        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined })),
+        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
         builtin,
         ...(m.art === undefined ? {} : { art: m.art }),
         ...(followed === true ? { followed: true } : {}),
@@ -556,7 +586,7 @@ export class AdgGameIntel extends Service {
       const sessionId = await conversations.create(`日报：${local.month}月${local.day}日`)
       const prompt = [
         '把下面这些近期的游戏活动写成今天发到飞书的日报正文。只根据给出的内容写，不调用工具，不提问。',
-        '要求：中文，按游戏分段（段首用【游戏名】），每个游戏一两句；先说快结束且没做完的（写清剩几天、还差什么），再说刚开始和即将开始的；用户已做完的不用提醒；不用 Markdown 标题、加粗或表格；整篇不超过 12 行；不要开场白和结束语。',
+        '要求：中文，按游戏分段（段首用【游戏名】），每个游戏一两句；先说快结束且没做完的（写清剩几天、还差什么），再说刚开始和即将开始的；用户已做完的不用提醒；不用 Markdown 标题、加粗或表格；整篇不超过 12 行。语气、称呼和自称按你的「回复风格」来（没有设定就平实地写）：可以用一句符合风格的话开头，内容照上面的要求，不要客套的结束语。',
         '',
         digest,
       ].join('\n')
@@ -585,6 +615,11 @@ export class AdgGameIntel extends Service {
     this.changed()
     return { channels, text }
   }
+}
+
+/** "news.example.com" for a page's address, without "www.". */
+function hostName(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '网页' }
 }
 
 /** `name` and `description` from a one-line-per-key frontmatter, and the body. */

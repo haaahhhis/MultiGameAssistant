@@ -225,3 +225,10 @@ button.source-name:hover:not(:disabled) { background: var(--accent-soft); color:
 .source-open .ui-icon { width: 12px; height: 12px; }
 .discover-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 .discover-row .text-input { flex: 1 1 220px; min-width: 0; }
+/* 「添加网址」 beside the sources */
+.source-add { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border: 1px dashed var(--border-strong); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.source-add:hover { color: var(--accent); border-color: var(--accent-line); }
+.source-add .ui-icon { width: 12px; height: 12px; }
+button.source-open { border: none; border-left: 1px solid var(--border); border-radius: 0; background: none; padding: 0; cursor: pointer; }
+.source-form { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.source-form .text-input { flex: 1 1 240px; min-width: 0; height: 30px; font-size: 13px; }

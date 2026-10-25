@@ -189,7 +189,7 @@ function ReportCard({ client, data, games, now, openSettings, onChanged }: {
           <span className={`badge ${settings.enabled ? 'ok' : ''}`}>{settings.enabled ? '已开启' : '未开启'}</span>
         </div>
         <label className="check-label"><input type="checkbox" checked={settings.enabled} disabled={busy} onChange={e => void set({ enabled: e.target.checked })} />每天定时发送</label>
-        <label className="check-label"><input type="checkbox" checked={settings.ai} disabled={busy} onChange={e => void set({ ai: e.target.checked })} />用 AI 总结，只说近期的事（刚开始、快结束、即将开始）；agent 不可用时发下面的完整列表</label>
+        <label className="check-label"><input type="checkbox" checked={settings.ai} disabled={busy} onChange={e => void set({ ai: e.target.checked })} />用 AI 总结，只说近期的事（刚开始、快结束、即将开始），语气按「设置 → 回复风格」；agent 不可用时发下面的完整列表</label>
         <div className="field-row">
           <label className="field">
             <span className="field-title">发送时间</span>

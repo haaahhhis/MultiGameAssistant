@@ -19,7 +19,7 @@ export const Persona = z.object({
   /** How it addresses the user ("主人", "指挥官"…). */
   callUser: z.string().max(20).optional(),
   /** Anything else, in the user's words. */
-  custom: z.string().max(1000).optional(),
+  custom: z.string().optional(),
 })
 export type Persona = z.infer<typeof Persona>
 

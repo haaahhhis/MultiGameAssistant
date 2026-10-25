@@ -75,7 +75,7 @@ const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
         script_id: { type: 'string', description: 'script-task：脚本 id。' },
         task_id: { type: 'string', description: 'script-task：任务 id。' },
         params: { ...PARAMS_SCHEMA, description: 'script-task：任务参数。' },
-        prompt: { type: 'string', description: 'agent：要 agent 做的事。' },
+        prompt: { type: 'string', description: 'agent：要 agent 做的事。可以用「/技能名 要做的事」开头，运行时让它先加载这个技能。' },
         minutes: { type: 'integer', description: 'wait：等几分钟。' },
         until: { type: 'string', description: 'wait：等到 HH:MM。' },
         text: { type: 'string', description: 'notify / gate：文字。' },

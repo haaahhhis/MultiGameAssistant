@@ -79,8 +79,8 @@ export function PersonaPage({ client }: { client: AdgClient }) {
               </label>
             </div>
             <label className="field">
-              <span className="field-title">其他要求（可选，最多 1000 字）</span>
-              <textarea className="text-input plain" rows={4} maxLength={1000} placeholder="例如：说话带一点罗德岛干员的口吻；汇报时先说有没有失败；不要用英文缩写。"
+              <span className="field-title">其他要求（可选）</span>
+              <textarea className="text-input plain" rows={6} placeholder="例如：说话带一点罗德岛干员的口吻；汇报时先说有没有失败；不要用英文缩写。"
                 value={persona.custom ?? ''} onChange={e => edit({ custom: e.target.value })} />
             </label>
             <div className="persona-actions">

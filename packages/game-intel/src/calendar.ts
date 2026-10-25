@@ -50,13 +50,15 @@ const StoredSchema = z.object({
   versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(), source: z.string(), at: z.number() })).default({}),
   pools: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number(), cover: z.string().optional(), up: z.array(z.string()) }))).default({}),
   settings: z.object({ report: GamesSettings.shape.report.partial().default({}), followed: z.array(z.string()).default([]) }).default({ report: {}, followed: [] }),
+  /** Pages the user added to a game (games/source/add), by game. */
+  links: z.record(z.string(), z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), at: z.number() }))).default({}),
 })
 type Saved = z.infer<typeof StoredSchema>
 
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {}, pools: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {}, pools: {}, links: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -70,7 +72,7 @@ export class Calendar {
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
       this.#items = saved.activities.map(a => ({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] }) as Stored)
-      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools }
+      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools, links: saved.links }
     } catch {
       // first start, or unreadable: start empty
     }
@@ -135,7 +137,33 @@ export class Calendar {
     return v !== undefined && (v.endsAt === undefined || v.endsAt > Date.now() - KEEP_ENDED_MS) ? v : undefined
   }
 
+  /** Pages the user added to a game. */
+  links(game: string): Saved['links'][string] {
+    return this.#saved.links[game] ?? []
+  }
+
   // ── writing ──
+
+  /** @returns the new source's id. */
+  async addLink(game: string, link: { name: string; url: string; at: number }): Promise<string> {
+    const list = this.#saved.links[game] ?? []
+    const same = list.find(l => l.url === link.url)
+    if (same !== undefined) return same.id
+    let n = list.length + 1
+    while (list.some(l => l.id === `link-${n}`)) n++
+    this.#saved.links[game] = [...list, { id: `link-${n}`, ...link }]
+    await this.save()
+    return `link-${n}`
+  }
+
+  /** @returns whether it was there. */
+  async removeLink(game: string, id: string): Promise<boolean> {
+    const list = this.#saved.links[game] ?? []
+    if (!list.some(l => l.id === id)) return false
+    this.#saved.links[game] = list.filter(l => l.id !== id)
+    await this.save()
+    return true
+  }
 
   async configure(patch: { [K in keyof GamesSettings['report']]?: GamesSettings['report'][K] | undefined }): Promise<GamesSettings> {
     this.#saved.settings.report = { ...this.#saved.settings.report, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) }
