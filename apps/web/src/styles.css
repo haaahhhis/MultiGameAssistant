@@ -1265,3 +1265,9 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .full-access-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--warn) 10%, transparent); color: var(--warn); font-size: 12px; font-weight: 500; }
 .full-access-chip:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .full-access-chip .ui-icon { width: 13px; height: 13px; }
+/* 设置 → 回复风格 (PersonaPage) */
+.persona-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.persona-style strong { font-size: 13.5px; }
+.persona-style .small { line-height: 1.55; }
+.persona-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.persona-prompt { margin: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); font-family: var(--font); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; color: var(--text-2); }

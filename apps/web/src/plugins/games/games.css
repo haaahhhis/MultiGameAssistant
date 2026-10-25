@@ -102,18 +102,23 @@
 .sched-card.soon .sched-count { background: rgb(255 138 91 / .18); border-color: rgb(255 138 91 / .45); }
 .sched-card.soon .sched-count b { color: #ff9d6e; }
 .sched-body { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; min-height: 116px; padding: 12px 14px 14px; }
-.sched-top { display: flex; align-items: center; gap: 8px; }
-.sched-tag { padding: 1px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 600; }
-.sched-tag.live { color: #1c7a3d; background: #d9f7e3; }
-.sched-tag.upcoming { color: #1d5fa8; background: #dcebfb; }
-.sched-tag.shop { color: #6b5a2a; background: #f5ecd2; }
-.sched-tag.done { color: #fff; background: var(--ok); }
-.sched-kind { font-size: 12px; opacity: .85; }
+.sched-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* status: a glass chip with a coloured dot, in the same voice as the countdown block and the progress pill */
+.sched-tag { --tag: #9aa0a6; flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 9px 0 8px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: .04em; color: rgb(255 255 255 / .92); background: rgb(255 255 255 / .1); border: 1px solid rgb(255 255 255 / .16); backdrop-filter: blur(8px); }
+.sched-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tag); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tag) 22%, transparent); }
+.sched-tag.live { --tag: #5fd68f; }
+.sched-tag.upcoming { --tag: #7db6ff; }
+.sched-tag.shop { --tag: var(--amber); }
+.sched-tag.done { --tag: #b8bcc4; color: rgb(255 255 255 / .7); }
+.sched-tag.live::before { animation: tag-pulse 2.4s ease-in-out infinite; }
+@keyframes tag-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--tag) 10%, transparent); } }
+.sched-kind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: rgb(255 255 255 / .62); letter-spacing: .02em; }
+.sched-kind::before { content: "·"; margin-right: 6px; opacity: .6; }
 .sched-name { font-size: 14.5px; font-weight: 600; line-height: 1.4; text-shadow: 0 1px 8px rgb(0 0 0 / .5); overflow-wrap: anywhere; }
 .sched-when { font-size: 12px; opacity: .78; font-variant-numeric: tabular-nums; }
 .sched-elapsed { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--amber); }
-.sched-card .ov-progress { background: rgb(0 0 0 / .4); border-color: rgb(255 255 255 / .2); color: #fff; }
-.sched-card .ov-progress.done { background: color-mix(in srgb, var(--ok) 70%, transparent); color: #fff; }
+.sched-card .ov-progress { flex: none; white-space: nowrap; height: 20px; padding: 0 9px; background: rgb(255 255 255 / .1); border-color: rgb(255 255 255 / .16); color: #fff; backdrop-filter: blur(8px); font-size: 11px; }
+.sched-card .ov-progress.done { background: rgb(95 214 143 / .18); border-color: rgb(95 214 143 / .4); color: #c9f5da; }
 .sched-card .ov-progress.unknown { color: rgb(255 255 255 / .7); }
 .sched-card .ov-ring { background: conic-gradient(var(--amber) var(--pct), rgb(255 255 255 / .25) 0); }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

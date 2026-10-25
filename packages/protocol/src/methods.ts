@@ -18,6 +18,7 @@ import { GamesNotifications, GamesRequests } from './games.ts'
 import { PermissionsNotifications, PermissionsRequests } from './permissions.ts'
 import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
 import { SkillsRequests } from './skills.ts'
+import { PersonaRequests } from './persona.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -407,6 +408,7 @@ export const Requests = {
   ...PermissionsRequests,
   ...QuestionsRequests,
   ...SkillsRequests,
+  ...PersonaRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [

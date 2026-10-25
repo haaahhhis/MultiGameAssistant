@@ -12,7 +12,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
@@ -28,9 +28,11 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { ErrorCode, PERMISSIONS_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
+import { PersonaStore, personaPrompt } from './persona.ts'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
@@ -76,8 +78,8 @@ export interface Config {
   readonly workspaceDir?: string
   /** Where the gateway keeps its own state (the permission mode). */
   readonly dataDir?: string
-  /** The user's dsh skill folder (`<DSH_HOME>/skills`): `skill_save` writes there. Absent: no such tool. */
-  readonly userSkillsDir?: string
+  /** Where the skills the agent saves are kept (this app's data, e.g. `<data>/skills`). Absent: no `skill_save`. */
+  readonly skillsDir?: string
 }
 
 /** The slice of dsh's session and permission-preset services the mode needs. */
@@ -343,38 +345,68 @@ export class AdgGateway extends Service {
         userInvocable: s.invocation.userInvocable,
       })
       const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
-      // The user's skill folder is read by each agent preset, not the host catalog: list it here too.
-      const mine = async (): Promise<Array<SkillInfo & { content: string }>> => config.userSkillsDir === undefined ? [] : (await userSkills(config.userSkillsDir)).map(s => ({
-        ...s, source: 'user-dsh', provider: 'filesystem', modelInvocable: true, userInvocable: true,
-      }))
       scoped.effect(() => this.registry.register({
         id: SKILLS_CAPABILITY,
         version: 1,
         methods: {
-          'skills/list': async (_params, call) => {
-            const host = (await scoped.skills.list(options(call.signal))).map(info)
-            const own = (await mine()).filter(s => !host.some(h => h.name === s.name)).map(({ content: _c, ...s }) => s)
-            return { skills: [...host, ...own] }
-          },
+          'skills/list': async (_params, call) => ({ skills: (await scoped.skills.list(options(call.signal))).map(info) }),
           'skills/get': async (params, call) => {
             const { name } = params as RequestParams<'skills/get'>
             const skill = await scoped.skills.get(name, options(call.signal))
-            if (skill !== undefined) return { ...info(skill), content: skill.content }
-            const own = (await mine()).find(s => s.name === name)
-            if (own === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
-            return own
+            if (skill === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
+            return { ...info(skill), content: skill.content }
           },
         },
       }), 'adg-gateway capability skills')
     })
 
-    // The agent saving what it just worked out as a skill (the UI offers it after a new multi-step job).
-    if (config.userSkillsDir !== undefined) {
-      const dir = config.userSkillsDir
+    // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.
+    if (config.dataDir !== undefined) {
+      const persona = new PersonaStore(config.dataDir)
+      const loaded = persona.load()
+      const answer = () => ({ persona: persona.current, prompt: personaPrompt(persona.current) })
+      ctx.effect(() => this.registry.register({
+        id: PERSONA_CAPABILITY,
+        version: 1,
+        methods: {
+          'persona/get': async () => { await loaded; return answer() },
+          'persona/set': async params => { await loaded; await persona.set((params as RequestParams<'persona/set'>).persona); return answer() },
+        },
+      }), 'adg-gateway capability persona')
+      ctx.inject(['systemPrompt'], scoped => {
+        scoped.effect(() => scoped.systemPrompt.section({
+          name: 'adg:persona',
+          // After the harness's own guidance, before the deployment suffix (10200).
+          order: 10_100,
+          interpolate: false,
+          text: () => personaPrompt(persona.current),
+        }), 'adg-gateway persona section')
+      })
+    }
+
+    // Skills the agent saved (the UI offers it after a new multi-step job): kept in this app's own data and
+    // registered for its agents only, not in a skill folder other agents on the machine read.
+    if (config.skillsDir !== undefined) {
+      const dir = config.skillsDir
       ctx.inject(['tools', 'skills'], scoped => {
+        const registered = new Map<string, () => void>()
+        const register = async (name?: string) => {
+          for (const skill of await userSkills(dir)) {
+            if (name !== undefined && skill.name !== name) continue
+            registered.get(skill.name)?.()
+            try {
+              registered.set(skill.name, scoped.skills.register({ name: skill.name, description: skill.description, content: skill.content, source: 'custom', path: skill.path, resourceBase: { kind: 'directory', path: dirname(skill.path) } }))
+            } catch (error) {
+              log.warn(`saved skill ${skill.name} not registered: ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }
+        }
+        void register().catch(error => log.warn(`saved skills not loaded: ${String(error)}`))
+        scoped.effect(() => () => { for (const dispose of registered.values()) dispose(); registered.clear() }, 'adg-gateway saved skills')
         scoped.tools.register(skillSaveTool({
           dir,
-          taken: async () => (await scoped.skills.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) })).filter(s => s.source !== 'user-dsh').map(s => s.name),
+          taken: async () => (await scoped.skills.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) })).filter(s => !registered.has(s.name)).map(s => s.name),
+          saved: name => register(name),
         }))
       })
     }

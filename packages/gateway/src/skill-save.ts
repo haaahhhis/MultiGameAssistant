@@ -1,8 +1,9 @@
 /**
  * `skill_save`: the agent writes what it just worked out as a skill, so the
  * next time the same thing is asked it follows the steps instead of finding
- * them again (fewer model calls). Skills go to the user's dsh skill folder
- * (`<DSH_HOME>/skills/<name>/SKILL.md`), which dsh watches: the skill is
+ * them again (fewer model calls). Skills are kept in this app's own data
+ * (`<data>/skills/<name>/SKILL.md`) and registered with this app's agents —
+ * not in a skill folder other agents on the machine read. A saved skill is
  * available at once, in every session, and shows on the 技能 page.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -23,6 +24,8 @@ export interface SkillSaveDeps {
   readonly dir: string
   /** Names of skills that come from elsewhere (packs, the app): not to be shadowed. */
   readonly taken: () => Promise<readonly string[]>
+  /** Called after a save: register it so the agents see it now. */
+  readonly saved?: (name: string) => Promise<void>
 }
 
 export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
@@ -59,6 +62,7 @@ export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
       await mkdir(folder, { recursive: true })
       // JSON strings are valid YAML scalars: no quoting surprises in the description.
       await writeFile(file, `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s+/g, ' ').trim())}\n---\n\n${content.trim()}\n`)
+      await deps.saved?.(name)
       return { saved: file, replaced: existing !== undefined, note: '已保存，所有会话马上就能用；在「技能」页可以看到' } as never
     },
     presentCall: args => ({ card: 'generic', title: `保存技能：${String((args as Record<string, unknown> | undefined)?.['name'] ?? '')}`, kind: 'other' }),
@@ -66,9 +70,7 @@ export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
 }
 
 /**
- * The skills in the user's folder, for the 技能 page. In this composition
- * each agent preset reads that folder itself (the host's own skill catalog
- * does not), so the gateway reads it too to show what the agent will see.
+ * The saved skills in `dir` (one folder per skill with its SKILL.md).
  */
 export async function userSkills(dir: string): Promise<Array<{ name: string; description: string; path: string; content: string }>> {
   const { readdir } = await import('node:fs/promises')

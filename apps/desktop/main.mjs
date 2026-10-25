@@ -17,8 +17,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
@@ -157,8 +157,8 @@ async function start() {
     if (action === 'restart') {
       restarts.length = 0
       stopHost()
-      await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: SLOW_HINT })
-      launchHost()
+      await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: slowHint() })
+      void launchHost()
     } else if (action === 'logs') {
       await shell.openPath(logDir())
     } else if (action === 'copy') {
@@ -193,25 +193,58 @@ async function start() {
     await fail('界面还没有构建', installed === undefined ? '请先在项目目录运行 pnpm build（或用 pnpm desktop:dev 启动）。' : `安装不完整（缺少 ${paths.uiDir}），请重新运行安装程序。`)
     return
   }
-  // Let the splash paint before the synchronous profile work below.
-  await new Promise(resolve => setTimeout(resolve, 60))
+  startupLog(`=== ${new Date().toISOString()} app start (${installed === undefined ? 'from the repository' : `installed ${installed.version}`}, data ${paths.home}) ===`)
   try {
-    prepareAdgProfile({
+    const profile = await prepareAdgProfile({
       home: paths.home,
       bundleDir: paths.bundleDir,
       dshBin: paths.dshBin,
       node: process.execPath,
       env: { ELECTRON_RUN_AS_NODE: '1' },
     })
+    startupLog(`[desktop] profile ready: ${profile}`)
   } catch (error) {
+    startupLog(`[desktop] profile failed: ${String(error)}`)
     await fail('无法准备运行环境', String(error))
     return
   }
-  await showSplash({ step: 'service', title: '正在启动 agent 服务', slowHint: SLOW_HINT })
-  launchHost()
+  await showSplash({ step: 'service', title: '正在启动 agent 服务', slowHint: slowHint() })
+  void launchHost()
 }
 
-const SLOW_HINT = '第一次启动或更新之后要安装插件，可能需要一两分钟。'
+/** Shown while the agent service starts slowly: why, and where to look. */
+function slowHint() {
+  return `第一次启动或更新之后要安装插件，可能需要一两分钟。日志：${join(logDir(), 'dsh.log')}`
+}
+
+/** One line in dsh.log from the shell itself (before dsh runs, or about it). */
+function startupLog(line) {
+  try {
+    mkdirSync(logDir(), { recursive: true })
+    appendFileSync(join(logDir(), 'dsh.log'), `${line}\n`)
+  } catch { /* the log is a help, not a requirement */ }
+}
+
+/**
+ * The agent service a previous start of this app left running (the app was
+ * killed, or crashed, before it could stop it). It would keep running the
+ * schedules and scripts on the same data: end it before starting a new one.
+ */
+const HOST_FILE = () => join(paths.home, 'adg', 'desktop-host.json')
+async function endLeftoverHost() {
+  let pid
+  try { pid = JSON.parse(readFileSync(HOST_FILE(), 'utf8')).pid } catch { return }
+  if (!Number.isInteger(pid) || pid === host?.pid) return
+  try { process.kill(pid, 0) } catch (error) { if (error?.code !== 'EPERM') { rmSync(HOST_FILE(), { force: true }); return } }
+  // Only if it is still our program: the id may belong to something else by now.
+  const image = await new Promise(resolve => execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (_e, out) => resolve(String(out ?? '').split(',')[0]?.replaceAll('"', '').trim().toLowerCase() ?? '')))
+  if (image !== basename(process.execPath).toLowerCase()) { rmSync(HOST_FILE(), { force: true }); return }
+  startupLog(`[desktop] an agent service from an earlier start is still running (pid ${pid}): ending it`)
+  await new Promise(resolve => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve(undefined)))
+  // Its schedule lock (packages/scheduler/src/lock.ts) would otherwise hold the new one back for a minute and a half.
+  rmSync(join(paths.home, 'adg', 'data', 'schedule.lock'), { force: true })
+  rmSync(HOST_FILE(), { force: true })
+}
 
 /** The splash: loaded once, then updated in place so its animation does not restart. */
 async function showSplash(state) {
@@ -312,7 +345,8 @@ function showWindow() {
   win.focus()
 }
 
-function launchHost() {
+async function launchHost() {
+  if (process.platform === 'win32') await endLeftoverHost().catch(error => startupLog(`[desktop] checking for a leftover service failed: ${String(error)}`))
   const token = randomBytes(24).toString('base64url')
   mkdirSync(logDir(), { recursive: true })
   const logFile = createWriteStream(join(logDir(), 'dsh.log'), { flags: 'a' })
@@ -334,10 +368,19 @@ function launchHost() {
     windowsHide: true,
   })
   host = child
+  try {
+    mkdirSync(dirname(HOST_FILE()), { recursive: true })
+    writeFileSync(HOST_FILE(), JSON.stringify({ pid: child.pid, startedAt: Date.now() }))
+  } catch { /* only used to clean up after a crash */ }
 
   let ready = false
+  /** dsh's "N entries did not activate" block, while it is being printed. */
+  let inactive = null
+  /** The failure was already shown: the exit that follows stopping it does not replace the message. */
+  let reported = false
   const timer = setTimeout(() => {
     if (!ready) {
+      reported = true
       stopHost()
       void fail('agent 服务启动超时', tail(), true)
     }
@@ -347,6 +390,18 @@ function launchHost() {
     logFile.write(`${line}\n`)
     logTail.push(line)
     if (logTail.length > LOG_TAIL_LINES) logTail.shift()
+    // dsh lists the plugins that did not start; without the gateway there is no window to show, so say why now.
+    if (!ready && /entr(y|ies) did not activate/.test(line)) inactive = [line]
+    else if (inactive !== null && /^\S+ \(.+\): /.test(line)) inactive.push(line)
+    if (!ready && inactive !== null && inactive.some(l => l.startsWith('adg-gateway '))) {
+      const why = inactive.join('\n')
+      inactive = null
+      reported = true
+      clearTimeout(timer)
+      stopHost()
+      void fail('agent 服务的网关没有启动', `${why}\n\n（脚本插件可能已经先启动了；网关等的服务没出现，界面就连不上。）`, true)
+      return
+    }
     const match = /adg gateway: (http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/.exec(line)
     if (match !== null && !ready) {
       ready = true
@@ -372,7 +427,8 @@ function launchHost() {
     clearTimeout(timer)
     logFile.end(`=== dsh exited (code ${code}, signal ${signal}) ===\n`)
     if (host === child) host = null
-    if (quitting) return
+    try { if (JSON.parse(readFileSync(HOST_FILE(), 'utf8')).pid === child.pid) rmSync(HOST_FILE(), { force: true }) } catch { /* not there */ }
+    if (quitting || reported) return
     // Unattended: bring dsh back by itself a few times before asking.
     const now = Date.now()
     while (restarts.length > 0 && now - restarts[0] > RESTART_WINDOW_MS) restarts.shift()
@@ -380,7 +436,7 @@ function launchHost() {
       restarts.push(now)
       logTail.push(`[desktop] dsh exited (code ${code}); restarting (${restarts.length}/${MAX_RESTARTS})`)
       void showSplash({ step: 'service', title: 'agent 服务意外退出，正在重新启动', hint: '定时任务会在重新启动后继续。' })
-      setTimeout(() => { if (!quitting) launchHost() }, 3000)
+      setTimeout(() => { if (!quitting) void launchHost() }, 3000)
       return
     }
     void fail(ready ? 'agent 服务反复意外退出' : 'agent 服务没能启动', tail(), true)
@@ -479,8 +535,8 @@ async function fail(title, detail, offerRestart = false) {
   if (response === 0) {
     restarts.length = 0
     stopHost()
-    await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: SLOW_HINT })
-    launchHost()
+    await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: slowHint() })
+    void launchHost()
   } else {
     quitting = true
     app.quit()

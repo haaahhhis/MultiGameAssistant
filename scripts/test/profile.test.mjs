@@ -47,8 +47,8 @@ test('a profile left half-made by an earlier start is moved aside and made again
   const bundleDir = join(root, 'packages', 'bundle')
   const home = mkdtempSync(join(tmpdir(), 'adg-profile-'))
   mkdirSync(join(home, 'profiles', 'adg'), { recursive: true }) // no package.json: an earlier start stopped half-way
-  const profile = prepareAdgProfile({ home, bundleDir, dshBin, env: { ADG_WORKSPACE_DIR: join(home, 'ws') } })
+  const profile = await prepareAdgProfile({ home, bundleDir, dshBin, env: { ADG_WORKSPACE_DIR: join(home, 'ws') } })
   assert.ok(existsSync(join(profile, 'package.json')))
   assert.ok(readdirSync(join(home, 'profiles')).some(n => n.startsWith('adg.unfinished-')), 'the half-made one is kept aside')
-  assert.throws(() => prepareAdgProfile({ home: mkdtempSync(join(tmpdir(), 'adg-profile-')), bundleDir, dshBin: join(home, 'missing.js') }), /创建 dsh 配置.*失败：.*(Cannot find module|missing\.js)/s)
+  await assert.rejects(prepareAdgProfile({ home: mkdtempSync(join(tmpdir(), 'adg-profile-')), bundleDir, dshBin: join(home, 'missing.js') }), /创建 dsh 配置.*失败：.*(Cannot find module|missing\.js)/s)
 })

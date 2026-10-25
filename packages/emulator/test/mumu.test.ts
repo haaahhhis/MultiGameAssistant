@@ -87,3 +87,29 @@ test('detection finds MuMuManager from uninstall entries and known folders', asy
   ], 'MuMuPlugin is not taken for MuMu; the folder scan still finds the second install')
   assert.deepEqual(await findMuMu(async () => undefined, []), [], 'no PowerShell, no folders: nothing found')
 })
+
+test('shutdown makes sure the instance went: asks again, then ends its processes, and says so when it cannot', async () => {
+  // Goes down when asked.
+  const ok = fakeMuMu()
+  await new MuMuManager('mgr.exe', ok.exec).shutdown(0, { pollMs: 5 })
+  assert.equal(ok.state[0]!.process, false)
+
+  // Ignores both requests; its processes are ended.
+  const calls: string[] = []
+  let running = true
+  const stubborn: Exec = async (file, args) => {
+    calls.push(`${file} ${args.join(' ')}`)
+    if (args[0] === 'info') return { code: 0, stdout: JSON.stringify({ index: '0', name: 'MuMu安卓设备', is_process_started: running, is_android_started: running, pid: 4242, headless_pid: 4343 }), stderr: '' }
+    if (file === 'taskkill') { if (args[1] === '4343') running = false; return { code: 0, stdout: '', stderr: '' } }
+    return { code: 0, stdout: '{"errcode":0}', stderr: '' }
+  }
+  await new MuMuManager('mgr.exe', stubborn).shutdown(0, { waitMs: 40, pollMs: 5 })
+  assert.equal(calls.filter(c => c.includes('shutdown')).length, 2, 'asked twice')
+  assert.ok(calls.includes('taskkill /PID 4242 /T /F') && calls.includes('taskkill /PID 4343 /T /F'), calls.join('\n'))
+
+  // Will not go at all.
+  const hung: Exec = async (_file, args) => args[0] === 'info'
+    ? { code: 0, stdout: JSON.stringify({ index: '0', name: 'x', is_process_started: true, is_android_started: true }), stderr: '' }
+    : { code: 0, stdout: '{"errcode":0}', stderr: '' }
+  await assert.rejects(new MuMuManager('mgr.exe', hung).shutdown(0, { waitMs: 20, pollMs: 5 }), /关不掉/)
+})

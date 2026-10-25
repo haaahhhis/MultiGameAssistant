@@ -94,6 +94,8 @@ export class Scheduler {
   #wakeSynced: string | undefined
   #wakeChecked = 0
   #wakeError: string | undefined
+  /** Timetables are being run (`begin`); a host waiting for the lock only loaded. */
+  #running = false
 
   constructor(deps: SchedulerDeps) {
     this.#deps = deps
@@ -102,6 +104,12 @@ export class Scheduler {
 
   /** Load, check once, and keep checking every `tickMs` (0: no timer, tests call `tick`). */
   async start(tickMs = 1000): Promise<void> {
+    await this.load()
+    this.begin(tickMs)
+  }
+
+  /** Read the saved state (settings, what was handled) without running anything yet. */
+  async load(): Promise<void> {
     const saved = await this.#deps.store.load()
     this.#state = {
       settings: { ...DEFAULT_SETTINGS, ...saved.settings },
@@ -111,6 +119,12 @@ export class Scheduler {
       lastCheck: saved.lastCheck ?? this.#now(),
       ...(saved.lastStartDay === undefined ? {} : { lastStartDay: saved.lastStartDay }),
     }
+  }
+
+  /** Start running timetables (and the on-start pipelines) after `load`. Once only. */
+  begin(tickMs = 1000): void {
+    if (this.#running) return
+    this.#running = true
     this.tick()
     if (tickMs > 0) {
       this.#timer = setInterval(() => this.tick(), tickMs)
@@ -134,7 +148,8 @@ export class Scheduler {
   stop(): void {
     clearInterval(this.#timer)
     clearTimeout(this.#autostartTimer)
-    void this.#save(true)
+    // Only the host that ran the timetables writes them back; one that only waited holds an old copy.
+    if (this.#running) void this.#save(true)
   }
 
   get settings(): ScheduleSettings {

@@ -4,7 +4,7 @@
  * place. Used by the Electron shell on every start (from the repository or
  * installed) and by `pnpm dev:home`.
  */
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import {
   existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs'
@@ -19,25 +19,30 @@ const BUNDLE = '@adg/bundle'
  * @param {string} options.dshBin - path to `@deepseek-ai/dsh/lib/bin.js`.
  * @param {string} [options.node] - JS runtime executing dshBin (default: this process).
  * @param {Record<string, string>} [options.env] - extra environment (e.g. ELECTRON_RUN_AS_NODE).
- * @returns {string} the profile directory.
+ * @param {number} [options.timeoutMs] - give up creating the profile after this long. @default 180000
+ * @returns {Promise<string>} the profile directory.
  */
-export function prepareAdgProfile({ home, bundleDir, dshBin, node = process.execPath, env = {} }) {
+export async function prepareAdgProfile({ home, bundleDir, dshBin, node = process.execPath, env = {}, timeoutMs = 180_000 }) {
   const profile = join(home, 'profiles', 'adg')
   if (!existsSync(join(profile, 'package.json'))) {
     // Left half-made by an earlier start that did not finish: dsh refuses an existing folder, so move it aside.
     if (existsSync(profile)) renameSync(profile, `${profile}.unfinished-${Date.now()}`)
-    try {
-      execFileSync(node, [dshBin, 'adg', '--from-default-profile', 'web', '--help'], {
+    // Not execFileSync: in the desktop shell that froze the window for as long as dsh took.
+    await new Promise((resolve, reject) => {
+      execFile(node, [dshBin, 'adg', '--from-default-profile', 'web', '--help'], {
         env: { ...process.env, ...env, DSH_HOME: home },
-        stdio: ['ignore', 'pipe', 'pipe'],
         encoding: 'utf8',
         windowsHide: true,
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+      }, (error, stdout, stderr) => {
+        if (error === null) return resolve(undefined)
+        // Say why: dsh's own last words, not just "Command failed".
+        const said = `${stderr ?? ''}\n${stdout ?? ''}`.split(/\r?\n/).filter(line => line.trim() !== '' && !/^\s+at /.test(line)).slice(-8).join('\n')
+        const why = error.killed ? `${Math.round(timeoutMs / 1000)} 秒没有完成${said === '' ? '' : `：${said}`}` : said || String(error)
+        reject(new Error(`创建 dsh 配置（${profile}）失败：${why}`, { cause: error }))
       })
-    } catch (error) {
-      // Say why: dsh's own last words, not just "Command failed".
-      const said = `${error?.stderr ?? ''}\n${error?.stdout ?? ''}`.split(/\r?\n/).filter(line => line.trim() !== '' && !/^\s+at /.test(line)).slice(-8).join('\n')
-      throw new Error(`创建 dsh 配置（${profile}）失败：${said || String(error)}`, { cause: error })
-    }
+    })
   }
 
   const manifestPath = join(profile, 'package.json')

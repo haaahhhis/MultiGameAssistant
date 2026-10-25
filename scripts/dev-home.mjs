@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from '../apps/desktop/profile.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const profile = prepareAdgProfile({
+const profile = await prepareAdgProfile({
   home: process.env.DSH_HOME ?? join(root, '.dev-home'),
   bundleDir: join(root, 'packages', 'bundle'),
   dshBin: join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),

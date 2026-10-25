@@ -43,8 +43,32 @@ export class MuMuManager {
     await this.#run(['control', '-v', String(index), 'launch'], '启动')
   }
 
-  async shutdown(index: number): Promise<void> {
+  /**
+   * Shut an instance down and make sure it went: MuMu's `shutdown` only asks,
+   * and a busy or hung instance can ignore it. Wait, ask once more, and as a
+   * last resort end the instance's own processes (`pid`, `headless_pid` from
+   * `info`).
+   * @throws Error when it is still running after all that.
+   */
+  async shutdown(index: number, options: { waitMs?: number; pollMs?: number } = {}): Promise<void> {
+    const wait = options.waitMs ?? 30_000
+    const down = async (ms: number) => {
+      for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+        await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 1500))
+        if ((await this.instance(index).catch(() => undefined))?.running !== true) return true
+      }
+      return false
+    }
+    if ((await this.instance(index).catch(() => undefined))?.running === false) return
     await this.#run(['control', '-v', String(index), 'shutdown'], '关闭')
+    if (await down(wait)) return
+    await this.#run(['control', '-v', String(index), 'shutdown'], '关闭').catch(() => '')
+    if (await down(wait / 2)) return
+    const raw = entries(await this.#json(['info', '-v', String(index)]).catch(() => ({}))).find(e => Number(e['index']) === index) ?? {}
+    const pids = ['pid', 'headless_pid'].map(k => Number(raw[k])).filter(p => Number.isInteger(p) && p > 0)
+    for (const pid of pids) await this.#exec('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 15_000 })
+    if (pids.length > 0 && await down(10_000)) return
+    throw new Error(`MuMu 实例 ${index} 关不掉：发了两次关闭命令${pids.length > 0 ? `，也结束了它的进程（${pids.join('、')}）` : ''}，它还在运行。可能需要用管理员身份运行本软件，或者在 MuMu 多开器里手动关闭`)
   }
 
   /** The instance's ADB address: from `info`, else `adb -v`, else the default port. */

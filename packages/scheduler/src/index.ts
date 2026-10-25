@@ -17,6 +17,7 @@ import type {} from '@adg/runner'
 import { SCHEDULE_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { windowsAutostart } from './autostart.ts'
+import { ScheduleLock } from './lock.ts'
 import { Power } from './power.ts'
 import { Scheduler, type SavedState } from './scheduler.ts'
 import { windowsPower, windowsWake } from './windows.ts'
@@ -112,8 +113,24 @@ export class AdgScheduler extends Service {
     })
     this.scheduler = scheduler
     this.power = power
-    this.ready = orchestrator.ready.then(() => scheduler.start())
-    ctx.effect(() => () => scheduler.stop(), 'adg-scheduler timer')
+    // One scheduler per data folder (lock.ts): a second host on the same data waits instead of running everything twice.
+    const lock = new ScheduleLock(join(spec.dataDir, 'schedule.lock'))
+    let waiting: ReturnType<typeof setInterval> | undefined
+    this.ready = orchestrator.ready.then(async () => {
+      await scheduler.load()
+      if (await lock.acquire()) { scheduler.begin(); return }
+      const other = await lock.holder()
+      log.warn(`another host (pid ${other?.pid ?? '?'}) runs the schedules of ${spec.dataDir}: waiting until it stops`)
+      waiting = setInterval(() => void lock.acquire().then(got => {
+        if (!got) return
+        clearInterval(waiting)
+        log.info('the other host is gone: running the schedules here')
+        scheduler.begin()
+        changed()
+      }), 30_000)
+      waiting.unref?.()
+    })
+    ctx.effect(() => () => { clearInterval(waiting); scheduler.stop(); void lock.release() }, 'adg-scheduler timer')
     ctx.effect(() => {
       const timer = setInterval(() => power.check(), 1000)
       timer.unref?.()

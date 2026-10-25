@@ -11,7 +11,7 @@
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { LaunchSettings, RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
 import { listWithNew, readChoices } from './choices.ts'
@@ -20,6 +20,7 @@ import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
 import { ConfigProfiles } from './profiles.ts'
 import { lineSplitter, LogTail } from './tail.ts'
+import { sweepTree } from './sweep.ts'
 import { gameKeywords, locateGame, type GameCandidate } from './locate.ts'
 
 /** What the runner needs from the script library. */
@@ -565,7 +566,25 @@ export class Runner {
     if (run.child !== undefined && run.child.exitCode === null) {
       run.info.state = 'stopping'
       this.#publish(run)
+      // Windows: everything the script started, also what a launcher that already exited left behind (sweep.ts).
+      if (process.platform === 'win32' && run.child.pid !== undefined) {
+        const swept = await sweepTree(run.child.pid, run.info.startedAt, await this.#gameProcesses(run.info.scriptId)).catch(() => undefined)
+        if (swept !== undefined && swept.failed.length > 0) this.warn(runId, `有 ${swept.failed.length} 个进程没能结束：${swept.failed.join('；')}`)
+        else if (swept !== undefined && swept.ended.length > 1) this.note(runId, `已结束脚本的 ${swept.ended.length} 个进程${swept.kept.length > 0 ? `（游戏和模拟器留着：${swept.kept.join('、')}）` : ''}`)
+      }
       await killTree(run.child)
+    }
+  }
+
+  /** The script's game executable(s): a stop leaves the game running (closing it is game_close / 关闭游戏). */
+  async #gameProcesses(scriptId: string): Promise<string[]> {
+    try {
+      const settings = await this.launch.get(scriptId)
+      const game = this.#options.library.packOf(scriptId)?.manifest.game
+      const names = [settings.pcProcess, game?.pc?.process, settings.pcExe === undefined ? undefined : basename(settings.pcExe)]
+      return names.filter((n): n is string => n !== undefined && n !== '').map(n => (/\.exe$/i.test(n) ? n : `${n}.exe`))
+    } catch {
+      return []
     }
   }
 

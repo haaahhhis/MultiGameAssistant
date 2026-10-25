@@ -24,8 +24,8 @@
         staticDir: !!js "process.env.ADG_UI_DIR || undefined"
         workspaceDir: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
-        # skill_save writes the user's skills where dsh looks for them.
-        userSkillsDir: !!js "dshHomePath('skills')"
+        # skill_save keeps saved skills in this app's data, for its own agents only.
+        skillsDir: !!js "(process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/skills'"
         validateResults: true
 
     # M1: script library — packs, GitHub installs, local imports, versions,

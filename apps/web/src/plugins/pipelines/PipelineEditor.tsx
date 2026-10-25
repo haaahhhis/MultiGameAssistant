@@ -9,7 +9,7 @@ import { errorText } from '../scripts/data.ts'
 import { ParamInput } from '../scripts/ParamInput.tsx'
 import { useScriptTasks } from './data.ts'
 
-const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }
+const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '控制节点', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }
 const NODE_STATE: Readonly<Record<NodeRun['state'], string>> = {
   pending: '待运行', waiting: '等待中', running: '运行中', succeeded: '成功', failed: '失败', skipped: '跳过', cancelled: '取消',
 }
@@ -156,7 +156,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
     onChange({ ...pipeline, edges: [...pipeline.edges, { from: c.source, to: c.target, when: target?.kind === 'end' ? 'always' : 'success' }] })
   }, [pipeline, onChange])
 
-  // A new step follows the selected one (or 开始) and takes over its link to 结束, so clicking tasks in turn builds a chain.
+  // A new step is placed next to the selected one (or 开始) without links: the user draws them.
   const add = (node: PipelineNode) => {
     const start = pipeline.nodes.find(n => n.kind === 'start')
     const end = pipeline.nodes.find(n => n.kind === 'end')
@@ -166,19 +166,12 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
     const x = at === undefined ? Math.max(0, ...taken.map(p => p.x)) + 280 : at.x + 280
     let y = at?.y ?? 40
     while (taken.some(p => Math.abs(p.x - x) < 200 && Math.abs(p.y - y) < 100)) y += 130
-    let edges = pipeline.edges
-    if (from !== undefined) {
-      edges = [...edges, { from: from.id, to: node.id, when: 'success' as const }]
-      if (end !== undefined && (from.kind === 'start' || edges.some(e => e.from === from.id && e.to === end.id))) {
-        edges = [...edges.filter(e => !(e.from === from.id && e.to === end.id)), { from: node.id, to: end.id, when: 'always' as const }]
-      }
-    }
     // Keep 结束 to the right of every step.
     const nodes = [
       ...pipeline.nodes.map(n => (n.kind === 'end' ? { ...n, position: { x: Math.max(positions.get(n.id)?.x ?? 0, x + 300), y: positions.get(n.id)?.y ?? y } } : n)),
       { ...node, position: { x, y } },
     ]
-    onChange({ ...pipeline, nodes, edges })
+    onChange({ ...pipeline, nodes })
     setSelectedNode(node.id)
     setSelectedEdge(null)
   }
@@ -205,7 +198,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
         ))}
         <div className="sidebar-label pack-label">其他步骤</div>
         <button className="palette-item" onClick={() => add({ id: newId('agent', pipeline), kind: 'agent', prompt: '检查活动还剩几天，快结束的提醒我' })}>agent 步骤</button>
-        <button className="palette-item" onClick={() => add({ id: newId('wait', pipeline), kind: 'wait', minutes: 10 })}>等待</button>
+        <button className="palette-item" onClick={() => add({ id: newId('wait', pipeline), kind: 'wait', minutes: 10 })}>控制节点</button>
         <button className="palette-item" onClick={() => add({ id: newId('notify', pipeline), kind: 'notify', text: `${pipeline.name}跑完了` })}>发消息</button>
         <button className="palette-item" onClick={() => add({ id: newId('gate', pipeline), kind: 'gate', text: '确认后继续' })}>人工确认</button>
         <p className="muted small pad">从节点右边的圆点拖到另一个节点左边，表示「这个完成后再运行那个」。没有连线的节点会同时开始；需要同一资源的会自动排队。</p>
@@ -230,7 +223,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
           <Background gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
-        {!pipeline.nodes.some(n => !isMarker(n)) && <div className="canvas-hint">从左边点一个任务加到画布上：它会接在选中的节点（没选时是「开始」）后面</div>}
+        {!pipeline.nodes.some(n => !isMarker(n)) && <div className="canvas-hint">从左边点一个任务加到画布上，再从节点右边的圆点拖到下一个节点，连成先后顺序</div>}
       </div>
 
       <aside className="pipeline-inspector">

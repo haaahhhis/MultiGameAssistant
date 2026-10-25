@@ -67,7 +67,7 @@ export function nodeLabel(node: PipelineNode, library?: CheckLibrary): string {
       return `${node.scriptId} · ${node.taskId}`
     }
   }
-  return { agent: 'agent 步骤', wait: '等待', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }[node.kind]
+  return { agent: 'agent 步骤', wait: '控制节点', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }[node.kind]
 }
 
 /** Resources a script task holds, as lock-like keys (an emulator task counts as `adb`). */

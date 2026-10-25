@@ -211,3 +211,27 @@ test('real keep-awake helper: Windows lists the request while held, and forgets 
   assert.doesNotMatch(seen, /powershell/i)
   assert.deepEqual(warnings, [])
 })
+
+test('one scheduler per data folder: a second host waits; a lock left by a host that died is taken over', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { ScheduleLock } = await import('../src/lock.ts')
+  const file = join(mkdtempSync(join(tmpdir(), 'adg-lock-')), 'schedule.lock')
+  let now = 1_000_000
+  // This process is alive: as "another host" it holds the lock.
+  const first = new ScheduleLock(file, { now: () => now })
+  const second = new ScheduleLock(file, { now: () => now, pid: process.pid + 1 })
+  assert.equal(await first.acquire(), true)
+  assert.equal(await second.acquire(), false, 'a live holder keeps it')
+  assert.equal((await second.holder())?.pid, process.pid)
+  now += 120_000 // the holder stopped beating
+  assert.equal(await second.acquire(), true, 'a stale lock is taken over')
+  await first.release() // not first's any more: left alone
+  const { readFileSync } = await import('node:fs')
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).pid, process.pid + 1, 'releasing a lock someone else took leaves it')
+  await second.release()
+  // A lock naming a process that does not exist is free at once.
+  writeFileSync(file, JSON.stringify({ pid: 999_999_99, at: now }))
+  assert.equal(await new ScheduleLock(file, { now: () => now }).acquire(), true)
+})
