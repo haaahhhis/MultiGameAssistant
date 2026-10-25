@@ -343,7 +343,7 @@ export class AdgGameIntel extends Service {
     const scripts = library.list().scripts.map(s => {
       const pack = library.packOf(s.id)?.manifest
       const folder = s.source.kind === 'local' ? s.source.path.split(/[\\/]/).filter(Boolean).at(-1) : undefined
-      const texts = [s.id, s.name, s.source.kind === 'github' ? s.source.repo : folder, pack?.name, pack?.game?.name, pack?.source.github]
+      const texts = [s.id, s.name, s.source.kind === 'github' ? s.source.repo : folder, s.channels.github?.repo, pack?.name, pack?.game?.name, pack?.source.github]
       return { id: s.id, texts: texts.filter((t): t is string => t !== undefined && t !== '') }
     })
     const games = this.games.map(({ manifest: m }) => ({

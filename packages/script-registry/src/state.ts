@@ -40,8 +40,12 @@ export const StoredScript = z.object({
   probe: ProjectProbe.optional(),
   update: z.object({ latest: z.string(), available: z.boolean(), checkedAt: z.number() }).optional(),
   addedAt: z.number(),
-  /** A local import's update source (`owner/repo`); undefined uses its pack's. `null`: the user turned it off. */
+  /** GitHub update channel the user set (`owner/repo`); undefined: the automatic one. `null`: the user turned it off. */
   updateFrom: z.string().nullable().optional(),
+  /** Mirror酱 update channel the user set, likewise. */
+  mirrorchyan: z.object({ rid: z.string(), platform: z.boolean() }).nullable().optional(),
+  /** The known project (no pack describes it) an imported folder was recognized as. */
+  known: z.string().optional(),
   /** The version found in a local import's directory, and where it was read. */
   localVersion: LocalVersion.optional(),
   /** Files a local update replaced or removed, newest last; `dir` holds them under `files/`. */

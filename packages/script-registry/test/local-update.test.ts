@@ -90,9 +90,7 @@ test('a local import updates where it is from GitHub: files backed up, settings 
     let info = await library.import({ path: dir })
     assert.equal(info.packId, 'tool')
     assert.deepEqual(info.localVersion, { version: '1.0.0', from: 'version.txt' })
-    assert.equal(info.updateFrom, 'Owner/Tool', 'the pack\'s repository')
-    assert.equal(info.updateFromPack, true)
-    assert.equal(info.mirrorchyan, 'Tool')
+    assert.deepEqual(info.channels, { github: { repo: 'Owner/Tool', from: 'pack' }, mirrorchyan: { rid: 'Tool', from: 'pack' } }, 'the pack\'s channels')
 
     assert.deepEqual(await library.checkUpdate('tool'), { current: '1.0.0', latest: '1.2.0', available: true })
     const update = await library.update('tool')
@@ -172,7 +170,7 @@ test('with a CDK a local import gets Mirror酱\'s incremental package from the v
   }
 })
 
-test('a local import without a pack: no source until the user names its repository', async () => {
+test('a local import without a pack: no channel until the user names its repository', async () => {
   const root = mkdtempSync(join(tmpdir(), 'adg-local-source-'))
   const github = await startFakeGitHub({ repos: { 'Someone/Other': [{ tag: 'v2.0.0', assets: [{ name: 'Other-v2.0.0-win-x64.zip', content: makeZip({ 'other.exe': 'MZ 2' }) }] }] } })
   const library = setup(root, { github: github.url })
@@ -182,21 +180,20 @@ test('a local import without a pack: no source until the user names its reposito
     mkdirSync(dir)
     writeFileSync(join(dir, 'other.exe'), 'MZ 1')
     let info = await library.import({ path: dir })
-    assert.equal(info.updateFrom, undefined)
+    assert.deepEqual(info.channels, {})
     assert.equal(info.localVersion, undefined, 'nothing says its version')
-    await assert.rejects(library.checkUpdate(info.id), /还没有更新来源/)
-    info = await library.setUpdateSource(info.id, 'Someone/Other')
-    assert.equal(info.updateFrom, 'Someone/Other')
-    assert.equal(info.updateFromPack, false)
+    await assert.rejects(library.checkUpdate(info.id), /还没有更新渠道/)
+    info = await library.setUpdateSource(info.id, { repo: 'Someone/Other' })
+    assert.deepEqual(info.channels, { github: { repo: 'Someone/Other', from: 'user' } })
     assert.deepEqual(await library.checkUpdate(info.id), { latest: '2.0.0', available: true }, 'an unknown version can be updated')
     const update = await library.update(info.id)
     const done = update.upToDate ? undefined : await update.done
     assert.equal(done?.phase, 'done', done?.error)
     assert.equal(readFileSync(join(dir, 'other.exe'), 'utf8'), 'MZ 2')
     assert.equal(library.get(info.id).undo?.from, undefined)
-    info = await library.setUpdateSource(info.id, null)
-    assert.equal(info.updateFrom, undefined)
-    await assert.rejects(library.checkUpdate(info.id), /还没有更新来源/)
+    info = await library.setUpdateSource(info.id, { repo: null })
+    assert.deepEqual(info.channels, {})
+    await assert.rejects(library.checkUpdate(info.id), /还没有更新渠道/)
 
     // The agent: the source and the in-place update are both asked; a refusal changes nothing.
     await library.restore(info.id)
@@ -204,13 +201,13 @@ test('a local import without a pack: no source until the user names its reposito
     const exec = { signal: new AbortController().signal } as never
     const refusing = scriptTools(library, async () => { throw new Error('用户拒绝了这个操作') })
     await assert.rejects(refusing.find(t => t.name === TOOL_NAMES.update)!.execute({ id: info.id, repo: 'Someone/Other' }, exec), /用户拒绝/)
-    assert.equal(library.get(info.id).updateFrom, undefined)
+    assert.deepEqual(library.get(info.id).channels, {})
     const asked: string[] = []
     const tools = scriptTools(library, async (_exec, reason) => { asked.push(reason) })
     const result = await tools.find(t => t.name === TOOL_NAMES.update)!.execute({ id: info.id, repo: 'Someone/Other' }, exec) as { ok: boolean }
     assert.equal(result.ok, true)
     assert.equal(asked.length, 2)
-    assert.match(asked[0]!, /更新来源.*Someone\/Other.*不在内置脚本包里/)
+    assert.match(asked[0]!, /GitHub 更新渠道.*Someone\/Other.*不在内置脚本包里/)
     assert.match(asked[1]!, /更新到 2\.0\.0.*先备份/)
     assert.equal(readFileSync(join(dir, 'other.exe'), 'utf8'), 'MZ 2')
     await tools.find(t => t.name === TOOL_NAMES.rollback)!.execute({ id: info.id }, exec)

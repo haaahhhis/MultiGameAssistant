@@ -2,11 +2,11 @@ import { useState } from 'react'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { FAMILY_LABEL, isActive, PHASE_LABEL, useScriptJobs, useScriptList } from './data.ts'
-import { ImportPanel, InstallPanel } from './InstallPanel.tsx'
+import { ImportPanel, InstallPanel, MirrorInstallPanel } from './InstallPanel.tsx'
 import { JobProgress } from './JobProgress.tsx'
 import { ScriptDetail } from './ScriptDetail.tsx'
 
-type Panel = { kind: 'install'; repo?: string } | { kind: 'import' } | null
+type Panel = { kind: 'install'; repo?: string } | { kind: 'mirror'; rid?: string } | { kind: 'import' } | null
 
 /** The script library: what is installed or imported, what packs can be installed, and each script's details. */
 export function ScriptsPage({ client, openSession }: PageProps) {
@@ -17,6 +17,12 @@ export function ScriptsPage({ client, openSession }: PageProps) {
   const scripts = data?.scripts ?? []
   const available = (data?.packs ?? []).filter(p => !p.installed && p.repo !== undefined && p.error === undefined)
   const broken = (data?.packs ?? []).filter(p => p.error !== undefined)
+  // Known projects no pack describes (BetterGI…): installed from Mirror酱 when it has them, else GitHub.
+  const known = (data?.known ?? []).filter(k => !k.installed)
+  const mirrorChoices = [
+    ...(data?.packs ?? []).filter(p => p.mirrorchyan !== undefined && p.error === undefined).map(p => ({ rid: p.mirrorchyan!, name: p.name })),
+    ...(data?.known ?? []).filter(k => k.mirrorchyan !== undefined).map(k => ({ rid: k.mirrorchyan!, name: k.name })),
+  ]
   // An install of a new script has no library entry until its files land: while it runs, its progress is shown instead.
   const pending = selected === null || scripts.some(s => s.id === selected) ? undefined : jobs.get(selected)
   const current = scripts.find(s => s.id === selected) ?? (panel === null && pending === undefined ? scripts[0] : undefined)
@@ -27,6 +33,7 @@ export function ScriptsPage({ client, openSession }: PageProps) {
         <div className="breadcrumb"><span>脚本</span><span className="breadcrumb-divider">/</span><h1>脚本库</h1></div>
         <div className="page-actions">
           <button className="small-button" onClick={() => setPanel({ kind: 'import' })}><Icon name="paperclip" />导入本地项目</button>
+          <button className="small-button" onClick={() => setPanel({ kind: 'mirror' })}><Icon name="plus" />从 Mirror酱 安装</button>
           <button className="primary small-button" onClick={() => setPanel({ kind: 'install' })}><Icon name="plus" />从 GitHub 安装</button>
         </div>
       </header>
@@ -67,7 +74,7 @@ export function ScriptsPage({ client, openSession }: PageProps) {
                 </button>
               ))}
 
-              {available.length > 0 && (
+              {(available.length > 0 || known.length > 0) && (
                 <>
                   <div className="sidebar-label pack-label">可安装的脚本包</div>
                   {available.map(pack => (
@@ -77,6 +84,15 @@ export function ScriptsPage({ client, openSession }: PageProps) {
                         <span className="muted small">{pack.description ?? pack.repo}</span>
                       </span>
                       <button className="small-button" onClick={() => setPanel({ kind: 'install', repo: pack.repo! })}>安装</button>
+                    </div>
+                  ))}
+                  {known.map(project => (
+                    <div key={project.id} className="pack-row">
+                      <span className="script-row-main">
+                        <span className="script-row-name">{project.name}</span>
+                        <span className="muted small">{[project.mirrorchyan === undefined ? undefined : `Mirror酱 ${project.mirrorchyan}`, project.repo].filter(Boolean).join(' · ')}</span>
+                      </span>
+                      <button className="small-button" onClick={() => setPanel(project.mirrorchyan !== undefined ? { kind: 'mirror', rid: project.mirrorchyan } : { kind: 'install', repo: project.repo! })}>安装</button>
                     </div>
                   ))}
                 </>
@@ -92,6 +108,10 @@ export function ScriptsPage({ client, openSession }: PageProps) {
           {panel?.kind === 'install' && (
             <InstallPanel key={panel.repo ?? 'blank'} client={client} jobs={jobs} {...(panel.repo === undefined ? {} : { initialRepo: panel.repo })}
               onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} />
+          )}
+          {panel?.kind === 'mirror' && (
+            <MirrorInstallPanel key={panel.rid ?? 'blank'} client={client} jobs={jobs} choices={mirrorChoices} {...(panel.rid === undefined ? {} : { initialRid: panel.rid })}
+              onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} onGitHub={repo => setPanel({ kind: 'install', repo })} />
           )}
           {panel?.kind === 'import' && (
             <ImportPanel client={client} onClose={() => setPanel(null)} onImported={id => { setSelected(id); setPanel(null) }} />

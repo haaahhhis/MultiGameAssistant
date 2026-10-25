@@ -86,7 +86,7 @@ test('with a CDK: installed from Mirror酱, updated with only the changed files 
     assert.equal(first.phase, 'done', first.error)
     let info = library.get('tool')
     assert.equal(info.current, '1.0.0')
-    assert.equal(info.mirrorchyan, 'Tool')
+    assert.equal(info.channels.mirrorchyan?.rid, 'Tool')
     assert.equal(readFileSync(join(info.dir!, 'tool.exe'), 'utf8'), 'MZ 1.0.0')
     assert.match(info.versions[0]!.asset?.name ?? '', /Mirror酱 完整包/)
     assert.ok(jobs.some(j => j.id === first.id && j.phase === 'downloading' && /Mirror酱/.test(j.message ?? '')))

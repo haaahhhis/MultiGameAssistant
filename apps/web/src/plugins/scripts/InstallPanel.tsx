@@ -127,7 +127,123 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
   )
 }
 
-const STEPS: readonly ScriptJob['phase'][] = ['resolving', 'downloading', 'verifying', 'extracting', 'checking', 'done']
+/**
+ * Install from Mirror酱: a resource id (or one of the known ones), looked up
+ * first (no CDK needed for that); downloading needs the user's CDK. A
+ * resource with a GitHub repository can be installed from there instead.
+ */
+export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, onGitHub, onClose }: {
+  client: AdgClient
+  initialRid?: string
+  /** Resources to offer with one click. */
+  choices: readonly { rid: string; name: string }[]
+  jobs: ReadonlyMap<string, ScriptJob>
+  onDone: (scriptId: string) => void
+  /** Install the resource's GitHub repository instead. */
+  onGitHub: (repo: string) => void
+  onClose: () => void
+}) {
+  const [rid, setRid] = useState(initialRid ?? '')
+  const [found, setFound] = useState<{ rid: string; version: string; platform: boolean; name?: string | undefined; repo?: string | undefined } | null>(null)
+  const [cdk, setCdk] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [started, setStarted] = useState<{ jobId: string; scriptId: string } | null>(null)
+
+  useEffect(() => {
+    void client.connection.call('scripts/settings', {}).then(s => setCdk(s.cdkConfigured), () => setCdk(null))
+  }, [client])
+
+  const lookup = async (value = rid) => {
+    const target = value.trim()
+    if (!/^[\w.-]{1,100}$/.test(target)) {
+      setError('请输入 Mirror酱 的资源 id，例如 BGI、MAA')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      setRid(target)
+      setFound(await client.connection.call('scripts/mirrorchyan/lookup', { rid: target }))
+    } catch (e) {
+      setFound(null)
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (initialRid !== undefined) void lookup(initialRid)
+    // Look up once for a resource handed in by a list row.
+  }, [initialRid])
+
+  const install = async () => {
+    if (found === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      setStarted(await client.connection.call('scripts/install', { mirrorchyan: found.rid }))
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (started !== null && found !== null) {
+    const job = jobs.get(started.scriptId)
+    return (
+      <InstallProgress client={client} repo={`Mirror酱 · ${found.rid}`} tag={found.version} asset={`${found.name ?? found.rid}（Mirror酱 完整包）`} job={job?.id === started.jobId ? job : undefined}
+        onDone={() => onDone(started.scriptId)} onRetry={() => setStarted(null)} onClose={onClose} />
+    )
+  }
+
+  return (
+    <section className="card panel-card">
+      <div className="card-head">
+        <div><h3>从 Mirror酱 安装</h3><p className="muted small">从 Mirror酱 下载（国内快，以后的更新有增量包）；需要在「设置 → 脚本安装」填写 CDK。</p></div>
+        <button className="icon-button" aria-label="关闭" onClick={onClose}><Icon name="close" /></button>
+      </div>
+      <form className="field-row" onSubmit={e => { e.preventDefault(); void lookup() }}>
+        <input className="text-input plain" aria-label="Mirror酱 资源 id" value={rid} onChange={e => setRid(e.target.value)} placeholder="资源 id，例如 BGI、MAA、M9A" spellCheck={false} disabled={busy} />
+        <button type="submit" disabled={busy || rid.trim() === ''}>{busy && found === null ? '查询中…' : '查询'}</button>
+      </form>
+      {choices.length > 0 && (
+        <div className="mirror-choices">
+          {choices.map(c => (
+            <button key={c.rid} className={`mirror-choice ${found?.rid === c.rid ? 'active' : ''}`} disabled={busy} onClick={() => void lookup(c.rid)}>{c.name}<span className="muted small">{c.rid}</span></button>
+          ))}
+        </div>
+      )}
+
+      {found !== null && (
+        <>
+          <div className="install-file">
+            <Icon name="package" />
+            <span className="asset-name">{found.name ?? found.rid}</span>
+            <span className="badge">Mirror酱 {found.rid}</span>
+            <span className="muted small">最新 {found.version}</span>
+          </div>
+          {cdk === false && (
+            <div className="notice info left small">
+              <span>还没有填写 Mirror酱 CDK，没法从 Mirror酱 下载。{found.repo !== undefined ? '也可以从 GitHub 安装，填了 CDK 后它的更新会走 Mirror酱。' : ''}</span>
+            </div>
+          )}
+          <div className="key-actions">
+            <span className="muted small">{found.repo === undefined ? '' : `GitHub：${found.repo}`}</span>
+            <span className="spacer" />
+            {found.repo !== undefined && <button className="small-button" disabled={busy} onClick={() => onGitHub(found.repo!)}>从 GitHub 安装</button>}
+            <button className="primary" onClick={() => void install()} disabled={busy || cdk === false}>安装 {found.version}</button>
+          </div>
+        </>
+      )}
+      {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
+    </section>
+  )
+}
+
+const STEPS: readonly ScriptJob['phase'][] =['resolving', 'downloading', 'verifying', 'extracting', 'checking', 'done']
 
 /** An install under way: where it comes from, each step, and while downloading how much, how fast and how long is left. */
 function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry, onClose }: {

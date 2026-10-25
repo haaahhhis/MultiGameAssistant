@@ -7,6 +7,7 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText, FAMILY_LABEL, isActive } from './data.ts'
 import { JobProgress } from './JobProgress.tsx'
 import { LocalUpdate } from './LocalUpdate.tsx'
+import { ChannelRows } from './Channels.tsx'
 import { GuardCard, PackCard } from './PackCards.tsx'
 import { ConfigCard } from './ConfigCard.tsx'
 import { GameCard } from './GameCard.tsx'
@@ -37,7 +38,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
   const shown = job !== undefined && (job.endedAt === undefined || job.startedAt >= script.addedAt - 1000) ? job : undefined
   const running = isActive(shown)
   const capabilities = useStore(client.capabilities)
-  const github = script.source.kind === 'github'
+  const managed = script.source.kind !== 'local'
 
   const act = async (name: string, fn: () => Promise<string | void>) => {
     setBusy(name)
@@ -62,8 +63,8 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
             <span className="chip">{script.id}</span>
             {script.family !== undefined && <span className="badge">{FAMILY_LABEL[script.family] ?? script.family}</span>}
             {script.packId !== undefined ? <span className="badge ok">脚本包 {script.packId}</span> : <span className="badge warn">无脚本包</span>}
-            {script.mirrorchyan !== undefined && <span className="badge" title="填了 Mirror酱 CDK 后从 Mirror酱 更新（增量）">Mirror酱 {script.mirrorchyan}</span>}
-            <span className="muted small">{github ? `GitHub · ${script.source.kind === 'github' ? script.source.repo : ''}` : '本地导入'}</span>
+            {script.channels.mirrorchyan !== undefined && <span className="badge" title="填了 Mirror酱 CDK 后从 Mirror酱 更新（增量）">Mirror酱 {script.channels.mirrorchyan.rid}</span>}
+            <span className="muted small">{script.source.kind === 'github' ? `GitHub · ${script.source.repo}` : script.source.kind === 'mirrorchyan' ? `Mirror酱 · ${script.source.rid}` : '本地导入'}</span>
           </div>
         </div>
       </header>
@@ -77,7 +78,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
             <button className="ghost small-button" onClick={() => void navigator.clipboard?.writeText(script.dir!)}><Icon name="copy" />复制路径</button>
           )}
         </div>
-        {github ? (
+        {managed ? (
           <>
             <ul className="version-list">
               {script.versions.map(v => (
@@ -95,6 +96,9 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
                 </li>
               ))}
             </ul>
+            <dl className="local-facts channel-facts">
+              <ChannelRows client={client} script={script} disabled={running || busy !== null} act={act} />
+            </dl>
             <div className="key-actions">
               <span className="muted small">
                 {script.update === undefined ? '还没有检查过更新' : script.update.available ? `有新版本 ${script.update.latest}` : `已是最新（${script.update.latest}）`}
@@ -179,19 +183,19 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
       <section className="card danger-zone">
         {!confirmRemove ? (
           <div className="key-actions">
-            <span className="muted small">{github ? '从脚本库移除；可选择同时删除已安装的文件。' : '从脚本库移除；你的目录不会被删除。'}</span>
+            <span className="muted small">{managed ? '从脚本库移除；可选择同时删除已安装的文件。' : '从脚本库移除；你的目录不会被删除。'}</span>
             <span className="spacer" />
             <button className="danger-outline small-button" disabled={running} onClick={() => setConfirmRemove(true)}>移除</button>
           </div>
         ) : (
           <div className="key-actions">
-            {github && (
+            {managed && (
               <label className="check-label"><input type="checkbox" checked={deleteFiles} onChange={e => setDeleteFiles(e.target.checked)} />同时删除所有已安装版本</label>
             )}
             <span className="spacer" />
             <button className="small-button" onClick={() => setConfirmRemove(false)}>取消</button>
             <button className="danger small-button" disabled={busy !== null} onClick={() => void act('remove', async () => {
-              await client.connection.call('scripts/remove', { id: script.id, deleteFiles: github && deleteFiles })
+              await client.connection.call('scripts/remove', { id: script.id, deleteFiles: managed && deleteFiles })
               onRemoved()
             })}>确认移除</button>
           </div>

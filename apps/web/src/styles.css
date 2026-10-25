@@ -995,6 +995,10 @@ button.script-row.active { background: var(--raised); box-shadow: inset 0 0 0 1p
 .local-confirm { padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--sunken); }
 .local-confirm p { margin: 0 0 8px; }
 .local-confirm code { font-family: var(--mono); word-break: break-all; }
+.channel-facts { margin-bottom: 4px; }
+.mirror-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mirror-choice { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--sunken); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.mirror-choice:hover:not(:disabled), .mirror-choice.active { border-color: var(--accent-line); background: var(--accent-soft); }
 .version-name { font-family: var(--mono); font-size: 13px; font-weight: 500; }
 .env-list li { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border); }
 .env-list li:first-child { border-top: none; padding-top: 0; }

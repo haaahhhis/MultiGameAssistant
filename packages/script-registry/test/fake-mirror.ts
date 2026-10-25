@@ -6,13 +6,13 @@ import type { AddressInfo } from 'node:net'
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex')
 
 /** A fake Mirror酱: `latest` answers by resource, CDK and current_version; packages are served from /dl/. */
-export async function fakeMirror(state: { latest: string; cdk: string; full: Uint8Array; incremental?: { from: string; body: Uint8Array } }) {
+export async function fakeMirror(state: { latest: string; cdk: string; full: Uint8Array; incremental?: { from: string; body: Uint8Array }; rid?: string }) {
   const asked: URLSearchParams[] = []
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
     if (url.pathname === '/dl/full.zip') { res.writeHead(200, { 'content-length': state.full.length }); res.end(state.full); return }
     if (url.pathname === '/dl/patch.zip' && state.incremental !== undefined) { res.writeHead(200, { 'content-length': state.incremental.body.length }); res.end(state.incremental.body); return }
-    if (url.pathname !== '/api/resources/Tool/latest') { res.writeHead(404).end(JSON.stringify({ code: 8001, msg: 'resource not found' })); return }
+    if (url.pathname !== `/api/resources/${state.rid ?? 'Tool'}/latest`) { res.writeHead(404).end(JSON.stringify({ code: 8001, msg: 'resource not found' })); return }
     asked.push(url.searchParams)
     const reply = (body: object) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body))
     if (url.searchParams.has('os')) return reply({ code: 8001, msg: 'resource not found' })

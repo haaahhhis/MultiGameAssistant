@@ -14,7 +14,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ToolCallView } from '@deepseek-ai/dsh-tools/presentation'
-import { GitHubRepo, ScriptId, type ScriptJob } from '@adg/protocol'
+import { GitHubRepo, MirrorRid, ScriptId, type ScriptJob } from '@adg/protocol'
 import { z } from 'zod'
 import type { ScriptLibrary } from './library.ts'
 
@@ -114,7 +114,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         const { scripts, packs, toolsDir } = library.list()
         return {
           toolsDir,
-          scripts: scripts.map(s => ({ id: s.id, name: s.name, source: s.source, version: s.source.kind === 'local' ? s.localVersion?.version ?? '（认不出）' : s.current, updateFrom: s.updateFrom, dir: s.dir, family: s.family, versions: s.versions.map(v => v.version), env: s.env === undefined ? undefined : { ok: s.env.ok, problems: s.env.items.filter(i => i.status !== 'ok' && i.status !== 'unsupported').map(i => `${i.label}: ${i.status}`) }, update: s.update })),
+          scripts: scripts.map(s => ({ id: s.id, name: s.name, source: s.source, version: s.source.kind === 'local' ? s.localVersion?.version ?? '（认不出）' : s.current, channels: s.channels, dir: s.dir, family: s.family, versions: s.versions.map(v => v.version), env: s.env === undefined ? undefined : { ok: s.env.ok, problems: s.env.items.filter(i => i.status !== 'ok' && i.status !== 'unsupported').map(i => `${i.label}: ${i.status}`) }, update: s.update })),
           availablePacks: packs.filter(p => !p.installed && p.error === undefined).map(p => ({ id: p.id, name: p.name, repo: p.repo, description: p.description })),
         }
       },
@@ -145,23 +145,34 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.install,
-      description: '从 GitHub 发布版本安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。默认装最新正式版。不在内置脚本包里的仓库会先请用户确认。已安装的脚本再次调用即为更新到指定版本。',
+      description: '从 GitHub 发布版本（repo）或 Mirror酱（mirrorchyan，资源 id）安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。默认装最新正式版；填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。不在内置脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。',
       properties: {
         repo,
+        mirrorchyan: { type: 'string', description: '改从 Mirror酱 安装：资源 id（例如 BGI、MAA），代替 repo；需要用户填过 Mirror酱 CDK。' },
         tag: { type: 'string', description: '指定版本标签；省略为最新正式版。' },
         asset: { type: 'string', description: '指定要下载的文件名；省略则自动选择。' },
         id: { type: 'string', description: '脚本 id；省略时使用脚本包 id 或仓库名。' },
       },
-      required: ['repo'],
       timeoutMs: INSTALL_TIMEOUT_MS,
       kind: 'execute',
-      title: a => `安装脚本：${String(a['repo'] ?? '')}${a['tag'] === undefined ? '' : ` ${String(a['tag'])}`}`,
+      title: a => `安装脚本：${String(a['repo'] ?? (a['mirrorchyan'] === undefined ? '' : `Mirror酱 ${String(a['mirrorchyan'])}`))}${a['tag'] === undefined ? '' : ` ${String(a['tag'])}`}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ repo: GitHubRepo, tag: opt(z.string().min(1).max(200)), asset: opt(z.string().min(1).max(300)), id: opt(ScriptId) }), args)
-        if (!library.isKnownRepo(a.repo)) {
-          await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${a.tag === undefined ? '最新发布版本' : ` ${a.tag}`}。这个仓库不在内置脚本包里，请确认它来源可信。`)
+        const a = parse(z.object({ repo: opt(GitHubRepo), mirrorchyan: opt(MirrorRid), tag: opt(z.string().min(1).max(200)), asset: opt(z.string().min(1).max(300)), id: opt(ScriptId) }), args)
+        let started: ReturnType<ScriptLibrary['install']>
+        if (a.mirrorchyan !== undefined) {
+          if (a.repo !== undefined) throw new Error('repo 和 mirrorchyan 只能给一个')
+          const found = await library.lookupMirror(a.mirrorchyan, exec.signal)
+          if (!library.isKnownMirror(found.rid)) {
+            await approve(exec, `从 Mirror酱 下载并安装资源 ${found.rid}（最新 ${found.version}）。这个资源不在已知列表里，请确认它来源可信。`)
+          }
+          started = library.install({ mirrorchyan: { rid: found.rid, platform: found.platform }, id: a.id })
+        } else {
+          if (a.repo === undefined) throw new Error('请给出 repo（GitHub 仓库）或 mirrorchyan（Mirror酱 资源 id）')
+          if (!library.isKnownRepo(a.repo)) {
+            await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${a.tag === undefined ? '最新发布版本' : ` ${a.tag}`}。这个仓库不在内置脚本包里，请确认它来源可信。`)
+          }
+          started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, id: a.id })
         }
-        const started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, id: a.id })
         const job = await followJob(library, started, exec.signal)
         const info = job.phase === 'done' ? library.get(job.scriptId) : undefined
         return { ...describeJob(job), dir: info?.dir, env: info?.env, family: info?.family }
@@ -170,19 +181,28 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     tool({
       name: TOOL_NAMES.update,
       description: '检查并更新脚本到最新发布版本（填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时从那里下载，否则从 GitHub）。安装的脚本：新版本装在旧版本旁边，配置文件带过去，旧版本保留用于回滚。本地导入的脚本：在它自己的目录里更新（会先请用户确认），被替换的文件先备份，已有的配置文件不动，可用 script_rollback 撤销；没有更新来源时用 repo 指定它的 GitHub 仓库。只更新官方发布，不修改脚本代码。',
-      properties: { id, repo: { ...repo, description: '本地导入的脚本的更新来源（GitHub 仓库 owner/repo）；省略则用已设置的或脚本包的。' } },
+      properties: {
+        id,
+        repo: { ...repo, description: '设置它的 GitHub 更新渠道（owner/repo）；省略则用已有的。从 GitHub 安装的脚本不能改。' },
+        mirrorchyan: { type: 'string', description: '设置它的 Mirror酱 更新渠道（资源 id，例如 BGI）；省略则用已有的。' },
+      },
       required: ['id'],
       timeoutMs: INSTALL_TIMEOUT_MS,
       kind: 'execute',
       title: a => `更新脚本：${String(a['id'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ id: ScriptId, repo: opt(GitHubRepo) }), args)
-        const before = library.get(a.id)
+        const a = parse(z.object({ id: ScriptId, repo: opt(GitHubRepo), mirrorchyan: opt(MirrorRid) }), args)
+        let before = library.get(a.id)
+        if (a.repo !== undefined && a.repo.toLowerCase() !== before.channels.github?.repo.toLowerCase()) {
+          await approve(exec, `把 ${before.name} 的 GitHub 更新渠道设为 ${a.repo}${library.isKnownRepo(a.repo) ? '' : '（不在内置脚本包里，请确认它就是这个脚本、来源可信）'}。`)
+          before = await library.setUpdateSource(a.id, { repo: a.repo })
+        }
+        if (a.mirrorchyan !== undefined && a.mirrorchyan.toLowerCase() !== before.channels.mirrorchyan?.rid.toLowerCase()) {
+          const found = await library.lookupMirror(a.mirrorchyan, exec.signal)
+          await approve(exec, `把 ${before.name} 的 Mirror酱 更新渠道设为 ${found.rid}（最新 ${found.version}${found.name === undefined ? '' : `，${found.name}`}）${library.isKnownMirror(found.rid) ? '' : '；这个资源不在已知列表里，请确认它就是这个脚本'}。`)
+          before = await library.setUpdateSource(a.id, { mirrorchyan: found })
+        }
         if (before.source.kind === 'local') {
-          if (a.repo !== undefined && a.repo.toLowerCase() !== before.updateFrom?.toLowerCase()) {
-            await approve(exec, `把本地脚本 ${before.name} 的更新来源设为 GitHub 仓库 ${a.repo}${library.isKnownRepo(a.repo) ? '' : '（不在内置脚本包里，请确认它就是这个脚本、来源可信）'}。`)
-            await library.setUpdateSource(a.id, a.repo)
-          }
           const check = await library.checkUpdate(a.id, exec.signal)
           if (!check.available) return { ok: true, upToDate: true, version: check.current }
           await approve(exec, `在 ${before.source.path} 里把 ${before.name} 从 ${check.current ?? '（认不出的版本）'} 更新到 ${check.latest}。会替换这个目录里的程序文件（先备份，可撤销），已有的配置文件不动；更新前请关闭这个脚本。`)

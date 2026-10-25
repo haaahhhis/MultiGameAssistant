@@ -17,9 +17,14 @@ export const ScriptId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/, 'use low
 /** `owner/repo` on GitHub. */
 export const GitHubRepo = z.string().trim().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'use owner/repo')
 
+/** A resource id on Mirror酱, e.g. `MAA`, `BGI`. */
+export const MirrorRid = z.string().trim().regex(/^[A-Za-z0-9_.-]{1,100}$/, 'use the resource id, e.g. MAA or BGI')
+
 export const ScriptSource = z.discriminatedUnion('kind', [
   /** Installed by MultiGameAssistant into the tools directory. */
   z.object({ kind: z.literal('github'), repo: z.string() }),
+  /** Installed into the tools directory from Mirror酱 (`platform`: asked with os and arch). */
+  z.object({ kind: z.literal('mirrorchyan'), rid: z.string(), platform: z.boolean() }),
   /** A directory the user already had; used in place, never moved or deleted. */
   z.object({ kind: z.literal('local'), path: z.string() }),
 ])
@@ -77,6 +82,21 @@ export const ProjectProbe = z.object({
 })
 export type ProjectProbe = z.infer<typeof ProjectProbe>
 
+/** Where an update channel came from: how it was installed, its pack, MultiGameAssistant's list of known projects, or the user. */
+export const ChannelFrom = z.enum(['install', 'pack', 'known', 'user'])
+export type ChannelFrom = z.infer<typeof ChannelFrom>
+
+/**
+ * Where a script's updates can come from, each on its own: with a Mirror酱
+ * CDK Mirror酱 is used first, else GitHub; a script only on Mirror酱 can be
+ * checked without a CDK but needs one to download.
+ */
+export const UpdateChannels = z.object({
+  github: z.object({ repo: z.string(), from: ChannelFrom }).optional(),
+  mirrorchyan: z.object({ rid: z.string(), from: ChannelFrom }).optional(),
+})
+export type UpdateChannels = z.infer<typeof UpdateChannels>
+
 /** Which version an imported directory holds, and where that was read (`interface.json`, `MAA.exe 的文件属性`, `更新`…). */
 export const LocalVersion = z.object({ version: z.string(), from: z.string() })
 export type LocalVersion = z.infer<typeof LocalVersion>
@@ -87,8 +107,6 @@ export const ScriptInfo = z.object({
   source: ScriptSource,
   /** Script Pack describing it, when one matches. */
   packId: z.string().optional(),
-  /** Its resource id on Mirror酱: with a CDK, updates come from there. */
-  mirrorchyan: z.string().optional(),
   family: ScriptFamily.optional(),
   /** Current version and its directory; local imports use `local`. */
   current: z.string().optional(),
@@ -97,10 +115,10 @@ export const ScriptInfo = z.object({
   env: EnvReport.optional(),
   probe: ProjectProbe.optional(),
   update: z.object({ latest: z.string(), available: z.boolean(), checkedAt: z.number() }).optional(),
-  /** A local import's update source (`owner/repo`): what the user set, else its pack's. */
-  updateFrom: z.string().optional(),
-  /** Whether `updateFrom` came from the pack (false: the user set it). */
-  updateFromPack: z.boolean().optional(),
+  /** Where its updates come from. */
+  channels: UpdateChannels,
+  /** The entry of the known-project list it was recognized as (no pack describes it). */
+  known: z.string().optional(),
   /** The version found in a local import's directory; absent when it could not be read. */
   localVersion: LocalVersion.optional(),
   /** The last in-place update of a local import, which can be undone. */
@@ -117,6 +135,8 @@ export const PackSummary = z.object({
   name: z.string(),
   description: z.string().optional(),
   repo: z.string().optional(),
+  /** Its resource id on Mirror酱, when it is published there. */
+  mirrorchyan: z.string().optional(),
   family: ScriptFamily.optional(),
   /** Shipped with MultiGameAssistant (false: in the user's pack directory). */
   builtin: z.boolean(),
@@ -126,6 +146,17 @@ export const PackSummary = z.object({
   error: z.string().optional(),
 })
 export type PackSummary = z.infer<typeof PackSummary>
+
+/** A project MultiGameAssistant knows where to update from without a pack. */
+export const KnownProjectSummary = z.object({
+  id: z.string(),
+  name: z.string(),
+  repo: z.string().optional(),
+  mirrorchyan: z.string().optional(),
+  /** A script with this project is in the library. */
+  installed: z.boolean(),
+})
+export type KnownProjectSummary = z.infer<typeof KnownProjectSummary>
 
 export const ReleaseAsset = z.object({ name: z.string(), size: z.number(), downloadUrl: z.string(), digest: z.string().optional() })
 export type ReleaseAsset = z.infer<typeof ReleaseAsset>
@@ -189,7 +220,7 @@ export const ScriptRequests = {
   'scripts/list': {
     capability: SCRIPTS_CAPABILITY,
     params: Empty,
-    result: z.object({ scripts: z.array(ScriptInfo), packs: z.array(PackSummary), toolsDir: z.string() }),
+    result: z.object({ scripts: z.array(ScriptInfo), packs: z.array(PackSummary), known: z.array(KnownProjectSummary), toolsDir: z.string() }),
   },
   'scripts/get': {
     capability: SCRIPTS_CAPABILITY,
@@ -208,18 +239,23 @@ export const ScriptRequests = {
     params: z.object({ repo: GitHubRepo, limit: z.number().int().min(1).max(30).optional() }),
     result: z.object({ repo: z.string(), packId: z.string().optional(), releases: z.array(ReleaseInfo) }),
   },
-  /** Start installing a release; progress arrives as `scripts/job`. */
+  /**
+   * Start installing a release from GitHub (`repo`) or Mirror酱
+   * (`mirrorchyan`, needs a CDK); progress arrives as `scripts/job`.
+   */
   'scripts/install': {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({
-      repo: GitHubRepo,
+      repo: GitHubRepo.optional(),
+      /** A Mirror酱 resource id, instead of `repo`; tag and asset do not apply. */
+      mirrorchyan: MirrorRid.optional(),
       /** Release tag; omitted takes the latest stable (or pre-release, if allowed and none is stable). */
       tag: z.string().min(1).max(200).optional(),
       /** Asset name; omitted takes the suggested one. */
       asset: z.string().min(1).max(300).optional(),
       /** Script id; omitted uses the matching pack's id, else the repo name. */
       id: ScriptId.optional(),
-    }),
+    }).refine(p => (p.repo === undefined) !== (p.mirrorchyan === undefined), 'give either repo or mirrorchyan'),
     result: z.object({ jobId: z.string(), scriptId: z.string() }),
   },
   /**
@@ -243,11 +279,27 @@ export const ScriptRequests = {
     params: ById,
     result: z.object({ jobId: z.string().optional(), upToDate: z.boolean() }),
   },
-  /** Set where a local import updates from (`owner/repo`); `null` turns updates off, omitted goes back to its pack's. */
+  /**
+   * Set a script's update channels: a value sets it, `null` turns it off,
+   * omitted leaves it, `reset` goes back to the automatic one (its pack's,
+   * or the known project's). A script installed from GitHub keeps its
+   * repository; one installed from Mirror酱 keeps its resource.
+   */
   'scripts/source/set': {
     capability: SCRIPTS_CAPABILITY,
-    params: z.object({ id: ScriptId, repo: GitHubRepo.nullable().optional() }),
+    params: z.object({
+      id: ScriptId,
+      repo: GitHubRepo.nullable().optional(),
+      mirrorchyan: MirrorRid.nullable().optional(),
+      reset: z.array(z.enum(['repo', 'mirrorchyan'])).optional(),
+    }),
     result: ScriptInfo,
+  },
+  /** Whether Mirror酱 has a resource, and its latest version (no CDK needed). */
+  'scripts/mirrorchyan/lookup': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ rid: MirrorRid }),
+    result: z.object({ rid: z.string(), version: z.string(), platform: z.boolean(), name: z.string().optional(), repo: z.string().optional() }),
   },
   /** Undo a local import's last in-place update: the old files back, the new ones removed. */
   'scripts/restore': {

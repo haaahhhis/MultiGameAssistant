@@ -1,12 +1,13 @@
 /**
  * Updates for a locally imported script: the version found in its folder,
- * where it updates from (its pack's repository, or one the user names), and
+ * where it updates from (GitHub and Mirror酱, each on its own), and
  * an in-place update that backs up what it replaces and can be undone.
  */
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { ScriptInfo } from '@adg/protocol'
 import { relativeTime } from '../../components/SessionList.tsx'
+import { ChannelRows } from './Channels.tsx'
 
 export function LocalUpdate({ client, script, disabled, busy, now, act }: {
   client: AdgClient
@@ -16,17 +17,10 @@ export function LocalUpdate({ client, script, disabled, busy, now, act }: {
   now: number
   act: (name: string, fn: () => Promise<string | void>) => Promise<void>
 }) {
-  const [editing, setEditing] = useState(false)
-  const [repo, setRepo] = useState(script.updateFrom ?? '')
   const [confirming, setConfirming] = useState(false)
   const version = script.localVersion
   const update = script.update
-
-  const setSource = (value: string | null | undefined) => act('source', async () => {
-    await client.connection.call('scripts/source/set', { id: script.id, ...(value === undefined ? {} : { repo: value }) })
-    setEditing(false)
-    return value === null ? '已关闭这个脚本的更新' : value === undefined ? '已改回脚本包的更新来源' : `更新来源已设为 ${value}`
-  })
+  const channels = script.channels.github !== undefined || script.channels.mirrorchyan !== undefined
 
   return (
     <div className="local-update">
@@ -37,26 +31,7 @@ export function LocalUpdate({ client, script, disabled, busy, now, act }: {
             ? <><span className="version-name">{version.version}</span><span className="muted small">{version.from === '更新' ? '（由 MultiGameAssistant 更新）' : `（读自 ${version.from}）`}</span></>
             : <span className="muted small">认不出这个目录的版本：检查更新时会当作可以更新</span>}
         </dd>
-        <dt>更新来源</dt>
-        <dd>
-          {!editing ? (
-            <>
-              {script.updateFrom !== undefined
-                ? <><span>GitHub · {script.updateFrom}</span>{script.updateFromPack === true && <span className="muted small">（脚本包）</span>}</>
-                : <span className="muted small">未设置：填写它的 GitHub 仓库后就能检查和更新</span>}
-              {script.mirrorchyan !== undefined && <span className="badge" title="填了 Mirror酱 CDK 后从 Mirror酱 下载（有增量包时只下变化的文件）">Mirror酱 {script.mirrorchyan}</span>}
-              <button className="ghost small-button" disabled={disabled} onClick={() => { setRepo(script.updateFrom ?? ''); setEditing(true) }}>{script.updateFrom === undefined ? '设置' : '修改'}</button>
-            </>
-          ) : (
-            <span className="local-source-edit">
-              <input className="text-input plain" aria-label="更新来源 GitHub 仓库" value={repo} onChange={e => setRepo(e.target.value)} placeholder="owner/repo，例如 MaaAssistantArknights/MaaAssistantArknights" spellCheck={false} autoFocus />
-              <button className="primary small-button" disabled={disabled || !/^[\w.-]+\/[\w.-]+$/.test(repo.trim())} onClick={() => void setSource(repo.trim())}>保存</button>
-              {script.packId !== undefined && <button className="small-button" disabled={disabled} onClick={() => void setSource(undefined)}>用脚本包的</button>}
-              {script.updateFrom !== undefined && <button className="small-button" disabled={disabled} onClick={() => void setSource(null)}>不再更新</button>}
-              <button className="ghost small-button" onClick={() => setEditing(false)}>取消</button>
-            </span>
-          )}
-        </dd>
+        <ChannelRows client={client} script={script} disabled={disabled} act={act} />
       </dl>
 
       {!confirming ? (
@@ -66,7 +41,7 @@ export function LocalUpdate({ client, script, disabled, busy, now, act }: {
             {update !== undefined && ` · ${relativeTime(update.checkedAt, now)}检查`}
           </span>
           <span className="spacer" />
-          <button className="small-button" disabled={disabled || script.updateFrom === undefined} onClick={() => void act('check', async () => {
+          <button className="small-button" disabled={disabled || !channels} onClick={() => void act('check', async () => {
             const r = await client.connection.call('scripts/checkUpdate', { id: script.id })
             return r.available ? `发现新版本 ${r.latest}${r.current === undefined ? '（认不出当前版本）' : `，当前 ${r.current}`}` : '已是最新版本'
           })}>{busy === 'check' ? '检查中…' : '检查更新'}</button>

@@ -13,13 +13,13 @@
 import { copyFile, cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorLatest, probeProject, readMirrorChanges, systemHost,
-  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest,
+  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, systemHost,
+  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorResource,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
-import type { EnvReport, InstallSettings, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
+import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
-import { mirrorResourceFor } from './mirror-resources.ts'
+import { KNOWN_PROJECTS, knownByDir, knownById, knownByMirror, knownByRepo, mirrorResourceFor } from './known-projects.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
 import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type StoredScript, type StoredVersion } from './state.ts'
 
@@ -46,7 +46,10 @@ export interface LibraryOptions {
 }
 
 export interface InstallRequest {
-  readonly repo: string
+  /** From GitHub… */
+  readonly repo?: string | undefined
+  /** …or from Mirror酱 (needs a CDK); tag and asset do not apply. */
+  readonly mirrorchyan?: MirrorResource | undefined
   readonly tag?: string | undefined
   readonly asset?: string | undefined
   readonly id?: string | undefined
@@ -79,6 +82,7 @@ export class ScriptLibrary {
   async start(): Promise<void> {
     this.#state = await this.#store.load(this.#options.defaults ?? {}, this.#options.log)
     await this.reloadPacks()
+    for (const script of this.#state.scripts) await this.#recognize(script)
   }
 
   dispose(): void {
@@ -131,7 +135,7 @@ export class ScriptLibrary {
 
   // ── reading ───────────────────────────────────────────────────────────
 
-  list(): { scripts: ScriptInfo[]; packs: PackSummary[]; toolsDir: string } {
+  list(): { scripts: ScriptInfo[]; packs: PackSummary[]; known: KnownProjectSummary[]; toolsDir: string } {
     const used = new Set(this.#state.scripts.map(s => s.packId).filter(Boolean))
     const packs: PackSummary[] = [...this.#packs.values()].map(({ manifest, builtin }) => ({
       id: manifest.id,
@@ -140,10 +144,21 @@ export class ScriptLibrary {
       installed: used.has(manifest.id),
       ...(manifest.description === undefined ? {} : { description: manifest.description }),
       ...(manifest.source.github === undefined ? {} : { repo: manifest.source.github }),
+      ...(manifest.source.mirrorchyan === undefined ? {} : { mirrorchyan: manifest.source.mirrorchyan.rid }),
       ...(manifest.family === undefined ? {} : { family: manifest.family }),
     }))
     for (const error of this.#packErrors) packs.push({ id: error.id, name: error.id, builtin: error.builtin, installed: false, error: error.error })
-    return { scripts: this.#state.scripts.map(s => this.#info(s)), packs, toolsDir: this.toolsDir }
+    // The known projects no pack describes (the others are listed as packs).
+    const known: KnownProjectSummary[] = KNOWN_PROJECTS
+      .filter(p => p.repo === undefined || packForRepo(this.#packs, p.repo) === undefined)
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        installed: this.#state.scripts.some(s => s.known === p.id || (s.source.kind === 'github' && s.source.repo.toLowerCase() === p.repo?.toLowerCase()) || (s.source.kind === 'mirrorchyan' && s.source.rid === p.mirrorchyan?.rid)),
+        ...(p.repo === undefined ? {} : { repo: p.repo }),
+        ...(p.mirrorchyan === undefined ? {} : { mirrorchyan: p.mirrorchyan.rid }),
+      }))
+    return { scripts: this.#state.scripts.map(s => this.#info(s)), packs, known, toolsDir: this.toolsDir }
   }
 
   get(id: string): ScriptInfo {
@@ -216,46 +231,85 @@ export class ScriptLibrary {
 
   /** Id an install of `repo` would use. */
   scriptIdFor(repo: string, id?: string): string {
-    return id ?? packForRepo(this.#packs, repo)?.manifest.id ?? slug(repo.split('/')[1] ?? repo)
+    return id ?? packForRepo(this.#packs, repo)?.manifest.id ?? knownByRepo(repo)?.id ?? slug(repo.split('/')[1] ?? repo)
+  }
+
+  /** Whether a Mirror酱 resource is one a pack or the known-project list names (curated). */
+  isKnownMirror(rid: string): boolean {
+    return knownByMirror(rid) !== undefined || this.#packForMirror(rid)?.builtin === true
+  }
+
+  /**
+   * Whether Mirror酱 has `rid`, its latest version, and whether it is
+   * uploaded per platform (asked with os and arch first, then without).
+   */
+  async lookupMirror(rid: string, signal?: AbortSignal): Promise<{ rid: string; version: string; platform: boolean; name?: string; repo?: string }> {
+    const known = this.#packForMirror(rid)?.manifest.source.mirrorchyan ?? knownByMirror(rid)?.mirrorchyan
+    const named = (resource: MirrorResource, version: string) => {
+      const pack = this.#packForMirror(resource.rid)
+      const project = knownByMirror(resource.rid)
+      const name = pack?.manifest.name ?? project?.name
+      const repo = pack?.manifest.source.github ?? project?.repo
+      return { rid: resource.rid, version: versionOfTag(version), platform: resource.platform, ...(name === undefined ? {} : { name }), ...(repo === undefined ? {} : { repo }) }
+    }
+    if (known !== undefined) return named(known, (await mirrorLatest(known, this.#mirrorOptions(undefined, signal))).version)
+    try {
+      return named({ rid, platform: true }, (await mirrorLatest({ rid, platform: true }, this.#mirrorOptions(undefined, signal))).version)
+    } catch (error) {
+      if (!(error instanceof MirrorChyanError) || error.code !== 8001) throw error
+      return named({ rid, platform: false }, (await mirrorLatest({ rid, platform: false }, this.#mirrorOptions(undefined, signal))).version)
+    }
   }
 
   // ── installing ────────────────────────────────────────────────────────
 
-  /** Start an install; the returned promise settles when the job ends. */
+  /** Start an install from GitHub (`repo`) or Mirror酱 (`mirrorchyan`); the returned promise settles when the job ends. */
   install(request: InstallRequest): { job: ScriptJob; done: Promise<ScriptJob> } {
-    const scriptId = this.scriptIdFor(request.repo, request.id)
+    const mirror = request.mirrorchyan
+    if ((request.repo === undefined) === (mirror === undefined)) throw new Error('请给出 GitHub 仓库或 Mirror酱 资源 id 之一')
+    const pack = request.repo !== undefined ? packForRepo(this.#packs, request.repo) : this.#packForMirror(mirror!.rid)
+    const scriptId = request.repo !== undefined
+      ? this.scriptIdFor(request.repo, request.id)
+      : request.id ?? pack?.manifest.id ?? knownByMirror(mirror!.rid)?.id ?? slug(mirror!.rid)
     const existing = this.#state.scripts.find(s => s.id === scriptId)
     if (existing !== undefined && existing.source.kind === 'local') {
       throw new Error(`id ${scriptId} 已被本地导入的脚本使用，请换一个 id`)
     }
-    if (existing !== undefined && existing.source.kind === 'github' && existing.source.repo.toLowerCase() !== request.repo.toLowerCase()) {
-      throw new Error(`id ${scriptId} 已属于 ${existing.source.repo}，请换一个 id`)
+    const source: ScriptSource = request.repo !== undefined ? { kind: 'github', repo: request.repo } : { kind: 'mirrorchyan', rid: mirror!.rid, platform: mirror!.platform }
+    if (existing !== undefined && !sameSource(existing.source, source)) {
+      throw new Error(`id ${scriptId} 已属于 ${describeSource(existing.source)}，请换一个 id`)
     }
-    return this.#jobs.start(existing === undefined ? 'install' : 'update', scriptId, ctl => this.#installJob(scriptId, request, ctl))
+    // A chosen release or file is GitHub's own; otherwise the latest, from Mirror酱 when it has the script and there is a CDK.
+    const channels = existing !== undefined
+      ? this.#channels(existing)
+      : this.#newChannels(source, pack)
+    const use: Channels = request.tag !== undefined || request.asset !== undefined ? (channels.github === undefined ? {} : { github: channels.github }) : channels
+    return this.#jobs.start(existing === undefined ? 'install' : 'update', scriptId, ctl => this.#installJob(scriptId, source, request, use, pack, ctl))
   }
 
   /**
-   * Compare the current version with the latest release. A local import is
-   * compared by the version found in its directory (read again each time:
-   * the script may have updated itself), against its update source.
+   * Compare the current version with the latest release, from Mirror酱 with
+   * a CDK else GitHub (Mirror酱 without a CDK when it is the only channel).
+   * A local import is compared by the version found in its directory (read
+   * again each time: the script may have updated itself).
    */
   async checkUpdate(id: string, signal?: AbortSignal): Promise<{ current?: string; latest: string; available: boolean }> {
     const script = this.#script(id)
-    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
+    await this.#recognize(script)
+    const pack = this.#packOf(script)
+    const channels = this.#channels(script)
+    if (channels.github === undefined && channels.mirror === undefined) {
+      throw new Error('这个脚本还没有更新渠道：在脚本页填写它的 GitHub 仓库（owner/repo）或 Mirror酱 资源 id 后再检查')
+    }
     let current = script.current
-    let repo: string
-    if (script.source.kind === 'github') {
-      repo = script.source.repo
-    } else {
-      const source = this.#updateSource(script)
-      if (source === undefined) throw new Error('这个本地脚本还没有更新来源：在脚本页填写它的 GitHub 仓库（owner/repo）后再检查')
-      repo = source.repo
+    if (script.source.kind === 'local') {
       const found = await this.#detectVersion(script)
       if (found !== undefined) script.localVersion = found
       current = script.localVersion?.version
     }
-    const version = await this.#latestVersion(repo, pack, signal)
-    const available = current === undefined || compareVersions(version, current) > 0 || (script.source.kind === 'github' && compareVersions(version, current) === 0 && version !== current)
+    const version = await this.#latestVersion(channels, pack, signal)
+    const managed = script.source.kind !== 'local'
+    const available = current === undefined || compareVersions(version, current) > 0 || (managed && compareVersions(version, current) === 0 && version !== current)
     script.update = { latest: version, available, checkedAt: this.#now() }
     await this.#save()
     this.#options.onChanged(id)
@@ -263,40 +317,50 @@ export class ScriptLibrary {
   }
 
   /**
-   * Update to the latest release. An installed script gets it beside the
-   * current version; a local import is updated in its own directory, with
-   * what it replaces backed up first (see {@link restore}).
+   * Update to the latest release over its channels. An installed script gets
+   * it beside the current version; a local import is updated in its own
+   * directory, with what it replaces backed up first (see {@link restore}).
    */
   async update(id: string, signal?: AbortSignal): Promise<{ upToDate: true } | { upToDate: false; job: ScriptJob; done: Promise<ScriptJob> }> {
     const script = this.#script(id)
     const check = await this.checkUpdate(id, signal)
     if (!check.available) return { upToDate: true }
+    const channels = this.#channels(script)
     if (script.source.kind === 'local') {
-      const repo = this.#updateSource(script)!.repo
-      return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#localUpdateJob(script, repo, ctl)) }
+      return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#localUpdateJob(script, channels, ctl)) }
     }
-    return { upToDate: false, ...this.install({ repo: script.source.repo, id }) }
+    const source = script.source
+    return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#installJob(id, source, {}, channels, this.#packOf(script), ctl)) }
   }
 
-  /** Where a local import updates from (`null`: no updates); an installed script always follows its repository. */
-  async setUpdateSource(id: string, repo: string | null | undefined): Promise<ScriptInfo> {
+  /**
+   * Set a script's update channels: a value sets it, `null` turns it off,
+   * `reset` goes back to the automatic one. How it was installed stays its
+   * channel (an installed script's repository, a Mirror酱 install's resource).
+   */
+  async setUpdateSource(id: string, patch: { repo?: string | null | undefined; mirrorchyan?: MirrorResource | null | undefined; reset?: readonly ('repo' | 'mirrorchyan')[] | undefined }): Promise<ScriptInfo> {
     const script = this.#script(id)
-    if (script.source.kind !== 'local') throw new Error('从 GitHub 安装的脚本跟随它安装时的仓库更新')
-    if (repo === undefined) delete script.updateFrom
-    else script.updateFrom = repo
+    if (patch.repo !== undefined || patch.reset?.includes('repo') === true) {
+      if (script.source.kind === 'github') throw new Error('从 GitHub 安装的脚本跟随它安装时的仓库更新')
+      if (patch.reset?.includes('repo') === true) delete script.updateFrom
+      else script.updateFrom = patch.repo!
+    }
+    if (patch.mirrorchyan !== undefined || patch.reset?.includes('mirrorchyan') === true) {
+      if (script.source.kind === 'mirrorchyan') throw new Error('从 Mirror酱 安装的脚本跟随它安装时的资源更新')
+      if (patch.reset?.includes('mirrorchyan') === true) delete script.mirrorchyan
+      else script.mirrorchyan = patch.mirrorchyan === null ? null : { rid: patch.mirrorchyan!.rid, platform: patch.mirrorchyan!.platform }
+    }
     delete script.update
     await this.#save()
     this.#options.onChanged(id)
     return this.#info(script)
   }
 
-  async #installJob(scriptId: string, request: InstallRequest, ctl: JobControl): Promise<string> {
-    const pack = packForRepo(this.#packs, request.repo)
+  async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
     let script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
     const have = (version: string) => script?.versions.some(v => v.version === version) === true
-    const fetched = (request.tag === undefined && request.asset === undefined ? await this.#fromMirror(scriptId, request.repo, pack, previous?.version, ctl, have) : undefined)
-      ?? await this.#fromGitHub(scriptId, request, pack, ctl, have)
+    const fetched = await this.#fetch(scriptId, channels, pack, previous?.version, ctl, request, have)
     const { version, archive } = fetched
     if (archive === undefined && script !== undefined) {
       script.current = version
@@ -339,14 +403,16 @@ export class ScriptLibrary {
     }
 
     if (script === undefined) {
+      const known = source.kind === 'github' ? knownByRepo(source.repo) : source.kind === 'mirrorchyan' ? knownByMirror(source.rid) : undefined
       script = {
         id: scriptId,
-        name: pack?.manifest.name ?? request.repo.split('/')[1] ?? scriptId,
-        source: { kind: 'github', repo: request.repo },
+        name: pack?.manifest.name ?? known?.name ?? (source.kind === 'github' ? source.repo.split('/')[1] : undefined) ?? (source.kind === 'mirrorchyan' ? source.rid : scriptId),
+        source,
         versions: [],
         addedAt: this.#now(),
         ...(pack === undefined ? {} : { packId: pack.manifest.id }),
-        ...(pack?.manifest.family === undefined ? {} : { family: pack.manifest.family }),
+        ...(pack === undefined && known !== undefined ? { known: known.id } : {}),
+        ...((pack?.manifest.family ?? known?.family) === undefined ? {} : { family: (pack?.manifest.family ?? known?.family)! }),
       }
       this.#state.scripts.push(script)
     }
@@ -373,10 +439,10 @@ export class ScriptLibrary {
    * (and the usual user-data folders) that exist are left as they are. A
    * failure part way (a file in use) puts the old files back.
    */
-  async #localUpdateJob(script: StoredScript, repo: string, ctl: JobControl): Promise<string> {
+  async #localUpdateJob(script: StoredScript, channels: Channels, ctl: JobControl): Promise<string> {
     const target = (script.source as { path: string }).path
-    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
-    const fetched = await this.#fromMirror(script.id, repo, pack, script.localVersion?.version, ctl) ?? await this.#fromGitHub(script.id, { repo }, pack, ctl)
+    const pack = this.#packOf(script)
+    const fetched = await this.#fetch(script.id, channels, pack, script.localVersion?.version, ctl)
     const { version } = fetched
     const archive = fetched.archive!
     const root = pack?.manifest.install.root
@@ -455,7 +521,7 @@ export class ScriptLibrary {
   /** Undo a local import's last in-place update: the files it replaced or removed back, the ones it added deleted. */
   async restore(id: string): Promise<ScriptInfo> {
     const script = this.#script(id)
-    if (script.source.kind !== 'local') throw new Error('从 GitHub 安装的脚本请用回滚切换版本')
+    if (script.source.kind !== 'local') throw new Error('安装的脚本请用回滚切换版本')
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请稍后再撤销`)
     const backup = script.backups?.at(-1)
     if (backup === undefined) throw new Error('没有可以撤销的更新')
@@ -477,29 +543,96 @@ export class ScriptLibrary {
     return this.#info(script)
   }
 
-  /** A local import's update source: what the user set, else its pack's repository. */
-  #updateSource(script: StoredScript): { repo: string; fromPack: boolean } | undefined {
-    if (script.source.kind === 'github') return { repo: script.source.repo, fromPack: false }
-    if (script.updateFrom === null) return undefined
-    if (script.updateFrom !== undefined) return { repo: script.updateFrom, fromPack: false }
-    const repo = script.packId === undefined ? undefined : this.#packs.get(script.packId)?.manifest.source.github
-    return repo === undefined ? undefined : { repo, fromPack: true }
+  /**
+   * A script's update channels, each on its own: what the user set (or
+   * turned off), how it was installed, its pack, the known project.
+   */
+  #channels(script: StoredScript): Channels {
+    const pack = this.#packOf(script)
+    const known = knownById(script.known)
+    const source = script.source
+    const github: Channels['github'] = source.kind === 'github'
+      ? { repo: source.repo, from: 'install' }
+      : script.updateFrom === null ? undefined
+        : script.updateFrom !== undefined ? { repo: script.updateFrom, from: 'user' }
+          : pack?.manifest.source.github !== undefined ? { repo: pack.manifest.source.github, from: 'pack' }
+            : known?.repo !== undefined ? { repo: known.repo, from: 'known' } : undefined
+    const byRepo = mirrorResourceFor(pack, github?.repo)
+    const mirror: Channels['mirror'] = source.kind === 'mirrorchyan'
+      ? { resource: { rid: source.rid, platform: source.platform }, from: 'install' }
+      : script.mirrorchyan === null ? undefined
+        : script.mirrorchyan !== undefined ? { resource: script.mirrorchyan, from: 'user' }
+          : pack?.manifest.source.mirrorchyan !== undefined ? { resource: pack.manifest.source.mirrorchyan, from: 'pack' }
+            : known?.mirrorchyan !== undefined ? { resource: known.mirrorchyan, from: 'known' }
+              : byRepo !== undefined ? { resource: byRepo, from: 'known' } : undefined
+    return { ...(github === undefined ? {} : { github }), ...(mirror === undefined ? {} : { mirror }) }
   }
 
-  /** The version in a local import's directory: where its pack says, else the usual places and its main program's file version. */
+  /** The channels a new install starts with. */
+  #newChannels(source: ScriptSource, pack: LoadedPack | undefined): Channels {
+    const draft: StoredScript = {
+      id: '', name: '', source, versions: [], addedAt: 0,
+      ...(pack === undefined ? {} : { packId: pack.manifest.id }),
+      ...(() => {
+        const known = source.kind === 'github' ? knownByRepo(source.repo) : source.kind === 'mirrorchyan' ? knownByMirror(source.rid) : undefined
+        return pack === undefined && known !== undefined ? { known: known.id } : {}
+      })(),
+    }
+    return this.#channels(draft)
+  }
+
+  /** A local import no pack describes: is it a known project? (Also for folders imported before it was known.) */
+  async #recognize(script: StoredScript): Promise<void> {
+    if (script.source.kind !== 'local' || script.packId !== undefined || script.known !== undefined) return
+    const known = await knownByDir(script.source.path)
+    if (known === undefined) return
+    script.known = known.id
+    if (script.family === undefined && known.family !== undefined) script.family = known.family
+    await this.#save()
+  }
+
+  #packOf(script: StoredScript): LoadedPack | undefined {
+    return script.packId === undefined ? undefined : this.#packs.get(script.packId)
+  }
+
+  #packForMirror(rid: string): LoadedPack | undefined {
+    const lower = rid.toLowerCase()
+    return [...this.#packs.values()].find(p => p.manifest.source.mirrorchyan?.rid.toLowerCase() === lower)
+      ?? (knownByMirror(rid)?.repo === undefined ? undefined : packForRepo(this.#packs, knownByMirror(rid)!.repo!))
+  }
+
+  /** The version in a local import's directory: where its pack (or the known project) says, else the usual places and its main program's file version. */
   #detectVersion(script: StoredScript): Promise<DetectedVersion | undefined> {
-    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
+    const pack = this.#packOf(script)
+    const known = knownById(script.known)
     const top = (script.probe?.executables ?? []).filter(e => !/[\\/]/.test(e) && !/unins|update|crash|adb|setup|helper/i.test(e))
-    const executables = [...(pack?.manifest.launch?.exe === undefined ? [] : [pack.manifest.launch.exe]), ...top]
+    const main = pack?.manifest.launch?.exe
+    const executables = [...(main === undefined ? [] : [main]), ...top]
+    const spec = pack?.manifest.install.version ?? known?.version
     return detectVersion((script.source as { path: string }).path, {
-      spec: pack?.manifest.install.version,
+      ...(spec === undefined ? {} : { spec }),
       executables: [...new Set(executables)],
       host: this.#options.envHost ?? systemHost,
     })
   }
 
+  /**
+   * The release file over the script's channels: Mirror酱 with a CDK (an
+   * incremental package from `from` when it has one), else GitHub. A script
+   * only on Mirror酱 needs the CDK, and says so.
+   */
+  async #fetch(scriptId: string, channels: Channels, pack: LoadedPack | undefined, from: string | undefined, ctl: JobControl, request: Pick<InstallRequest, 'tag' | 'asset'> = {}, have?: (version: string) => boolean): Promise<Fetched> {
+    const onlyMirror = channels.github === undefined
+    if (channels.mirror !== undefined) {
+      const fetched = await this.#fromMirror(scriptId, channels.mirror.resource, from, ctl, onlyMirror, have)
+      if (fetched !== undefined) return fetched
+    }
+    if (channels.github === undefined) throw new Error('这个脚本没有可以下载的更新渠道')
+    return this.#fromGitHub(scriptId, { repo: channels.github.repo, ...request }, pack, ctl, have)
+  }
+
   /** The release's file from GitHub (through the download mirror); no download when `have` says the version is already there. */
-  async #fromGitHub(scriptId: string, request: InstallRequest, pack: LoadedPack | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
+  async #fromGitHub(scriptId: string, request: { repo: string; tag?: string | undefined; asset?: string | undefined }, pack: LoadedPack | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
     const settings = this.#state.settings
     ctl.phase('resolving', { message: `读取 ${request.repo} 的发布信息` })
     const github = this.#github()
@@ -533,17 +666,18 @@ export class ScriptLibrary {
   }
 
   /**
-   * With the user's CDK and a script published on Mirror酱: the latest
-   * release from there, as an incremental package over `from` (the version
-   * there now) when Mirror酱 has one.
-   * @returns undefined to use GitHub instead (no CDK, nothing on Mirror酱,
-   * a CDK problem — said in the job's message).
+   * With the user's CDK: the latest release from Mirror酱, as an incremental
+   * package over `from` (the version there now) when it has one.
+   * @returns undefined to use GitHub instead (no CDK, a CDK problem, no
+   * download link — said in the job's message); with `required` (no GitHub
+   * channel) those are errors instead.
    */
-  async #fromMirror(scriptId: string, repo: string, pack: LoadedPack | undefined, from: string | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched | undefined> {
-    const resource = mirrorResourceFor(pack, repo)
-    if (resource === undefined) return undefined
+  async #fromMirror(scriptId: string, resource: MirrorResource, from: string | undefined, ctl: JobControl, required: boolean, have?: (version: string) => boolean): Promise<Fetched | undefined> {
     const cdk = await this.#options.credential(this.#state.settings.cdkRef)
-    if (cdk === undefined || cdk === '') return undefined
+    if (cdk === undefined || cdk === '') {
+      if (required) throw new Error(`${resource.rid} 只能从 Mirror酱 下载：请先在「设置 → 脚本安装」填写 Mirror酱 CDK`)
+      return undefined
+    }
     const options = this.#mirrorOptions(cdk, ctl.signal)
     let latest: MirrorLatest
     try {
@@ -556,7 +690,7 @@ export class ScriptLibrary {
         if (incremental?.url !== undefined && incremental.version === latest.version) latest = incremental
       }
     } catch (error) {
-      if (ctl.signal.aborted) throw error
+      if (ctl.signal.aborted || required) throw error
       this.#options.log.warn(`${scriptId}: Mirror酱: ${errorText(error)}`)
       ctl.phase('resolving', { message: `${errorText(error)}；改从 GitHub 下载` })
       return undefined
@@ -566,6 +700,7 @@ export class ScriptLibrary {
     const name = `Mirror酱 ${incremental ? '增量包' : '完整包'} ${latest.version}`
     if (have?.(version) === true) return { version, asset: { name, size: latest.size ?? 0 }, incremental: false }
     if (latest.url === undefined) {
+      if (required) throw new Error(`Mirror酱 没有给出 ${resource.rid} 的下载地址`)
       ctl.phase('resolving', { message: 'Mirror酱 没有给出下载地址；改从 GitHub 下载' })
       return undefined
     }
@@ -584,19 +719,22 @@ export class ScriptLibrary {
     return { version, archive, asset: { name, size: latest.size ?? 0 }, incremental }
   }
 
-  /** The newest version where the update will come from: Mirror酱 with a CDK (for a script published there), else GitHub. */
-  async #latestVersion(repo: string, pack: LoadedPack | undefined, signal?: AbortSignal): Promise<string> {
-    const resource = mirrorResourceFor(pack, repo)
-    const cdk = resource === undefined ? undefined : await this.#options.credential(this.#state.settings.cdkRef)
-    if (resource !== undefined && cdk !== undefined && cdk !== '') {
+  /**
+   * The newest version where the update will come from: Mirror酱 with a CDK
+   * (or when it is the only channel; asking needs no CDK), else GitHub.
+   */
+  async #latestVersion(channels: Channels, pack: LoadedPack | undefined, signal?: AbortSignal): Promise<string> {
+    const mirror = channels.mirror?.resource
+    const cdk = mirror === undefined ? undefined : await this.#options.credential(this.#state.settings.cdkRef)
+    if (mirror !== undefined && ((cdk !== undefined && cdk !== '') || channels.github === undefined)) {
       try {
-        return versionOfTag((await mirrorLatest(resource, this.#mirrorOptions(undefined, signal))).version)
+        return versionOfTag((await mirrorLatest(mirror, this.#mirrorOptions(undefined, signal))).version)
       } catch (error) {
-        if (signal?.aborted === true) throw error
-        this.#options.log.warn(`${repo}: Mirror酱: ${errorText(error)}; asking GitHub`)
+        if (signal?.aborted === true || channels.github === undefined) throw error
+        this.#options.log.warn(`${mirror.rid}: Mirror酱: ${errorText(error)}; asking GitHub`)
       }
     }
-    const latest = await this.#github().latest(repo, { includePrereleases: this.#prereleases(pack), ...(signal === undefined ? {} : { signal }) })
+    const latest = await this.#github().latest(channels.github!.repo, { includePrereleases: this.#prereleases(pack), ...(signal === undefined ? {} : { signal }) })
     return versionOfTag(latest.tag)
   }
 
@@ -623,7 +761,7 @@ export class ScriptLibrary {
 
   async rollback(id: string, version?: string): Promise<ScriptInfo> {
     const script = this.#script(id)
-    if (script.source.kind !== 'github') throw new Error('本地导入的脚本只有一个目录，无法回滚；在这里更新过的可以「撤销上次更新」')
+    if (script.source.kind === 'local') throw new Error('本地导入的脚本只有一个目录，无法回滚；在这里更新过的可以「撤销上次更新」')
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请稍后再回滚`)
     const ordered = [...script.versions].sort((a, b) => b.installedAt - a.installedAt)
     const target = version === undefined
@@ -685,18 +823,20 @@ export class ScriptLibrary {
       }
     }
     const probe = await probeProject(path)
-    const base = request.id ?? pack?.manifest.id ?? slug(basename(path))
+    const known = pack === undefined ? await knownByDir(path) : undefined
+    const base = request.id ?? pack?.manifest.id ?? known?.id ?? slug(basename(path))
     const id = this.#freeId(base)
     const script: StoredScript = {
       id,
-      name: request.name ?? pack?.manifest.name ?? basename(path),
+      name: request.name ?? pack?.manifest.name ?? known?.name ?? basename(path),
       source: { kind: 'local', path },
       current: 'local',
       versions: [{ version: 'local', dir: path, installedAt: this.#now() }],
       probe,
       addedAt: this.#now(),
       ...(pack === undefined ? {} : { packId: pack.manifest.id }),
-      ...(pack?.manifest.family ?? probe.family) === undefined ? {} : { family: (pack?.manifest.family ?? probe.family)! },
+      ...(known === undefined ? {} : { known: known.id }),
+      ...(pack?.manifest.family ?? known?.family ?? probe.family) === undefined ? {} : { family: (pack?.manifest.family ?? known?.family ?? probe.family)! },
     }
     const found = await this.#detectVersion(script)
     if (found !== undefined) script.localVersion = found
@@ -711,7 +851,7 @@ export class ScriptLibrary {
   async remove(id: string, deleteFiles = false): Promise<void> {
     const script = this.#script(id)
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请先取消`)
-    if (deleteFiles && script.source.kind === 'github') {
+    if (deleteFiles && script.source.kind !== 'local') {
       const dir = join(this.toolsDir, id)
       if (this.#ownsDir(dir)) await rm(dir, { recursive: true, force: true })
     }
@@ -798,8 +938,7 @@ export class ScriptLibrary {
   #info(script: StoredScript): ScriptInfo {
     const current = currentVersion(script)
     const job = this.#jobs.active(script.id)
-    const source = this.#updateSource(script)
-    const mirror = source === undefined ? undefined : mirrorResourceFor(script.packId === undefined ? undefined : this.#packs.get(script.packId), source.repo)
+    const channels = this.#channels(script)
     const last = script.backups?.at(-1)
     return {
       id: script.id,
@@ -808,8 +947,11 @@ export class ScriptLibrary {
       versions: [...script.versions].sort((a, b) => b.installedAt - a.installedAt).map(v => ({ ...v, current: v.version === script.current })),
       addedAt: script.addedAt,
       ...(script.packId === undefined ? {} : { packId: script.packId }),
-      ...(mirror === undefined ? {} : { mirrorchyan: mirror.rid }),
-      ...(script.source.kind !== 'local' || source === undefined ? {} : { updateFrom: source.repo, updateFromPack: source.fromPack }),
+      channels: {
+        ...(channels.github === undefined ? {} : { github: channels.github }),
+        ...(channels.mirror === undefined ? {} : { mirrorchyan: { rid: channels.mirror.resource.rid, from: channels.mirror.from } }),
+      },
+      ...(script.known === undefined ? {} : { known: script.known }),
       ...(script.localVersion === undefined ? {} : { localVersion: script.localVersion }),
       ...(last === undefined ? {} : { undo: { to: last.to, at: last.at, ...(last.from === undefined ? {} : { from: last.from }) } }),
       ...(script.family === undefined ? {} : { family: script.family }),
@@ -835,6 +977,22 @@ export class ScriptLibrary {
   #save(): Promise<void> {
     return this.#store.save(this.#state)
   }
+}
+
+/** A script's update channels, resolved (see `#channels`). */
+interface Channels {
+  readonly github?: { readonly repo: string; readonly from: ChannelFrom }
+  readonly mirror?: { readonly resource: MirrorResource; readonly from: ChannelFrom }
+}
+
+function sameSource(a: ScriptSource, b: ScriptSource): boolean {
+  if (a.kind === 'github' && b.kind === 'github') return a.repo.toLowerCase() === b.repo.toLowerCase()
+  if (a.kind === 'mirrorchyan' && b.kind === 'mirrorchyan') return a.rid.toLowerCase() === b.rid.toLowerCase()
+  return false
+}
+
+function describeSource(source: ScriptSource): string {
+  return source.kind === 'github' ? source.repo : source.kind === 'mirrorchyan' ? `Mirror酱 ${source.rid}` : source.path
 }
 
 /** A release file downloaded for an install or update. */

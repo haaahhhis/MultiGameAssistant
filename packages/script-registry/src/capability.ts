@@ -18,9 +18,12 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
         const p = params as RequestParams<'scripts/releases'>
         return library.releases(p.repo, p.limit ?? 10, call.signal)
       },
-      'scripts/install': params => {
+      'scripts/install': async (params, call) => {
         const p = params as RequestParams<'scripts/install'>
-        const { job } = library.install({ repo: p.repo, tag: p.tag, asset: p.asset, id: p.id })
+        const mirror = p.mirrorchyan === undefined ? undefined : await library.lookupMirror(p.mirrorchyan, call.signal)
+        const { job } = library.install(mirror === undefined
+          ? { repo: p.repo, tag: p.tag, asset: p.asset, id: p.id }
+          : { mirrorchyan: { rid: mirror.rid, platform: mirror.platform }, id: p.id })
         return { jobId: job.id, scriptId: job.scriptId }
       },
       'scripts/checkUpdate': (params, call) => library.checkUpdate((params as RequestParams<'scripts/checkUpdate'>).id, call.signal),
@@ -32,10 +35,13 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
         const p = params as RequestParams<'scripts/rollback'>
         return library.rollback(p.id, p.version)
       },
-      'scripts/source/set': params => {
+      'scripts/source/set': async (params, call) => {
         const p = params as RequestParams<'scripts/source/set'>
-        return library.setUpdateSource(p.id, p.repo)
+        // A resource id is looked up first: it must exist, and whether it is uploaded per platform is learned.
+        const mirrorchyan = typeof p.mirrorchyan === 'string' ? await library.lookupMirror(p.mirrorchyan, call.signal) : p.mirrorchyan
+        return library.setUpdateSource(p.id, { repo: p.repo, mirrorchyan, reset: p.reset })
       },
+      'scripts/mirrorchyan/lookup': (params, call) => library.lookupMirror((params as RequestParams<'scripts/mirrorchyan/lookup'>).rid, call.signal),
       'scripts/restore': params => library.restore((params as RequestParams<'scripts/restore'>).id),
       'scripts/import': params => {
         const p = params as RequestParams<'scripts/import'>
