@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { ReleaseInfo, ScriptJob } from '@adg/protocol'
+import type { MirrorLookup, MirrorSearchItem, ReleaseInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { errorText, formatBytes, PHASE_LABEL } from './data.ts'
 
@@ -132,19 +132,18 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
  * first (no CDK needed for that); downloading needs the user's CDK. A
  * resource with a GitHub repository can be installed from there instead.
  */
-export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, onGitHub, onClose }: {
+export function MirrorInstallPanel({ client, initialRid, jobs, onDone, onGitHub, onClose }: {
   client: AdgClient
   initialRid?: string
-  /** Resources to offer with one click. */
-  choices: readonly { rid: string; name: string }[]
   jobs: ReadonlyMap<string, ScriptJob>
   onDone: (scriptId: string) => void
   /** Install the resource's GitHub repository instead. */
   onGitHub: (repo: string) => void
   onClose: () => void
 }) {
-  const [rid, setRid] = useState(initialRid ?? '')
-  const [found, setFound] = useState<{ rid: string; version: string; platform: boolean; name?: string | undefined; repo?: string | undefined } | null>(null)
+  const [query, setQuery] = useState('')
+  const results = useMirrorSearch(client, query)
+  const [found, setFound] = useState<MirrorLookup | null>(null)
   const [cdk, setCdk] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -154,17 +153,11 @@ export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, 
     void client.connection.call('scripts/settings', {}).then(s => setCdk(s.cdkConfigured), () => setCdk(null))
   }, [client])
 
-  const lookup = async (value = rid) => {
-    const target = value.trim()
-    if (!/^[\w.-]{1,100}$/.test(target)) {
-      setError('请输入 Mirror酱 的资源 id，例如 BGI、MAA')
-      return
-    }
+  const lookup = async (rid: string) => {
     setBusy(true)
     setError(null)
     try {
-      setRid(target)
-      setFound(await client.connection.call('scripts/mirrorchyan/lookup', { rid: target }))
+      setFound(await client.connection.call('scripts/mirrorchyan/lookup', { rid }))
     } catch (e) {
       setFound(null)
       setError(errorText(e))
@@ -175,7 +168,7 @@ export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, 
 
   useEffect(() => {
     if (initialRid !== undefined) void lookup(initialRid)
-    // Look up once for a resource handed in by a list row.
+    // Look up once for a resource handed in by a link.
   }, [initialRid])
 
   const install = async () => {
@@ -199,23 +192,19 @@ export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, 
     )
   }
 
+  const typed = query.trim()
+  // A resource id typed exactly can be looked up even when the list does not have it.
+  const exact = /^[\w.-]{1,100}$/.test(typed) && !(results.items ?? []).some(i => i.rid.toLowerCase() === typed.toLowerCase())
+
   return (
     <section className="card panel-card">
       <div className="card-head">
-        <div><h3>从 Mirror酱 安装</h3><p className="muted small">从 Mirror酱 下载（国内快，以后的更新有增量包）；需要在「设置 → 脚本安装」填写 CDK。</p></div>
+        <div><h3>从 Mirror酱 安装</h3><p className="muted small">按游戏名、工具名或资源 id 查找（查找和查询版本都不需要 CDK）；下载需要在「设置 → 脚本安装」填写 CDK，以后的更新有增量包。</p></div>
         <button className="icon-button" aria-label="关闭" onClick={onClose}><Icon name="close" /></button>
       </div>
-      <form className="field-row" onSubmit={e => { e.preventDefault(); void lookup() }}>
-        <input className="text-input plain" aria-label="Mirror酱 资源 id" value={rid} onChange={e => setRid(e.target.value)} placeholder="资源 id，例如 BGI、MAA、M9A" spellCheck={false} disabled={busy} />
-        <button type="submit" disabled={busy || rid.trim() === ''}>{busy && found === null ? '查询中…' : '查询'}</button>
-      </form>
-      {choices.length > 0 && (
-        <div className="mirror-choices">
-          {choices.map(c => (
-            <button key={c.rid} className={`mirror-choice ${found?.rid === c.rid ? 'active' : ''}`} disabled={busy} onClick={() => void lookup(c.rid)}>{c.name}<span className="muted small">{c.rid}</span></button>
-          ))}
-        </div>
-      )}
+      <input className="text-input plain" aria-label="搜索 Mirror酱" value={query} onChange={e => setQuery(e.target.value)} placeholder="例如 原神、鸣潮、BetterGI、MAA" spellCheck={false} autoFocus />
+      <MirrorResults results={results} selected={found?.rid} disabled={busy} onPick={rid => void lookup(rid)} />
+      {exact && <div className="key-actions"><span className="spacer" /><button className="small-button" disabled={busy} onClick={() => void lookup(typed)}>按资源 id 查询 {typed}</button></div>}
 
       {found !== null && (
         <>
@@ -225,6 +214,7 @@ export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, 
             <span className="badge">Mirror酱 {found.rid}</span>
             <span className="muted small">最新 {found.version}</span>
           </div>
+          {found.description !== undefined && <p className="muted small mirror-desc">{found.description}</p>}
           {cdk === false && (
             <div className="notice info left small">
               <span>还没有填写 Mirror酱 CDK，没法从 Mirror酱 下载。{found.repo !== undefined ? '也可以从 GitHub 安装，填了 CDK 后它的更新会走 Mirror酱。' : ''}</span>
@@ -240,6 +230,57 @@ export function MirrorInstallPanel({ client, initialRid, choices, jobs, onDone, 
       )}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </section>
+  )
+}
+
+type MirrorResults = { items?: MirrorSearchItem[]; from?: 'mirrorchyan' | 'builtin'; error?: string; loading: boolean }
+
+/** Mirror酱 search as the user types (a short pause first); an empty query lists everything, the known ones first. */
+export function useMirrorSearch(client: AdgClient, query: string): MirrorResults {
+  const [state, setState] = useState<MirrorResults>({ loading: true })
+  useEffect(() => {
+    let live = true
+    setState(s => ({ ...s, loading: true }))
+    const timer = setTimeout(() => {
+      client.connection.call('scripts/mirrorchyan/search', { query: query.trim() })
+        .then(r => { if (live) setState({ items: r.items, from: r.from, loading: false }) })
+        .catch(e => { if (live) setState({ error: errorText(e), loading: false }) })
+    }, query.trim() === '' ? 0 : 250)
+    return () => { live = false; clearTimeout(timer) }
+  }, [client, query])
+  return state
+}
+
+/** Search results to pick from: name, id, what it is for, whether it is already in the library. */
+export function MirrorResults({ results, selected, disabled, limit = 8, onPick, pickLabel = '选择' }: {
+  results: MirrorResults
+  selected?: string | undefined
+  disabled: boolean
+  limit?: number
+  onPick: (rid: string) => void
+  pickLabel?: string
+}) {
+  const [all, setAll] = useState(false)
+  if (results.error !== undefined) return <div className="notice error left small"><Icon name="alert" /><span>{results.error}</span></div>
+  const items = results.items ?? []
+  if (items.length === 0) return <div className="muted small mirror-empty">{results.loading ? '查找中…' : '没有找到。可以换个说法（游戏简称、英文名），或直接输入资源 id。'}</div>
+  const shown = all ? items : items.slice(0, limit)
+  return (
+    <>
+      {results.from === 'builtin' && <div className="muted small mirror-empty">读不到 Mirror酱 的项目列表，下面是已知的几个；也可以直接输入资源 id 查询。</div>}
+      <ul className="mirror-results">
+        {shown.map(item => (
+          <li key={item.rid} className={item.rid === selected ? 'active' : ''}>
+            <div className="mirror-result-main">
+              <span className="mirror-result-name">{item.name}<span className="chip subtle">{item.rid}</span>{item.installed && <span className="badge ok">已在脚本库</span>}</span>
+              {item.description !== '' && <span className="muted small">{item.description}</span>}
+            </div>
+            <button className="small-button" disabled={disabled} onClick={() => onPick(item.rid)}>{pickLabel}</button>
+          </li>
+        ))}
+      </ul>
+      {!all && items.length > limit && <button className="link-button small" onClick={() => setAll(true)}>还有 {items.length - limit} 个</button>}
+    </>
   )
 }
 

@@ -5,7 +5,7 @@
  */
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { ChannelFrom, ScriptInfo } from '@adg/protocol'
+import type { ChannelFrom, MirrorSearchItem, ScriptInfo } from '@adg/protocol'
 
 const FROM: Readonly<Record<ChannelFrom, string>> = {
   install: '安装来源',
@@ -24,6 +24,7 @@ export function ChannelRows({ client, script, disabled, act }: {
 }) {
   const [editing, setEditing] = useState<Kind | null>(null)
   const [value, setValue] = useState('')
+  const [matches, setMatches] = useState<{ items: MirrorSearchItem[]; checked: boolean } | null>(null)
   const github = script.channels.github
   const mirror = script.channels.mirrorchyan
 
@@ -33,6 +34,11 @@ export function ChannelRows({ client, script, disabled, act }: {
     setEditing(null)
     const label = kind === 'repo' ? 'GitHub' : 'Mirror酱'
     return next === null ? `已不再从 ${label} 更新` : next === 'reset' ? `${label} 更新渠道已恢复自动` : `${label} 更新渠道已设为 ${next}`
+  })
+  const findOnMirror = () => act('mirror-match', async () => {
+    const r = await client.connection.call('scripts/mirrorchyan/match', { id: script.id })
+    setMatches({ items: r.items, checked: true })
+    return r.items.length === 0 ? `Mirror酱 上没有找到它${r.from === 'builtin' ? '（读不到 Mirror酱 的项目列表，只查了已知的）' : ''}；知道资源 id 的话可以直接「设置」` : undefined
   })
   const valid = (kind: Kind, text: string) => kind === 'repo' ? /^[\w.-]+\/[\w.-]+$/.test(text) : /^[\w.-]{1,100}$/.test(text)
 
@@ -50,6 +56,9 @@ export function ChannelRows({ client, script, disabled, act }: {
                 setValue(shown?.text ?? '')
                 setEditing(kind)
               }}>{shown === undefined ? '设置' : '修改'}</button>
+            )}
+            {kind === 'mirrorchyan' && shown === undefined && (
+              <button className="ghost small-button" disabled={disabled} onClick={() => void findOnMirror()}>查询是否接入</button>
             )}
           </>
         ) : (
@@ -69,6 +78,20 @@ export function ChannelRows({ client, script, disabled, act }: {
     <>
       {row('repo', 'GitHub', github === undefined ? undefined : { text: github.repo, from: github.from }, '未设置：填写它的 GitHub 仓库', 'owner/repo，例如 babalae/better-genshin-impact')}
       {row('mirrorchyan', 'Mirror酱', mirror === undefined ? undefined : { text: mirror.rid, from: mirror.from }, '未设置：在 Mirror酱 发布的脚本填它的资源 id', '资源 id，例如 BGI、MAA')}
+      {mirror === undefined && matches !== null && matches.items.length > 0 && (
+        <>
+          <dt />
+          <dd className="mirror-matches">
+            <span className="muted small">Mirror酱 上可能是它：</span>
+            {matches.items.slice(0, 5).map(item => (
+              <span key={item.rid} className="mirror-match">
+                <span>{item.name}</span><span className="chip subtle">{item.rid}</span>
+                <button className="small-button" disabled={disabled} onClick={() => void set('mirrorchyan', item.rid).then(() => setMatches(null))}>用这个</button>
+              </span>
+            ))}
+          </dd>
+        </>
+      )}
     </>
   )
 }

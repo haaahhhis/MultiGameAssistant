@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { FAMILY_LABEL, isActive, PHASE_LABEL, useScriptJobs, useScriptList } from './data.ts'
@@ -9,20 +9,20 @@ import { ScriptDetail } from './ScriptDetail.tsx'
 type Panel = { kind: 'install'; repo?: string } | { kind: 'mirror'; rid?: string } | { kind: 'import' } | null
 
 /** The script library: what is installed or imported, what packs can be installed, and each script's details. */
-export function ScriptsPage({ client, openSession }: PageProps) {
+export function ScriptsPage({ client, openSession, arg }: PageProps) {
   const { data, error } = useScriptList(client)
   const jobs = useScriptJobs(client)
   const [selected, setSelected] = useState<string | null>(null)
   const [panel, setPanel] = useState<Panel>(null)
+  // A link such as the game page's (#/p/scripts/mirror:okww) opens the Mirror酱 install of that resource.
+  useEffect(() => {
+    if (arg?.startsWith('mirror:') === true) setPanel({ kind: 'mirror', rid: arg.slice('mirror:'.length) })
+  }, [arg])
   const scripts = data?.scripts ?? []
   const available = (data?.packs ?? []).filter(p => !p.installed && p.repo !== undefined && p.error === undefined)
   const broken = (data?.packs ?? []).filter(p => p.error !== undefined)
   // Known projects no pack describes (BetterGI…): installed from Mirror酱 when it has them, else GitHub.
   const known = (data?.known ?? []).filter(k => !k.installed)
-  const mirrorChoices = [
-    ...(data?.packs ?? []).filter(p => p.mirrorchyan !== undefined && p.error === undefined).map(p => ({ rid: p.mirrorchyan!, name: p.name })),
-    ...(data?.known ?? []).filter(k => k.mirrorchyan !== undefined).map(k => ({ rid: k.mirrorchyan!, name: k.name })),
-  ]
   // An install of a new script has no library entry until its files land: while it runs, its progress is shown instead.
   const pending = selected === null || scripts.some(s => s.id === selected) ? undefined : jobs.get(selected)
   const current = scripts.find(s => s.id === selected) ?? (panel === null && pending === undefined ? scripts[0] : undefined)
@@ -110,7 +110,7 @@ export function ScriptsPage({ client, openSession }: PageProps) {
               onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} />
           )}
           {panel?.kind === 'mirror' && (
-            <MirrorInstallPanel key={panel.rid ?? 'blank'} client={client} jobs={jobs} choices={mirrorChoices} {...(panel.rid === undefined ? {} : { initialRid: panel.rid })}
+            <MirrorInstallPanel key={panel.rid ?? 'blank'} client={client} jobs={jobs} {...(panel.rid === undefined ? {} : { initialRid: panel.rid })}
               onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} onGitHub={repo => setPanel({ kind: 'install', repo })} />
           )}
           {panel?.kind === 'import' && (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { Activity, GameInfo, Pipeline, PipelineSummary } from '@adg/protocol'
+import type { Activity, GameInfo, MirrorSearchItem, Pipeline, PipelineSummary } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useStore } from '../../hooks.ts'
@@ -289,6 +289,33 @@ function ReadingLine({ what, reading, now, openSession }: { what: string; readin
   )
 }
 
+/** Mirror酱 tools that play this game (matched like scripts), each a link to installing it from Mirror酱. */
+function MirrorTools({ client, game }: { client: AdgClient; game: GameInfo }) {
+  const capabilities = useStore(client.capabilities)
+  const [items, setItems] = useState<MirrorSearchItem[] | null>(null)
+  useEffect(() => {
+    if (!capabilities.has('scripts')) return
+    let live = true
+    client.connection.call('games/mirrorchyan', { game: game.id }).then(r => { if (live) setItems(r.items) }, () => { if (live) setItems([]) })
+    return () => { live = false }
+  }, [client, game.id, capabilities.has('scripts')])
+  if (items === null || items.length === 0) return null
+  return (
+    <div className="mirror-tools">
+      <div className="muted small">Mirror酱 上有这些玩它的工具：</div>
+      <ul>
+        {items.slice(0, 5).map(item => (
+          <li key={item.rid}>
+            <a href={`#/p/scripts/${encodeURIComponent(`mirror:${item.rid}`)}`}>{item.name}</a>
+            <span className="chip subtle">{item.rid}</span>
+            {item.description !== '' && <span className="muted small">{item.description}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 /** The pipelines that play this game's scripts: when they run next, how the last run went. */
 function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; game: GameInfo; now: number; openScripts: () => void }) {
   const capabilities = useStore(client.capabilities)
@@ -325,6 +352,7 @@ function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; g
     <div className="game-schedule-runs">
       <div className="field-title">日程</div>
       {game.scripts.length === 0 && <p className="muted small">还没有玩它的脚本。在<button className="link-button" onClick={openScripts}>脚本页</button>安装或导入后，名字或仓库里提到这个游戏的脚本会自动对上。</p>}
+      {game.scripts.length === 0 && <MirrorTools client={client} game={game} />}
       {game.scripts.length > 0 && (
         <p className="muted small">
           玩它的脚本：{game.scripts.map((s, i) => <span key={s}>{i > 0 ? '、' : ''}<button className="link-button" onClick={openScripts}>{s}</button></span>)}

@@ -202,6 +202,10 @@ export class AdgGameIntel extends Service {
             const p = params as RequestParams<'games/source/add'>
             return this.addLink(p.game, p.url, p.name)
           },
+          'games/mirrorchyan': async (params, call) => {
+            await this.ready
+            return this.mirrorTools((params as RequestParams<'games/mirrorchyan'>).game, call.signal)
+          },
           'games/source/remove': async params => {
             await this.ready
             const p = params as RequestParams<'games/source/remove'>
@@ -346,17 +350,44 @@ export class AdgGameIntel extends Service {
       const texts = [s.id, s.name, s.source.kind === 'github' ? s.source.repo : folder, s.channels.github?.repo, pack?.name, pack?.game?.name, pack?.source.github]
       return { id: s.id, texts: texts.filter((t): t is string => t !== undefined && t !== '') }
     })
-    const games = this.games.map(({ manifest: m }) => ({
-      id: m.id,
-      words: [m.name, ...m.aliases, ...(m.id.startsWith('sra-') ? [] : [m.id]), ...m.sources.flatMap(s => SRA_GAMES.find(g => g.sra === s.sra?.game)?.words ?? [])],
-    }))
-    for (const [script, ids] of matchScripts(scripts, games)) {
+    for (const [script, ids] of matchScripts(scripts, this.gameWords())) {
       for (const id of ids) {
         const list = out.get(id)!
         if (!list.includes(script)) list.push(script)
       }
     }
     return out
+  }
+
+  /** Each game's words for matching scripts and tools to it (names, aliases, the usual script names of SRA games). */
+  private gameWords() {
+    return this.games.map(({ manifest: m }) => ({
+      id: m.id,
+      words: [m.name, ...m.aliases, ...(m.id.startsWith('sra-') ? [] : [m.id]), ...m.sources.flatMap(s => SRA_GAMES.find(g => g.sra === s.sra?.game)?.words ?? [])],
+    }))
+  }
+
+  /**
+   * Mirror酱 tools for a game: its name or aliases in the tool's name or id,
+   * else (for a tool whose name names no game) in its description. Every
+   * game MultiGameAssistant knows takes part, followed or not, so a tool for
+   * another game is not taken for this one; usual script names ("一条龙")
+   * are left out, they do not tell tools apart. No CDK is needed.
+   */
+  private async mirrorTools(gameId: string, signal?: AbortSignal) {
+    const library = this.ctx.get('adgScripts')?.library
+    if (library === undefined) throw new Error('脚本库没有加载')
+    const { items, from } = await library.searchMirror('', signal)
+    // 「明日方舟：终末地」 is written 「终末地」, 「蔚蓝档案（国服）」 「蔚蓝档案」.
+    const forms = (name: string) => [name, name.replace(/[（(][^）)]*[）)]/g, '').trim(), ...(/[：:](.{2,})$/.exec(name)?.slice(1) ?? [])]
+    const followed = this.games.map(({ manifest: m }) => ({ id: m.id, words: [m.name, ...m.aliases].flatMap(forms) }))
+    const names = new Set(this.games.map(g => g.manifest.name))
+    const games = [...followed, ...SRA_GAMES.filter(g => !names.has(g.name)).map(g => ({ id: `sra:${g.sra}`, words: forms(g.name) }))]
+    const byName = matchScripts(items.map(i => ({ id: i.rid, texts: [i.rid, i.name] })), games)
+    const rest = items.filter(i => (byName.get(i.rid)?.length ?? 0) === 0)
+    const byDescription = matchScripts(rest.map(i => ({ id: i.rid, texts: [i.description] })), games)
+    const mine = new Set([...byName, ...byDescription].filter(([, ids]) => ids.includes(gameId)).map(([rid]) => rid))
+    return { items: items.filter(i => mine.has(i.rid)), from }
   }
 
   private scriptsOf(gameId: string): string[] {

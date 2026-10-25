@@ -14,6 +14,13 @@ export interface MirrorResource {
   readonly rid: string
   /** Uploaded per system and architecture: ask with `os` and `arch` (and without them otherwise, or Mirror酱 answers "not found"). */
   readonly platform: boolean
+  /**
+   * Ask with `os=windows` / `arch=x64` each on its own (overriding
+   * `platform`): Mirror酱 matches them exactly, and some builds are uploaded
+   * for any system but one architecture.
+   */
+  readonly os?: boolean | undefined
+  readonly arch?: boolean | undefined
 }
 
 export interface MirrorLatest {
@@ -79,7 +86,8 @@ export async function mirrorLatest(resource: MirrorResource, options: MirrorOpti
   const url = new URL(`/api/resources/${encodeURIComponent(resource.rid)}/latest`, options.base ?? 'https://mirrorchyan.com')
   if (options.currentVersion !== undefined) url.searchParams.set('current_version', options.currentVersion)
   if (options.cdk !== undefined && options.cdk !== '') url.searchParams.set('cdk', options.cdk)
-  if (resource.platform) { url.searchParams.set('os', 'windows'); url.searchParams.set('arch', 'x64') }
+  if (resource.os ?? resource.platform) url.searchParams.set('os', 'windows')
+  if (resource.arch ?? resource.platform) url.searchParams.set('arch', 'x64')
   if (options.channel !== undefined) url.searchParams.set('channel', options.channel)
   url.searchParams.set('user_agent', MIRROR_USER_AGENT)
   const timeout = AbortSignal.timeout(options.timeoutMs ?? 15_000)

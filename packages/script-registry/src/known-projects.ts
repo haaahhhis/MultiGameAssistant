@@ -30,6 +30,9 @@ export const KNOWN_PROJECTS: readonly KnownProject[] = [
   { id: 'maaend', name: 'MaaEnd（终末地）', repo: 'MaaEnd/MaaEnd', mirrorchyan: { rid: 'MaaEnd', platform: true } },
   { id: 'march7th', name: '三月七小助手（星穹铁道）', repo: 'moesnow/March7thAssistant', mirrorchyan: { rid: 'March7thAssistant', platform: false } },
   { id: 'm9a', name: 'M9A（重返未来：1999）', repo: 'MAA1999/M9A', mirrorchyan: { rid: 'M9A', platform: true } },
+  { id: 'ok-ww', name: '鸣潮 ok-ww', repo: 'ok-oldking/ok-wuthering-waves', mirrorchyan: { rid: 'okww', platform: false } },
+  // Uploaded for any system but x64 only: asked with arch and without os (without arch Mirror酱 answers an old build).
+  { id: 'zzz-od', name: '绝区零 一条龙', repo: 'OneDragon-Anything/ZenlessZoneZero-OneDragon', mirrorchyan: { rid: 'ZZZ-OneDragon', platform: false, arch: true } },
   {
     id: 'bettergi',
     name: 'BetterGI（原神）',

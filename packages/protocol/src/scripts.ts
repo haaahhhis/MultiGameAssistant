@@ -23,8 +23,8 @@ export const MirrorRid = z.string().trim().regex(/^[A-Za-z0-9_.-]{1,100}$/, 'use
 export const ScriptSource = z.discriminatedUnion('kind', [
   /** Installed by MultiGameAssistant into the tools directory. */
   z.object({ kind: z.literal('github'), repo: z.string() }),
-  /** Installed into the tools directory from Mirror酱 (`platform`: asked with os and arch). */
-  z.object({ kind: z.literal('mirrorchyan'), rid: z.string(), platform: z.boolean() }),
+  /** Installed into the tools directory from Mirror酱 (`platform`: asked with os and arch; `os` / `arch` each on its own). */
+  z.object({ kind: z.literal('mirrorchyan'), rid: z.string(), platform: z.boolean(), os: z.boolean().optional(), arch: z.boolean().optional() }),
   /** A directory the user already had; used in place, never moved or deleted. */
   z.object({ kind: z.literal('local'), path: z.string() }),
 ])
@@ -146,6 +146,32 @@ export const PackSummary = z.object({
   error: z.string().optional(),
 })
 export type PackSummary = z.infer<typeof PackSummary>
+
+/** What Mirror酱 says about a resource (no CDK needed). */
+export const MirrorLookup = z.object({
+  rid: z.string(),
+  version: z.string(),
+  platform: z.boolean(),
+  os: z.boolean().optional(),
+  arch: z.boolean().optional(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  repo: z.string().optional(),
+})
+export type MirrorLookup = z.infer<typeof MirrorLookup>
+
+export const MirrorSearchItem = z.object({
+  rid: z.string(),
+  name: z.string(),
+  description: z.string(),
+  repo: z.string().optional(),
+  url: z.string().optional(),
+  /** A script with this resource is in the library. */
+  installed: z.boolean(),
+  /** A pack or MultiGameAssistant's list knows it (curated). */
+  known: z.boolean(),
+})
+export type MirrorSearchItem = z.infer<typeof MirrorSearchItem>
 
 /** A project MultiGameAssistant knows where to update from without a pack. */
 export const KnownProjectSummary = z.object({
@@ -295,11 +321,35 @@ export const ScriptRequests = {
     }),
     result: ScriptInfo,
   },
+  /**
+   * Whether a library script is on Mirror酱 (no CDK needed): the projects
+   * whose GitHub repository is its repository, else whose name matches.
+   */
+  'scripts/mirrorchyan/match': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({ items: z.array(MirrorSearchItem.extend({ by: z.enum(['repo', 'name']) })), from: z.enum(['mirrorchyan', 'builtin']) }),
+  },
   /** Whether Mirror酱 has a resource, and its latest version (no CDK needed). */
   'scripts/mirrorchyan/lookup': {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({ rid: MirrorRid }),
-    result: z.object({ rid: z.string(), version: z.string(), platform: z.boolean(), name: z.string().optional(), repo: z.string().optional() }),
+    result: MirrorLookup,
+  },
+  /**
+   * Search Mirror酱's projects by name, game or id (its project list, read
+   * at most once a day; MultiGameAssistant's own list when it cannot be read).
+   * Only tools with a Windows build Mirror酱 hands out.
+   */
+  'scripts/mirrorchyan/search': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ query: z.string().trim().max(100) }),
+    result: z.object({
+      items: z.array(MirrorSearchItem),
+      /** `mirrorchyan`: its list, fresh or from today's cache; `builtin`: it could not be read. */
+      from: z.enum(['mirrorchyan', 'builtin']),
+      fetchedAt: z.number().optional(),
+    }),
   },
   /** Undo a local import's last in-place update: the old files back, the new ones removed. */
   'scripts/restore': {

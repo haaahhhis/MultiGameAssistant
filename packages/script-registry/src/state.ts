@@ -43,7 +43,7 @@ export const StoredScript = z.object({
   /** GitHub update channel the user set (`owner/repo`); undefined: the automatic one. `null`: the user turned it off. */
   updateFrom: z.string().nullable().optional(),
   /** Mirror酱 update channel the user set, likewise. */
-  mirrorchyan: z.object({ rid: z.string(), platform: z.boolean() }).nullable().optional(),
+  mirrorchyan: z.object({ rid: z.string(), platform: z.boolean(), os: z.boolean().optional(), arch: z.boolean().optional() }).nullable().optional(),
   /** The known project (no pack describes it) an imported folder was recognized as. */
   known: z.string().optional(),
   /** The version found in a local import's directory, and where it was read. */

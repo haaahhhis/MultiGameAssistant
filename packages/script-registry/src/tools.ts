@@ -48,6 +48,10 @@ function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   return parsed.data
 }
 
+function errorOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function blankToUndefined(value: unknown): unknown {
   return value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value
 }
@@ -121,13 +125,23 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.search,
-      description: '在 GitHub 上搜索脚本仓库（按星数排序），结果中标出有内置脚本包的仓库。',
-      properties: { query: { type: 'string', description: '关键词，例如 "MAA 明日方舟" 或 "星穹铁道 自动化"。' } },
+      description: '按游戏名或脚本名搜索脚本：GitHub 仓库（按星数排序，标出有内置脚本包的），以及 Mirror酱 上有 Windows 版的工具（资源 id 可直接用于 script_install 的 mirrorchyan；查询不需要 CDK）。',
+      properties: { query: { type: 'string', description: '关键词，例如 "原神"、"MAA 明日方舟" 或 "星穹铁道 自动化"。' } },
       required: ['query'],
       readOnly: true,
       kind: 'search',
-      title: a => `搜索 GitHub：${String(a['query'] ?? '')}`,
-      execute: async (args, exec) => library.search(parse(z.object({ query: z.string().trim().min(1).max(200) }), args).query, exec.signal),
+      title: a => `搜索脚本：${String(a['query'] ?? '')}`,
+      execute: async (args, exec) => {
+        const { query } = parse(z.object({ query: z.string().trim().min(1).max(200) }), args)
+        // Either side failing still returns the other.
+        const [github, mirror] = await Promise.allSettled([library.search(query, exec.signal), library.searchMirror(query, exec.signal)])
+        return {
+          github: github.status === 'fulfilled' ? github.value.items : { error: errorOf(github.reason) },
+          mirrorchyan: mirror.status === 'fulfilled'
+            ? mirror.value.items.slice(0, 10).map(i => ({ rid: i.rid, name: i.name, description: i.description.slice(0, 120), repo: i.repo, installed: i.installed }))
+            : { error: errorOf(mirror.reason) },
+        }
+      },
     }),
     tool({
       name: TOOL_NAMES.releases,
@@ -165,7 +179,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
           if (!library.isKnownMirror(found.rid)) {
             await approve(exec, `从 Mirror酱 下载并安装资源 ${found.rid}（最新 ${found.version}）。这个资源不在已知列表里，请确认它来源可信。`)
           }
-          started = library.install({ mirrorchyan: { rid: found.rid, platform: found.platform }, id: a.id })
+          started = library.install({ mirrorchyan: found, id: a.id })
         } else {
           if (a.repo === undefined) throw new Error('请给出 repo（GitHub 仓库）或 mirrorchyan（Mirror酱 资源 id）')
           if (!library.isKnownRepo(a.repo)) {

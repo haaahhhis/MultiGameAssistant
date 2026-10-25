@@ -23,7 +23,7 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
         const mirror = p.mirrorchyan === undefined ? undefined : await library.lookupMirror(p.mirrorchyan, call.signal)
         const { job } = library.install(mirror === undefined
           ? { repo: p.repo, tag: p.tag, asset: p.asset, id: p.id }
-          : { mirrorchyan: { rid: mirror.rid, platform: mirror.platform }, id: p.id })
+          : { mirrorchyan: mirror, id: p.id })
         return { jobId: job.id, scriptId: job.scriptId }
       },
       'scripts/checkUpdate': (params, call) => library.checkUpdate((params as RequestParams<'scripts/checkUpdate'>).id, call.signal),
@@ -41,6 +41,8 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
         const mirrorchyan = typeof p.mirrorchyan === 'string' ? await library.lookupMirror(p.mirrorchyan, call.signal) : p.mirrorchyan
         return library.setUpdateSource(p.id, { repo: p.repo, mirrorchyan, reset: p.reset })
       },
+      'scripts/mirrorchyan/search': (params, call) => library.searchMirror((params as RequestParams<'scripts/mirrorchyan/search'>).query, call.signal),
+      'scripts/mirrorchyan/match': (params, call) => library.matchMirror((params as RequestParams<'scripts/mirrorchyan/match'>).id, call.signal),
       'scripts/mirrorchyan/lookup': (params, call) => library.lookupMirror((params as RequestParams<'scripts/mirrorchyan/lookup'>).rid, call.signal),
       'scripts/restore': params => library.restore((params as RequestParams<'scripts/restore'>).id),
       'scripts/import': params => {

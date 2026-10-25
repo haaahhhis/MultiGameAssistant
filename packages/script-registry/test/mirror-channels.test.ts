@@ -96,7 +96,7 @@ test('installed straight from Mirror酱: a CDK is needed to download, checking i
   await library.start()
   try {
     const found = await library.lookupMirror('Tool')
-    assert.deepEqual(found, { rid: 'Tool', version: '1.0.0', platform: false }, 'asked with os first, then without')
+    assert.deepEqual(found, { rid: 'Tool', version: '1.0.0', platform: false, os: false, arch: false }, 'asked with os and arch first, then without')
     await assert.rejects(library.lookupMirror('Nothing'), /没有这个资源/)
 
     const refused = await library.install({ mirrorchyan: { rid: 'Tool', platform: false } }).done

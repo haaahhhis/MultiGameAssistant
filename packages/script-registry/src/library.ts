@@ -10,18 +10,21 @@
  *
  * Nothing here names a particular script: behaviour comes from Script Packs.
  */
-import { copyFile, cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, systemHost,
-  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorResource,
+  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorCatalogue, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, systemHost,
+  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
-import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource } from '@adg/protocol'
+import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
 import { KNOWN_PROJECTS, knownByDir, knownById, knownByMirror, knownByRepo, mirrorResourceFor } from './known-projects.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
 import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type StoredScript, type StoredVersion } from './state.ts'
+
+/** Mirror酱's project list is read again after a day. */
+const CATALOGUE_TTL_MS = 24 * 60 * 60_000
 
 export interface LibraryOptions {
   readonly toolsDir: string
@@ -66,6 +69,7 @@ export class ScriptLibrary {
   #packErrors: PackLoadError[] = []
   readonly #checkers = new Map<string, EnvChecker>()
   readonly #packListeners = new Set<() => void>()
+  #catalogue: { at: number; projects: MirrorProject[] } | undefined
 
   constructor(options: LibraryOptions) {
     this.#options = options
@@ -240,25 +244,153 @@ export class ScriptLibrary {
   }
 
   /**
-   * Whether Mirror酱 has `rid`, its latest version, and whether it is
-   * uploaded per platform (asked with os and arch first, then without).
+   * Whether Mirror酱 has `rid`, its latest version, and how to ask for its
+   * Windows build. No CDK is needed. Its project list says how; for a
+   * resource not on it (or when the list cannot be read), the pack or the
+   * known-project list, else each way of asking is tried.
    */
-  async lookupMirror(rid: string, signal?: AbortSignal): Promise<{ rid: string; version: string; platform: boolean; name?: string; repo?: string }> {
-    const known = this.#packForMirror(rid)?.manifest.source.mirrorchyan ?? knownByMirror(rid)?.mirrorchyan
-    const named = (resource: MirrorResource, version: string) => {
+  async lookupMirror(rid: string, signal?: AbortSignal): Promise<MirrorLookup> {
+    const { projects } = await this.mirrorProjects(signal)
+    const listed = projects.find(p => p.rid.toLowerCase() === rid.toLowerCase())
+    if (listed !== undefined && listed.windows === undefined) throw new Error(`Mirror酱 上的 ${listed.name}（${listed.rid}）没有 Windows 版`)
+    if (listed !== undefined && !listed.download) throw new Error(`Mirror酱 不提供 ${listed.name}（${listed.rid}）的下载`)
+    const named = (resource: MirrorResource, version: string): MirrorLookup => {
       const pack = this.#packForMirror(resource.rid)
       const project = knownByMirror(resource.rid)
-      const name = pack?.manifest.name ?? project?.name
-      const repo = pack?.manifest.source.github ?? project?.repo
-      return { rid: resource.rid, version: versionOfTag(version), platform: resource.platform, ...(name === undefined ? {} : { name }), ...(repo === undefined ? {} : { repo }) }
+      const name = pack?.manifest.name ?? project?.name ?? listed?.name
+      const repo = pack?.manifest.source.github ?? project?.repo ?? listed?.repo
+      return {
+        rid: resource.rid,
+        version: versionOfTag(version),
+        platform: resource.platform,
+        ...(resource.os === undefined ? {} : { os: resource.os }),
+        ...(resource.arch === undefined ? {} : { arch: resource.arch }),
+        ...(name === undefined ? {} : { name }),
+        ...(listed?.description === undefined || listed.description === '' ? {} : { description: listed.description }),
+        ...(repo === undefined ? {} : { repo }),
+      }
     }
+    const known = listed?.windows ?? this.#packForMirror(rid)?.manifest.source.mirrorchyan ?? knownByMirror(rid)?.mirrorchyan
     if (known !== undefined) return named(known, (await mirrorLatest(known, this.#mirrorOptions(undefined, signal))).version)
-    try {
-      return named({ rid, platform: true }, (await mirrorLatest({ rid, platform: true }, this.#mirrorOptions(undefined, signal))).version)
-    } catch (error) {
-      if (!(error instanceof MirrorChyanError) || error.code !== 8001) throw error
-      return named({ rid, platform: false }, (await mirrorLatest({ rid, platform: false }, this.#mirrorOptions(undefined, signal))).version)
+    // Mirror酱 matches os and arch exactly: try both, neither, then each alone.
+    let last: unknown
+    for (const [os, arch] of [[true, true], [false, false], [false, true], [true, false]] as const) {
+      const resource: MirrorResource = { rid, platform: os && arch, os, arch }
+      try {
+        return named(resource, (await mirrorLatest(resource, this.#mirrorOptions(undefined, signal))).version)
+      } catch (error) {
+        if (!(error instanceof MirrorChyanError) || error.code !== 8001) throw error
+        last = error
+      }
     }
+    throw last
+  }
+
+  /**
+   * Mirror酱's project list, read at most once a day (kept in
+   * `<dataDir>/mirrorchyan-projects.json`, so an older copy serves when it
+   * cannot be read); without any copy, the packs and known projects on it.
+   * Needs no CDK.
+   */
+  async mirrorProjects(signal?: AbortSignal): Promise<{ projects: MirrorProject[]; from: 'mirrorchyan' | 'builtin'; fetchedAt?: number }> {
+    const file = join(this.#options.dataDir, 'mirrorchyan-projects.json')
+    if (this.#catalogue === undefined) {
+      try {
+        const saved = JSON.parse(await readFile(file, 'utf8')) as { at?: unknown; projects?: unknown }
+        if (typeof saved.at === 'number' && Array.isArray(saved.projects)) this.#catalogue = { at: saved.at, projects: saved.projects as MirrorProject[] }
+      } catch { /* none yet */ }
+    }
+    const cached = this.#catalogue
+    if (cached !== undefined && this.#now() - cached.at < CATALOGUE_TTL_MS) return { projects: cached.projects, from: 'mirrorchyan', fetchedAt: cached.at }
+    try {
+      const projects = await mirrorCatalogue({
+        ...(this.#options.mirrorchyanBase === undefined ? {} : { base: this.#options.mirrorchyanBase }),
+        ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      this.#catalogue = { at: this.#now(), projects }
+      await mkdir(dirname(file), { recursive: true })
+      await writeFile(file, `${JSON.stringify(this.#catalogue)}\n`).catch(() => {})
+      return { projects, from: 'mirrorchyan', fetchedAt: this.#catalogue.at }
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      this.#options.log.warn(`Mirror酱 project list: ${errorText(error)}`)
+      if (cached !== undefined) return { projects: cached.projects, from: 'mirrorchyan', fetchedAt: cached.at }
+      return { projects: this.#builtinMirrorProjects(), from: 'builtin' }
+    }
+  }
+
+  /**
+   * Search Mirror酱's tools (with a Windows build it hands out) by name,
+   * game, id or repository; every word of `query` must match. An empty query
+   * lists them all, the known ones first. Needs no CDK.
+   */
+  async searchMirror(query: string, signal?: AbortSignal): Promise<{ items: MirrorSearchItem[]; from: 'mirrorchyan' | 'builtin'; fetchedAt?: number }> {
+    const list = await this.mirrorProjects(signal)
+    const words = query.split(/\s+/).map(squash).filter(w => w !== '')
+    const scored: { item: MirrorSearchItem; score: number }[] = []
+    for (const p of list.projects) {
+      if (p.windows === undefined || !p.download || (p.type !== '' && p.type !== 'GameTools')) continue
+      const fields = { rid: squash(p.rid), name: squash(p.name), repo: squash(p.repo ?? ''), description: squash(p.description) }
+      let score = 0
+      let all = true
+      for (const word of words) {
+        const s = fields.rid === word ? 100 : fields.name === word ? 90 : fields.rid.includes(word) || fields.name.includes(word) ? 60 : fields.repo.includes(word) ? 40 : fields.description.includes(word) ? 30 : 0
+        if (s === 0) { all = false; break }
+        score += s
+      }
+      if (!all) continue
+      const known = this.isKnownMirror(p.rid)
+      scored.push({
+        // The ones MultiGameAssistant recognizes and updates first, unless another is named exactly.
+        score: score + (known ? 40 : 0),
+        item: {
+          rid: p.rid,
+          name: p.name,
+          description: p.description,
+          installed: this.#state.scripts.some(s => this.#channels(s).mirror?.resource.rid.toLowerCase() === p.rid.toLowerCase()),
+          known,
+          ...(p.repo === undefined ? {} : { repo: p.repo }),
+          ...(p.url === undefined ? {} : { url: p.url }),
+        },
+      })
+    }
+    scored.sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name, 'zh-CN'))
+    return { items: scored.map(s => s.item), from: list.from, ...(list.fetchedAt === undefined ? {} : { fetchedAt: list.fetchedAt }) }
+  }
+
+  /**
+   * Whether a script is on Mirror酱, for one that has no Mirror酱 channel
+   * yet: the projects whose GitHub repository is its repository, else whose
+   * name or id is in its name (or the reverse). Needs no CDK.
+   */
+  async matchMirror(id: string, signal?: AbortSignal): Promise<{ items: (MirrorSearchItem & { by: 'repo' | 'name' })[]; from: 'mirrorchyan' | 'builtin' }> {
+    const script = this.#script(id)
+    const { items, from } = await this.searchMirror('', signal)
+    const repo = this.#channels(script).github?.repo.toLowerCase()
+    const byRepo = repo === undefined ? [] : items.filter(i => i.repo?.toLowerCase() === repo)
+    if (byRepo.length > 0) return { items: byRepo.map(i => ({ ...i, by: 'repo' as const })), from }
+    const names = [script.name, script.id, script.source.kind === 'local' ? basename(script.source.path) : undefined].filter((n): n is string => n !== undefined).map(squash).filter(n => n.length >= 2)
+    const byName = items.filter(i => {
+      const keys = [squash(i.name), squash(i.rid)].filter(k => k.length >= 3)
+      return keys.some(k => names.some(n => n.includes(k) || k.includes(n)))
+    })
+    return { items: byName.map(i => ({ ...i, by: 'name' as const })), from }
+  }
+
+  /** The packs and known projects on Mirror酱, for when its list cannot be read. */
+  #builtinMirrorProjects(): MirrorProject[] {
+    const out = new Map<string, MirrorProject>()
+    const add = (resource: MirrorResource, name: string, repo: string | undefined, description = '') => {
+      if (out.has(resource.rid.toLowerCase())) return
+      out.set(resource.rid.toLowerCase(), { rid: resource.rid, name, description, type: 'GameTools', download: true, windows: resource, ...(repo === undefined ? {} : { repo }) })
+    }
+    for (const pack of this.#packs.values()) {
+      const resource = pack.manifest.source.mirrorchyan
+      if (resource !== undefined) add(resource, pack.manifest.name, pack.manifest.source.github, pack.manifest.description ?? '')
+    }
+    for (const project of KNOWN_PROJECTS) if (project.mirrorchyan !== undefined) add(project.mirrorchyan, project.name, project.repo)
+    return [...out.values()]
   }
 
   // ── installing ────────────────────────────────────────────────────────
@@ -275,7 +407,7 @@ export class ScriptLibrary {
     if (existing !== undefined && existing.source.kind === 'local') {
       throw new Error(`id ${scriptId} 已被本地导入的脚本使用，请换一个 id`)
     }
-    const source: ScriptSource = request.repo !== undefined ? { kind: 'github', repo: request.repo } : { kind: 'mirrorchyan', rid: mirror!.rid, platform: mirror!.platform }
+    const source: ScriptSource = request.repo !== undefined ? { kind: 'github', repo: request.repo } : { kind: 'mirrorchyan', ...resourceOf(mirror!) }
     if (existing !== undefined && !sameSource(existing.source, source)) {
       throw new Error(`id ${scriptId} 已属于 ${describeSource(existing.source)}，请换一个 id`)
     }
@@ -348,7 +480,7 @@ export class ScriptLibrary {
     if (patch.mirrorchyan !== undefined || patch.reset?.includes('mirrorchyan') === true) {
       if (script.source.kind === 'mirrorchyan') throw new Error('从 Mirror酱 安装的脚本跟随它安装时的资源更新')
       if (patch.reset?.includes('mirrorchyan') === true) delete script.mirrorchyan
-      else script.mirrorchyan = patch.mirrorchyan === null ? null : { rid: patch.mirrorchyan!.rid, platform: patch.mirrorchyan!.platform }
+      else script.mirrorchyan = patch.mirrorchyan === null ? null : resourceOf(patch.mirrorchyan!)
     }
     delete script.update
     await this.#save()
@@ -559,7 +691,7 @@ export class ScriptLibrary {
             : known?.repo !== undefined ? { repo: known.repo, from: 'known' } : undefined
     const byRepo = mirrorResourceFor(pack, github?.repo)
     const mirror: Channels['mirror'] = source.kind === 'mirrorchyan'
-      ? { resource: { rid: source.rid, platform: source.platform }, from: 'install' }
+      ? { resource: resourceOf(source), from: 'install' }
       : script.mirrorchyan === null ? undefined
         : script.mirrorchyan !== undefined ? { resource: script.mirrorchyan, from: 'user' }
           : pack?.manifest.source.mirrorchyan !== undefined ? { resource: pack.manifest.source.mirrorchyan, from: 'pack' }
@@ -983,6 +1115,16 @@ export class ScriptLibrary {
 interface Channels {
   readonly github?: { readonly repo: string; readonly from: ChannelFrom }
   readonly mirror?: { readonly resource: MirrorResource; readonly from: ChannelFrom }
+}
+
+/** Just how to ask Mirror酱 for it (rid, platform, os, arch), from anything carrying them. */
+function resourceOf(r: MirrorResource): MirrorResource {
+  return { rid: r.rid, platform: r.platform, ...(r.os === undefined ? {} : { os: r.os }), ...(r.arch === undefined ? {} : { arch: r.arch }) }
+}
+
+/** Lowercase, without spaces and punctuation, for matching names (《原神》 · Genshin → 原神genshin). */
+function squash(text: string): string {
+  return text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
 }
 
 function sameSource(a: ScriptSource, b: ScriptSource): boolean {

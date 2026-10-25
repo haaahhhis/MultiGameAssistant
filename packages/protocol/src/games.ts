@@ -5,6 +5,7 @@
  * `@adg/game-intel`.
  */
 import { z } from 'zod'
+import { MirrorSearchItem } from './scripts.ts'
 import { ClockTime } from './pipelines.ts'
 
 export const GAMES_CAPABILITY = 'games'
@@ -206,6 +207,12 @@ export const GamesRequests = {
    * forum post): kept with the game as a source only the agent reads, and
    * read by the agent at once. @returns the reading session.
    */
+  /** Mirror酱 tools that play a game, matched like scripts (no CDK needed); `builtin` when Mirror酱's list could not be read. */
+  'games/mirrorchyan': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string() }),
+    result: z.object({ items: z.array(MirrorSearchItem), from: z.enum(['mirrorchyan', 'builtin']) }),
+  },
   'games/source/add': {
     capability: GAMES_CAPABILITY,
     params: z.object({ game: z.string(), url: z.string().url().refine(u => /^https?:\/\//.test(u), '只能是 http 或 https 网址'), name: z.string().max(30).optional() }),

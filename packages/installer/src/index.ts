@@ -13,4 +13,5 @@ export { checkEnvironment, compareVersions, satisfies, systemHost, type EnvCheck
 export { applyFix, ManualFixError, runElevated, type FixDeps } from './fix.ts'
 export { matchesDetect, probeProject } from './probe.ts'
 export { cleanVersion, detectVersion, type DetectedVersion, type VersionSpec } from './version.ts'
+export { mirrorCatalogue, windowsResource, type MirrorProject } from './mirror-catalogue.ts'
 export { applyMirrorChanges, readMirrorChanges, MIRROR_USER_AGENT, MirrorChyanError, mirrorLatest, type MirrorChanges, type MirrorLatest, type MirrorOptions, type MirrorResource } from './mirrorchyan.ts'
