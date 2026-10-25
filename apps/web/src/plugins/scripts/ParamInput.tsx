@@ -9,10 +9,12 @@ type Spec = TaskInfo['params'][string]
  * One task parameter: a list when the pack gives values (fixed, or read from
  * the script's config, with 「新建…」 when new ones can be made), else a text box.
  */
-export function ParamInput({ client, scriptId, taskId, name, spec, value, onChange, onCreated }: {
+export function ParamInput({ client, scriptId, taskId, name, spec, value, onChange, onCreated, profile }: {
   client: AdgClient
   scriptId: string
   taskId: string
+  /** The config profile its choices come from (new ones go there too); default: the current one. */
+  profile?: string | undefined
   name: string
   spec: Spec
   value: string
@@ -30,7 +32,7 @@ export function ParamInput({ client, scriptId, taskId, name, spec, value, onChan
     setError(null)
     setBusy(true)
     try {
-      const { value: made } = await client.connection.call('runs/choices/create', { scriptId, taskId, param: name, name: label })
+      const { value: made } = await client.connection.call('runs/choices/create', { scriptId, taskId, param: name, name: label, ...(profile === undefined ? {} : { profile }) })
       setNaming(null)
       onCreated?.()
       onChange(made)

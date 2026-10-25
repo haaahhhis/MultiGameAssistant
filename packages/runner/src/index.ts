@@ -58,10 +58,16 @@ export class AdgRunner extends Service {
     // Earlier runs and their saved logs, for the run list and the agent.
     void runner.loadHistory().catch(error => log.warn(`loading run history failed: ${String(error)}`))
     const library: LibraryView = { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) }
+    // Pages showing a script's profiles (its config card, pipeline steps) re-read them.
+    const profilesChanged = async (scriptId: string) => {
+      const list = await runner.profiles.list(scriptId)
+      ctx.get('adgGateway')?.broadcast('configs/profiles/changed', { scriptId, list })
+      return list
+    }
     ctx.effect(() => () => { void runner.dispose() }, 'adg-runner runs')
 
     ctx.inject(['tools'], scoped => {
-      for (const tool of runnerTools(runner, { library, dataDir: spec.dataDir })) {
+      for (const tool of runnerTools(runner, { library, dataDir: spec.dataDir, profilesChanged })) {
         scoped.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
       }
     })
@@ -71,11 +77,11 @@ export class AdgRunner extends Service {
         id: RUNS_CAPABILITY,
         version: 1,
         methods: {
-          'runs/tasks': async params => { await scripts.ready; return runner.tasks((params as RequestParams<'runs/tasks'>).scriptId) },
+          'runs/tasks': async params => { await scripts.ready; const p = params as RequestParams<'runs/tasks'>; return runner.tasks(p.scriptId, p.profile) },
           'runs/start': async params => {
             await scripts.ready
             const p = params as RequestParams<'runs/start'>
-            return runner.start(p.scriptId, p.taskId, p.params ?? {})
+            return runner.start(p.scriptId, p.taskId, p.params ?? {}, { profile: p.profile })
           },
           'runs/stop': async params => { await runner.stop((params as RequestParams<'runs/stop'>).runId); return {} },
           'runs/list': params => ({ items: runner.list((params as RequestParams<'runs/list'>).scriptId) }),
@@ -87,28 +93,54 @@ export class AdgRunner extends Service {
             const saved = await runner.readLog(p.runId, { limit }).catch(() => undefined)
             return { lines: saved !== undefined && saved.lines.length > memory.length ? saved.lines.map(({ n: _n, ...line }) => line) : memory }
           },
+          'configs/profiles': async params => {
+            await scripts.ready
+            return runner.profiles.list((params as RequestParams<'configs/profiles'>).scriptId)
+          },
+          'configs/profiles/create': async params => {
+            await scripts.ready
+            const p = params as RequestParams<'configs/profiles/create'>
+            const created = await runner.createProfile(p.scriptId, p.name, p.from)
+            return { ...created, list: await profilesChanged(p.scriptId) }
+          },
+          'configs/profiles/update': async params => {
+            await scripts.ready
+            const p = params as RequestParams<'configs/profiles/update'>
+            if (p.name !== undefined) await runner.profiles.rename(p.scriptId, p.profile, p.name)
+            if (p.current === true) await runner.profiles.setCurrent(p.scriptId, p.profile)
+            return profilesChanged(p.scriptId)
+          },
+          'configs/profiles/remove': async params => {
+            await scripts.ready
+            const p = params as RequestParams<'configs/profiles/remove'>
+            await runner.removeProfile(p.scriptId, p.profile)
+            return profilesChanged(p.scriptId)
+          },
           'configs/status': async params => {
             await scripts.ready
-            return configStatus(library, runner.profiles, (params as RequestParams<'configs/status'>).scriptId)
+            const p = params as RequestParams<'configs/status'>
+            return configStatus(library, runner.profiles, p.scriptId, p.profile)
           },
           'configs/read': async params => {
             await scripts.ready
             const p = params as RequestParams<'configs/read'>
-            const { file, content, truncated } = await readConfig(library, runner.profiles, p.scriptId, p.file)
+            const { file, content, truncated } = await readConfig(library, runner.profiles, p.scriptId, p.file, p.profile)
             return { file, content, truncated }
           },
           'configs/import': async params => {
             await scripts.ready
-            return { imported: await importConfig(library, runner.profiles, (params as RequestParams<'configs/import'>).scriptId) }
+            const p = params as RequestParams<'configs/import'>
+            return { imported: await importConfig(library, runner.profiles, p.scriptId, p.profile) }
           },
           'configs/open': async params => {
             await scripts.ready
-            return runner.settings((params as RequestParams<'configs/open'>).scriptId)
+            const p = params as RequestParams<'configs/open'>
+            return runner.settings(p.scriptId, p.profile)
           },
           'runs/choices/create': async params => {
             await scripts.ready
             const p = params as RequestParams<'runs/choices/create'>
-            return { value: await runner.createChoice(p.scriptId, p.taskId, p.param, p.name) }
+            return { value: await runner.createChoice(p.scriptId, p.taskId, p.param, p.name, p.profile) }
           },
           'configs/launch': async params => {
             await scripts.ready

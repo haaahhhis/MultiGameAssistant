@@ -82,6 +82,42 @@ test('a settings session saves what the script wrote back into the local copy', 
   assert.ok(existsSync(join(profiles.filesDir('tool'), 'config', 'presets', 'b.yaml')))
 })
 
+test('profiles: saved from a copy, the original or another folder; named, made current, removed', async () => {
+  const { script, data, profiles } = setup()
+  assert.deepEqual(await profiles.list('tool'), { current: 'default', items: [{ id: 'default', name: '默认' }] })
+  await profiles.write('tool', script, MANIFEST, 'config/gui.json', ['Stage'], 'CE-6', join(data, 'h1'))
+
+  const copy = await profiles.create('tool', script, MANIFEST, '小号', { kind: 'copy', profile: 'default' }, 1000)
+  assert.deepEqual(copy.files, ['config/gui.json', 'config/presets/a.yaml'])
+  assert.match(await profiles.read('tool', script, MANIFEST, 'config/gui.json', copy.profile.id), /CE-6/, 'a copy takes the local edits')
+  await profiles.write('tool', script, MANIFEST, 'config/gui.json', ['Stage'], 'H8-4', join(data, 'h2'), copy.profile.id)
+  assert.match(await profiles.read('tool', script, MANIFEST, 'config/gui.json'), /CE-6/, 'editing one profile leaves the others')
+
+  const fresh = await profiles.create('tool', script, MANIFEST, '原样', { kind: 'original' }, 2000)
+  assert.match(await profiles.read('tool', script, MANIFEST, 'config/gui.json', fresh.profile.id), /1-7/)
+
+  const other = mkdtempSync(join(tmpdir(), 'adg-prof-other-'))
+  mkdirSync(join(other, 'config'), { recursive: true })
+  writeFileSync(join(other, 'config', 'gui.json'), '{"Stage": "5-3"}')
+  const folder = await profiles.create('tool', script, MANIFEST, '另一台电脑', { kind: 'folder', dir: other }, 3000)
+  assert.deepEqual(folder.files, ['config/gui.json'])
+  assert.match(await profiles.read('tool', script, MANIFEST, 'config/gui.json', folder.profile.id), /5-3/)
+  assert.deepEqual((await profiles.status('tool', script, MANIFEST, folder.profile.id)).drift, [], 'drift is judged against the script, not the folder read from')
+  await assert.rejects(profiles.create('tool', script, MANIFEST, '空', { kind: 'folder', dir: mkdtempSync(join(tmpdir(), 'adg-prof-empty-')) }), /没有这个脚本的配置文件/)
+
+  await assert.rejects(profiles.create('tool', script, MANIFEST, '小号', { kind: 'original' }), /已经有叫「小号」的配置了/)
+  assert.equal((await profiles.resolve('tool', '小号')).id, copy.profile.id, 'found by name')
+  await profiles.rename('tool', '小号', '副号')
+  await profiles.setCurrent('tool', '副号')
+  assert.equal((await profiles.resolve('tool')).name, '副号', 'no name: the current one')
+  await assert.rejects(profiles.remove('tool', 'default'), /「默认」配置不能删除/)
+  await profiles.remove('tool', '副号')
+  const after = await profiles.list('tool')
+  assert.equal(after.current, 'default')
+  assert.deepEqual(after.items.map(i => i.name), ['默认', '原样', '另一台电脑'])
+  assert.ok(!existsSync(profiles.filesDir('tool', copy.profile.id)))
+})
+
 test('changes the user makes in the script itself show up as drift until imported', async () => {
   const { script, profiles } = setup()
   await profiles.ensure('tool', script, MANIFEST)

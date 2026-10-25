@@ -18,7 +18,7 @@ import { listWithNew, readChoices } from './choices.ts'
 import { closeGame, describeSelfLaunch, ensureGame, LaunchStore, type GameStart } from './game.ts'
 import { BusyError, ResourceLocks } from './locks.ts'
 import { backupDirFor, inside } from './patch.ts'
-import { ConfigProfiles } from './profiles.ts'
+import { ConfigProfiles, type ProfileEntry, type ProfileSource } from './profiles.ts'
 import { lineSplitter, LogTail } from './tail.ts'
 import { sweepTree } from './sweep.ts'
 import { gameKeywords, locateGame, type GameCandidate } from './locate.ts'
@@ -138,18 +138,18 @@ export class Runner {
     this.launch = new LaunchStore(options.dataDir)
   }
 
-  /** Tasks of a library script, from its pack. */
-  /** Tasks of a library script, from its pack; parameter choices are read from the local config copy. */
-  async tasks(scriptId: string): Promise<{ tasks: TaskInfo[]; runnable: boolean; problem?: string }> {
+  /** Tasks of a library script, from its pack; parameter choices are read from the profile's local config copy (the current one by default). */
+  async tasks(scriptId: string, profileRef?: string): Promise<{ tasks: TaskInfo[]; runnable: boolean; problem?: string }> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) return { tasks: [], runnable: false, problem: `${script.name} 没有脚本包，还不知道怎么运行它；可以让 agent 分析这个脚本生成脚本包` }
+    const profile = (await this.profiles.resolve(scriptId, profileRef)).id
     const tasks: TaskInfo[] = []
     for (const t of pack.manifest.tasks) {
       const params: TaskInfo['params'] = {}
       for (const [name, spec] of Object.entries(t.params)) {
         const { choices: from, ...rest } = spec
-        params[name] = from === undefined ? rest : { ...rest, choices: readChoices(from, await this.#localText(scriptId, pack.manifest, from.file)), ...(from.create === undefined ? {} : { canCreate: true }) }
+        params[name] = from === undefined ? rest : { ...rest, choices: readChoices(from, await this.#localText(scriptId, pack.manifest, from.file, profile)), ...(from.create === undefined ? {} : { canCreate: true }) }
       }
       tasks.push({
         id: t.id,
@@ -171,23 +171,41 @@ export class Runner {
    * Add a choice to a parameter's list in the local config copy (a copy of an existing item).
    * @returns the new value. @throws Error when the parameter has no creatable choices or the name is taken.
    */
-  async createChoice(scriptId: string, taskId: string, param: string, name: string): Promise<string> {
+  async createChoice(scriptId: string, taskId: string, param: string, name: string, profileRef?: string): Promise<string> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     const spec = pack?.manifest.tasks.find(t => t.id === taskId)?.params[param]?.choices
     if (pack === undefined || script.dir === undefined || spec?.create === undefined) throw new Error(`任务 ${taskId} 的参数 ${param} 不能新建`)
-    const text = await this.#localText(scriptId, pack.manifest, spec.file)
+    const profile = (await this.profiles.resolve(scriptId, profileRef)).id
+    const text = await this.#localText(scriptId, pack.manifest, spec.file, profile)
     if (text === undefined) throw new Error(`本地配置里还没有 ${spec.file}：先「打开脚本修改设置」，在脚本里建一个，之后就可以在这里复制`)
     const { list, value } = listWithNew(spec, text, name.trim())
     const historyDir = join(this.#options.dataDir, 'config-history', scriptId, new Date(this.#now()).toISOString().replace(/[:.]/g, '-'))
-    await this.profiles.write(scriptId, script.dir, pack.manifest, spec.file, spec.list, list, historyDir)
+    await this.profiles.write(scriptId, script.dir, pack.manifest, spec.file, spec.list, list, historyDir, profile)
     return value
   }
 
-  async #localText(scriptId: string, manifest: ScriptManifest, file: string): Promise<string | undefined> {
+  async #localText(scriptId: string, manifest: ScriptManifest, file: string, profile: string): Promise<string | undefined> {
     const dir = this.#options.library.get(scriptId).dir
     if (dir === undefined) return undefined
-    return this.profiles.read(scriptId, dir, manifest, file).catch(() => undefined)
+    return this.profiles.read(scriptId, dir, manifest, file, profile).catch(() => undefined)
+  }
+
+  /** Save a new config profile for a script with a pack. */
+  async createProfile(scriptId: string, name: string, source: ProfileSource): Promise<{ profile: ProfileEntry; files: string[] }> {
+    const script = this.#options.library.get(scriptId)
+    const pack = this.#options.library.packOf(scriptId)
+    if (pack === undefined) throw new Error(`${script.name} 没有脚本包，不知道哪些是它的配置文件`)
+    if (script.dir === undefined) throw new Error(`${script.name} 还没有安装`)
+    return this.profiles.create(scriptId, script.dir, pack.manifest, name, source, this.#now())
+  }
+
+  /** @throws Error while a run or settings session of the script uses that profile. */
+  async removeProfile(scriptId: string, ref: string): Promise<void> {
+    const target = await this.profiles.resolve(scriptId, ref)
+    const busy = this.list(scriptId).find(r => r.endedAt === undefined && r.profile === target.id)
+    if (busy !== undefined) throw new Error(`「${target.name}」正在被${busy.kind === 'settings' ? '设置界面' : `任务「${busy.taskTitle}」`}使用，结束后再删`)
+    await this.profiles.remove(scriptId, target.id)
   }
 
   /** Who starts the game before this script's runs, and what its pack says. */
@@ -416,11 +434,13 @@ export class Runner {
    * Start a task. Resolves once the program has started (or the run failed to start).
    * @throws Error before anything ran: unknown script or task, bad parameters; BusyError for busy resources.
    */
-  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string } = {}): Promise<RunInfo> {
+  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string; profile?: string | undefined } = {}): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) throw new Error(`${script.name} 没有脚本包，还不知道怎么运行它`)
     if (script.dir === undefined) throw new Error(`${script.name} 还没有安装`)
+    // Which config copy: the one named (a pipeline step, the agent), else the script's current one.
+    const profile = await this.profiles.resolve(scriptId, options.profile)
     const manifest = options.manifest ?? pack.manifest
     const mode = options.mode ?? 'task'
     const task = manifest.tasks.find(t => t.id === taskId)
@@ -433,7 +453,7 @@ export class Runner {
     const run: ActiveRun = {
       info: {
         id: runId, scriptId, scriptName: script.name, taskId, taskTitle: task?.title ?? taskId, params: {}, state: 'starting',
-        startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [], kind: mode,
+        startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [], kind: mode, profile: profile.id, profileName: profile.name,
         ...(options.retryOf === undefined ? {} : { retryOf: options.retryOf }),
       },
       mode,
@@ -477,7 +497,7 @@ export class Runner {
       // The local config copy (plus this task's temporary edits) goes in for the run; the original comes back after.
       // Patches for a managed emulator only (e.g. turn the script's own emulator start off) apply when we started it.
       const patches = rendered.patches.filter(p => p.when !== 'emulator-managed' || emulatorManaged)
-      const injection = await this.profiles.inject(scriptId, script.dir, manifest, patches, backupDirFor(this.#options.dataDir, runId))
+      const injection = await this.profiles.inject(scriptId, script.dir, manifest, patches, backupDirFor(this.#options.dataDir, runId), profile.id)
       run.release.push(() => injection.restore())
       if (mode === 'settings') {
         // Runs before the restore above (releases run in reverse).
@@ -487,12 +507,12 @@ export class Runner {
             return
           }
           const saved = await injection.saveBack()
-          this.#line(run, 'adg', saved.length > 0 ? `已保存到本地配置：${saved.join('、')}` : '脚本没有写出配置文件，本地配置未变')
+          this.#line(run, 'adg', saved.length > 0 ? `已保存到本地配置「${profile.name}」：${saved.join('、')}` : '脚本没有写出配置文件，本地配置未变')
         })
       }
       for (const file of injection.skipped) run.info.warnings.push(`没有找到配置文件 ${file}，这项临时修改跳过`)
       if (injection.drift.length > 0) run.info.warnings.push(`原项目的配置（${injection.drift.join('、')}）在导入本地配置后改过；本次按本地配置运行。需要的话在脚本页「导入原项目设置」`)
-      if (injection.files.length > 0) this.#line(run, 'adg', `已放入本地配置：${injection.files.join('、')}（结束后还原原项目配置）`)
+      if (injection.files.length > 0) this.#line(run, 'adg', `已放入本地配置「${profile.name}」：${injection.files.join('、')}（结束后还原原项目配置）`)
 
       // The game, for scripts that do not start it themselves (judged on the config now in place).
       if (mode === 'task') {
@@ -534,7 +554,7 @@ export class Runner {
    * their own settings window).
    * @throws Error when the pack declares no program at all.
    */
-  async settings(scriptId: string): Promise<RunInfo> {
+  async settings(scriptId: string, profile?: string): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) throw new Error(`${script.name} 没有脚本包，不知道该打开哪个程序`)
@@ -550,7 +570,7 @@ export class Runner {
       }],
       logs: { sources: [{ stdout: true, encoding: 'auto' }], rules: [] },
     }
-    return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings' })
+    return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings', profile })
   }
 
   /**
@@ -602,7 +622,7 @@ export class Runner {
         await this.stop(runId, `已重启：${reason}`)
       }
       await run.finished
-      return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId })
+      return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId, profile: run.info.profile })
     })()
     this.#successors.set(runId, next.catch(() => undefined))
     return next

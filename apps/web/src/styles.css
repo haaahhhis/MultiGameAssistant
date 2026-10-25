@@ -211,6 +211,14 @@ button.rail-item.active { color: var(--text); background: var(--raised); box-sha
 .card h3 { margin: 0; font-size: 15px; }
 .card > p { margin: 0; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Config profiles (scripts/ConfigCard.tsx) */
+.profile-bar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.profile-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.profile-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--muted); font-size: 12.5px; }
+.profile-chip.active { color: var(--text); background: var(--raised); border-color: var(--accent); box-shadow: var(--shadow-1); }
+.profile-current { font-size: 11px; color: var(--ok); }
+.script-summary .summary-text { margin: 4px 0 0; line-height: 1.7; white-space: pre-wrap; }
+.profile-save { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
 .chip.subtle { margin-left: 8px; font-family: var(--font); font-size: 11px; padding: 0 8px; color: var(--muted); }
 .plugin-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .plugin-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 9px 0; border-top: 1px solid var(--border); }

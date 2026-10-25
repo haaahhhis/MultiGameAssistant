@@ -217,3 +217,24 @@ test('a local import without a pack: no channel until the user names its reposit
     await github.close()
   }
 })
+
+test('the AI summary gets the script\'s source, pack, files and README, and is kept with the script', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-summary-'))
+  const library = setup(root, { github: 'http://127.0.0.1:9' })
+  await library.start()
+  try {
+    const dir = userFolder(root, { 'README.md': '# Tool\n\n<!-- badge -->\nAutomates the daily grind.\n', 'README_zh.md': '# 工具\n\n自动清日常。\n' })
+    await library.import({ path: dir })
+    const material = await library.summaryMaterial('tool')
+    assert.match(material, /名字：Tool|名字：Fake Tool/)
+    assert.match(material, /脚本包：Fake Tool/)
+    assert.match(material, /config\/ {2}notes\.txt/, 'the folder listing, folders marked')
+    assert.match(material, /README_zh\.md（开头部分）：\n# 工具\n\n自动清日常。/, 'the Chinese README first')
+    assert.doesNotMatch(material, /badge/)
+
+    await library.setSummary('tool', { state: 'done', at: 5, sessionId: 's1', text: '一个自动清日常的工具。' })
+    assert.deepEqual(library.get('tool').summary, { state: 'done', at: 5, sessionId: 's1', text: '一个自动清日常的工具。' })
+  } finally {
+    library.dispose()
+  }
+})

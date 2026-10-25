@@ -65,6 +65,20 @@ export const TaskInfo = z.object({
 })
 export type TaskInfo = z.infer<typeof TaskInfo>
 
+/** A config profile, by id or name. */
+export const ProfileRef = z.string().trim().min(1).max(64)
+
+/** One of a script's saved config copies. */
+export const ProfileEntry = z.object({ id: z.string(), name: z.string(), createdAt: z.number().optional() })
+export type ProfileEntry = z.infer<typeof ProfileEntry>
+
+export const ProfileList = z.object({
+  /** What runs use when they name no profile. */
+  current: z.string(),
+  items: z.array(ProfileEntry),
+})
+export type ProfileList = z.infer<typeof ProfileList>
+
 export const RunInfo = z.object({
   id: z.string(),
   scriptId: z.string(),
@@ -89,6 +103,9 @@ export const RunInfo = z.object({
   kind: z.enum(['task', 'settings']),
   /** This run restarts that one (L0 recovery or the user's retry). */
   retryOf: z.string().optional(),
+  /** The config profile it ran with (absent in runs from before profiles). */
+  profile: z.string().optional(),
+  profileName: z.string().optional(),
 })
 export type RunInfo = z.infer<typeof RunInfo>
 
@@ -108,7 +125,8 @@ export const RunRequests = {
   /** Tasks a library script can run, from its Script Pack. */
   'runs/tasks': {
     capability: RUNS_CAPABILITY,
-    params: z.object({ scriptId: ScriptId }),
+    /** `profile`: read parameter choices from that config profile (default: the current one). */
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef.optional() }),
     result: z.object({ tasks: z.array(TaskInfo), runnable: z.boolean(), problem: z.string().optional() }),
   },
   'runs/start': {
@@ -117,6 +135,8 @@ export const RunRequests = {
       scriptId: ScriptId,
       taskId: z.string().min(1).max(64),
       params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+      /** Config profile (id or name); default: the script's current one. */
+      profile: ProfileRef.optional(),
     }),
     result: RunInfo,
   },
@@ -138,13 +158,45 @@ export const RunRequests = {
     result: z.object({ lines: z.array(RunLogLine) }),
   },
   /** The script's local config copy and whether the original changed since it was imported. */
-  'configs/status': {
+  /** A script's config profiles and which one runs use when they name none. */
+  'configs/profiles': {
     capability: RUNS_CAPABILITY,
     params: z.object({ scriptId: ScriptId }),
+    result: ProfileList,
+  },
+  /** Save a new profile: a copy of one, the original project's current config, or config files from another folder. */
+  'configs/profiles/create': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({
+      scriptId: ScriptId,
+      name: z.string().trim().min(1).max(30),
+      from: z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('copy'), profile: ProfileRef }),
+        z.object({ kind: z.literal('original') }),
+        z.object({ kind: z.literal('folder'), dir: z.string().trim().min(1).max(500) }),
+      ]),
+    }),
+    result: z.object({ profile: ProfileEntry, files: z.array(z.string()), list: ProfileList }),
+  },
+  'configs/profiles/update': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef, name: z.string().trim().min(1).max(30).optional(), current: z.literal(true).optional() }),
+    result: ProfileList,
+  },
+  'configs/profiles/remove': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef }),
+    result: ProfileList,
+  },
+  'configs/status': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef.optional() }),
     result: z.object({
       importedAt: z.number().optional(),
       /** Where the local copy lives. */
       dir: z.string(),
+      /** The profile this is. */
+      profile: ProfileEntry,
       files: z.array(z.object({ file: z.string(), local: z.boolean(), original: z.boolean(), changed: z.boolean() })),
       drift: z.array(z.string()),
     }),
@@ -152,25 +204,25 @@ export const RunRequests = {
   /** One declared config file of the local copy, as text (to look at). */
   'configs/read': {
     capability: RUNS_CAPABILITY,
-    params: z.object({ scriptId: ScriptId, file: z.string().min(1) }),
+    params: z.object({ scriptId: ScriptId, file: z.string().min(1), profile: ProfileRef.optional() }),
     result: z.object({ file: z.string(), content: z.string(), truncated: z.boolean() }),
   },
   /** Replace the local copy with the original project's current config (the user's call). */
   'configs/import': {
     capability: RUNS_CAPABILITY,
-    params: z.object({ scriptId: ScriptId }),
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef.optional() }),
     result: z.object({ imported: z.array(z.string()) }),
   },
   /** Open the script's own settings window on the local copy; saved back when the user closes it. */
   'configs/open': {
     capability: RUNS_CAPABILITY,
-    params: z.object({ scriptId: ScriptId }),
+    params: z.object({ scriptId: ScriptId, profile: ProfileRef.optional() }),
     result: RunInfo,
   },
   /** Make a new choice for a parameter (e.g. an MXU instance copied from an existing one) in the local config. */
   'runs/choices/create': {
     capability: RUNS_CAPABILITY,
-    params: z.object({ scriptId: ScriptId, taskId: z.string().min(1), param: z.string().min(1), name: z.string().trim().min(1).max(40) }),
+    params: z.object({ scriptId: ScriptId, taskId: z.string().min(1), param: z.string().min(1), name: z.string().trim().min(1).max(40), profile: ProfileRef.optional() }),
     result: z.object({ value: z.string() }),
   },
   'configs/launch': {
@@ -205,5 +257,7 @@ export const RunRequests = {
 
 export const RunNotifications = {
   'runs/state': RunInfo,
+  /** A script's config profiles changed (saved, renamed, removed, another made current). */
+  'configs/profiles/changed': z.object({ scriptId: z.string(), list: ProfileList }),
   'runs/log': z.object({ runId: z.string(), lines: z.array(RunLogLine) }),
 } as const

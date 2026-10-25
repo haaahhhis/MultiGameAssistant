@@ -21,6 +21,7 @@ import { z } from 'zod'
 import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
 import { startSkillHub } from './skill-hub-plugin.ts'
+import { scriptSummaries } from './script-summary.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
@@ -96,8 +97,9 @@ export class AdgScripts extends Service {
       }
     })
 
+    const summaries = scriptSummaries(ctx, library, { warn: message => log.warn(message) })
     ctx.inject(['adgGateway'], scoped => {
-      const capability = scriptsCapability(library)
+      const capability = scriptsCapability(library, summaries)
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

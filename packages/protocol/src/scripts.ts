@@ -101,6 +101,17 @@ export type UpdateChannels = z.infer<typeof UpdateChannels>
 export const LocalVersion = z.object({ version: z.string(), from: z.string() })
 export type LocalVersion = z.infer<typeof LocalVersion>
 
+/** What the agent wrote about a script (what it is, which game, what it does), on the user's request. */
+export const ScriptSummary = z.object({
+  state: z.enum(['running', 'done', 'failed']),
+  at: z.number(),
+  /** The summary; on failure, why. */
+  text: z.string().optional(),
+  /** The agent session that wrote it. */
+  sessionId: z.string().optional(),
+})
+export type ScriptSummary = z.infer<typeof ScriptSummary>
+
 export const ScriptInfo = z.object({
   id: z.string(),
   name: z.string(),
@@ -126,6 +137,7 @@ export const ScriptInfo = z.object({
   /** Job currently working on this script. */
   jobId: z.string().optional(),
   addedAt: z.number(),
+  summary: ScriptSummary.optional(),
 })
 export type ScriptInfo = z.infer<typeof ScriptInfo>
 
@@ -379,6 +391,12 @@ export const ScriptRequests = {
    * Remove from the library. Installed versions are deleted only with
    * `deleteFiles`; an imported directory is never deleted.
    */
+  /** Have the agent sum up what the script is (its README, files, pack); the summary lands in `summary`. */
+  'scripts/summarize': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: ScriptId }),
+    result: z.object({ sessionId: z.string() }),
+  },
   'scripts/remove': {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({ id: ScriptId, deleteFiles: z.boolean().optional() }),

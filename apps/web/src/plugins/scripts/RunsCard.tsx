@@ -7,6 +7,7 @@ import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
 import { ParamInput } from './ParamInput.tsx'
+import { ProfileSelect, useProfiles } from './Profiles.tsx'
 
 export const RUN_STATE: Readonly<Record<RunInfo['state'], [string, string]>> = {
   starting: ['', '启动中'], running: ['', '运行中'], stopping: ['warn', '停止中'],
@@ -26,18 +27,21 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
   const [error, setError] = useState<string | null>(null)
   const [shown, setShown] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
+  const profiles = useProfiles(client, scriptId, packId !== undefined)
+  const [profile, setProfile] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     if (status.state !== 'open') return
     let live = true
-    client.connection.call('runs/tasks', { scriptId }).then(r => {
+    // Parameter choices (e.g. MXU instances) are read from the profile the run will use.
+    client.connection.call('runs/tasks', { scriptId, ...(profile === undefined ? {} : { profile }) }).then(r => {
       if (!live) return
       setTasks(r)
       setTaskId(id => id === '' ? r.tasks[0]?.id ?? '' : id)
     }).catch(e => { if (live) setError(errorText(e)) })
     client.connection.call('runs/list', { scriptId }).then(r => { if (live) setRuns(r.items) }).catch(() => {})
     return () => { live = false }
-  }, [client, scriptId, packId, status.state, revision])
+  }, [client, scriptId, packId, status.state, revision, profile, profiles?.current])
 
   useEffect(() => client.connection.on('runs/state', run => {
     if (run.scriptId !== scriptId) return
@@ -64,7 +68,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
         if (raw === '') continue
         params[name] = spec.type === 'boolean' ? raw === 'true' : spec.type === 'integer' || spec.type === 'number' ? Number(raw) : raw
       }
-      const run = await client.connection.call('runs/start', { scriptId, taskId: task.id, params })
+      const run = await client.connection.call('runs/start', { scriptId, taskId: task.id, params, ...(profile === undefined ? {} : { profile }) })
       setShown(run.id)
       if (run.state === 'failed') setError(run.outcome ?? '运行失败')
     } catch (e) {
@@ -95,8 +99,9 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
               {task.description !== undefined && <span>{task.description}</span>}
             </div>
           )}
+          <ProfileSelect id="run-profile" list={profiles} value={profile} onChange={setProfile} />
           {task !== undefined && Object.entries(task.params).map(([name, spec]) => (
-            <ParamInput key={name} client={client} scriptId={scriptId} taskId={task.id} name={name} spec={spec}
+            <ParamInput key={name} client={client} scriptId={scriptId} taskId={task.id} name={name} spec={spec} profile={profile}
               value={values[name] ?? ''} onChange={value => setValues(v => ({ ...v, [name]: value }))} onCreated={() => setRevision(r => r + 1)} />
           ))}
           <div className="key-actions">
@@ -115,7 +120,7 @@ export function RunsCard({ client, scriptId, packId }: { client: AdgClient; scri
             return (
               <button key={run.id} className={`run-row ${run.id === viewing?.id ? 'active' : ''}`} aria-expanded={run.id === viewing?.id} onClick={() => setShown(s => (s === run.id || (s === null && run.id === viewing?.id) ? '' : run.id))}>
                 <span className={`badge ${tone}`}>{label}</span>
-                <span className="run-title">{run.taskTitle}</span>
+                <span className="run-title">{run.taskTitle}{run.profileName !== undefined && (profiles?.items.length ?? 0) > 1 && <span className="muted small"> · {run.profileName}</span>}</span>
                 <span className="muted small run-outcome">{run.outcome ?? run.resources.join(' · ')}</span>
                 <span className="session-time">{relativeTime(run.startedAt, now)}</span>
               </button>

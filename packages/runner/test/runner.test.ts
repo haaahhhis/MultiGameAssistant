@@ -178,7 +178,7 @@ test('a settings session keeps what the script saved in the local copy; the next
   const session = await runner.finished((await runner.settings('tool')).id)
   assert.equal(session.kind, 'settings')
   assert.equal(session.state, 'succeeded', session.outcome)
-  assert.ok(runner.logs(session.id).some(l => /已保存到本地配置：config\/gui\.json/.test(l.text)))
+  assert.ok(runner.logs(session.id).some(l => /已保存到本地配置「默认」：config\/gui\.json/.test(l.text)))
   assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original, 'the original project config is back')
   assert.match(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /H8-4/)
 
@@ -189,6 +189,44 @@ test('a settings session keeps what the script saved in the local copy; the next
   await runner.finished(started.id)
   assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original)
   assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /RunDirectly/, 'task patches never leak into the local copy')
+})
+
+test('profiles: a run, a settings session and a retry use the profile named; without one, the current profile', async () => {
+  const dir = scriptDir()
+  const original = readFileSync(join(dir, 'config', 'gui.json'), 'utf8')
+  const { runner } = setup({ tool: dir }, bridge)
+  const { profile: alt } = await runner.createProfile('tool', '小号', { kind: 'copy', profile: 'default' })
+  // The settings window for 小号 saves into 小号 only.
+  const session = await runner.finished((await runner.settings('tool', '小号')).id)
+  assert.equal(session.profile, alt.id)
+  assert.ok(runner.logs(session.id).some(l => /已保存到本地配置「小号」/.test(l.text)))
+  assert.match(readFileSync(join(runner.profiles.filesDir('tool', alt.id), 'config', 'gui.json'), 'utf8'), /H8-4/)
+  assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /H8-4/, '默认 is untouched')
+
+  const stage = async (profile?: string) => {
+    const run = await runner.start('tool', 'gui', {}, { profile })
+    const seen = JSON.parse(readFileSync(join(dir, 'config', 'gui.json'), 'utf8')).Configurations.Default.Stage as string | undefined
+    return { run, seen }
+  }
+  const named = await stage(alt.id)
+  assert.equal(named.seen, 'H8-4')
+  assert.equal(named.run.profileName, '小号')
+  const retry = await runner.restart(named.run.id, 'test')
+  assert.equal(retry.profile, alt.id, 'a retry keeps the profile')
+  await runner.finished(retry.id)
+
+  assert.equal((await stage()).seen, undefined, 'no profile named: the current one (默认)')
+  await runner.stop(runner.list('tool').find(r => r.endedAt === undefined)!.id)
+  await runner.profiles.setCurrent('tool', '小号')
+  const current = await stage()
+  assert.equal(current.seen, 'H8-4', 'the current profile changed')
+  await assert.rejects(runner.removeProfile('tool', '小号'), /正在被任务「配置驱动任务」使用/)
+  await runner.stop(current.run.id)
+  await runner.finished(current.run.id)
+  await assert.rejects(runner.start('tool', 'gui', {}, { profile: '大号' }), /没有叫「大号」的配置；现有：默认、小号/)
+  await runner.removeProfile('tool', '小号')
+  assert.equal((await runner.profiles.list('tool')).current, 'default', 'removing the current profile falls back to 默认')
+  assert.equal(readFileSync(join(dir, 'config', 'gui.json'), 'utf8'), original, 'the original never changes')
 })
 
 test('without a declared settings window, a settings session opens the main program with its base args', async () => {

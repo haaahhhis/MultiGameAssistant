@@ -4,7 +4,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { EnvReport, InstallSettings, LocalVersion, ProjectProbe, ScriptFamily, ScriptSource } from '@adg/protocol'
+import { EnvReport, InstallSettings, LocalVersion, ProjectProbe, ScriptFamily, ScriptSource, ScriptSummary } from '@adg/protocol'
 import { z } from 'zod'
 
 export const StoredVersion = z.object({
@@ -50,6 +50,8 @@ export const StoredScript = z.object({
   localVersion: LocalVersion.optional(),
   /** Files a local update replaced or removed, newest last; `dir` holds them under `files/`. */
   backups: z.array(LocalBackup).optional(),
+  /** The agent's summary of what the script is. */
+  summary: ScriptSummary.optional(),
 })
 export type StoredScript = z.infer<typeof StoredScript>
 

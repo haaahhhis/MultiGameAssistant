@@ -8,6 +8,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { useTheme } from '../../theme.ts'
 import { errorText } from '../scripts/data.ts'
 import { ParamInput } from '../scripts/ParamInput.tsx'
+import { ProfileSelect } from '../scripts/Profiles.tsx'
 import { useScriptTasks } from './data.ts'
 
 const KIND: Readonly<Record<PipelineNode['kind'], string>> = { 'script-task': '脚本任务', agent: 'agent 步骤', wait: '控制节点', notify: '发消息', gate: '人工确认', start: '开始', end: '结束' }
@@ -105,7 +106,8 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
       const script = scripts.find(s => s.scriptId === node.scriptId)
       const task = script?.tasks.find(t => t.id === node.taskId)
       const params = Object.entries(node.params).map(([k, v]) => `${k}=${String(v)}`).join(' ')
-      return { label: node.title ?? `${script?.scriptName ?? node.scriptId} · ${task?.title ?? node.taskId}`, sub: params, input: INPUT[task?.input ?? 'none'] ?? '' }
+      const profile = node.profile === undefined ? undefined : script?.profiles?.items.find(p => p.id === node.profile)?.name ?? '已删除的配置'
+      return { label: node.title ?? `${script?.scriptName ?? node.scriptId} · ${task?.title ?? node.taskId}`, sub: [profile === undefined ? '' : `配置：${profile}`, params].filter(Boolean).join(' · '), input: INPUT[task?.input ?? 'none'] ?? '' }
     }
     if (node.kind === 'wait') return { label: node.title ?? (node.minutes !== undefined ? `等 ${node.minutes} 分钟` : `等到 ${node.until}`), sub: '', input: '' }
     if (node.kind === 'agent') return { label: node.title ?? 'agent 步骤', sub: node.prompt.slice(0, 40), input: '' }
@@ -294,8 +296,12 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
       <input id="node-title" className="text-input plain" value={node.title ?? ''} maxLength={60}
         onChange={e => { const { title: _t, ...rest } = node; onChange((e.target.value === '' ? rest : { ...rest, title: e.target.value }) as PipelineNode) }} />
 
+      {node.kind === 'script-task' && (
+        <ProfileSelect id="node-profile" label="用哪份配置" list={scripts.find(s => s.scriptId === node.scriptId)?.profiles ?? null} value={node.profile}
+          onChange={profile => { const { profile: _p, ...rest } = node; onChange(profile === undefined ? rest : { ...rest, profile }) }} />
+      )}
       {node.kind === 'script-task' && task !== undefined && Object.entries(task.params).map(([name, spec]) => (
-        <ParamInput key={name} client={client} scriptId={node.scriptId} taskId={node.taskId} name={name} spec={spec}
+        <ParamInput key={name} client={client} scriptId={node.scriptId} taskId={node.taskId} name={name} spec={spec} profile={node.profile}
           value={String(node.params[name] ?? (spec.type === 'boolean' ? spec.default ?? false : ''))}
           onCreated={onTasksChanged}
           onChange={raw => {

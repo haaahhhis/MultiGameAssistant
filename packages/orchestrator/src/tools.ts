@@ -53,7 +53,7 @@ const brief = (run: PipelineRun, pipelines: Pipelines) => {
 
 const DRAFT_HELP = `先按 pipeline-planning 技能：调用 system_info 看电脑带不带得动，默认一次只跑一个游戏（串行），串行的连线用 always，这样一个游戏失败不影响后面的。
 流水线是一个 DAG：nodes 是步骤，edges 是先后关系（from 完成后才运行 to；同一个节点的多个下游并行）。
-节点 kind：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
+节点 kind：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数；脚本存了多份配置时可以填 profile 选一份，script_profiles 可查，不填用脚本当前那份）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
 连线 when：success（默认）/ failure / always。失败处理：节点或整条流水线的 retries（重试次数）和 then（continue 继续其他分支 / stop 停止流水线），默认不重试、继续。
 需要同一资源（桌面鼠标键盘、同一台模拟器、同一账号）的并行节点会自动排队，不用自己串起来；只在有真正的先后依赖时才连线。
 例：MAA（模拟器）和三月七（桌面）并行，都完成后发飞书——nodes：maa（script-task，script_id maa，task_id daily）、m7（script-task，script_id march7th，task_id main）、done（notify，text「日常都跑完了」）；edges：maa→done（always）、m7→done（always）。`
@@ -75,6 +75,7 @@ const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
         script_id: { type: 'string', description: 'script-task：脚本 id。' },
         task_id: { type: 'string', description: 'script-task：任务 id。' },
         params: { ...PARAMS_SCHEMA, description: 'script-task：任务参数。' },
+        profile: { type: 'string', description: 'script-task：用脚本的哪份配置（名字或 id，script_profiles 可查）；不填用当前那份。' },
         prompt: { type: 'string', description: 'agent：要 agent 做的事。可以用「/技能名 要做的事」开头，运行时让它先加载这个技能。' },
         minutes: { type: 'integer', description: 'wait：等几分钟。' },
         until: { type: 'string', description: 'wait：等到 HH:MM。' },
@@ -115,6 +116,7 @@ const DraftArgs = z.object({
     script_id: z.string().nullish(),
     task_id: z.string().nullish(),
     params: z.array(z.object({ name: z.string(), value: z.string() })).nullish(),
+    profile: z.string().trim().min(1).max(64).nullish(),
     prompt: z.string().nullish(),
     minutes: z.number().int().nullish(),
     until: z.string().nullish(),
@@ -151,7 +153,7 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
           const scriptId = n.script_id ?? ''
           const taskId = n.task_id ?? ''
           const spec = library.packOf(scriptId)?.manifest.tasks.find(t => t.id === taskId)?.params ?? {}
-          return { ...base, kind: 'script-task' as const, scriptId, taskId, params: taskParams(n.params, spec) as Record<string, string | number | boolean> }
+          return { ...base, kind: 'script-task' as const, scriptId, taskId, params: taskParams(n.params, spec) as Record<string, string | number | boolean>, ...(given(n.profile) ? { profile: n.profile } : {}) }
         }
         case 'agent': return { ...base, kind: 'agent' as const, prompt: n.prompt ?? '' }
         case 'wait': return { ...base, kind: 'wait' as const, ...(given(n.until) ? { until: n.until } : { minutes: n.minutes ?? 1 }) }

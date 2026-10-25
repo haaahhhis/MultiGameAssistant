@@ -6,7 +6,7 @@ import type { CapabilityRegistration } from '@adg/gateway'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 
-export function scriptsCapability(library: ScriptLibrary): CapabilityRegistration {
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }): CapabilityRegistration {
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -70,6 +70,7 @@ export function scriptsCapability(library: ScriptLibrary): CapabilityRegistratio
       'scripts/settings': () => library.settings(),
       'scripts/settings/set': params => library.setSettings(params as RequestParams<'scripts/settings/set'>),
       'scripts/mirrorchyan/check': (_params, call) => library.checkMirrorCdk(call.signal),
+      'scripts/summarize': async params => ({ sessionId: await summaries.summarize((params as RequestParams<'scripts/summarize'>).id) }),
     },
   }
 }

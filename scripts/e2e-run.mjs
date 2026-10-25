@@ -4,7 +4,8 @@
  * key and no game: a copy of node.exe stands in for a script's program and
  * plays a test-kit scenario.
  *
- * 1. The agent sees the new tools and the pack skills.
+ * 1. The agent sees the new tools, the analysis skill and the skills repository
+ *    (script skills are downloaded from it, not shipped).
  * 2. A local "script" directory is imported; the fake model analyzes it and
  *    proposes a Script Pack; the draft is accepted through `packs@1`.
  * 3. The agent runs the pack's config-driven task (`script_run`, wait): the
@@ -152,11 +153,11 @@ try {
   const analyzed = await ask('分析一下这个脚本')
   if (analyzed.error) fail(`script_analyze failed: ${analyzed.text}`)
   const offered = llm.requests[first]?.tools?.map(t => t.function?.name) ?? []
-  for (const name of ['script_run', 'script_tasks', 'script_analyze', 'pack_propose', 'script_config_set', 'emulator_status']) if (!offered.includes(name)) fail(`tool ${name} not offered`)
+  for (const name of ['script_run', 'script_tasks', 'script_analyze', 'pack_propose', 'script_config_set', 'script_profiles', 'emulator_status', 'skill_hub_list']) if (!offered.includes(name)) fail(`tool ${name} not offered`)
   step('agent tools offered', offered.filter(n => /^(script|pack|emulator)_/.test(n)).length + ' script/pack/emulator tools')
   const prompt = JSON.stringify(llm.requests[first]?.messages ?? [])
-  for (const skill of ['maa', 'march7th', 'script-analysis']) if (!prompt.includes(skill)) fail(`skill ${skill} not in the agent's skill list`)
-  step('pack skills visible to the agent', 'maa, maaend, march7th, script-analysis')
+  if (!prompt.includes('script-analysis')) fail('skill script-analysis not in the agent skill list')
+  step('core skill visible to the agent; script skills come from the skills repository', 'script-analysis, skill_hub_list')
   if (!analyzed.text.includes('"suggestedFamily"')) fail(`unexpected analysis: ${analyzed.text.slice(0, 200)}`)
   step('script_analyze', /"suggestedFamily": "([^"]+)"/.exec(analyzed.text)?.[1] ?? '?')
 

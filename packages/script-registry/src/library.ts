@@ -17,7 +17,7 @@ import {
   type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
-import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource } from '@adg/protocol'
+import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource, ScriptSummary } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
 import { KNOWN_PROJECTS, knownByDir, knownById, knownByMirror, knownByRepo, mirrorResourceFor } from './known-projects.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
@@ -1109,7 +1109,54 @@ export class ScriptLibrary {
       ...(script.probe === undefined ? {} : { probe: script.probe }),
       ...(script.update === undefined ? {} : { update: script.update }),
       ...(job === undefined ? {} : { jobId: job.id }),
+      ...(script.summary === undefined ? {} : { summary: script.summary }),
     }
+  }
+
+  /**
+   * What the agent gets to sum a script up: where it came from, its pack, the
+   * files at the top of its folder and its README (the start of it).
+   */
+  async summaryMaterial(id: string): Promise<string> {
+    const script = this.#state.scripts.find(s => s.id === id)
+    if (script === undefined) throw new Error(`脚本库里没有 ${id}`)
+    const info = this.#info(script)
+    const pack = this.packOf(id)
+    const known = knownById(script.known)
+    const lines = [
+      `名字：${script.name}（id ${script.id}）`,
+      `来源：${script.source.kind === 'github' ? `GitHub ${script.source.repo}` : script.source.kind === 'mirrorchyan' ? `Mirror酱 ${script.source.rid}` : `本地导入 ${script.source.path}`}`,
+      ...(info.current === undefined ? [] : [`版本：${info.current}`]),
+      ...(known === undefined ? [] : [`认出来是：${known.name}${known.repo === undefined ? '' : `（${known.repo}）`}`]),
+      ...(info.channels.github === undefined ? [] : [`GitHub 更新渠道：${info.channels.github.repo}`]),
+    ]
+    if (pack !== undefined) {
+      const m = pack.manifest
+      lines.push(`脚本包：${m.name}${m.description === undefined ? '' : `——${m.description}`}`)
+      if (m.game?.name !== undefined) lines.push(`玩的游戏：${m.game.name}`)
+      if (m.tasks.length > 0) lines.push(`脚本包里的任务：${m.tasks.map(t => t.title).join('、')}`)
+    }
+    if (info.dir !== undefined) {
+      const entries = await readdir(info.dir, { withFileTypes: true }).catch(() => [])
+      const names = entries.map(e => (e.isDirectory() ? `${e.name}/` : e.name)).sort()
+      lines.push(`文件夹里（${names.length} 项）：${names.slice(0, 60).join('  ')}${names.length > 60 ? ' …' : ''}`)
+      const readme = entries.filter(e => e.isFile() && /^read[ _-]?me.*\.(md|txt)$|^read[ _-]?me$/i.test(e.name))
+        .sort((a, b) => Number(/zh|cn|中文/i.test(b.name)) - Number(/zh|cn|中文/i.test(a.name)) || a.name.length - b.name.length)[0]
+      if (readme !== undefined) {
+        const text = (await readFile(join(info.dir, readme.name), 'utf8').catch(() => '')).replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim()
+        if (text !== '') lines.push('', `${readme.name}（开头部分）：`, text.slice(0, 6000))
+      }
+    }
+    return lines.join('\n')
+  }
+
+  /** Keep the agent's summary of a script (or how getting it went). */
+  async setSummary(id: string, summary: ScriptSummary): Promise<void> {
+    const script = this.#state.scripts.find(s => s.id === id)
+    if (script === undefined) return
+    script.summary = summary
+    await this.#save()
+    this.#options.onChanged(id)
   }
 
   #freeId(base: string): string {

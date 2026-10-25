@@ -12,6 +12,7 @@ import { GuardCard, PackCard } from './PackCards.tsx'
 import { ConfigCard } from './ConfigCard.tsx'
 import { GameCard } from './GameCard.tsx'
 import { RunsCard } from './RunsCard.tsx'
+import { SummaryCard } from './SummaryCard.tsx'
 
 const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   ok: ['ok', '满足'],
@@ -70,6 +71,8 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
       </header>
 
       {shown !== undefined && <JobProgress client={client} job={shown} />}
+
+      {script.dir !== undefined && <SummaryCard client={client} script={script} openSession={openSession} />}
 
       <section className="card">
         <div className="card-head">

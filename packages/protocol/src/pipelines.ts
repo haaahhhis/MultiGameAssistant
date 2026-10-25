@@ -37,8 +37,8 @@ const NodeBase = {
 }
 
 export const PipelineNode = z.discriminatedUnion('kind', [
-  /** A script's task with parameters (from its pack). */
-  z.object({ ...NodeBase, kind: z.literal('script-task'), scriptId: ScriptId, taskId: z.string().min(1).max(64), params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}) }),
+  /** A script's task with parameters (from its pack), run with one of the script's config profiles (default: its current one). */
+  z.object({ ...NodeBase, kind: z.literal('script-task'), scriptId: ScriptId, taskId: z.string().min(1).max(64), params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}), profile: z.string().min(1).max(64).optional() }),
   /** A step in plain words for the agent, e.g. "检查活动还剩几天，快结束的发飞书提醒我". */
   z.object({ ...NodeBase, kind: z.literal('agent'), prompt: z.string().min(1).max(4000) }),
   /** Wait some minutes, or until a time of day. */

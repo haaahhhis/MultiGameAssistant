@@ -273,7 +273,7 @@ export class Engine {
     const signal = active.controller.signal
     switch (node.kind) {
       case 'script-task': {
-        let current: RunInfo = await this.#deps.runner.start(node.scriptId, node.taskId, node.params)
+        let current: RunInfo = await this.#deps.runner.start(node.scriptId, node.taskId, node.params, { profile: node.profile })
         for (;;) {
           this.#addRun(active, node.id, current)
           if (current.endedAt !== undefined && current.state === 'failed') return { ok: false, detail: current.outcome ?? '没有启动' }

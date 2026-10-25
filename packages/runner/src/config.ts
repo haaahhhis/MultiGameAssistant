@@ -2,11 +2,12 @@
  * The agent's way to read and change a script's settings: the local config
  * copy (docs/PLAN.zh.md §5.7), never the original project's files. Only files
  * the pack lists under `config.files`; each write keeps the previous local
- * file under `<dataDir>/config-history/<script>/<time>/`.
+ * file under `<dataDir>/config-history/<script>/<time>/`. `profile` picks
+ * one of the script's config profiles (id or name; default: the current one).
  */
 import { join } from 'node:path'
 import { globToRegExp, type ScriptManifest } from '@adg/pack-schema'
-import type { ConfigProfiles, ProfileStatus } from './profiles.ts'
+import { DEFAULT_PROFILE, type ConfigProfiles, type ProfileEntry, type ProfileStatus } from './profiles.ts'
 import type { LibraryView } from './runs.ts'
 
 const MAX_READ = 60_000
@@ -29,30 +30,35 @@ export function packFor(library: LibraryView, scriptId: string): { manifest: Scr
   return { manifest: pack.manifest, dir: script.dir }
 }
 
-export async function readConfig(library: LibraryView, profiles: ConfigProfiles, scriptId: string, file: string): Promise<{ file: string; content: string; truncated: boolean; copy: 'local' }> {
+export async function readConfig(library: LibraryView, profiles: ConfigProfiles, scriptId: string, file: string, profileRef?: string): Promise<{ file: string; content: string; truncated: boolean; copy: 'local'; profile: string }> {
   const { manifest, dir } = packFor(library, scriptId)
   allowed(manifest, file)
-  const text = await profiles.read(scriptId, dir, manifest, file)
-  return { file, content: text.slice(0, MAX_READ), truncated: text.length > MAX_READ, copy: 'local' }
+  const profile = await profiles.resolve(scriptId, profileRef)
+  const text = await profiles.read(scriptId, dir, manifest, file, profile.id)
+  return { file, content: text.slice(0, MAX_READ), truncated: text.length > MAX_READ, copy: 'local', profile: profile.name }
 }
 
 export async function writeConfig(
-  library: LibraryView, profiles: ConfigProfiles, dataDir: string, scriptId: string, file: string, path: readonly (string | number)[], value: unknown, now = Date.now(),
-): Promise<{ file: string; backup: string; copy: 'local' }> {
+  library: LibraryView, profiles: ConfigProfiles, dataDir: string, scriptId: string, file: string, path: readonly (string | number)[], value: unknown, now = Date.now(), profileRef?: string,
+): Promise<{ file: string; backup: string; copy: 'local'; profile: string }> {
   const { manifest, dir } = packFor(library, scriptId)
   allowed(manifest, file)
-  const historyDir = join(dataDir, 'config-history', scriptId, new Date(now).toISOString().replace(/[:.]/g, '-'))
-  await profiles.write(scriptId, dir, manifest, file, path, value, historyDir)
-  return { file, backup: join(historyDir, file), copy: 'local' }
+  const profile = await profiles.resolve(scriptId, profileRef)
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-')
+  const historyDir = join(dataDir, 'config-history', scriptId, profile.id === DEFAULT_PROFILE ? stamp : `${stamp}-${profile.id}`)
+  await profiles.write(scriptId, dir, manifest, file, path, value, historyDir, profile.id)
+  return { file, backup: join(historyDir, file), copy: 'local', profile: profile.name }
 }
 
-export async function configStatus(library: LibraryView, profiles: ConfigProfiles, scriptId: string): Promise<ProfileStatus & { dir: string }> {
+export async function configStatus(library: LibraryView, profiles: ConfigProfiles, scriptId: string, profileRef?: string): Promise<ProfileStatus & { dir: string; profile: ProfileEntry }> {
   const { manifest, dir } = packFor(library, scriptId)
-  await profiles.ensure(scriptId, dir, manifest)
-  return { ...(await profiles.status(scriptId, dir, manifest)), dir: profiles.filesDir(scriptId) }
+  const profile = await profiles.resolve(scriptId, profileRef)
+  await profiles.ensure(scriptId, dir, manifest, Date.now(), profile.id)
+  return { ...(await profiles.status(scriptId, dir, manifest, profile.id)), dir: profiles.filesDir(scriptId, profile.id), profile }
 }
 
-export async function importConfig(library: LibraryView, profiles: ConfigProfiles, scriptId: string): Promise<string[]> {
+export async function importConfig(library: LibraryView, profiles: ConfigProfiles, scriptId: string, profileRef?: string): Promise<string[]> {
   const { manifest, dir } = packFor(library, scriptId)
-  return profiles.importFromOriginal(scriptId, dir, manifest)
+  const profile = await profiles.resolve(scriptId, profileRef)
+  return profiles.importFromOriginal(scriptId, dir, manifest, Date.now(), profile.id)
 }
