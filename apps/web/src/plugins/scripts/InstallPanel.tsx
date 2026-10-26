@@ -361,7 +361,7 @@ function InstallProgress({ client, repo, tag, asset, size, job, onDone, openSess
         </div>
       )}
       {job?.error !== undefined && <div className="notice error left"><Icon name="alert" /><span>{job.error}</span></div>}
-      {handed !== undefined && <div className="notice left"><Icon name="info" /><span>{job?.message}。装好后脚本会出现在左边的列表里。</span></div>}
+      {handed !== undefined && <div className="notice left"><Icon name="info" /><span>{job?.message}。它也在左边「等待安装」里：没配好模型时可以在那里自己安装。装好后脚本会出现在列表里。</span></div>}
 
       <div className="key-actions">
         <span className="muted small">{running ? '可以关掉这个面板，安装会在后台继续。' : handed !== undefined ? `下载好了 ${job?.version ?? tag} 的安装程序。` : phase === 'done' ? `已安装 ${job?.version ?? tag}。` : ''}</span>

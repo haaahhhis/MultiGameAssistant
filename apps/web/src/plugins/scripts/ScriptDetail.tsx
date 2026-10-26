@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { EnvItem, ScriptInfo, ScriptJob } from '@adg/protocol'
+import type { EnvItem, PendingSetupInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -13,6 +13,7 @@ import { ConfigCard } from './ConfigCard.tsx'
 import { GameCard } from './GameCard.tsx'
 import { RunsCard } from './RunsCard.tsx'
 import { SummaryCard } from './SummaryCard.tsx'
+import { SetupCard } from './SetupCard.tsx'
 
 const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   ok: ['ok', '满足'],
@@ -22,10 +23,12 @@ const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   unsupported: ['', '暂不检测'],
 }
 
-export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
+export function ScriptDetail({ client, script, job, setup, onRemoved, openSession }: {
   client: AdgClient
   script: ScriptInfo
   job: ScriptJob | undefined
+  /** An update that downloaded a setup program, waiting to be installed. */
+  setup?: PendingSetupInfo | undefined
   onRemoved: () => void
   openSession: (sessionId: string) => void
 }) {
@@ -71,6 +74,7 @@ export function ScriptDetail({ client, script, job, onRemoved, openSession }: {
       </header>
 
       {shown !== undefined && <JobProgress client={client} job={shown} />}
+      {setup !== undefined && <SetupCard client={client} setup={setup} openSession={openSession} onImported={() => {}} />}
 
       {script.dir !== undefined && <SummaryCard client={client} script={script} openSession={openSession} />}
 

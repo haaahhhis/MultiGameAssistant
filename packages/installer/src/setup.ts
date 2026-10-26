@@ -7,6 +7,7 @@
  */
 import { spawn } from 'node:child_process'
 import { open } from 'node:fs/promises'
+import { basename } from 'node:path'
 
 export type SetupKind = 'nsis' | 'inno'
 
@@ -68,17 +69,27 @@ export interface RunSetupOptions {
 /** @returns the exit code (quiet), or undefined once the window was started. */
 export function runSetup(file: string, options: RunSetupOptions): Promise<number | undefined> {
   const commandLine = setupCommandLine(options.kind, options.dir, options.quiet)
+  // Windows refuses a file that is not a program (incomplete, blocked) at once, or through 'error'.
+  const unopened = (error: NodeJS.ErrnoException) => options.signal?.aborted === true
+    ? error
+    : new Error(`打不开安装程序 ${basename(file)}（${error.code ?? error.message}）：文件可能不完整，或被杀毒软件拦下了；可以点「不装了」删掉后重新安装`)
   return new Promise((resolve, reject) => {
-    // Verbatim, for NSIS's /D=; the exe quoted by hand for that reason.
-    const child = spawn(file, [commandLine], {
-      argv0: `"${file}"`,
-      windowsVerbatimArguments: true,
-      windowsHide: options.quiet,
-      detached: !options.quiet,
-      stdio: 'ignore',
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    })
-    child.once('error', reject)
+    let child: ReturnType<typeof spawn>
+    try {
+      // Verbatim, for NSIS's /D=; the exe quoted by hand for that reason.
+      child = spawn(file, [commandLine], {
+        argv0: `"${file}"`,
+        windowsVerbatimArguments: true,
+        windowsHide: options.quiet,
+        detached: !options.quiet,
+        stdio: 'ignore',
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+    } catch (error) {
+      reject(unopened(error as NodeJS.ErrnoException))
+      return
+    }
+    child.once('error', error => reject(unopened(error)))
     if (!options.quiet) {
       child.once('spawn', () => { child.unref(); resolve(undefined) })
       return

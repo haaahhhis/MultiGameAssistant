@@ -5,6 +5,7 @@ import { FAMILY_LABEL, isActive, PHASE_LABEL, useScriptJobs, useScriptList } fro
 import { ImportPanel, InstallPanel, MirrorInstallPanel } from './InstallPanel.tsx'
 import { JobProgress } from './JobProgress.tsx'
 import { ScriptDetail } from './ScriptDetail.tsx'
+import { SetupCard } from './SetupCard.tsx'
 
 type Panel = { kind: 'install'; repo?: string } | { kind: 'mirror'; rid?: string } | { kind: 'import' } | null
 
@@ -23,9 +24,13 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
   const broken = (data?.packs ?? []).filter(p => p.error !== undefined)
   // Known projects no pack describes (BetterGI…): installed from Mirror酱 when it has them, else GitHub.
   const known = (data?.known ?? []).filter(k => !k.installed)
+  // Setup programs waiting to be installed: a new script's has no library entry yet.
+  const setups = data?.setups ?? []
+  const waiting = setups.filter(s => !scripts.some(x => x.id === s.scriptId))
+  const waitingShown = panel === null ? waiting.find(s => s.scriptId === selected) : undefined
   // An install of a new script has no library entry until its files land: while it runs, its progress is shown instead.
-  const pending = selected === null || scripts.some(s => s.id === selected) ? undefined : jobs.get(selected)
-  const current = scripts.find(s => s.id === selected) ?? (panel === null && pending === undefined ? scripts[0] : undefined)
+  const pending = selected === null || scripts.some(s => s.id === selected) || waitingShown !== undefined ? undefined : jobs.get(selected)
+  const current = scripts.find(s => s.id === selected) ?? (panel === null && pending === undefined && waitingShown === undefined ? scripts[0] : undefined)
 
   return (
     <section className="main scripts-page">
@@ -58,11 +63,23 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
                       <span className="muted small">{script.source.kind === 'local' ? '本地' : script.current ?? '未安装'}{script.family === undefined ? '' : ` · ${FAMILY_LABEL[script.family] ?? script.family}`}</span>
                     </span>
                     {isActive(job) ? <span className="run-dot" role="img" aria-label="进行中" />
+                      : setups.some(s => s.scriptId === script.id) ? <span className="badge warn">待安装</span>
                       : script.update?.available === true ? <span className="badge ok">可更新</span>
                         : problems > 0 ? <span className="badge warn">环境 {problems}</span> : null}
                   </button>
                 )
               })}
+
+              {waiting.length > 0 && <div className="sidebar-label">等待安装（{waiting.length}）</div>}
+              {waiting.map(setup => (
+                <button key={setup.scriptId} className={`script-row ${setup === waitingShown ? 'active' : ''}`} onClick={() => { setSelected(setup.scriptId); setPanel(null) }}>
+                  <span className="script-row-main">
+                    <span className="script-row-name">{setup.name}</span>
+                    <span className="muted small">{setup.version} · {setup.agent?.state === 'running' ? 'agent 正在安装' : setup.agent?.state === 'failed' ? 'agent 没能装好' : '安装程序已下载'}</span>
+                  </span>
+                  {setup.agent?.state === 'running' ? <span className="run-dot" role="img" aria-label="进行中" /> : <span className="badge warn">待安装</span>}
+                </button>
+              ))}
 
               {[...jobs.values()].filter(j => isActive(j) && !scripts.some(s => s.id === j.scriptId)).map(job => (
                 <button key={job.id} className={`script-row ${selected === job.scriptId && panel === null ? 'active' : ''}`} onClick={() => { setSelected(job.scriptId); setPanel(null) }}>
@@ -117,12 +134,15 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
             <ImportPanel client={client} onClose={() => setPanel(null)} onImported={id => { setSelected(id); setPanel(null) }} />
           )}
           {panel === null && current !== undefined && (
-            <ScriptDetail key={current.id} client={client} script={current} job={jobs.get(current.id)} onRemoved={() => setSelected(null)} openSession={openSession} />
+            <ScriptDetail key={current.id} client={client} script={current} job={jobs.get(current.id)} setup={setups.find(s => s.scriptId === current.id)} onRemoved={() => setSelected(null)} openSession={openSession} />
+          )}
+          {waitingShown !== undefined && (
+            <SetupCard key={waitingShown.scriptId} client={client} setup={waitingShown} openSession={openSession} onImported={id => setSelected(id)} />
           )}
           {panel === null && current === undefined && pending !== undefined && (
             <section className="card"><div className="card-head"><div><h3>{pending.scriptId}</h3><p className="muted small">{isActive(pending) ? '正在安装，装好后这里显示脚本的详情' : '安装没有完成'}</p></div></div><JobProgress client={client} job={pending} /></section>
           )}
-          {panel === null && current === undefined && pending === undefined && data !== null && (
+          {panel === null && current === undefined && pending === undefined && waitingShown === undefined && data !== null && (
             <div className="empty">
               {/* An install of a new script has no library entry until its files land. */}
               {[...jobs.values()].filter(j => isActive(j) && !scripts.some(s => s.id === j.scriptId)).map(job => (

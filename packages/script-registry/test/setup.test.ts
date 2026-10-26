@@ -62,11 +62,15 @@ test('a setup program instead of an archive: handed to the agent, kept across a 
     assert.deepEqual(setup.source, { kind: 'mirrorchyan', rid: 'Tool', platform: false })
     assert.throws(() => lib.get('tool'), 'not installed yet')
 
-    // Still waiting after a restart.
+    // The page lists it (without the installer's own path); an agent still on it when the app stops is not any more.
+    assert.deepEqual(lib.list().setups.map(s => [s.scriptId, s.version, s.update]), [['tool', '5.7.32', false]])
+    assert.equal('file' in lib.list().setups[0]!, false)
+    await lib.setSetupAgent('tool', { sessionId: 'session-1', state: 'running' })
     lib.dispose()
     lib = library(root, mirror.url, setups, jobs)
     await lib.start()
-    assert.equal(lib.pendingSetup('tool')?.version, '5.7.32')
+    assert.equal(lib.pendingSetup('tool')?.version, '5.7.32', 'still waiting after a restart')
+    assert.deepEqual(lib.pendingSetup('tool')?.agent, { sessionId: 'session-1', state: 'failed', reason: '程序重新启动了，agent 没有装完' })
     await assert.rejects(lib.import({ path: setup.dir, id: 'tool' }), /不是一个存在的目录/, 'nothing installed yet')
     mkdirSync(setup.dir, { recursive: true })
     await assert.rejects(lib.import({ path: setup.dir, id: 'tool' }), /是空的/)
@@ -87,7 +91,14 @@ test('a setup program instead of an archive: handed to the agent, kept across a 
     assert.equal(update.phase, 'done', update.error)
     assert.equal(setups.length, before)
     assert.match(jobs.at(-1)?.message ?? '', /用 script_setup_run 运行它/)
-    assert.equal(lib.pendingSetup('tool')?.update, true)
+    const waiting = lib.pendingSetup('tool')!
+    assert.equal(waiting.update, true)
+
+    // 「不装了」: the installer goes, nothing changes.
+    await lib.discardSetup('tool')
+    assert.equal(lib.pendingSetup('tool'), undefined)
+    assert.ok(!existsSync(waiting.file))
+    assert.equal(lib.get('tool').current, '5.7.32')
   } finally {
     lib.dispose()
     await mirror.close()

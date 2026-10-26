@@ -65,6 +65,7 @@ export class AdgScripts extends Service {
     const spec = parsed.data
     const log = ctx.logger('adg-scripts')
     const ref = (value: string) => value as CredentialRef
+    const handOff = setupHandOff(ctx, () => this.library, { info: message => log.info(message), warn: message => log.warn(message) })
 
     this.library = new ScriptLibrary({
       toolsDir: spec.toolsDir,
@@ -75,7 +76,7 @@ export class AdgScripts extends Service {
       credentialConfigured: async name => (await ctx.get('credentials')?.describe(ref(name)))?.configured ?? false,
       onChanged: id => ctx.get('adgGateway')?.broadcast('scripts/changed', id === undefined ? {} : { id }),
       onJob: job => ctx.get('adgGateway')?.broadcast('scripts/job', job),
-      onSetup: setupHandOff(ctx, { info: message => log.info(message), warn: message => log.warn(message) }),
+      onSetup: handOff,
       log: { info: message => log.info(message), warn: message => log.warn(message) },
     })
     const library = this.library
@@ -101,7 +102,11 @@ export class AdgScripts extends Service {
 
     const summaries = scriptSummaries(ctx, library, { warn: message => log.warn(message) })
     ctx.inject(['adgGateway'], scoped => {
-      const capability = scriptsCapability(library, summaries)
+      const capability = scriptsCapability(library, summaries, async id => {
+        const setup = library.pendingSetup(id)
+        if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
+        return handOff(setup)
+      })
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

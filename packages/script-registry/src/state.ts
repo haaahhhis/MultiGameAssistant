@@ -4,7 +4,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { EnvReport, InstallSettings, LocalVersion, ProjectProbe, ScriptFamily, ScriptSource, ScriptSummary } from '@adg/protocol'
+import { EnvReport, InstallSettings, LocalVersion, ProjectProbe, ScriptFamily, ScriptSource, ScriptSummary, SetupAgent } from '@adg/protocol'
 import { z } from 'zod'
 
 export const StoredVersion = z.object({
@@ -76,6 +76,7 @@ export const PendingSetup = z.object({
   /** Updating an existing script. */
   update: z.boolean(),
   at: z.number(),
+  agent: SetupAgent.optional(),
 })
 export type PendingSetup = z.infer<typeof PendingSetup>
 

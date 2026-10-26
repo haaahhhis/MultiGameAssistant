@@ -6,7 +6,8 @@ import type { CapabilityRegistration } from '@adg/gateway'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 
-export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }): CapabilityRegistration {
+/** @param setupAgent - hand a waiting setup program to the agent; @returns its conversation. */
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>): CapabilityRegistration {
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -45,6 +46,15 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
       'scripts/mirrorchyan/match': (params, call) => library.matchMirror((params as RequestParams<'scripts/mirrorchyan/match'>).id, call.signal),
       'scripts/mirrorchyan/lookup': (params, call) => library.lookupMirror((params as RequestParams<'scripts/mirrorchyan/lookup'>).rid, call.signal),
       'scripts/restore': params => library.restore((params as RequestParams<'scripts/restore'>).id),
+      'scripts/setup/open': async params => {
+        const { dir } = await library.runSetup((params as RequestParams<'scripts/setup/open'>).id, { quiet: false })
+        return { dir }
+      },
+      'scripts/setup/agent': async params => ({ sessionId: await setupAgent((params as RequestParams<'scripts/setup/agent'>).id) }),
+      'scripts/setup/discard': async params => {
+        await library.discardSetup((params as RequestParams<'scripts/setup/discard'>).id)
+        return {}
+      },
       'scripts/import': params => {
         const p = params as RequestParams<'scripts/import'>
         return library.import({ path: p.path, id: p.id, name: p.name, packId: p.packId })

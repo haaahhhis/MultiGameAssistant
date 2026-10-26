@@ -214,6 +214,28 @@ export type ReleaseInfo = z.infer<typeof ReleaseInfo>
 export const ScriptJobPhase = z.enum(['queued', 'resolving', 'downloading', 'verifying', 'extracting', 'checking', 'running', 'done', 'failed', 'cancelled'])
 export type ScriptJobPhase = z.infer<typeof ScriptJobPhase>
 
+/** How the agent is doing with a waiting setup program: `failed` (no model set up, stopped…) says why. */
+export const SetupAgent = z.object({ sessionId: z.string(), state: z.enum(['running', 'failed']), reason: z.string().optional() })
+export type SetupAgent = z.infer<typeof SetupAgent>
+
+/**
+ * A setup program (NSIS / Inno Setup) an install or update downloaded instead of an archive: it waits to be
+ * run — by the agent, or by the user in its own window — and the folder it installed into to be imported.
+ */
+export const PendingSetupInfo = z.object({
+  scriptId: z.string(),
+  name: z.string(),
+  kind: z.enum(['nsis', 'inno']),
+  version: z.string(),
+  /** Where it installs (prefilled in its window): a new version folder, or a local import's own. */
+  dir: z.string(),
+  /** Updating a script already in the library. */
+  update: z.boolean(),
+  at: z.number(),
+  agent: SetupAgent.optional(),
+})
+export type PendingSetupInfo = z.infer<typeof PendingSetupInfo>
+
 export const ScriptJob = z.object({
   id: z.string(),
   kind: z.enum(['install', 'update', 'env-fix']),
@@ -260,7 +282,7 @@ export const ScriptRequests = {
   'scripts/list': {
     capability: SCRIPTS_CAPABILITY,
     params: Empty,
-    result: z.object({ scripts: z.array(ScriptInfo), packs: z.array(PackSummary), known: z.array(KnownProjectSummary), toolsDir: z.string() }),
+    result: z.object({ scripts: z.array(ScriptInfo), packs: z.array(PackSummary), known: z.array(KnownProjectSummary), setups: z.array(PendingSetupInfo).default([]), toolsDir: z.string() }),
   },
   'scripts/get': {
     capability: SCRIPTS_CAPABILITY,
@@ -378,6 +400,24 @@ export const ScriptRequests = {
     result: ScriptInfo,
   },
   /** Register an existing directory in place. */
+  /** Open a waiting setup program's own window (its folder prefilled), for the user to install it; then `scripts/import` its folder. */
+  'scripts/setup/open': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({ dir: z.string() }),
+  },
+  /** Hand a waiting setup program to the agent (again). */
+  'scripts/setup/agent': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({ sessionId: z.string() }),
+  },
+  /** Give up a waiting setup program: it is deleted, nothing is installed. */
+  'scripts/setup/discard': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: Empty,
+  },
   'scripts/import': {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({

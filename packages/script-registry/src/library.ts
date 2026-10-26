@@ -22,7 +22,7 @@ import {
   type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource, type SetupKind,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
-import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource, ScriptSummary } from '@adg/protocol'
+import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, PendingSetupInfo, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource, ScriptSummary, SetupAgent } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
 import { KNOWN_PROJECTS, knownByDir, knownById, knownByMirror, knownByRepo, mirrorResourceFor } from './known-projects.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
@@ -94,6 +94,10 @@ export class ScriptLibrary {
 
   async start(): Promise<void> {
     this.#state = await this.#store.load(this.#options.defaults ?? {}, this.#options.log)
+    // An agent still on a setup program when the app stopped is not any more.
+    for (const setup of this.#state.setups) {
+      if (setup.agent?.state === 'running') setup.agent = { ...setup.agent, state: 'failed', reason: '程序重新启动了，agent 没有装完' }
+    }
     await this.reloadPacks()
     for (const script of this.#state.scripts) await this.#recognize(script)
   }
@@ -148,7 +152,7 @@ export class ScriptLibrary {
 
   // ── reading ───────────────────────────────────────────────────────────
 
-  list(): { scripts: ScriptInfo[]; packs: PackSummary[]; known: KnownProjectSummary[]; toolsDir: string } {
+  list(): { scripts: ScriptInfo[]; packs: PackSummary[]; known: KnownProjectSummary[]; setups: PendingSetupInfo[]; toolsDir: string } {
     const used = new Set(this.#state.scripts.map(s => s.packId).filter(Boolean))
     const packs: PackSummary[] = [...this.#packs.values()].map(({ manifest, builtin }) => ({
       id: manifest.id,
@@ -171,7 +175,8 @@ export class ScriptLibrary {
         ...(p.repo === undefined ? {} : { repo: p.repo }),
         ...(p.mirrorchyan === undefined ? {} : { mirrorchyan: p.mirrorchyan.rid }),
       }))
-    return { scripts: this.#state.scripts.map(s => this.#info(s)), packs, known, toolsDir: this.toolsDir }
+    const setups = this.#state.setups.map(({ file: _file, asset: _asset, source: _source, packId: _packId, ...shown }) => shown)
+    return { scripts: this.#state.scripts.map(s => this.#info(s)), packs, known, setups, toolsDir: this.toolsDir }
   }
 
   get(id: string): ScriptInfo {
@@ -564,7 +569,7 @@ export class ScriptLibrary {
   }
 
   /** A version unpacked (or installed) in `dir` becomes the current one, the script added if it is new. */
-  async #addVersion(scriptId: string, source: ScriptSource, pack: LoadedPack | undefined, version: string, dir: string, asset: { name: string; size: number }, ctl?: JobControl): Promise<void> {
+  async #addVersion(scriptId: string, source: ScriptSource, pack: LoadedPack | undefined, version: string, dir: string, asset: { name: string; size: number }, ctl?: JobControl, name?: string): Promise<void> {
     let script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
     if (previous !== undefined && pack !== undefined && !samePath(previous.dir, dir)) {
@@ -575,7 +580,7 @@ export class ScriptLibrary {
       const known = source.kind === 'github' ? knownByRepo(source.repo) : source.kind === 'mirrorchyan' ? knownByMirror(source.rid) : undefined
       script = {
         id: scriptId,
-        name: newName(scriptId, source, pack),
+        name: name ?? newName(scriptId, source, pack),
         source,
         versions: [],
         addedAt: this.#now(),
@@ -634,6 +639,26 @@ export class ScriptLibrary {
     return this.#state.setups.find(s => s.scriptId === id)
   }
 
+  /** Note how the agent is doing with a script's waiting setup program (undefined: no agent on it). */
+  async setSetupAgent(id: string, agent: SetupAgent | undefined): Promise<void> {
+    const setup = this.pendingSetup(id)
+    if (setup === undefined) return
+    if (agent === undefined) delete setup.agent
+    else setup.agent = agent
+    await this.#save()
+    this.#options.onChanged(id)
+  }
+
+  /** Give up a script's waiting setup program: deleted, nothing installed. */
+  async discardSetup(id: string): Promise<void> {
+    const setup = this.pendingSetup(id)
+    if (setup === undefined) return
+    this.#state.setups = this.#state.setups.filter(s => s !== setup)
+    await rm(setup.file, { force: true })
+    await this.#save()
+    this.#options.onChanged(id)
+  }
+
   /**
    * Run a script's waiting setup program: quietly into its folder, waiting
    * until it is done; or with its own window (returning at once), for the
@@ -671,7 +696,7 @@ export class ScriptLibrary {
       delete script.update
       script.probe = await probeProject(path)
     } else if (inside(path)) {
-      await this.#addVersion(setup.scriptId, setup.source, pack, setup.version, path, setup.asset)
+      await this.#addVersion(setup.scriptId, setup.source, pack, setup.version, path, setup.asset, undefined, request.name ?? setup.name)
     } else if (script !== undefined) {
       throw new Error(`安装程序装到了 ${path}；${script.name} 的新版本要装在 ${setup.dir}`)
     } else {
