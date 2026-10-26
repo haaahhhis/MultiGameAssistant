@@ -8,20 +8,25 @@
  * helpers such as platform-tools live in `<toolsDir>/_shared/`. Imported
  * directories stay where they are and are never moved or deleted.
  *
+ * A release that is a setup program (NSIS / Inno Setup) is not unpacked: it
+ * waits in the downloads folder for the agent to run it (`runSetup`) and
+ * import the folder it installed into, which finishes the install.
+ *
  * Nothing here names a particular script: behaviour comes from Script Packs.
  */
-import { copyFile, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, archiveKind, checkEnvironment, compareVersions, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorCatalogue, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, systemHost,
-  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource,
+  applyFix, archiveKind, checkEnvironment, compareVersions, contentKind, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorCatalogue, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, runSetup,
+  SETUP_NAMES, setupExitText, setupKind, systemHost,
+  type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource, type SetupKind,
 } from '@adg/installer'
 import { chooseAsset, globToRegExp, versionOfTag } from '@adg/pack-schema'
 import type { ChannelFrom, EnvReport, InstallSettings, KnownProjectSummary, MirrorLookup, MirrorSearchItem, PackSummary, ReleaseInfo, ScriptInfo, ScriptJob, ScriptSource, ScriptSummary } from '@adg/protocol'
 import { JobBoard, type JobControl } from './jobs.ts'
 import { KNOWN_PROJECTS, knownByDir, knownById, knownByMirror, knownByRepo, mirrorResourceFor } from './known-projects.ts'
 import { loadPacks, packForRepo, type LoadedPack, type PackDir, type PackLoadError } from './packs.ts'
-import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type StoredScript, type StoredVersion } from './state.ts'
+import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type PendingSetup, type StoredScript, type StoredVersion } from './state.ts'
 
 /** Mirror酱's project list is read again after a day. */
 const CATALOGUE_TTL_MS = 24 * 60 * 60_000
@@ -45,6 +50,8 @@ export interface LibraryOptions {
   readonly now?: () => number
   readonly onChanged: (id?: string) => void
   readonly onJob: (job: ScriptJob) => void
+  /** An install or update the agent did not ask for downloaded a setup program: start the agent on it. @returns its conversation. */
+  readonly onSetup?: (setup: PendingSetup) => Promise<string>
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
@@ -56,6 +63,8 @@ export interface InstallRequest {
   readonly tag?: string | undefined
   readonly asset?: string | undefined
   readonly id?: string | undefined
+  /** The agent asked: a setup program is left to it (the job says so) rather than to a new conversation. */
+  readonly byAgent?: boolean | undefined
 }
 
 export class ScriptLibrary {
@@ -64,7 +73,7 @@ export class ScriptLibrary {
   readonly #store: StateStore
   readonly #jobs: JobBoard
   readonly #now: () => number
-  #state: LibraryState = { settings: DEFAULT_SETTINGS, scripts: [] }
+  #state: LibraryState = { settings: DEFAULT_SETTINGS, scripts: [], setups: [] }
   #packs = new Map<string, LoadedPack>()
   #packErrors: PackLoadError[] = []
   readonly #checkers = new Map<string, EnvChecker>()
@@ -470,16 +479,16 @@ export class ScriptLibrary {
    * it beside the current version; a local import is updated in its own
    * directory, with what it replaces backed up first (see {@link restore}).
    */
-  async update(id: string, signal?: AbortSignal): Promise<{ upToDate: true } | { upToDate: false; job: ScriptJob; done: Promise<ScriptJob> }> {
+  async update(id: string, signal?: AbortSignal, options: { byAgent?: boolean } = {}): Promise<{ upToDate: true } | { upToDate: false; job: ScriptJob; done: Promise<ScriptJob> }> {
     const script = this.#script(id)
     const check = await this.checkUpdate(id, signal)
     if (!check.available) return { upToDate: true }
     const channels = this.#channels(script)
     if (script.source.kind === 'local') {
-      return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#localUpdateJob(script, channels, ctl)) }
+      return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#localUpdateJob(script, channels, ctl, options.byAgent === true)) }
     }
     const source = script.source
-    return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#installJob(id, source, {}, channels, this.#packOf(script), ctl)) }
+    return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#installJob(id, source, { byAgent: options.byAgent }, channels, this.#packOf(script), ctl)) }
   }
 
   /**
@@ -505,8 +514,8 @@ export class ScriptLibrary {
     return this.#info(script)
   }
 
-  async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
-    let script = this.#state.scripts.find(s => s.id === scriptId)
+  async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset' | 'byAgent'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
+    const script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
     const have = (version: string) => script?.versions.some(v => v.version === version) === true
     const fetched = await this.#fetch(scriptId, channels, pack, previous?.version, ctl, request, have)
@@ -519,6 +528,10 @@ export class ScriptLibrary {
       return version
     }
     const versionDir = join(this.toolsDir, scriptId, dirName(version))
+    const setup = await setupKind(archive!)
+    if (setup !== undefined) {
+      return this.#handOffSetup(setup, { scriptId, file: archive!, version, asset: fetched.asset, dir: versionDir, source: script?.source ?? source, ...(pack === undefined ? {} : { packId: pack.manifest.id }), update: script !== undefined }, request.byAgent === true, ctl)
+    }
     const root = pack?.manifest.install.root
     ctl.phase('extracting', { message: fetched.incremental ? `在 ${previous!.version} 的基础上更新到 ${version}` : `解压到 ${versionDir}` })
     await rm(versionDir, { recursive: true, force: true })
@@ -546,16 +559,23 @@ export class ScriptLibrary {
       }
     }
     await rm(archive!, { force: true })
-    if (previous !== undefined && pack !== undefined) {
-      const carried = await carryConfig(pack, previous.dir, versionDir)
+    await this.#addVersion(scriptId, source, pack, version, versionDir, fetched.asset, ctl)
+    return version
+  }
+
+  /** A version unpacked (or installed) in `dir` becomes the current one, the script added if it is new. */
+  async #addVersion(scriptId: string, source: ScriptSource, pack: LoadedPack | undefined, version: string, dir: string, asset: { name: string; size: number }, ctl?: JobControl): Promise<void> {
+    let script = this.#state.scripts.find(s => s.id === scriptId)
+    const previous = script === undefined ? undefined : currentVersion(script)
+    if (previous !== undefined && pack !== undefined && !samePath(previous.dir, dir)) {
+      const carried = await carryConfig(pack, previous.dir, dir)
       if (carried.length > 0) this.#options.log.info(`${scriptId}: carried ${carried.length} config file(s) from ${previous.version}`)
     }
-
     if (script === undefined) {
       const known = source.kind === 'github' ? knownByRepo(source.repo) : source.kind === 'mirrorchyan' ? knownByMirror(source.rid) : undefined
       script = {
         id: scriptId,
-        name: pack?.manifest.name ?? known?.name ?? (source.kind === 'github' ? source.repo.split('/')[1] : undefined) ?? (source.kind === 'mirrorchyan' ? source.rid : scriptId),
+        name: newName(scriptId, source, pack),
         source,
         versions: [],
         addedAt: this.#now(),
@@ -565,20 +585,105 @@ export class ScriptLibrary {
       }
       this.#state.scripts.push(script)
     }
-    script.versions.push({ version, dir: versionDir, installedAt: this.#now(), asset: fetched.asset })
+    script.versions = script.versions.filter(v => v.version !== version)
+    script.versions.push({ version, dir, installedAt: this.#now(), asset })
     script.current = version
     delete script.update
-    script.probe = await probeProject(versionDir)
+    script.probe = await probeProject(dir)
     if (script.family === undefined && script.probe.family !== undefined) script.family = script.probe.family
     await this.#prune(script)
     await this.#save()
     this.#options.onChanged(scriptId)
 
     if (pack !== undefined && pack.manifest.install.requires.length > 0) {
-      ctl.phase('checking', { message: '检查运行环境' })
+      ctl?.phase('checking', { message: '检查运行环境' })
       await this.envCheck(scriptId)
     }
-    return version
+  }
+
+  // ── setup programs ──────────────────────────────────────────────────
+
+  /**
+   * The download is a setup program: keep it for the agent instead of
+   * unpacking it. Without `byAgent` the app starts a conversation for it.
+   * @returns the version it will install.
+   */
+  async #handOffSetup(kind: SetupKind, setup: Omit<PendingSetup, 'kind' | 'name' | 'at'>, byAgent: boolean, ctl: JobControl): Promise<string> {
+    const pack = setup.packId === undefined ? undefined : this.#packs.get(setup.packId)
+    const pending: PendingSetup = { ...setup, kind, name: this.#state.scripts.find(s => s.id === setup.scriptId)?.name ?? newName(setup.scriptId, setup.source, pack), at: this.#now() }
+    for (const old of this.#state.setups.filter(s => s.scriptId === setup.scriptId && !samePath(s.file, setup.file))) await rm(old.file, { force: true })
+    this.#state.setups = [...this.#state.setups.filter(s => s.scriptId !== setup.scriptId), pending]
+    await this.#save()
+    this.#options.onChanged(setup.scriptId)
+    const what = `${basename(setup.file)} 是 ${SETUP_NAMES[kind]} 安装程序，不是压缩包`
+    const handed = { kind, dir: setup.dir }
+    const sessionId = byAgent ? undefined : await this.#options.onSetup?.(pending).catch(error => {
+      this.#options.log.warn(`${setup.scriptId}: setup program not handed to the agent: ${errorText(error)}`)
+      return undefined
+    })
+    if (sessionId === undefined) {
+      ctl.phase('running', { message: `${what}：让 agent 用 script_setup_run 运行它，装好后用 script_import 导入 ${setup.dir}`, setup: handed })
+    } else {
+      ctl.phase('running', { message: `${what}，已交给 agent 安装（对话「安装脚本：${pending.name}」）`, setup: { ...handed, sessionId } })
+    }
+    return setup.version
+  }
+
+  /** The setup program waiting to be run for a script, if any. */
+  pendingSetup(id: string): PendingSetup | undefined {
+    return this.#state.setups.find(s => s.scriptId === id)
+  }
+
+  /**
+   * Run a script's waiting setup program: quietly into its folder, waiting
+   * until it is done; or with its own window (returning at once), for the
+   * agent to click through. Then `import` of that folder finishes the install.
+   */
+  async runSetup(id: string, options: { quiet: boolean; signal?: AbortSignal }): Promise<{ dir: string; result: string; exitCode?: number; files?: number; executables?: string[] }> {
+    const setup = this.pendingSetup(id)
+    if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
+    if (!(await exists(setup.file))) {
+      this.#state.setups = this.#state.setups.filter(s => s !== setup)
+      await this.#save()
+      throw new Error(`安装程序 ${setup.file} 已经不在了：请重新安装或更新 ${setup.name}`)
+    }
+    // A new version folder starts empty; a local import's own folder is installed over.
+    const fresh = this.#ownsDir(setup.dir) && this.#state.scripts.find(s => s.id === id)?.versions.some(v => samePath(v.dir, setup.dir)) !== true
+    if (options.quiet && fresh) await rm(setup.dir, { recursive: true, force: true })
+    const exitCode = await runSetup(setup.file, { kind: setup.kind, dir: setup.dir, quiet: options.quiet, ...(options.signal === undefined ? {} : { signal: options.signal }) })
+    if (exitCode === undefined) return { dir: setup.dir, result: `${SETUP_NAMES[setup.kind]} 安装程序的窗口已经打开，安装位置预先填好了 ${setup.dir}` }
+    const files = await exists(setup.dir) ? (await listFiles(setup.dir)).length : 0
+    this.#options.log.info(`${id}: setup ${basename(setup.file)} exited ${exitCode}, ${files} file(s) in ${setup.dir}`)
+    return { dir: setup.dir, exitCode, result: setupExitText(setup.kind, exitCode), files, executables: files === 0 ? [] : (await probeProject(setup.dir)).executables }
+  }
+
+  /** The agent imported the folder a setup program installed into: the install (or update) is done. */
+  async #finishSetup(setup: PendingSetup, path: string, request: { name?: string | undefined; packId?: string | undefined }): Promise<ScriptInfo> {
+    if (!(await stat(path).then(s => s.isDirectory(), () => false))) throw new Error(`不是一个存在的目录：${path}`)
+    if ((await listFiles(path)).length === 0) throw new Error(`${path} 是空的：安装程序还没把文件装进去`)
+    const script = this.#state.scripts.find(s => s.id === setup.scriptId)
+    const pack = setup.packId === undefined ? undefined : this.#packs.get(setup.packId)
+    const inside = (dir: string) => { const rel = relative(join(this.toolsDir, setup.scriptId), dir); return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) }
+    let id = setup.scriptId
+    if (script?.source.kind === 'local') {
+      if (!samePath(script.source.path, path)) throw new Error(`${script.name} 在 ${script.source.path}，安装程序要装回那里（现在给的是 ${path}）`)
+      script.localVersion = { version: setup.version, from: '安装程序' }
+      delete script.update
+      script.probe = await probeProject(path)
+    } else if (inside(path)) {
+      await this.#addVersion(setup.scriptId, setup.source, pack, setup.version, path, setup.asset)
+    } else if (script !== undefined) {
+      throw new Error(`安装程序装到了 ${path}；${script.name} 的新版本要装在 ${setup.dir}`)
+    } else {
+      // Installed somewhere else (chosen in the installer's window): a local import of that version.
+      id = (await this.#importLocal(path, { id: setup.scriptId, name: request.name ?? setup.name, packId: request.packId ?? setup.packId })).id
+      this.#script(id).localVersion ??= { version: setup.version, from: '安装程序' }
+    }
+    this.#state.setups = this.#state.setups.filter(s => s !== setup)
+    await rm(setup.file, { force: true })
+    await this.#save()
+    this.#options.onChanged(id)
+    return this.#info(this.#script(id))
   }
 
   /**
@@ -588,12 +693,16 @@ export class ScriptLibrary {
    * (and the usual user-data folders) that exist are left as they are. A
    * failure part way (a file in use) puts the old files back.
    */
-  async #localUpdateJob(script: StoredScript, channels: Channels, ctl: JobControl): Promise<string> {
+  async #localUpdateJob(script: StoredScript, channels: Channels, ctl: JobControl, byAgent = false): Promise<string> {
     const target = (script.source as { path: string }).path
     const pack = this.#packOf(script)
     const fetched = await this.#fetch(script.id, channels, pack, script.localVersion?.version, ctl)
     const { version } = fetched
     const archive = fetched.archive!
+    const setup = await setupKind(archive)
+    if (setup !== undefined) {
+      return this.#handOffSetup(setup, { scriptId: script.id, file: archive, version, asset: fetched.asset, dir: target, source: script.source, ...(pack === undefined ? {} : { packId: pack.manifest.id }), update: true }, byAgent, ctl)
+    }
     const root = pack?.manifest.install.root
     const staging = join(this.toolsDir, script.id, '.staging')
     try {
@@ -854,9 +963,9 @@ export class ScriptLibrary {
       return undefined
     }
 
-    const archive = join(this.toolsDir, scriptId, '.downloads', mirrorFileName(latest.url, resource.rid, latest.version))
+    let archive = join(this.toolsDir, scriptId, '.downloads', mirrorFileName(latest.url, resource.rid, latest.version))
     ctl.phase('downloading', { message: `${name}（Mirror酱）`, received: 0, ...(latest.size === undefined ? {} : { total: latest.size }) })
-    await download({
+    const downloaded = await download({
       url: latest.url,
       dest: archive,
       ...(latest.size === undefined ? {} : { expectedSize: latest.size }),
@@ -865,6 +974,7 @@ export class ScriptLibrary {
       onProgress: (received, total) => ctl.phase('downloading', { message: `${name}（Mirror酱）`, received, ...(total === undefined ? {} : { total }) }),
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
     })
+    archive = await realName(archive, downloaded.finalUrl)
     return { version, archive, asset: { name, size: latest.size ?? 0 }, incremental }
   }
 
@@ -949,8 +1059,15 @@ export class ScriptLibrary {
     return this.#info(script)
   }
 
+  /** Register a folder in place; the folder a waiting setup program installed into (by id, or by its folder) finishes that install instead. */
   async import(request: { path: string; id?: string | undefined; name?: string | undefined; packId?: string | undefined }): Promise<ScriptInfo> {
     const path = resolve(request.path)
+    const setup = (request.id === undefined ? undefined : this.pendingSetup(request.id)) ?? this.#state.setups.find(s => samePath(s.dir, path))
+    if (setup !== undefined) return this.#finishSetup(setup, path, request)
+    return this.#importLocal(path, request)
+  }
+
+  async #importLocal(path: string, request: { id?: string | undefined; name?: string | undefined; packId?: string | undefined }): Promise<ScriptInfo> {
     if (!(await stat(path).then(s => s.isDirectory(), () => false))) throw new Error(`不是一个存在的目录：${path}`)
     if (this.#ownsDir(path)) throw new Error('这个目录在工具目录里，由安装器管理，不需要导入')
     const same = this.#state.scripts.find(s => s.source.kind === 'local' && samePath(s.source.path, path))
@@ -1006,6 +1123,8 @@ export class ScriptLibrary {
     }
     // A local import's own directory stays; the backups of its updates were ours.
     if (script.source.kind === 'local') await rm(join(this.toolsDir, id, '.local-backup'), { recursive: true, force: true })
+    for (const setup of this.#state.setups.filter(s => s.scriptId === id)) await rm(setup.file, { force: true })
+    this.#state.setups = this.#state.setups.filter(s => s.scriptId !== id)
     this.#state.scripts = this.#state.scripts.filter(s => s.id !== id)
     await this.#save()
     this.#options.onChanged(id)
@@ -1276,6 +1395,35 @@ async function putBack(target: string, backup: LocalBackup): Promise<void> {
     const saved = join(backup.dir, 'files', ...rel.split('/'))
     if (await exists(saved)) await saveCopy(saved, join(target, ...rel.split('/')))
   }
+}
+
+/** A new script's name: its pack's, the known project's, or from where it comes. */
+function newName(scriptId: string, source: ScriptSource, pack: LoadedPack | undefined): string {
+  const known = source.kind === 'github' ? knownByRepo(source.repo) : source.kind === 'mirrorchyan' ? knownByMirror(source.rid) : undefined
+  return pack?.manifest.name ?? known?.name ?? (source.kind === 'github' ? source.repo.split('/')[1] : undefined) ?? (source.kind === 'mirrorchyan' ? source.rid : scriptId)
+}
+
+/**
+ * A download saved under a made-up name (the link did not name the file)
+ * gets the real one: from where the link redirected to, else from what the
+ * bytes are. @returns its path now.
+ */
+async function realName(file: string, finalUrl: string): Promise<string> {
+  let name: string | undefined
+  try {
+    const served = decodeURIComponent(basename(new URL(finalUrl).pathname))
+    if (archiveKind(served) !== undefined && !/[\\/:*?"<>|]/.test(served)) name = served
+  } catch { /* no name in it */ }
+  if (name === undefined) {
+    const found = await contentKind(file)
+    if (found === undefined || archiveKind(basename(file)) === found.kind) return file
+    name = basename(file).replace(/\.(zip|7z|tar(\.\w+)?|exe|msi)$/i, '') + found.ext
+  }
+  if (name === basename(file)) return file
+  const renamed = join(dirname(file), name)
+  await rm(renamed, { force: true })
+  await rename(file, renamed)
+  return renamed
 }
 
 /** The archive's name from Mirror酱's download link, or one made up with a zip extension. */

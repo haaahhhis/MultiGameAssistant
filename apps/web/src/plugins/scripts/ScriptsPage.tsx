@@ -107,11 +107,11 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
         <div className="scripts-detail">
           {panel?.kind === 'install' && (
             <InstallPanel key={panel.repo ?? 'blank'} client={client} jobs={jobs} {...(panel.repo === undefined ? {} : { initialRepo: panel.repo })}
-              onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} />
+              onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} openSession={openSession} />
           )}
           {panel?.kind === 'mirror' && (
             <MirrorInstallPanel key={panel.rid ?? 'blank'} client={client} jobs={jobs} {...(panel.rid === undefined ? {} : { initialRid: panel.rid })}
-              onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} onGitHub={repo => setPanel({ kind: 'install', repo })} />
+              onClose={() => setPanel(null)} onDone={id => { setSelected(id); setPanel(null) }} openSession={openSession} onGitHub={repo => setPanel({ kind: 'install', repo })} />
           )}
           {panel?.kind === 'import' && (
             <ImportPanel client={client} onClose={() => setPanel(null)} onImported={id => { setSelected(id); setPanel(null) }} />

@@ -11,13 +11,15 @@ import { Select } from '../../components/Select.tsx'
  * explicit confirmation of where the code comes from. The panel then follows
  * the install (steps, bytes, speed) until it is done, failed or cancelled.
  */
-export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
+export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, onClose }: {
   client: AdgClient
   initialRepo?: string
   /** The library's jobs by script id (useScriptJobs). */
   jobs: ReadonlyMap<string, ScriptJob>
   /** Show the installed script. */
   onDone: (scriptId: string) => void
+  /** A setup program was handed to the agent: its conversation. */
+  openSession: (sessionId: string) => void
   onClose: () => void
 }) {
   const [repo, setRepo] = useState(initialRepo ?? '')
@@ -76,7 +78,7 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
     const job = jobs.get(started.scriptId)
     return (
       <InstallProgress client={client} repo={loaded.repo} {...started} job={job?.id === started.jobId ? job : undefined}
-        onDone={() => onDone(started.scriptId)} onRetry={() => setStarted(null)} onClose={onClose} />
+        onDone={() => onDone(started.scriptId)} openSession={openSession} onRetry={() => setStarted(null)} onClose={onClose} />
     )
   }
 
@@ -132,11 +134,12 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, onClose }: {
  * first (no CDK needed for that); downloading needs the user's CDK. A
  * resource with a GitHub repository can be installed from there instead.
  */
-export function MirrorInstallPanel({ client, initialRid, jobs, onDone, onGitHub, onClose }: {
+export function MirrorInstallPanel({ client, initialRid, jobs, onDone, openSession, onGitHub, onClose }: {
   client: AdgClient
   initialRid?: string
   jobs: ReadonlyMap<string, ScriptJob>
   onDone: (scriptId: string) => void
+  openSession: (sessionId: string) => void
   /** Install the resource's GitHub repository instead. */
   onGitHub: (repo: string) => void
   onClose: () => void
@@ -188,7 +191,7 @@ export function MirrorInstallPanel({ client, initialRid, jobs, onDone, onGitHub,
     const job = jobs.get(started.scriptId)
     return (
       <InstallProgress client={client} repo={`Mirror酱 · ${found.rid}`} tag={found.version} asset={`${found.name ?? found.rid}（Mirror酱 完整包）`} job={job?.id === started.jobId ? job : undefined}
-        onDone={() => onDone(started.scriptId)} onRetry={() => setStarted(null)} onClose={onClose} />
+        onDone={() => onDone(started.scriptId)} openSession={openSession} onRetry={() => setStarted(null)} onClose={onClose} />
     )
   }
 
@@ -287,7 +290,7 @@ export function MirrorResults({ results, selected, disabled, limit = 8, onPick, 
 const STEPS: readonly ScriptJob['phase'][] =['resolving', 'downloading', 'verifying', 'extracting', 'checking', 'done']
 
 /** An install under way: where it comes from, each step, and while downloading how much, how fast and how long is left. */
-function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry, onClose }: {
+function InstallProgress({ client, repo, tag, asset, size, job, onDone, openSession, onRetry, onClose }: {
   client: AdgClient
   repo: string
   tag: string
@@ -295,10 +298,13 @@ function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry,
   size?: number | undefined
   job: ScriptJob | undefined
   onDone: () => void
+  openSession: (sessionId: string) => void
   onRetry: () => void
   onClose: () => void
 }) {
   const phase = job?.phase ?? 'queued'
+  // A setup program, not an archive: not installed yet, the agent runs it.
+  const handed = phase === 'done' ? job?.setup : undefined
   const running = job === undefined || job.endedAt === undefined
   const speed = useSpeed(job?.received)
   const total = job?.total ?? size
@@ -307,7 +313,7 @@ function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry,
   const reached = useRef(-1)
   const at = STEPS.indexOf(phase)
   if (at > reached.current) reached.current = at
-  const title = phase === 'done' ? '安装完成' : phase === 'failed' ? '安装失败' : phase === 'cancelled' ? '已取消安装' : '正在安装'
+  const title = handed !== undefined ? '交给 agent 安装' : phase === 'done' ? '安装完成' : phase === 'failed' ? '安装失败' : phase === 'cancelled' ? '已取消安装' : '正在安装'
   const stepState = (i: number): string => {
     if (phase === 'done' || i < reached.current) return 'done'
     if (i === reached.current) return running ? 'active' : 'stopped'
@@ -355,13 +361,15 @@ function InstallProgress({ client, repo, tag, asset, size, job, onDone, onRetry,
         </div>
       )}
       {job?.error !== undefined && <div className="notice error left"><Icon name="alert" /><span>{job.error}</span></div>}
+      {handed !== undefined && <div className="notice left"><Icon name="info" /><span>{job?.message}。装好后脚本会出现在左边的列表里。</span></div>}
 
       <div className="key-actions">
-        <span className="muted small">{running ? '可以关掉这个面板，安装会在后台继续。' : phase === 'done' ? `已安装 ${job?.version ?? tag}。` : ''}</span>
+        <span className="muted small">{running ? '可以关掉这个面板，安装会在后台继续。' : handed !== undefined ? `下载好了 ${job?.version ?? tag} 的安装程序。` : phase === 'done' ? `已安装 ${job?.version ?? tag}。` : ''}</span>
         <span className="spacer" />
         {running && job !== undefined && <button className="small-button" onClick={() => void client.connection.call('scripts/jobs/cancel', { jobId: job.id }).catch(() => {})}>取消安装</button>}
         {(phase === 'failed' || phase === 'cancelled') && <button className="small-button" onClick={onRetry}>重新选择</button>}
-        {phase === 'done' && <button className="primary small-button" onClick={onDone}>查看脚本</button>}
+        {handed?.sessionId !== undefined && <button className="primary small-button" onClick={() => openSession(handed.sessionId!)}>查看对话</button>}
+        {phase === 'done' && handed === undefined && <button className="primary small-button" onClick={onDone}>查看脚本</button>}
       </div>
     </section>
   )

@@ -70,7 +70,7 @@ export function SessionList({ client, selected, onSelect, onNew }: {
   const kindOf = (item: { id: string; title: string | null }): Exclude<Tab, 'archived'> => {
     if (remote.has(item.id) || /^(飞书|feishu)：/.test(item.title ?? '')) return 'remote'
     // Sessions the app opens on its own (see each `conversations.create` title).
-    if (/^(干预|编排|游戏信息|游戏资讯|添加游戏|日报|合并技能|脚本介绍)：/.test(item.title ?? '')) return 'auto'
+    if (/^(干预|编排|游戏信息|游戏资讯|添加游戏|日报|合并技能|脚本介绍|安装脚本)：/.test(item.title ?? '')) return 'auto'
     return 'chats'
   }
 

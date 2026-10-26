@@ -5,11 +5,17 @@ import type { AddressInfo } from 'node:net'
 
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex')
 
-/** A fake Mirror酱: `latest` answers by resource, CDK and current_version; packages are served from /dl/. */
-export async function fakeMirror(state: { latest: string; cdk: string; full: Uint8Array; incremental?: { from: string; body: Uint8Array }; rid?: string }) {
+/**
+ * A fake Mirror酱: `latest` answers by resource, CDK and current_version; packages are served from /dl/.
+ * With `served`, the full package's link is like the real one (`/api/resources/download/<token>`, no file
+ * name) and redirects to the file under that name.
+ */
+export async function fakeMirror(state: { latest: string; cdk: string; full: Uint8Array; incremental?: { from: string; body: Uint8Array }; rid?: string; served?: string }) {
   const asked: URLSearchParams[] = []
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
+    if (url.pathname === '/api/resources/download/tok3n' && state.served !== undefined) { res.writeHead(302, { location: `/files/${state.served}` }).end(); return }
+    if (state.served !== undefined && url.pathname === `/files/${state.served}`) { res.writeHead(200, { 'content-length': state.full.length }); res.end(state.full); return }
     if (url.pathname === '/dl/full.zip') { res.writeHead(200, { 'content-length': state.full.length }); res.end(state.full); return }
     if (url.pathname === '/dl/patch.zip' && state.incremental !== undefined) { res.writeHead(200, { 'content-length': state.incremental.body.length }); res.end(state.incremental.body); return }
     if (url.pathname !== `/api/resources/${state.rid ?? 'Tool'}/latest`) { res.writeHead(404).end(JSON.stringify({ code: 8001, msg: 'resource not found' })); return }
@@ -23,7 +29,7 @@ export async function fakeMirror(state: { latest: string; cdk: string; full: Uin
     if (cdk === null || current === state.latest) return reply({ code: 0, msg: 'ok', data: base })
     const inc = state.incremental !== undefined && current === state.incremental.from
     const body = inc ? state.incremental!.body : state.full
-    return reply({ code: 0, msg: 'success', data: { ...base, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/dl/${inc ? 'patch' : 'full'}.zip`, sha256: sha(body), filesize: body.length, update_type: inc ? 'incremental' : 'full', cdk_expired_time: 1824382315 } })
+    return reply({ code: 0, msg: 'success', data: { ...base, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}${!inc && state.served !== undefined ? '/api/resources/download/tok3n' : `/dl/${inc ? 'patch' : 'full'}.zip`}`, sha256: sha(body), filesize: body.length, update_type: inc ? 'incremental' : 'full', cdk_expired_time: 1824382315 } })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, asked, close: () => new Promise<void>(resolve => server.close(() => resolve())) }

@@ -224,6 +224,8 @@ export const ScriptJob = z.object({
   total: z.number().optional(),
   version: z.string().optional(),
   error: z.string().optional(),
+  /** The release was a setup program (not an archive), left for the agent to run into `dir`; in that conversation when the app started one. */
+  setup: z.object({ kind: z.enum(['nsis', 'inno']), dir: z.string(), sessionId: z.string().optional() }).optional(),
   startedAt: z.number(),
   endedAt: z.number().optional(),
 })

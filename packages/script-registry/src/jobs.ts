@@ -86,5 +86,5 @@ export class JobBoard {
 
 export interface JobControl {
   readonly signal: AbortSignal
-  phase(phase: ScriptJobPhase, extra?: { message?: string; received?: number; total?: number }): void
+  phase(phase: ScriptJobPhase, extra?: { message?: string; received?: number; total?: number; setup?: ScriptJob['setup'] }): void
 }

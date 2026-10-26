@@ -35,6 +35,8 @@ export interface DownloadResult {
   readonly sha256: string
   /** The URL that served the bytes. */
   readonly via: string
+  /** Where redirects ended: it names the file when `via` does not (a download API's link). */
+  readonly finalUrl: string
   readonly resumed: boolean
 }
 
@@ -128,7 +130,7 @@ async function downloadFrom(url: string, options: DownloadOptions): Promise<Down
   }
   await rm(options.dest, { force: true })
   await rename(part, options.dest)
-  return { path: options.dest, bytes, sha256, via: url, resumed }
+  return { path: options.dest, bytes, sha256, via: url, finalUrl: response.url || url, resumed }
 }
 
 function parseDigest(digest: string | undefined): string | undefined {

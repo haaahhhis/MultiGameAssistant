@@ -8,7 +8,8 @@
  */
 export { GitHubClient, GitHubError, type GitHubOptions } from './github.ts'
 export { download, DownloadError, hashFile, mirrored, type DownloadOptions, type DownloadResult } from './download.ts'
-export { archiveKind, extract, type ArchiveKind, type ExtractResult } from './extract.ts'
+export { archiveKind, contentKind, extract, type ArchiveKind, type ExtractResult } from './extract.ts'
+export { runSetup, SETUP_NAMES, setupCommandLine, setupExitText, setupKind, type RunSetupOptions, type SetupKind } from './setup.ts'
 export { checkEnvironment, compareVersions, satisfies, systemHost, type EnvChecked, type EnvChecker, type EnvContext, type EnvHost, type ExecResult, type FixPlan } from './env.ts'
 export { applyFix, ManualFixError, runElevated, type FixDeps } from './fix.ts'
 export { matchesDetect, probeProject } from './probe.ts'

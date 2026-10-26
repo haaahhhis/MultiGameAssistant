@@ -6,7 +6,8 @@ import { test } from 'node:test'
 import { makeZip, startFakeGitHub } from '@adg/test-kit'
 import { download } from '../src/download.ts'
 import { checkEnvironment, satisfies, type EnvHost } from '../src/env.ts'
-import { extract } from '../src/extract.ts'
+import { contentKind, extract } from '../src/extract.ts'
+import { setupCommandLine, setupExitText, setupKind } from '../src/setup.ts'
 import { applyFix } from '../src/fix.ts'
 import { GitHubClient, GitHubError } from '../src/github.ts'
 import { matchesDetect, probeProject } from '../src/probe.ts'
@@ -89,6 +90,33 @@ test('extraction lifts a single top folder and refuses paths that escape', async
   writeFileSync(join(dir, 'setup.exe'), 'MZ')
   await extract(join(dir, 'setup.exe'), join(dir, 'single'))
   assert.ok(existsSync(join(dir, 'single', 'setup.exe')))
+
+  // The bytes decide over the name: an exe saved as .zip is copied, not read as a zip; an .apk (a zip inside) stays one file.
+  writeFileSync(join(dir, 'named.zip'), 'MZ not a zip')
+  assert.deepEqual(await contentKind(join(dir, 'named.zip')), { kind: 'single-file', ext: '.exe' })
+  await extract(join(dir, 'named.zip'), join(dir, 'named'))
+  assert.equal(readFileSync(join(dir, 'named', 'named.zip'), 'utf8'), 'MZ not a zip')
+  writeFileSync(join(dir, 'app.apk'), makeZip({ 'AndroidManifest.xml': 'x' }))
+  await extract(join(dir, 'app.apk'), join(dir, 'apk'))
+  assert.ok(existsSync(join(dir, 'apk', 'app.apk')))
+})
+
+test('setup programs: NSIS and Inno Setup told apart from other exes, and their quiet command lines', async () => {
+  const dir = tmp('setup')
+  const exe = (name: string, marker: string) => {
+    writeFileSync(join(dir, name), Buffer.concat([Buffer.from('MZ'), Buffer.alloc(5000), Buffer.from(marker), Buffer.alloc(100)]))
+    return join(dir, name)
+  }
+  assert.equal(await setupKind(exe('ok.exe', '<assemblyIdentity name="Nullsoft.NSIS.exehead"/>')), 'nsis')
+  assert.equal(await setupKind(exe('hutao.exe', '<assemblyIdentity name="JR.Inno.Setup"/>')), 'inno')
+  assert.equal(await setupKind(exe('plain.exe', 'just a program')), undefined)
+  writeFileSync(join(dir, 'text.exe'), 'Nullsoft.NSIS.exehead but no MZ')
+  assert.equal(await setupKind(join(dir, 'text.exe')), undefined)
+  assert.equal(await setupKind(join(dir, 'missing.exe')), undefined)
+  assert.equal(setupCommandLine('nsis', 'C:\\My Tools\\ok\\1.0', true), '/S /D=C:\\My Tools\\ok\\1.0', 'NSIS: /D= last, unquoted')
+  assert.equal(setupCommandLine('nsis', 'C:\\t', false), '/D=C:\\t')
+  assert.equal(setupCommandLine('inno', 'C:\\My Tools\\h', true), '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="C:\\My Tools\\h"')
+  assert.equal(setupExitText('inno', 5), '安装被取消了')
 })
 
 function fakeHost(spec: { dirs?: Record<string, string[]>; files?: string[]; exec?: Record<string, { code: number; stdout: string }> }): EnvHost {

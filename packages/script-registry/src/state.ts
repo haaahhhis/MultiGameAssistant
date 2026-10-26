@@ -55,6 +55,30 @@ export const StoredScript = z.object({
 })
 export type StoredScript = z.infer<typeof StoredScript>
 
+/**
+ * A setup program an install or update downloaded instead of an archive
+ * (NSIS / Inno Setup): it waits for the agent to run it into `dir` and then
+ * import that folder, which finishes the install (see ScriptLibrary.runSetup).
+ */
+export const PendingSetup = z.object({
+  scriptId: z.string(),
+  name: z.string(),
+  kind: z.enum(['nsis', 'inno']),
+  /** The installer, kept in the script's downloads folder until it is done. */
+  file: z.string(),
+  version: z.string(),
+  asset: z.object({ name: z.string(), size: z.number() }),
+  /** Where it installs: a new version folder, or a local import's own folder (updated in place). */
+  dir: z.string(),
+  /** How a new script came (an update keeps the script's own). */
+  source: ScriptSource,
+  packId: z.string().optional(),
+  /** Updating an existing script. */
+  update: z.boolean(),
+  at: z.number(),
+})
+export type PendingSetup = z.infer<typeof PendingSetup>
+
 export const DEFAULT_SETTINGS: InstallSettings = {
   apiBase: 'https://api.github.com',
   downloadMirror: '',
@@ -69,11 +93,13 @@ const StateFile = z.object({
   version: z.literal(1),
   settings: InstallSettings.partial().default({}),
   scripts: z.array(StoredScript).default([]),
+  setups: z.array(PendingSetup).default([]),
 })
 
 export interface LibraryState {
   settings: InstallSettings
   scripts: StoredScript[]
+  setups: PendingSetup[]
 }
 
 export class StateStore {
@@ -90,21 +116,21 @@ export class StateStore {
     try {
       text = await readFile(this.file, 'utf8')
     } catch {
-      return { settings: { ...DEFAULT_SETTINGS, ...defaults }, scripts: [] }
+      return { settings: { ...DEFAULT_SETTINGS, ...defaults }, scripts: [], setups: [] }
     }
     const parsed = StateFile.safeParse(safeJson(text))
     if (!parsed.success) {
       const aside = `${this.file}.corrupt-${Date.now()}`
       await rename(this.file, aside).catch(() => {})
       log.warn(`script library state was unreadable and was moved to ${aside}: ${parsed.error.message}`)
-      return { settings: { ...DEFAULT_SETTINGS, ...defaults }, scripts: [] }
+      return { settings: { ...DEFAULT_SETTINGS, ...defaults }, scripts: [], setups: [] }
     }
-    return { settings: { ...DEFAULT_SETTINGS, ...defaults, ...stripUndefined(parsed.data.settings) } as InstallSettings, scripts: parsed.data.scripts }
+    return { settings: { ...DEFAULT_SETTINGS, ...defaults, ...stripUndefined(parsed.data.settings) } as InstallSettings, scripts: parsed.data.scripts, setups: parsed.data.setups }
   }
 
   /** Persist; writes are serialized so the last state always wins. */
   save(state: LibraryState): Promise<void> {
-    const text = `${JSON.stringify({ version: 1, settings: state.settings, scripts: state.scripts }, null, 2)}\n`
+    const text = `${JSON.stringify({ version: 1, settings: state.settings, scripts: state.scripts, ...(state.setups.length === 0 ? {} : { setups: state.setups }) }, null, 2)}\n`
     this.#writing = this.#writing.catch(() => {}).then(async () => {
       await mkdir(dirname(this.file), { recursive: true })
       const temp = `${this.file}.${process.pid}.tmp`

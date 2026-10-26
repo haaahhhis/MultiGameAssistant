@@ -22,6 +22,7 @@ import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
 import { startSkillHub } from './skill-hub-plugin.ts'
 import { scriptSummaries } from './script-summary.ts'
+import { setupHandOff } from './setup-handoff.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
@@ -74,6 +75,7 @@ export class AdgScripts extends Service {
       credentialConfigured: async name => (await ctx.get('credentials')?.describe(ref(name)))?.configured ?? false,
       onChanged: id => ctx.get('adgGateway')?.broadcast('scripts/changed', id === undefined ? {} : { id }),
       onJob: job => ctx.get('adgGateway')?.broadcast('scripts/job', job),
+      onSetup: setupHandOff(ctx, { info: message => log.info(message), warn: message => log.warn(message) }),
       log: { info: message => log.info(message), warn: message => log.warn(message) },
     })
     const library = this.library

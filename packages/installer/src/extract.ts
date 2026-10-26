@@ -9,7 +9,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import yauzl from 'yauzl'
@@ -24,6 +24,32 @@ export function archiveKind(name: string): ArchiveKind | undefined {
   return undefined
 }
 
+/**
+ * What a file is by its first bytes, whatever its name says (a download link
+ * may not name the file it serves), with the extension it should have.
+ * Undefined when the bytes say nothing known.
+ */
+export async function contentKind(file: string): Promise<{ kind: ArchiveKind; ext: string } | undefined> {
+  const handle = await open(file, 'r').catch(() => undefined)
+  if (handle === undefined) return undefined
+  const head = Buffer.alloc(512)
+  try {
+    await handle.read(head, 0, head.length, 0)
+  } finally {
+    await handle.close()
+  }
+  const starts = (...bytes: number[]) => bytes.every((b, i) => head[i] === b)
+  if (starts(0x50, 0x4b, 0x03, 0x04) || starts(0x50, 0x4b, 0x05, 0x06)) return { kind: 'zip', ext: '.zip' }
+  if (starts(0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c)) return { kind: 'tar', ext: '.7z' }
+  if (starts(0x1f, 0x8b)) return { kind: 'tar', ext: '.tar.gz' }
+  if (starts(0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00)) return { kind: 'tar', ext: '.tar.xz' }
+  if (starts(0x28, 0xb5, 0x2f, 0xfd)) return { kind: 'tar', ext: '.tar.zst' }
+  if (head.toString('latin1', 257, 262) === 'ustar') return { kind: 'tar', ext: '.tar' }
+  if (starts(0x4d, 0x5a)) return { kind: 'single-file', ext: '.exe' }
+  if (starts(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1)) return { kind: 'single-file', ext: '.msi' }
+  return undefined
+}
+
 export interface ExtractResult {
   readonly files: number
   /** The archive's single top-level folder that was lifted, if any. */
@@ -35,7 +61,10 @@ export interface ExtractResult {
  * @param root - path inside the archive to use as the install root (pack `install.root`).
  */
 export async function extract(archive: string, dest: string, options: { root?: string; signal?: AbortSignal; tar?: string } = {}): Promise<ExtractResult> {
-  const kind = archiveKind(archive)
+  // The bytes decide (a `.zip` that is really an exe), except that an `.apk` or `.jar` is a zip inside and stays one file.
+  const named = archiveKind(archive)
+  const found = (await contentKind(archive))?.kind
+  const kind = named === 'single-file' && found === 'zip' ? named : found ?? named
   if (kind === undefined) throw new Error(`不支持的文件类型：${basename(archive)}`)
   if (await stat(dest).then(() => true, () => false)) throw new Error(`目标目录已存在：${dest}`)
   const staging = `${dest}.extracting`

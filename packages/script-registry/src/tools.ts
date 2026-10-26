@@ -9,7 +9,8 @@
  * - runs an official installer to fix the environment (it needs admin);
  * - deletes installed files.
  * Reading, searching, checking, importing in place, switching versions and
- * curated installs run without a prompt.
+ * curated installs run without a prompt; so does running the setup program
+ * an install downloaded (the install itself was the user's, or approved).
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -31,6 +32,7 @@ export const TOOL_NAMES = {
   remove: 'script_remove',
   envCheck: 'script_env_check',
   envFix: 'script_env_fix',
+  setupRun: 'script_setup_run',
 } as const
 
 const INSTALL_TIMEOUT_MS = 60 * 60_000
@@ -96,6 +98,16 @@ async function followJob(library: ScriptLibrary, started: { job: ScriptJob; done
     return await started.done
   } finally {
     signal.removeEventListener('abort', onAbort)
+  }
+}
+
+/** A setup program the job left for the agent, and what to do with it. */
+function setupOf(library: ScriptLibrary, scriptId: string) {
+  const setup = library.pendingSetup(scriptId)
+  if (setup === undefined) return undefined
+  return {
+    installer: setup.file, kind: setup.kind, version: setup.version, dir: setup.dir,
+    next: `这是安装程序，还没装好：用 ${TOOL_NAMES.setupRun}（id=${scriptId}）运行它，装好后用 ${TOOL_NAMES.import}（path=${setup.dir}，id=${scriptId}）导入`,
   }
 }
 
@@ -179,15 +191,17 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
           if (!library.isKnownMirror(found.rid)) {
             await approve(exec, `从 Mirror酱 下载并安装资源 ${found.rid}（最新 ${found.version}）。这个资源不在已知列表里，请确认它来源可信。`)
           }
-          started = library.install({ mirrorchyan: found, id: a.id })
+          started = library.install({ mirrorchyan: found, id: a.id, byAgent: true })
         } else {
           if (a.repo === undefined) throw new Error('请给出 repo（GitHub 仓库）或 mirrorchyan（Mirror酱 资源 id）')
           if (!library.isKnownRepo(a.repo)) {
             await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${a.tag === undefined ? '最新发布版本' : ` ${a.tag}`}。这个仓库不在内置脚本包里，请确认它来源可信。`)
           }
-          started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, id: a.id })
+          started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, id: a.id, byAgent: true })
         }
         const job = await followJob(library, started, exec.signal)
+        const setup = setupOf(library, job.scriptId)
+        if (setup !== undefined) return { ...describeJob(job), setup }
         const info = job.phase === 'done' ? library.get(job.scriptId) : undefined
         return { ...describeJob(job), dir: info?.dir, env: info?.env, family: info?.family }
       },
@@ -221,9 +235,11 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
           if (!check.available) return { ok: true, upToDate: true, version: check.current }
           await approve(exec, `在 ${before.source.path} 里把 ${before.name} 从 ${check.current ?? '（认不出的版本）'} 更新到 ${check.latest}。会替换这个目录里的程序文件（先备份，可撤销），已有的配置文件不动；更新前请关闭这个脚本。`)
         }
-        const result = await library.update(a.id, exec.signal)
+        const result = await library.update(a.id, exec.signal, { byAgent: true })
         if (result.upToDate) return { ok: true, upToDate: true, version: library.get(a.id).current }
-        return describeJob(await followJob(library, result, exec.signal))
+        const job = await followJob(library, result, exec.signal)
+        const setup = setupOf(library, a.id)
+        return setup === undefined ? describeJob(job) : { ...describeJob(job), setup }
       },
     }),
     tool({
@@ -244,8 +260,31 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
       },
     }),
     tool({
+      name: TOOL_NAMES.setupRun,
+      description: `运行脚本安装或更新时下载到的安装程序（NSIS / Inno Setup 的 setup.exe，有的脚本只发布这种完整包）。quiet（默认 true）：不弹窗口，静默装进脚本的版本目录并等它装完，返回退出码和装出来的文件；false：打开安装程序自己的窗口（安装位置已预先填好）后立即返回，再用 screen_capture / screen_tap 一步步点完。装好后用 ${TOOL_NAMES.import} 导入那个目录（path 填返回的 dir，id 填这个脚本的 id），安装才算完成。只能运行脚本库下载的安装程序。`,
+      properties: {
+        id: { type: 'string', description: '脚本 id（script_install / script_update 的结果里有）。' },
+        quiet: { type: 'boolean', description: '静默安装并等待结束；默认 true。静默失败或需要在界面里选择时用 false。' },
+      },
+      required: ['id'],
+      timeoutMs: 35 * 60_000,
+      kind: 'execute',
+      title: a => `运行安装程序：${String(a['id'] ?? '')}${a['quiet'] === false ? '（打开窗口）' : ''}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({ id: ScriptId, quiet: opt(z.boolean()) }), args)
+        const quiet = a.quiet ?? true
+        const ran = await library.runSetup(a.id, { quiet, signal: exec.signal })
+        const next = !quiet
+          ? `用 screen_capture 看安装窗口，一步步点完（安装位置保持 ${ran.dir}，不勾选「立即运行」）；装完后用 ${TOOL_NAMES.import} 导入 ${ran.dir}`
+          : ran.exitCode === 0 && (ran.files ?? 0) > 0
+            ? `用 ${TOOL_NAMES.import}（path=${ran.dir}，id=${a.id}）导入，安装就完成了`
+            : `静默安装没有成功：可以用 quiet=false 打开安装窗口手动点完`
+        return { ok: !quiet || (ran.exitCode === 0 && (ran.files ?? 0) > 0), ...ran, next }
+      },
+    }),
+    tool({
       name: TOOL_NAMES.import,
-      description: '把用户电脑上已有的脚本目录登记到脚本库（原地使用，不移动、不复制、不修改）。会按内置脚本包自动识别是哪个脚本。',
+      description: `把用户电脑上已有的脚本目录登记到脚本库（原地使用，不移动、不复制、不修改）。会按内置脚本包自动识别是哪个脚本。用 ${TOOL_NAMES.setupRun} 装好的目录也用它导入（id 填那个脚本的 id），这样安装或更新才算完成，版本和更新渠道会接上。`,
       properties: {
         path: { type: 'string', description: '脚本所在目录的绝对路径。' },
         id: { type: 'string', description: '脚本 id；省略时自动生成。' },
