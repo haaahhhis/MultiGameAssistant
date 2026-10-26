@@ -5,6 +5,8 @@ apps/*/dist/
 .dev-home/
 .env
 *.log
+# Except the logs tests replay.
+!packages/*/test/samples/*.log
 # Machine-specific preview config (absolute Node path).
 .claude/launch.json
 /dist/

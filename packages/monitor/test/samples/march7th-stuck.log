@@ -1,0 +1,4 @@
+# March7th Assistant console output (time | LEVEL | message, its utils/logger format); the messages are its own.
+2026-10-18 05:00:01 | INFO | 开始运行：清体力
+2026-10-18 05:00:09 | ERROR | 截图失败：没有找到游戏窗口
+2026-10-18 05:00:12 | INFO | 尝试重新寻找游戏窗口
