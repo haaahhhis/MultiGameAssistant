@@ -10,6 +10,36 @@ export interface DesktopBridge {
   setTheme?(theme: 'system' | 'light' | 'dark'): Promise<void>
   /** Which build this is: installed (its version) or run from the repository. */
   appInfo?(): Promise<{ fromSource: boolean; arch: string; version?: string; commit?: string }>
+  /** Updates from GitHub Releases; every call answers the state, null when run from the repository. */
+  updates?: UpdatesBridge
+}
+
+export interface UpdateState {
+  current: string
+  arch: string
+  /** Check by itself (after starting, then every few hours). */
+  auto: boolean
+  /** The version 「跳过这个版本」 was clicked for: not announced again. */
+  skipped?: string
+  checking: boolean
+  checkedAt?: number
+  /** The last check failed: why. */
+  error?: string
+  /** A newer release (none when this is the newest). */
+  latest?: { version: string; prerelease: boolean; notesUrl: string; publishedAt?: string; size: number }
+  download?: { version: string; state: 'downloading' | 'ready' | 'failed'; received: number; total: number; error?: string }
+}
+
+export interface UpdatesBridge {
+  state(): Promise<UpdateState | null>
+  check(): Promise<UpdateState | null>
+  download(): Promise<UpdateState | null>
+  /** Quits the app and runs the downloaded installer, which starts the new version. */
+  install(): Promise<UpdateState | null>
+  skip(version: string): Promise<UpdateState | null>
+  setAuto(auto: boolean): Promise<UpdateState | null>
+  /** @returns the unsubscriber. */
+  onChange(listener: (state: UpdateState) => void): () => void
 }
 
 export function desktop(): DesktopBridge | undefined {

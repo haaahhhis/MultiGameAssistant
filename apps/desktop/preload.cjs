@@ -17,4 +17,20 @@ contextBridge.exposeInMainWorld('adgDesktop', {
   appInfo: () => ipcRenderer.invoke('adg:app-info'),
   /** Only answered while the startup screen is showing. */
   splash: action => ipcRenderer.invoke('adg:splash', action),
+  /** Updates from GitHub Releases (apps/desktop/updates.mjs); each call answers the state, null when run from the repository. */
+  updates: {
+    state: () => ipcRenderer.invoke('adg:update', 'state'),
+    check: () => ipcRenderer.invoke('adg:update', 'check'),
+    download: () => ipcRenderer.invoke('adg:update', 'download'),
+    /** Quits the app and runs the downloaded installer. */
+    install: () => ipcRenderer.invoke('adg:update', 'install'),
+    skip: version => ipcRenderer.invoke('adg:update', 'skip', version),
+    setAuto: auto => ipcRenderer.invoke('adg:update', 'auto', auto),
+    /** @returns the unsubscriber. */
+    onChange: listener => {
+      const handler = (_event, state) => listener(state)
+      ipcRenderer.on('adg:update-state', handler)
+      return () => ipcRenderer.removeListener('adg:update-state', handler)
+    },
+  },
 })

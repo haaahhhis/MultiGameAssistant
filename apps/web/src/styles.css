@@ -494,6 +494,17 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .approval-elsewhere { display: flex; align-items: center; gap: 8px; background: var(--raised); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); box-shadow: var(--shadow-pop); font-size: 13px; text-align: left; }
 .approval-elsewhere .ui-icon { width: 15px; height: 15px; margin-left: auto; color: var(--muted); }
 .approval-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+/* a newer release (components/Updates.tsx): in the dock, and in 「设置 → 关于」 */
+.update-card { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
+.update-card .approval-head > .ui-icon { color: var(--accent); }
+.update-card .approval-text { flex: 1; }
+.update-close { width: 28px; height: 28px; margin: -4px -6px 0 0; flex-shrink: 0; }
+.update-actions { display: flex; flex-direction: column; gap: 8px; }
+.update-actions p { margin: 0; }
+.update-progress { display: flex; flex-direction: column; gap: 6px; }
+.update-progress .progress { height: 6px; }
+.update-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.update-buttons button { height: 34px; padding: 0 14px; font-size: 13px; }
 /* messages waiting in the session's queue (Composer) */
 .queue { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .queue-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border: 1px dashed var(--border); border-radius: var(--r-md, 10px); background: var(--raised); font-size: 13px; min-width: 0; }

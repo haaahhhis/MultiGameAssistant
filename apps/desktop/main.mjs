@@ -13,6 +13,9 @@
  * wakes the computer for a scheduled time) does too, without running the
  * on-start pipelines, and is ignored when the app already runs; dsh is
  * restarted when it dies, and the scheduler picks up where it left off.
+ *
+ * Updates (installed only, updates.mjs): newer releases on GitHub are offered
+ * in the window and the tray; installing one quits and runs its installer.
  */
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
@@ -22,6 +25,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
+import { createUpdater } from './updates.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 /**
@@ -89,6 +93,8 @@ let everReady = false
 let failure = ''
 const restarts = []
 const logTail = []
+/** @type {ReturnType<typeof createUpdater> | null} Only for an installed build: from the repository, git pull. */
+let updater = null
 
 // The desktop shell's own folder (logs, theme) moves with the rename too, before anything opens a file in it.
 if (installed !== undefined) movedFromLegacy(app.getPath('userData'))
@@ -190,6 +196,30 @@ async function start() {
   ipcMain.handle('adg:copy-image', (event, dataUrl) => {
     if (win === null || event.sender !== win.webContents || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) return
     clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
+  })
+  updater = installed === undefined ? null : createUpdater({
+    current: installed.version,
+    arch: installed.arch ?? process.arch,
+    dir: join(app.getPath('userData'), 'updates'),
+    log: { info: line => startupLog(`[update] ${line}`), warn: line => startupLog(`[update] ${line}`) },
+    onChange: state => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send('adg:update-state', state) },
+    onFound: version => {
+      // In the window the notice shows it; the balloon is for when it is in the tray.
+      if (tray !== null && process.platform === 'win32' && !(win?.isVisible() ?? false)) {
+        tray.displayBalloon({ title: `MultiGameAssistant ${version} 可以更新了`, content: '打开窗口查看更新内容并安装。', iconType: 'info' })
+      }
+    },
+  })
+  updater?.start()
+  // The update notice and 「设置 → 关于」. null: running from the repository, nothing to update.
+  ipcMain.handle('adg:update', async (_event, action, value) => {
+    if (updater === null) return null
+    if (action === 'check') return updater.check()
+    if (action === 'download') return updater.download()
+    if (action === 'skip' && typeof value === 'string') return updater.skip(value)
+    if (action === 'auto' && typeof value === 'boolean') return updater.setAuto(value)
+    if (action === 'install') { await installUpdate(); return updater.state() }
+    return updater.state()
   })
   win.on('close', event => {
     if (quitting) return
@@ -359,6 +389,29 @@ function createTray() {
     { label: '退出', click: () => { quitting = true; app.quit() } },
   ]))
   tray.on('click', () => showWindow())
+  tray.on('balloon-click', () => showWindow())
+}
+
+/**
+ * Quit and run the downloaded installer over this install: quietly (/S) in the
+ * folder chosen when installing, without asking to close the app (--updated),
+ * starting the new version when done (--force-run). Data and schedules stay.
+ */
+async function installUpdate() {
+  const { file, args } = updater.installCommand()
+  startupLog(`[update] installing ${file}`)
+  try {
+    // Quit only once it has started: if it cannot, the app keeps running and says why.
+    await new Promise((resolve, reject) => {
+      const child = spawn(file, args, { detached: true, stdio: 'ignore' })
+      child.once('spawn', () => { child.unref(); resolve(undefined) })
+      child.once('error', reject)
+    })
+  } catch (error) {
+    throw new Error(`打不开安装程序：${error instanceof Error ? error.message : String(error)}`)
+  }
+  quitting = true
+  app.quit()
 }
 
 function showWindow() {

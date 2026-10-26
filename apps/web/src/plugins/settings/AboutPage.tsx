@@ -1,10 +1,13 @@
 /**
  * 「设置 → 关于」: which build this is, its license (AGPL-3.0-only) and where
  * its source is. AGPL section 13 asks a program people use over a network to
- * offer them its source; this is where the app does.
+ * offer them its source; this is where the app does. The installed app also
+ * checks for and installs updates here (components/Updates.tsx).
  */
 import { useEffect, useState } from 'react'
+import { Icon } from '../../components/Icons.tsx'
 import { desktop } from '../../desktop.ts'
+import { UpdateActions, useUpdates } from '../../components/Updates.tsx'
 
 const REPOSITORY = 'https://github.com/haaahhhis/MultiGameAssistant'
 
@@ -37,6 +40,10 @@ export function AboutPage() {
         </dl>
       </section>
 
+      {info?.fromSource === true
+        ? <section className="card about-card"><h3>更新</h3><p className="muted">从源码运行：在项目目录 git pull 后重新构建（pnpm install、pnpm build）。</p></section>
+        : info !== null && info !== undefined && <UpdateSection />}
+
       <section className="card about-card">
         <h3>许可证</h3>
         <p>Copyright (C) 2026 MultiGameAssistant contributors</p>
@@ -45,5 +52,37 @@ export function AboutPage() {
         <p className="muted small">附带的第三方组件（Electron、DeepSeek Harness 等）遵循各自的许可证，许可证文件在程序的安装目录里。本程序安装和调度的游戏脚本是各自独立的项目，不属于本程序。</p>
       </section>
     </div>
+  )
+}
+
+function UpdateSection() {
+  const { bridge, state } = useUpdates()
+  if (bridge === undefined || state === null) return null
+  const latest = state?.latest
+  const status = state === undefined ? '…'
+    : state.checking ? '正在检查…'
+      : state.error !== undefined ? state.error
+        : latest !== undefined ? `有新版本 ${latest.version}${latest.prerelease ? '（预发布版）' : ''}${latest.version === state.skipped ? '，已跳过' : ''}`
+          : state.checkedAt !== undefined ? `已经是最新版本（${new Date(state.checkedAt).toLocaleString()} 检查）`
+            : '还没有检查过'
+  return (
+    <section className="card about-card">
+      <div className="card-head">
+        <div>
+          <h3>更新</h3>
+          <p className={state?.error !== undefined && !state.checking ? 'error small' : 'muted small'}>
+            {status}{latest !== undefined && <> · <a href={latest.notesUrl} target="_blank" rel="noreferrer">查看更新内容</a></>}
+          </p>
+        </div>
+        <button className="small-button" disabled={state === undefined || state.checking} onClick={() => void bridge.check()}><Icon name="refresh" />检查更新</button>
+      </div>
+      {state !== undefined && <UpdateActions bridge={bridge} state={state} />}
+      {state !== undefined && (
+        <label className="check-label">
+          <input type="checkbox" checked={state.auto} onChange={e => void bridge.setAuto(e.target.checked)} />
+          自动检查更新（启动后和每隔几小时，从 GitHub Releases；{/-/.test(state.current) ? '预发布版也会收到更新的预发布版' : '只提示正式版'}）
+        </label>
+      )}
+    </section>
   )
 }

@@ -4,6 +4,7 @@ import type { AdgClient } from '@adg/client-core'
 import { useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
 import { PowerCard, usePowerStatus } from './PowerCard.tsx'
+import { UpdateCard } from './Updates.tsx'
 
 /**
  * Pending approvals and the agent's questions: the current session's in full,
@@ -18,7 +19,6 @@ export function ApprovalDock({ client, sessionId, onSelect }: {
   const approvals = useStore(client.approvals)
   const questions = useStore(client.questions)
   const pending = usePowerStatus(client)?.pending
-  if (approvals.length === 0 && questions.length === 0 && pending === undefined) return null
   const here = approvals.filter(a => a.sessionId === sessionId)
   const asked = questions.filter(q => q.sessionId === sessionId)
   const elsewhere = [...approvals, ...questions].filter(a => a.sessionId !== sessionId)
@@ -33,6 +33,7 @@ export function ApprovalDock({ client, sessionId, onSelect }: {
           <span className="approval-dot" />另有 {new Set(elsewhere.map(e => e.sessionId)).size} 个会话在等你{waiting}<Icon name="chevron" />
         </button>
       )}
+      <UpdateCard />
     </div>
   )
 }
