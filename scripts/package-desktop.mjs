@@ -92,7 +92,7 @@ const manifest = JSON.parse(readFileSync(join(staging, 'package.json'), 'utf8'))
 delete manifest.devDependencies
 delete manifest.scripts
 // electron-builder copies what `dependencies` leads to, and does not follow peer dependencies, which dsh wires
-// most of its plugins through: list every package pnpm deploy put at the top level, so all of node_modules goes in.
+// most of its plugins through: list every package pnpm deploy put at the top level (afterPack fills what it still misses).
 manifest.dependencies = topLevelPackages(join(staging, 'node_modules'))
 writeFileSync(join(staging, 'package.json'), `${JSON.stringify({ ...manifest, name: 'multigameassistant', productName: 'MultiGameAssistant', version, author: 'MultiGameAssistant' }, null, 2)}\n`)
 mkdirSync(resources, { recursive: true })
@@ -130,6 +130,17 @@ const files = await build({
     nodeGypRebuild: false,
     // node_modules is already exactly what runs (pnpm deploy --prod): take it whole.
     files: ['**/*'],
+    // electron-builder still rebuilds the dependency tree from pnpm's metadata and leaves out packages dsh only
+    // reaches through peer dependencies (28 of them, @deepseek-ai/cordis-plugin-group among them: the installed app
+    // could not start). So the deployed node_modules goes over its copy, and every package is checked to be there.
+    afterPack: async context => {
+      const from = join(staging, 'node_modules')
+      const to = join(context.appOutDir, 'resources', 'app', 'node_modules')
+      cpSync(from, to, { recursive: true, force: true, filter: source => !/^\.(bin|pnpm|modules\.yaml)$/.test(source.slice(from.length + 1).split(/[\\/]/)[0] ?? '') })
+      const missing = Object.keys(topLevelPackages(from)).filter(name => !existsSync(join(to, ...name.split('/'), 'package.json')))
+      if (missing.length > 0) throw new Error(`packages missing from the packaged app: ${missing.join(', ')}`)
+      console.log(`  node_modules: all ${Object.keys(topLevelPackages(from)).length} deployed packages are in the app`)
+    },
     // Beside Electron's own LICENSE.electron.txt and LICENSES.chromium.html.
     extraFiles: [{ from: 'LICENSE', to: 'LICENSE.txt' }],
     win: { target: 'nsis', icon: join(resources, 'icon.ico'), signAndEditExecutable: true },
