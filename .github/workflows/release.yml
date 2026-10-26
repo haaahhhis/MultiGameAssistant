@@ -1,5 +1,5 @@
 # A version tag (v0.7.0, v0.7.0-beta.1) builds the Windows installers, x64 and ARM64, and publishes them
-# with SHA256SUMS.txt on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
+# on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
 # (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
 name: Release
 
@@ -121,6 +121,6 @@ jobs:
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
-          # SHA256SUMS.txt is published as a file: the app's updater checks its downloads against it.
-          gh release create "$TAG" *.exe SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag \
+          # Only the installers: GitHub shows each file's SHA-256, and the app's updater checks against that.
+          gh release create "$TAG" *.exe --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md "${flags[@]}"

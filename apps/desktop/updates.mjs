@@ -1,11 +1,12 @@
 /**
  * Updates from the project's GitHub Releases (.github/workflows/release.yml
- * publishes the installers with SHA256SUMS.txt). The installed app looks for a
- * newer release when it starts and every few hours: a stable version is offered
- * stable releases only, a pre-release (1.0.0-rc.3) newer pre-releases too. The
- * installer for this architecture is downloaded and checked against
- * SHA256SUMS.txt; 「退出并安装」 then runs it quietly over the install (it finds
- * the folder the user chose, the data stays) and it starts the new version.
+ * publishes the installers there). The installed app looks for a newer release
+ * when it starts and every few hours: a stable version is offered stable
+ * releases only, a pre-release (1.0.0-rc.3) newer pre-releases too. The
+ * installer for this architecture is downloaded and checked against the
+ * SHA-256 GitHub computed when it was uploaded (the asset's digest);
+ * 「退出并安装」 then runs it quietly over the install (it finds the folder the
+ * user chose, the data stays) and it starts the new version.
  */
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -14,7 +15,6 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 export const REPOSITORY = 'haaahhhis/MultiGameAssistant'
-const SUMS = 'SHA256SUMS.txt'
 /** The first look after starting waits a little, so it does not slow the start down. */
 const FIRST_CHECK_MS = 30_000
 const CHECK_EVERY_MS = 6 * 60 * 60_000
@@ -52,27 +52,23 @@ export function installerAsset(release, arch) {
   return release.assets?.find(a => a.name === name)
 }
 
+/** The installer's SHA-256 as GitHub gives it (`digest: "sha256:…"`), lowercase; undefined without one. */
+export function assetSha256(asset) {
+  const m = /^sha256:([0-9a-f]{64})$/i.exec(String(asset?.digest ?? ''))
+  return m === null ? undefined : m[1].toLowerCase()
+}
+
 /**
  * The newest release to offer over `current`, from GitHub's list: with an
- * installer for `arch` and SHA256SUMS.txt; pre-releases only to a pre-release.
+ * installer for `arch` that has its SHA-256; pre-releases only to a pre-release.
  */
 export function pickRelease(releases, current, arch) {
   const pre = /-/.test(current)
   return releases
     .filter(r => r.draft !== true && (pre || r.prerelease !== true))
     .map(r => ({ release: r, version: String(r.tag_name).replace(/^v/, '') }))
-    .filter(c => compareVersions(c.version, current) > 0 && installerAsset(c.release, arch) !== undefined && c.release.assets.some(a => a.name === SUMS))
+    .filter(c => compareVersions(c.version, current) > 0 && assetSha256(installerAsset(c.release, arch)) !== undefined)
     .sort((a, b) => compareVersions(b.version, a.version))[0]
-}
-
-/** `<sha256>  <file>` lines (sha256sum's format) → file name → lowercase hash. */
-export function parseSums(text) {
-  const sums = new Map()
-  for (const line of String(text).split(/\r?\n/)) {
-    const m = /^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$/.exec(line)
-    if (m !== null) sums.set(m[2], m[1].toLowerCase())
-  }
-  return sums
 }
 
 async function sha256(file) {
@@ -145,7 +141,7 @@ export function createUpdater({ current, arch, dir, onChange, onFound = () => {}
     return snapshot()
   }
 
-  /** Download the found version's installer and check it against SHA256SUMS.txt. */
+  /** Download the found version's installer and check it against its SHA-256. */
   async function download() {
     if (found === undefined) throw new Error('没有可以更新的版本')
     if (state.download?.state === 'downloading' || state.download?.state === 'ready') return snapshot()
@@ -158,10 +154,7 @@ export function createUpdater({ current, arch, dir, onChange, onFound = () => {}
       mkdirSync(dir, { recursive: true })
       // Installers of other versions are not needed any more.
       for (const name of readdirSync(dir)) if (name.endsWith('.exe') || name.endsWith('.part')) if (name !== asset.name) rmSync(join(dir, name), { force: true })
-      const sums = await fetch(release.assets.find(a => a.name === SUMS).browser_download_url, { headers: { 'user-agent': 'MultiGameAssistant' }, signal: AbortSignal.timeout(60_000) })
-      if (!sums.ok) throw new Error(`下载 ${SUMS} 失败（${sums.status}）`)
-      const expected = parseSums(await sums.text()).get(asset.name)
-      if (expected === undefined) throw new Error(`${SUMS} 里没有 ${asset.name}`)
+      const expected = assetSha256(asset)
       if (!(existsSync(file) && await sha256(file) === expected)) {
         const response = await fetch(asset.browser_download_url, { headers: { 'user-agent': 'MultiGameAssistant' } })
         if (!response.ok || response.body === null) throw new Error(`下载安装包失败（${response.status}）`)

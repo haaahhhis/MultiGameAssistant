@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { compareVersions, createUpdater, parseSums, pickRelease } from '../../apps/desktop/updates.mjs'
+import { assetSha256, compareVersions, createUpdater, pickRelease } from '../../apps/desktop/updates.mjs'
 
 test('versions order by semantic versioning, pre-releases before their release', () => {
   const sorted = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-beta', '1.0.0-rc.2', '1.0.0-rc.10', '1.0.0', '1.0.1', '1.1.0', '2.0.0']
@@ -17,15 +17,15 @@ test('versions order by semantic versioning, pre-releases before their release',
   assert.equal(compareVersions('1.2', '1.2.0'), 0)
 })
 
-const release = (version, { prerelease = /-/.test(version), arm64 = true, sums = true, draft = false } = {}) => ({
+const DIGEST = `sha256:${'0'.repeat(64)}`
+const release = (version, { prerelease = /-/.test(version), arm64 = true, digest = true, draft = false } = {}) => ({
   tag_name: `v${version}`,
   prerelease,
   draft,
   html_url: `https://example.test/releases/v${version}`,
   assets: [
-    { name: `MultiGameAssistant-Setup-${version}.exe`, size: 10, browser_download_url: `x64/${version}` },
-    ...(arm64 ? [{ name: `MultiGameAssistant-Setup-${version}-arm64.exe`, size: 10, browser_download_url: `arm64/${version}` }] : []),
-    ...(sums ? [{ name: 'SHA256SUMS.txt', size: 1, browser_download_url: `sums/${version}` }] : []),
+    { name: `MultiGameAssistant-Setup-${version}.exe`, size: 10, browser_download_url: `x64/${version}`, ...(digest ? { digest: DIGEST } : {}) },
+    ...(arm64 ? [{ name: `MultiGameAssistant-Setup-${version}-arm64.exe`, size: 10, browser_download_url: `arm64/${version}`, digest: DIGEST }] : []),
   ],
 })
 
@@ -37,20 +37,17 @@ test('a stable version is offered stable releases only; a pre-release newer pre-
   assert.equal(pickRelease(releases, '1.2.0-rc.1', 'x64'), undefined)
 })
 
-test('a release without this architecture\'s installer or SHA256SUMS.txt, or a draft, is not offered', () => {
+test('a release without this architecture\'s installer or its SHA-256, or a draft, is not offered', () => {
   assert.equal(pickRelease([release('1.1.0', { arm64: false })], '1.0.0', 'arm64'), undefined)
   assert.equal(pickRelease([release('1.1.0', { arm64: false })], '1.0.0', 'x64')?.version, '1.1.0')
-  assert.equal(pickRelease([release('1.1.0', { sums: false })], '1.0.0', 'x64'), undefined)
+  assert.equal(pickRelease([release('1.1.0', { digest: false })], '1.0.0', 'x64'), undefined)
   assert.equal(pickRelease([release('1.1.0', { draft: true })], '1.0.0', 'x64'), undefined)
 })
 
-test('SHA256SUMS.txt lines are read in sha256sum\'s format', () => {
-  const a = 'a'.repeat(64)
-  const b = 'B'.repeat(64)
-  const sums = parseSums(`${a}  one.exe\r\n${b} *two words.exe\nnot a line\n`)
-  assert.equal(sums.get('one.exe'), a)
-  assert.equal(sums.get('two words.exe'), b.toLowerCase())
-  assert.equal(sums.size, 2)
+test('the SHA-256 is read from GitHub\'s digest', () => {
+  assert.equal(assetSha256({ digest: `sha256:${'AB'.repeat(32)}` }), 'ab'.repeat(32))
+  assert.equal(assetSha256({ digest: `sha512:${'a'.repeat(128)}` }), undefined)
+  assert.equal(assetSha256({}), undefined)
 })
 
 /** GitHub's releases list and downloads, from a local server. */
@@ -63,13 +60,8 @@ async function fakeGitHub(installer, { corrupt = false, status = 200 } = {}) {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(status !== 200 ? '{}' : JSON.stringify([{
         tag_name: 'v1.1.0', prerelease: false, draft: false, html_url: `${base}/notes`, published_at: '2026-10-26T00:00:00Z',
-        assets: [
-          { name, size: installer.length, browser_download_url: `${base}/download/${name}` },
-          { name: 'SHA256SUMS.txt', size: 100, browser_download_url: `${base}/download/SHA256SUMS.txt` },
-        ],
+        assets: [{ name, size: installer.length, browser_download_url: `${base}/download/${name}`, digest: `sha256:${hash}` }],
       }]))
-    } else if (req.url === '/download/SHA256SUMS.txt') {
-      res.end(`${hash}  ${name}\n`)
     } else if (req.url === `/download/${name}`) {
       res.end(corrupt ? Buffer.concat([installer, Buffer.from('x')]) : installer)
     } else {
@@ -80,7 +72,7 @@ async function fakeGitHub(installer, { corrupt = false, status = 200 } = {}) {
   return { api: `http://127.0.0.1:${server.address().port}/releases`, close: () => server.close(), name }
 }
 
-test('a newer release is found, downloaded and checked against SHA256SUMS.txt', async () => {
+test('a newer release is found, downloaded and checked against its SHA-256', async () => {
   const installer = Buffer.alloc(200_000, 7)
   const github = await fakeGitHub(installer)
   const dir = mkdtempSync(join(tmpdir(), 'adg-update-'))
@@ -108,7 +100,7 @@ test('a newer release is found, downloaded and checked against SHA256SUMS.txt', 
   }
 })
 
-test('a download that does not match SHA256SUMS.txt is deleted, not offered for installing', async () => {
+test('a download that does not match its SHA-256 is deleted, not offered for installing', async () => {
   const github = await fakeGitHub(Buffer.alloc(1000, 1), { corrupt: true })
   const dir = mkdtempSync(join(tmpdir(), 'adg-update-'))
   try {
