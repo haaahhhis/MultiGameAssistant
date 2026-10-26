@@ -1,5 +1,6 @@
 # A version tag (v0.7.0, v0.7.0-beta.1) builds the Windows installers, x64 and ARM64, and publishes them
-# on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
+# on that tag's GitHub Release, the tag's message as the notes (a tag with "-" is a pre-release;
+# `pnpm release` makes the tag, scripts/release.mjs). Run by hand
 # (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
 name: Release
 
@@ -113,7 +114,14 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           x64=$(ls *.exe | grep -v -- '-arm64\.exe$')
           arm64=$(ls *-arm64.exe)
+          # What changed: the tag's message (pnpm release drafts it from the feat and fix commits);
+          # a lightweight tag has none. A signature at its end is not part of the notes.
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
           {
+            if [[ "$ref" == "tag "* ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/git/tags/${ref#tag }" --jq .message | sed '/^-----BEGIN .*SIGNATURE-----$/,$d'
+              echo
+            fi
             echo '## 下载'
             echo
             echo "- Windows x64（大多数电脑）：\`$x64\`"

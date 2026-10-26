@@ -34,6 +34,7 @@
     "e2e:questions": "node scripts/e2e-questions.mjs",
     "e2e:steer": "node scripts/e2e-steer.mjs",
     "package:desktop": "node scripts/package-desktop.mjs",
+    "release": "node scripts/release.mjs",
     "check:dsh": "node scripts/check-dsh.mjs"
   },
   "devDependencies": {
