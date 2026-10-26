@@ -1,5 +1,5 @@
 # A version tag (v0.7.0, v0.7.0-beta.1) builds the Windows installers, x64 and ARM64, and publishes them
-# with their SHA-256 on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
+# with SHA256SUMS.txt on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
 # (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
 name: Release
 
@@ -118,16 +118,9 @@ jobs:
             echo
             echo "- Windows x64（大多数电脑）：\`$x64\`"
             echo "- Windows ARM64（骁龙等 ARM 处理器的电脑）：\`$arm64\`"
-            echo
-            echo '安装包没有代码签名，Windows 可能提示「未知发布者」。下载后可以核对 SHA-256（也在 SHA256SUMS.txt 里）：'
-            echo
-            echo '```'
-            cat SHA256SUMS.txt
-            echo '```'
-            echo
-            echo "以 [AGPL-3.0-only](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/LICENSE) 开源；这个版本的完整源代码就是标签 \`$TAG\`（下方 Source code）。"
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          # SHA256SUMS.txt is published as a file: the app's updater checks its downloads against it.
           gh release create "$TAG" *.exe SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md --generate-notes "${flags[@]}"
+            --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md "${flags[@]}"
