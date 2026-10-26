@@ -42,7 +42,8 @@ export interface ScheduleStore {
 /** Starting MultiGameAssistant at logon (a Windows Task Scheduler task). */
 export interface AutostartPort {
   available(): boolean
-  status(): Promise<{ registered: boolean; detail?: string }>
+  /** `stale`: registered for this app at a place it no longer is (see `repairAutostart`). */
+  status(): Promise<{ registered: boolean; stale?: boolean; detail?: string }>
   register(): Promise<void>
   unregister(): Promise<void>
 }
@@ -259,6 +260,21 @@ export class Scheduler {
       for (const slot of slotsBetween(pipeline, now, now + 8 * 24 * 3_600_000)) out.push({ pipelineId: pipeline.id, pipelineName: pipeline.name, at: slot.at })
     }
     return out.sort((a, b) => a.at - b.at).slice(0, limit)
+  }
+
+  /**
+   * With autostart on, a logon task that is gone or stale (it starts this app
+   * from where it no longer is: a moved folder, reinstalled dependencies) is
+   * registered again, so logon starts the app where it is now.
+   * @returns whether it was. @throws Error when registering failed.
+   */
+  async repairAutostart(): Promise<boolean> {
+    const port = this.#deps.autostart
+    if (!this.#state.settings.autostart || !port.available()) return false
+    const status = await port.status()
+    if (status.registered && status.stale !== true) return false
+    await port.register()
+    return true
   }
 
   /** @throws Error when autostart cannot be registered here. */

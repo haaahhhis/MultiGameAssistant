@@ -10,12 +10,12 @@ import { Scheduler, slotsBetween, type AutostartPort, type SavedState } from '..
 
 const at = (y: number, mo: number, d: number, h: number, mi: number, s = 0) => new Date(y, mo - 1, d, h, mi, s).getTime()
 
-function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; appStart?: boolean; lastSuccess?: string; running?: string[] } = {}) {
+function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; appStart?: boolean; lastSuccess?: string; running?: string[]; autostart?: AutostartPort } = {}) {
   let now = at(2026, 10, 19, 4, 0)
   const started: { id: string; trigger: PipelineTrigger; at: number }[] = []
   let saved: SavedState | undefined = options.saved as SavedState | undefined
   const registered: string[] = []
-  const autostart: AutostartPort = {
+  const autostart: AutostartPort = options.autostart ?? {
     available: () => true,
     status: async () => ({ registered: registered.length > 0 }),
     register: async () => { registered.push('on') },
@@ -159,6 +159,24 @@ test('turning autostart on registers the task; upcoming lists the next times', a
   s.stop()
 })
 
+test('with autostart on, a missing or stale logon task is registered again at start', async () => {
+  const env = setup([], { saved: { settings: { autostart: true, autostartPipelines: [], autostartDelaySeconds: 0, skipIfRanToday: true } } as Partial<SavedState> })
+  const s = env.make()
+  await s.load()
+  assert.equal(await s.repairAutostart(), true, 'missing')
+  assert.deepEqual(env.registered, ['on'])
+  assert.equal(await s.repairAutostart(), false, 'registered and current')
+  let stale = true
+  const port: AutostartPort = { available: () => true, status: async () => ({ registered: true, stale }), register: async () => { stale = false }, unregister: async () => {} }
+  const other = setup([], { saved: env.saved(), autostart: port }).make()
+  await other.load()
+  assert.equal(await other.repairAutostart(), true, 'stale')
+  assert.equal(stale, false)
+  await s.configure({ autostart: false })
+  assert.equal(await s.repairAutostart(), false, 'autostart off')
+  assert.deepEqual(env.registered, [])
+})
+
 test('the Windows task: logon trigger for this user, no time limit, the desktop command with --auto-start', async () => {
   const command = ['C:\\Program Files\\ADG\\electron.exe', 'C:\\Users\\me\\MultiGameAssistant\\apps\\desktop', '--auto-start']
   const xml = taskXml(command, 'PC\\me')
@@ -187,6 +205,11 @@ test('the Windows task: logon trigger for this user, no time limit, the desktop 
   assert.deepEqual(await port.status(), { registered: true })
   const moved = windowsAutostart({ command: ['D:\\elsewhere\\electron.exe', '--auto-start'], user: 'PC\\me', exec, platform: 'win32', taskName: 'ADG-test' })
   assert.match((await moved.status()).detail ?? '', /和当前程序位置不一致/)
+  // Stale: the registered program is gone, or it is this same app through another path to Electron.
+  const elsewhere = (exists: boolean, args = command.slice(1)) => windowsAutostart({ command: ['D:\\elsewhere\\electron.exe', ...args], user: 'PC\\me', exec, platform: 'win32', taskName: 'ADG-test', exists: () => exists })
+  assert.equal((await elsewhere(false, ['--auto-start']).status()).stale, true, 'the registered program is gone')
+  assert.equal((await elsewhere(true).status()).stale, true, 'same app folder, another Electron path')
+  assert.equal((await elsewhere(true, ['--auto-start']).status()).stale, false, 'another copy of the app that is still there')
   await port.unregister()
   assert.deepEqual(await port.status(), { registered: false })
   assert.equal(windowsAutostart({ command: undefined, platform: 'win32' }).available(), false, 'no desktop app, no autostart')

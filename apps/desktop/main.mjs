@@ -65,8 +65,13 @@ const MAX_RESTARTS = 5
 const RESTART_WINDOW_MS = 10 * 60_000
 const autoStarted = process.argv.includes('--auto-start')
 const woken = process.argv.includes('--wake')
-/** How the logon task starts this app again: the packaged exe, or Electron with this app's folder. */
-const launchCommand = app.isPackaged ? [process.execPath, '--auto-start'] : [process.execPath, here, '--auto-start']
+/**
+ * How the logon task starts this app again: the packaged exe, or Electron with this app's folder.
+ * From the repository, Electron through this folder's node_modules link rather than process.execPath:
+ * that is its real folder in pnpm's store, whose name changes with the dependencies (the next
+ * `pnpm install` deletes the old one, and the task would start nothing).
+ */
+const launchCommand = app.isPackaged ? [process.execPath, '--auto-start'] : [sourceElectron(), here, '--auto-start']
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let host = null
@@ -326,6 +331,12 @@ function readInstalled() {
   } catch {
     return undefined
   }
+}
+
+/** Electron at a path that stays the same across installs (pnpm's link in apps/desktop/node_modules), when there is one. */
+function sourceElectron() {
+  const linked = join(here, 'node_modules', 'electron', 'dist', basename(process.execPath))
+  return existsSync(linked) ? linked : process.execPath
 }
 
 function logDir() {

@@ -122,6 +122,7 @@ export class AdgScheduler extends Service {
       if (spec.taskName === undefined && spec.wakeTaskName === undefined) {
         await retireLegacyTasks({ command }).then(done => { for (const line of done) log.info(line) }, error => log.warn(`old tasks not moved: ${error instanceof Error ? error.message : String(error)}`))
       }
+      await scheduler.repairAutostart().then(done => { if (done) log.info('registered the logon task again: it was missing or started the app from an old place') }, error => log.warn(`logon task not repaired: ${error instanceof Error ? error.message : String(error)}`))
       if (await lock.acquire()) { scheduler.begin(); return }
       const other = await lock.holder()
       log.warn(`another host (pid ${other?.pid ?? '?'}) runs the schedules of ${spec.dataDir}: waiting until it stops`)

@@ -9,6 +9,7 @@
  * started from a terminal or opened in a browser cannot start itself.
  */
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -30,11 +31,14 @@ export interface WindowsAutostartOptions {
   readonly user?: string
   readonly exec?: ExecBuffer
   readonly platform?: NodeJS.Platform
+  /** Whether a file is there (the registered program). */
+  readonly exists?: (file: string) => boolean
 }
 
 export function windowsAutostart(options: WindowsAutostartOptions): AutostartPort {
   const taskName = options.taskName ?? 'MultiGameAssistant'
   const exec = options.exec ?? systemExec
+  const exists = options.exists ?? existsSync
   const command = options.command
   const user = options.user ?? `${process.env['USERDOMAIN'] ?? ''}\\${process.env['USERNAME'] ?? ''}`.replace(/^\\/, '')
   const platform = options.platform ?? process.platform
@@ -48,7 +52,10 @@ export function windowsAutostart(options: WindowsAutostartOptions): AutostartPor
       const program = unescape(/<Command>([^<]*)<\/Command>/.exec(xml)?.[1] ?? '')
       const args = unescape(/<Arguments>([^<]*)<\/Arguments>/.exec(xml)?.[1] ?? '')
       if (command !== undefined && (program.toLowerCase() !== command[0]!.toLowerCase() || args !== joinArgs(command.slice(1)))) {
-        return { registered: true, detail: `已注册的启动命令和当前程序位置不一致（${program}），关掉再打开一次开机自启即可更新` }
+        // A program that is gone (folder moved or renamed, dependencies reinstalled), or this same app
+        // started another way: the task is out of date. Otherwise it starts another copy of the app.
+        const stale = !exists(program) || args === joinArgs(command.slice(1))
+        return { registered: true, stale, detail: `已注册的启动命令和当前程序位置不一致（${program}），关掉再打开一次开机自启即可更新` }
       }
       return { registered: true }
     },
