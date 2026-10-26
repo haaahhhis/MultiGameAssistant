@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 /**
- * Build the Windows installer: `dist/desktop/MultiGameAssistant-Setup-<version>.exe`.
+ * Build the Windows installer: `dist/desktop/MultiGameAssistant-Setup-<version>.exe`
+ * (x64), or `…-Setup-<version>-arm64.exe` for Windows on ARM.
  *
  * 1. `pnpm build` (skip with --skip-build).
  * 2. `pnpm deploy` the desktop app into dist/desktop/app with its production
  *    dependencies only — dsh, the bundle and our plugins — as a flat
- *    node_modules with no links, so the installer can copy it as is.
+ *    node_modules with no links, so the installer can copy it as is. Native
+ *    modules come for the target architecture (`--cpu`); each one is checked
+ *    to be built for it.
  * 3. Add the UI (apps/web/dist → web/), the startup screen's stylesheet, the
  *    icon, and installed.json (the shell reads it to know it is installed:
  *    data goes to %LOCALAPPDATA%\MultiGameAssistant, see apps/desktop/main.mjs).
  * 4. electron-builder: the Electron runtime already in node_modules (no
- *    download), no asar (dsh runs the files as a separate Node process), an
+ *    download; for another architecture, scripts/fetch-electron.mjs unpacks
+ *    that one beside the output), no asar (dsh runs the files as a separate Node process), an
  *    NSIS installer per user (no administrator), Chinese, desktop and Start
  *    menu shortcuts; uninstalling keeps the data (apps/desktop/installer.nsh).
  *    Source maps are left out (a quarter of the files; nothing reads them).
  *
- *   pnpm package:desktop [--skip-build] [--version 0.7.0] [--dir] [--out <folder>]
+ *   pnpm package:desktop [--arch x64|arm64] [--skip-build] [--version 0.7.0] [--dir] [--out <folder>]
  *
- * --dir stops after the unpacked app (<out>/win-unpacked), for a quick try.
+ * --arch: x64 (default) or arm64. There is no 32-bit build: Electron no longer
+ * makes one for Windows.
+ * --dir stops after the unpacked app (<out>/win-unpacked, win-arm64-unpacked), for a quick try.
  * --out builds somewhere else than dist/desktop. electron-builder runs a stub
  * of the installer it builds; on a machine where dsh's sandbox has labelled
  * the repository low-integrity, programs started from under it fail, so
@@ -26,7 +32,7 @@
  * a mirror (e.g. https://npmmirror.com/mirrors/electron-builder-binaries/).
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +44,8 @@ const args = process.argv.slice(2)
 const flag = name => args.includes(name)
 const option = name => { const i = args.indexOf(name); return i === -1 ? undefined : args[i + 1] }
 const out = resolve(option('--out') ?? join(root, 'dist', 'desktop'))
+const arch = option('--arch') ?? 'x64'
+if (arch !== 'x64' && arch !== 'arm64') throw new Error(`--arch ${arch}: only x64 and arm64 (Electron makes no 32-bit Windows build)`)
 const staging = join(out, 'app')
 const resources = join(out, 'build')
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
@@ -46,7 +54,7 @@ const step = text => console.log(`\n▸ ${text}`)
 
 const version = option('--version') ?? versionFromGit()
 const commit = git(['rev-parse', '--short', 'HEAD'])
-console.log(`MultiGameAssistant ${version} (${commit ?? 'no git'})`)
+console.log(`MultiGameAssistant ${version} (${commit ?? 'no git'}) for Windows ${arch}`)
 
 if (!flag('--skip-build')) {
   step('pnpm build')
@@ -54,11 +62,17 @@ if (!flag('--skip-build')) {
 }
 if (!existsSync(join(root, 'apps', 'web', 'dist', 'index.html'))) throw new Error('apps/web/dist is missing: run pnpm build first')
 
-step('production dependencies → dist/desktop/app')
+step(`production dependencies (win32-${arch}) → dist/desktop/app`)
 rmSync(out, { recursive: true, force: true, maxRetries: 5 })
 mkdirSync(out, { recursive: true })
 // --legacy: the workspace has two cordis versions in its graph; hoisted: a flat node_modules without links.
-run(pnpm, ['--filter', '@adg/desktop', 'deploy', '--prod', '--legacy', '--config.node-linker=hoisted', staging])
+// --os / --cpu: the native modules' platform packages (sharp, koffi…) for the target, not this machine.
+// For another architecture, no install scripts: they check (or build) a binary for the machine running them —
+// koffi's fails looking for this machine's — while each module loads the target's prebuilt one when the app runs.
+const crossArch = arch === process.arch ? [] : ['--ignore-scripts']
+run(pnpm, ['--filter', '@adg/desktop', 'deploy', '--prod', '--legacy', '--config.node-linker=hoisted', '--os=win32', `--cpu=${arch}`, ...crossArch, staging])
+const wrong = nativeMismatches(join(staging, 'node_modules'), arch)
+if (wrong.length > 0) throw new Error(`these packages have no ${arch} build of their native module:\n${wrong.map(w => `  ${w}`).join('\n')}`)
 
 step('UI, startup screen, icon, installed.json')
 cpSync(join(root, 'apps', 'web', 'dist'), join(staging, 'web'), { recursive: true })
@@ -71,7 +85,7 @@ for (const junk of ['installer.nsh']) rmSync(join(staging, junk), { force: true 
 // Source maps are a quarter of the files and nothing reads them: fewer files install much faster.
 const maps = removeFiles(join(staging, 'node_modules'), name => name.endsWith('.map'))
 console.log(`  removed ${maps} source maps`)
-writeFileSync(join(staging, 'installed.json'), `${JSON.stringify({ version, ...(commit === undefined ? {} : { commit }), builtAt: new Date().toISOString() }, null, 2)}\n`)
+writeFileSync(join(staging, 'installed.json'), `${JSON.stringify({ version, arch, ...(commit === undefined ? {} : { commit }), builtAt: new Date().toISOString() }, null, 2)}\n`)
 const manifest = JSON.parse(readFileSync(join(staging, 'package.json'), 'utf8'))
 delete manifest.devDependencies
 delete manifest.scripts
@@ -87,11 +101,18 @@ step(flag('--dir') ? 'electron-builder (unpacked only)' : 'electron-builder → 
 const require = createRequire(join(desktop, 'package.json'))
 const { build, Platform, Arch } = require('electron-builder')
 const electronVersion = require('electron/package.json').version
-// The runtime electron-builder copies (pnpm setup:electron puts it in place, without downloading twice).
-if (!existsSync(join(dirname(require.resolve('electron/package.json')), 'dist', 'electron.exe'))) run(process.execPath, [join(root, 'scripts', 'fetch-electron.mjs')])
+// The runtime electron-builder copies: this machine's is the one in node_modules (pnpm setup:electron puts it in
+// place, without downloading twice); another architecture's is unpacked beside the output.
+const electronDist = arch === process.arch ? join(dirname(require.resolve('electron/package.json')), 'dist') : join(out, `electron-${arch}`)
+if (arch === process.arch) {
+  if (!existsSync(join(electronDist, 'electron.exe'))) run(process.execPath, [join(root, 'scripts', 'fetch-electron.mjs')])
+} else {
+  run(process.execPath, [join(root, 'scripts', 'fetch-electron.mjs'), '--arch', arch, '--to', electronDist])
+}
+if (machineOf(join(electronDist, 'electron.exe')) !== arch) throw new Error(`${join(electronDist, 'electron.exe')} is not a ${arch} build`)
 const files = await build({
   projectDir: staging,
-  targets: Platform.WINDOWS.createTarget(flag('--dir') ? 'dir' : 'nsis', Arch.x64),
+  targets: Platform.WINDOWS.createTarget(flag('--dir') ? 'dir' : 'nsis', Arch[arch]),
   config: {
     // The id from before the rename (AutoDailyGamePlay): Windows knows the installed app by it, so a new
     // version still replaces the old one instead of installing beside it. People never see it.
@@ -100,7 +121,7 @@ const files = await build({
     executableName: 'MultiGameAssistant',
     copyright: 'MultiGameAssistant',
     directories: { output: out, buildResources: resources },
-    electronDist: join(dirname(require.resolve('electron/package.json')), 'dist'),
+    electronDist,
     electronVersion,
     asar: false,
     npmRebuild: false,
@@ -124,7 +145,7 @@ const files = await build({
       // "Windows cannot find …MultiGameAssistant.lnk": start it from the shortcut instead.
       runAfterFinish: false,
       include: join(resources, 'installer.nsh'),
-      artifactName: 'MultiGameAssistant-Setup-${version}.${ext}',
+      artifactName: `MultiGameAssistant-Setup-\${version}${arch === 'x64' ? '' : `-${arch}`}.\${ext}`,
     },
   },
 })
@@ -139,6 +160,46 @@ function removeFiles(dir, match) {
     else if (match(entry.name)) { rmSync(path, { force: true }); count++ }
   }
   return count
+}
+
+/** What a Windows binary (exe, dll, .node) is built for: 'x64', 'arm64', 'ia32', or undefined when it is not one. */
+function machineOf(file) {
+  try {
+    const head = Buffer.alloc(4096)
+    const fd = openSync(file, 'r')
+    try { readSync(fd, head, 0, head.length, 0) } finally { closeSync(fd) }
+    if (head.readUInt16LE(0) !== 0x5a4d) return undefined // MZ
+    const pe = head.readUInt32LE(0x3c)
+    return { 0x8664: 'x64', 0xaa64: 'arm64', 0x14c: 'ia32' }[head.readUInt16LE(pe + 4)]
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Packages whose Windows native modules (.node) include none for `arch`
+ * (one package may carry builds for several, like node-pty's prebuilds).
+ * @returns their names, with the architectures they do have.
+ */
+function nativeMismatches(dir, arch) {
+  const byPackage = new Map()
+  const walk = (path, pkg) => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const full = join(path, entry.name)
+      if (entry.isDirectory()) {
+        // The nearest package.json above a file names its package.
+        walk(full, existsSync(join(full, 'package.json')) ? full : pkg)
+      } else if (entry.name.endsWith('.node')) {
+        const machine = machineOf(full)
+        if (machine === undefined) continue // another system's (an ELF or Mach-O prebuild)
+        const found = byPackage.get(pkg) ?? new Set()
+        found.add(machine)
+        byPackage.set(pkg, found)
+      }
+    }
+  }
+  walk(dir, dir)
+  return [...byPackage].filter(([, found]) => !found.has(arch)).map(([pkg, found]) => `${pkg.slice(dir.length + 1)} (${[...found].join(', ')})`)
 }
 
 /** `{ name: version }` of every package directly in a node_modules folder (scoped ones too). */
