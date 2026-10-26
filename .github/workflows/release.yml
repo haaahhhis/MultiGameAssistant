@@ -124,6 +124,8 @@ jobs:
             echo '```'
             cat SHA256SUMS.txt
             echo '```'
+            echo
+            echo "以 [AGPL-3.0-only](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/LICENSE) 开源；这个版本的完整源代码就是标签 \`$TAG\`（下方 Source code）。"
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi

@@ -74,8 +74,10 @@ run(pnpm, ['--filter', '@adg/desktop', 'deploy', '--prod', '--legacy', '--config
 const wrong = nativeMismatches(join(staging, 'node_modules'), arch)
 if (wrong.length > 0) throw new Error(`these packages have no ${arch} build of their native module:\n${wrong.map(w => `  ${w}`).join('\n')}`)
 
-step('UI, startup screen, icon, installed.json')
+step('UI, startup screen, icon, license, installed.json')
 cpSync(join(root, 'apps', 'web', 'dist'), join(staging, 'web'), { recursive: true })
+// AGPL-3.0: the license goes with the program, as LICENSE.txt in the install folder (extraFiles takes it from here).
+copyFileSync(join(root, 'LICENSE'), join(staging, 'LICENSE'))
 // The splash links the page's stylesheet from the repository; installed, it sits next to it.
 copyFileSync(join(root, 'apps', 'web', 'src', 'boot.css'), join(staging, 'boot.css'))
 const splash = readFileSync(join(staging, 'splash.html'), 'utf8')
@@ -128,6 +130,8 @@ const files = await build({
     nodeGypRebuild: false,
     // node_modules is already exactly what runs (pnpm deploy --prod): take it whole.
     files: ['**/*'],
+    // Beside Electron's own LICENSE.electron.txt and LICENSES.chromium.html.
+    extraFiles: [{ from: 'LICENSE', to: 'LICENSE.txt' }],
     win: { target: 'nsis', icon: join(resources, 'icon.ico'), signAndEditExecutable: true },
     nsis: {
       oneClick: false,

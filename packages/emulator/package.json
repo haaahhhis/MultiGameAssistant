@@ -2,6 +2,7 @@
   "name": "@adg/emulator",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: Android emulators for ADB scripts — MuMu detection and instance control, a manual ADB address for others, the emulator environment check, installer download",
   "type": "module",
   "main": "lib/index.js",

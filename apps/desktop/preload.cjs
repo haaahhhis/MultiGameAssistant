@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('adgDesktop', {
   copyImage: dataUrl => ipcRenderer.invoke('adg:copy-image', dataUrl),
   openPath: path => ipcRenderer.invoke('adg:open-path', path),
   setTheme: theme => ipcRenderer.invoke('adg:theme', theme),
+  /** Which build this is: `{ fromSource, arch, version?, commit? }`. */
+  appInfo: () => ipcRenderer.invoke('adg:app-info'),
   /** Only answered while the startup screen is showing. */
   splash: action => ipcRenderer.invoke('adg:splash', action),
 })

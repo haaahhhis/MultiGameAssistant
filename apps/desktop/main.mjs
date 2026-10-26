@@ -180,6 +180,13 @@ async function start() {
     }
     return false
   })
+  // For 「设置 → 关于」: which build this is.
+  ipcMain.handle('adg:app-info', () => ({
+    fromSource: installed === undefined,
+    arch: installed?.arch ?? process.arch,
+    ...(installed?.version === undefined ? {} : { version: installed.version }),
+    ...(typeof installed?.commit === 'string' ? { commit: installed.commit } : {}),
+  }))
   ipcMain.handle('adg:copy-image', (event, dataUrl) => {
     if (win === null || event.sender !== win.webContents || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) return
     clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))

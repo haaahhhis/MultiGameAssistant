@@ -2,6 +2,7 @@
   "name": "@adg/scheduler",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: pipelines on a timetable (catch-up window, no double runs, DST-safe), chained pipelines, and starting at Windows logon",
   "type": "module",
   "main": "lib/index.js",

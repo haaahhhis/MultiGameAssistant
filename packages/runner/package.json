@@ -2,6 +2,7 @@
   "name": "@adg/runner",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: runs Script Pack tasks (config patches with restore, launch, log rules, resource locks) as agent tools and the runs gateway capability",
   "type": "module",
   "main": "lib/index.js",

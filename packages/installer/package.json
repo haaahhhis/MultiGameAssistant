@@ -2,6 +2,7 @@
   "name": "@adg/installer",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Script installation library: GitHub releases, resumable verified downloads, safe extraction, environment checks and fixes, directory probing",
   "type": "module",
   "main": "lib/index.js",

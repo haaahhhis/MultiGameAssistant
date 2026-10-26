@@ -2,6 +2,7 @@
   "name": "@adg/protocol",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Versioned UI protocol between dsh and any client: zod schemas, TS types, exported JSON Schema",
   "type": "module",
   "main": "lib/index.js",

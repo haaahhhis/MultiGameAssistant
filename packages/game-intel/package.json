@@ -2,6 +2,7 @@
   "name": "@adg/game-intel",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: game information — Game Packs, an event calendar from data sites (no model) and the agent reading the game screen, and a daily report to the chat channels",
   "type": "module",
   "main": "lib/index.js",

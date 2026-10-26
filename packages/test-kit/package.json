@@ -2,6 +2,7 @@
   "name": "@adg/test-kit",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Local simulation environment for tests: scenario-driven fake scripts, fake GitHub releases, a fake LLM, a fake Feishu Open Platform (REST and long connection), and a manual clock",
   "type": "module",
   "main": "lib/index.js",

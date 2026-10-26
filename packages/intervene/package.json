@@ -2,6 +2,7 @@
   "name": "@adg/intervene",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: screen tools for any image-capable model (emulator over ADB, Windows desktop and windows), and interventions — the agent handles what L0 recovery could not, with the script paused",
   "type": "module",
   "main": "lib/index.js",

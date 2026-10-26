@@ -2,6 +2,7 @@
   "name": "@adg/trajectory",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Framework-free trajectory projection: protocol events to turns, steps, records and a timeline",
   "type": "module",
   "main": "lib/index.js",

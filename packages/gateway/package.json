@@ -2,6 +2,7 @@
   "name": "@adg/gateway",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin exposing the dsh agent runtime over the custom UI protocol",
   "type": "module",
   "main": "lib/index.js",

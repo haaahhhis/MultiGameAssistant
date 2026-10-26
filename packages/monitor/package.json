@@ -2,6 +2,7 @@
   "name": "@adg/monitor",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: incidents while scripts run (error rules, failures, stalls, overtime), L0 recovery from the Script Pack, screenshots, and the push to chat channels",
   "type": "module",
   "main": "lib/index.js",

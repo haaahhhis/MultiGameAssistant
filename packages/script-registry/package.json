@@ -2,6 +2,7 @@
   "name": "@adg/script-registry",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: the script library (packs, GitHub installs, local imports, side-by-side versions, environment checks) as agent tools and the scripts gateway capability",
   "type": "module",
   "main": "lib/index.js",

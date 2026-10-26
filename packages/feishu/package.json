@@ -2,6 +2,7 @@
   "name": "@adg/feishu",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: the Feishu / Lark channel — long-connection messages and card buttons, notices as cards, approval cards, an allow-list with pairing, and a self-check",
   "type": "module",
   "main": "lib/index.js",

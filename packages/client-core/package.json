@@ -2,6 +2,7 @@
   "name": "@adg/client-core",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Framework-free client core: JSON-RPC connection, session sync, stores and view models",
   "type": "module",
   "main": "lib/index.js",

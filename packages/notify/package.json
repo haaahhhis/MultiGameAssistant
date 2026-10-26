@@ -2,6 +2,7 @@
   "name": "@adg/notify",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: the chat layer — channels, notices with buttons, replies that act on them, conversations with the agent, approval cards",
   "type": "module",
   "main": "lib/index.js",

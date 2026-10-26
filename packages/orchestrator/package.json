@@ -2,6 +2,7 @@
   "name": "@adg/orchestrator",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: pipelines — DAGs of script tasks, agent steps, waits, messages and confirmations — with resource-aware queueing, failure policies and a feasibility check",
   "type": "module",
   "main": "lib/index.js",

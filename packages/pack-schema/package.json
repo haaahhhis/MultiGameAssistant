@@ -2,6 +2,7 @@
   "name": "@adg/pack-schema",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Script Pack manifest (adg.script.yaml): zod schema, YAML parsing, asset matching and template expansion; no Node or framework dependencies",
   "type": "module",
   "main": "lib/index.js",

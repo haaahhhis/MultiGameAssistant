@@ -2,6 +2,7 @@
   "name": "@adg/analyzer",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Cordis host plugin: analyzes script directories, proposes Script Pack drafts for the user to accept, and registers pack SKILL.md files as agent skills",
   "type": "module",
   "main": "lib/index.js",

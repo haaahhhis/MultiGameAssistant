@@ -8,6 +8,8 @@ export interface DesktopBridge {
   openPath?(path: string): Promise<'opened' | 'revealed' | 'missing'>
   /** Follow the theme picked here, so the startup screen and window background match it. */
   setTheme?(theme: 'system' | 'light' | 'dark'): Promise<void>
+  /** Which build this is: installed (its version) or run from the repository. */
+  appInfo?(): Promise<{ fromSource: boolean; arch: string; version?: string; commit?: string }>
 }
 
 export function desktop(): DesktopBridge | undefined {

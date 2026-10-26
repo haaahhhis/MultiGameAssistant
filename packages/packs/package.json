@@ -2,6 +2,7 @@
   "name": "@adg/packs",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Built-in Script Packs (packs/<id>/adg.script.yaml + SKILL.md) and Game Packs (games/<id>/game.yaml + GAME.md); data only",
   "type": "module",
   "main": "index.js",

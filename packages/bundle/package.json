@@ -2,6 +2,7 @@
   "name": "@adg/bundle",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Profile layer: keeps the dsh agent and host services, mounts the MultiGameAssistant gateway and feature plugins",
   "type": "module",
   "files": [
