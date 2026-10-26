@@ -1,0 +1,131 @@
+# A version tag (v0.7.0, v0.7.0-beta.1) builds the Windows installers, x64 and ARM64, and publishes them
+# with their SHA-256 on that tag's GitHub Release (a tag with "-" is a pre-release). Run by hand
+# (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the installers
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every tag: without one the version would be 0.0.0-dev (scripts/package-desktop.mjs reads git describe).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The version in package.json's packageManager.
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - name: Install
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run setup:electron
+
+      - name: Build and test
+        run: |
+          pnpm run build
+          pnpm run typecheck
+          pnpm test
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          # A tag names it (v0.7.0 → 0.7.0); a run by hand takes it from git describe.
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v', '' } else { '' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: x64 installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $extra = if ($env:VERSION) { @('--version', $env:VERSION) } else { @() }
+          pnpm package:desktop --skip-build --out dist/x64 @extra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: ARM64 installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $extra = if ($env:VERSION) { @('--version', $env:VERSION) } else { @() }
+          pnpm package:desktop --skip-build --arch arm64 --out dist/arm64 @extra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: SHA-256
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/release | Out-Null
+          Copy-Item dist/x64/*.exe, dist/arm64/*.exe dist/release/
+          # The format sha256sum -c reads: "<hash>  <file>", with \n line ends (it is checked again on Linux).
+          $lines = Get-ChildItem dist/release/*.exe | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          }
+          [IO.File]::WriteAllText("$PWD/dist/release/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
+          Get-Content dist/release/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installers
+          path: dist/release/
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: installers
+          path: release
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd release
+          sha256sum -c SHA256SUMS.txt
+          x64=$(ls *.exe | grep -v -- '-arm64\.exe$')
+          arm64=$(ls *-arm64.exe)
+          {
+            echo '## 下载'
+            echo
+            echo "- Windows x64（大多数电脑）：\`$x64\`"
+            echo "- Windows ARM64（骁龙等 ARM 处理器的电脑）：\`$arm64\`"
+            echo
+            echo '安装包没有代码签名，Windows 可能提示「未知发布者」。下载后可以核对 SHA-256（也在 SHA256SUMS.txt 里）：'
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > notes.md
+          flags=()
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" *.exe SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md --generate-notes "${flags[@]}"
