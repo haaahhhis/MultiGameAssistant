@@ -28,6 +28,8 @@ export interface FakeLlmOptions {
   readonly scripted?: (body: Readonly<Record<string, unknown>>) => boolean
   /** Decide a reply from the request itself; returning undefined falls back to the script. */
   readonly respond?: (body: Readonly<Record<string, unknown>>) => FakeReply | undefined
+  /** The prompt tokens reported for a request (default 100); what dsh's token meter, and so its compaction, goes by. */
+  readonly promptTokens?: (body: Readonly<Record<string, unknown>>) => number
 }
 
 export interface FakeLlm {
@@ -75,7 +77,8 @@ export async function startFakeLlm(options: FakeLlmOptions = {}): Promise<FakeLl
       ? reply.toolCalls.map((call, index) => ({ index, id: `call_${sequence}_${index}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } }))
       : undefined
     const finish = toolCalls === undefined ? 'stop' : 'tool_calls'
-    const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }
+    const prompt = options.promptTokens?.(body) ?? 100
+    const usage = { prompt_tokens: prompt, completion_tokens: 20, total_tokens: prompt + 20 }
 
     if (body['stream'] !== true) {
       res.writeHead(200, { 'content-type': 'application/json' })

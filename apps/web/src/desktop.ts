@@ -10,6 +10,8 @@ export interface DesktopBridge {
   setTheme?(theme: 'system' | 'light' | 'dark'): Promise<void>
   /** Which build this is: installed (its version) or run from the repository. */
   appInfo?(): Promise<{ fromSource: boolean; arch: string; version?: string; commit?: string }>
+  /** Stop and start the agent service again (settings read at its start); the window shows the startup screen meanwhile. */
+  restartService?(): Promise<void>
   /** Updates from GitHub Releases; every call answers the state, null when run from the repository. */
   updates?: UpdatesBridge
 }

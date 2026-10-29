@@ -101,6 +101,8 @@ export interface BuiltinDeps {
   readonly notify: <M extends NotificationMethod>(call: MethodContext, method: M, params: NotificationParams<M>) => void
   /** Working folder for sessions created without one. */
   readonly workspaceDir?: string
+  /** 「压缩对话」 (compact.ts). Absent: session/compact fails. */
+  readonly compact?: (sessionId: string, signal: AbortSignal) => Promise<{ compacted: boolean; message: string }>
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -234,6 +236,10 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
       'session/cancel': (params: RequestParams<'session/cancel'>) => {
         sessions.cancel({ sessionId: sid(params.sessionId) })
         return { accepted: true as const }
+      },
+      'session/compact': async (params: RequestParams<'session/compact'>, call: MethodContext) => {
+        if (deps.compact === undefined) throw new Error('这里不能压缩对话')
+        return deps.compact(params.sessionId, call.signal)
       },
       'session/queue/update': async (params: RequestParams<'session/queue/update'>) => {
         await sessions.updateQueue({ sessionId: sid(params.sessionId), itemId: params.itemId as never, action: { kind: params.action } })

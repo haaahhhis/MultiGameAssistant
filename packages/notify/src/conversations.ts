@@ -66,6 +66,10 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
         return false
       }
     },
+    async lastActive(sessionId) {
+      const { items } = await sessions.list({}, AbortSignal.timeout(10_000))
+      return items.find(s => s.sessionId === sessionId)?.updatedAt
+    },
     async recent(sessionId) {
       const opened = await snapshot(sessions, sessionId, RECENT_MESSAGES).catch(() => undefined)
       if (opened === undefined) return undefined

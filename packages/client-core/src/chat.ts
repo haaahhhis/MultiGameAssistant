@@ -108,7 +108,7 @@ export function buildChat(
             files: event.content.filter(p => p.type === 'file').length,
           })
         } else if (event.replacesHistory === true) {
-          items.push({ kind: 'context', id: `c:${event.seq}`, title: 'Earlier conversation was summarized', summary: '', text })
+          items.push({ kind: 'context', id: `c:${event.seq}`, title: '较早的对话已压缩成摘要（agent 只记得摘要里的内容）', summary: '', text })
         } else if (event.origin.summary !== undefined) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: event.origin.kind, summary: event.origin.summary, text })
         }

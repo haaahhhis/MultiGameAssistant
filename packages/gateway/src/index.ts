@@ -28,10 +28,13 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { areaOf, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { areaOf, COMPACTION_CAPABILITY, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
+import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
+import { compactSession } from './compact.ts'
+import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
@@ -89,6 +92,14 @@ interface PresetService {
   set(session: PresetSession, name: string): void
 }
 
+/** The slice of dsh's `agent/pre-step` waterfall (dsh-agent runtime-types) the stale-context reminder uses. */
+interface PreStep {
+  readonly agent: { readonly session: { readonly id: string; readonly seq: number; eventAt(seq: number): TimedEvent | undefined } }
+  readonly step: number
+  readonly signal: AbortSignal
+}
+type PreStepDecision = { kind: 'reject' } | { kind: 'enter'; messages: unknown[]; startsRequestSeries?: true }
+
 export class AdgGateway extends Service {
   static inject = ['sessionController']
 
@@ -128,6 +139,7 @@ export class AdgGateway extends Service {
       ...(config.workspaceDir === undefined ? {} : { workspaceDir: config.workspaceDir }),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
+      compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),
       capabilities: () => this.registry.list().filter(c => !c.id.startsWith('$')),
       notify: (call, method, params) => call.peer.notify(method, params),
     })) {
@@ -385,6 +397,22 @@ export class AdgGateway extends Service {
       scoped.effect(() => scoped.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }), 'adg-gateway identity section')
     })
 
+    // Reminders that earlier parts may be out of date (time-context.ts): appended to the history, so the prompt cache keeps working.
+    // Prepended, so the note goes in whatever other listeners do with the step's messages.
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    ctx.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
+      const decision = await next()
+      if (decision.kind !== 'enter' || payload.signal.aborted) return decision
+      try {
+        const session = payload.agent.session
+        const note = timeNote(timeFacts(session.seq, seq => session.eventAt(seq)), Date.now(), payload.step, timeZone)
+        return note === undefined ? decision : { ...decision, messages: [...decision.messages, timeMessage(note)] }
+      } catch (error) {
+        log.warn(`stale-context reminder for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
+        return decision
+      }
+    }) as never, true)
+
     // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.
     if (config.dataDir !== undefined) {
       const persona = new PersonaStore(config.dataDir)
@@ -407,6 +435,19 @@ export class AdgGateway extends Service {
           text: () => personaPrompt(persona.current),
         }), 'adg-gateway persona section')
       })
+    }
+
+    // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
+    if (config.dataDir !== undefined) {
+      const compaction = new CompactionStore(config.dataDir)
+      ctx.effect(() => this.registry.register({
+        id: COMPACTION_CAPABILITY,
+        version: 1,
+        methods: {
+          'compaction/get': () => compaction.state(),
+          'compaction/set': params => compaction.set((params as RequestParams<'compaction/set'>).settings),
+        },
+      }), 'adg-gateway capability compaction')
     }
 
     // Skills the agent saved (the UI offers it after a new multi-step job): kept in this app's own data and

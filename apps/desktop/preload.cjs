@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('adgDesktop', {
   setTheme: theme => ipcRenderer.invoke('adg:theme', theme),
   /** Which build this is: `{ fromSource, arch, version?, commit? }`. */
   appInfo: () => ipcRenderer.invoke('adg:app-info'),
+  /** Restart the agent service; the window shows the startup screen until it is back. */
+  restartService: () => ipcRenderer.invoke('adg:restart-service'),
   /** Only answered while the startup screen is showing. */
   splash: action => ipcRenderer.invoke('adg:splash', action),
   /** Updates from GitHub Releases (apps/desktop/updates.mjs); each call answers the state, null when run from the repository. */

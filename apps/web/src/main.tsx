@@ -11,7 +11,7 @@ import { pipelinesPlugin, schedulePlugin } from './plugins/pipelines/index.ts'
 import { gamesPlugin } from './plugins/games/index.ts'
 import { skillsPlugin } from './plugins/skills/index.ts'
 import { emulatorsPlugin, scriptsPlugin } from './plugins/scripts/index.ts'
-import { aboutPlugin, permissionsPlugin, personaPlugin, settingsPlugin } from './plugins/settings/index.ts'
+import { aboutPlugin, compactionPlugin, permissionsPlugin, personaPlugin, settingsPlugin } from './plugins/settings/index.ts'
 import { statusPlugin } from './plugins/status/index.ts'
 import { trajectoryPlugin } from './plugins/trajectory/index.ts'
 import { applyTheme } from './theme.ts'
@@ -30,6 +30,7 @@ registerPlugin(trajectoryPlugin)
 registerPlugin(settingsPlugin)
 registerPlugin(permissionsPlugin)
 registerPlugin(personaPlugin)
+registerPlugin(compactionPlugin)
 registerPlugin(aboutPlugin)
 registerPlugin(statusPlugin)
 registerPlugin(scriptsPlugin)

@@ -23,7 +23,7 @@ function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: st
   return { channel, sent, asked, owners, resolved }
 }
 
-function setup(conversations?: Conversations) {
+function setup(conversations?: Conversations, now?: () => number) {
   const answered: string[] = []
   const sessions = new Map<string, string>()
   const notify = new Notify({
@@ -32,6 +32,7 @@ function setup(conversations?: Conversations) {
     sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.set(key, id) }, keyOf: id => [...sessions].find(([, s]) => s === id)?.[0] },
     changed: () => {},
     log: { info() {}, warn() {} },
+    ...(now === undefined ? {} : { now }),
   })
   return { notify, answered, sessions }
 }
@@ -206,6 +207,33 @@ test('a conversation that cannot go on (its folder was renamed) is replaced, wit
   assert.match(replyMarkdown(reply), /\*\*执行了 1 个步骤\*\*\n- ✓ game_events：明日方舟\n\n\*\*两个\*\*活动还没做$/)
   await notify.inbound({ actor, text: '好' })
   assert.equal(prompts[1], '好', 'the new one is used as it is')
+})
+
+test('a conversation idle for half a day starts over quietly, its last messages carried over with their date', async () => {
+  const prompts: string[] = []
+  const HOUR = 3_600_000
+  const now = Date.parse('2026-10-29T08:00:00+08:00')
+  const lastActive = new Map([['old-session', now - 30 * HOUR], ['fresh-session', now - HOUR]])
+  let created = 0
+  const conversations: Conversations = {
+    create: async () => `new-${++created}`,
+    exists: async () => true,
+    recent: async id => (id === 'old-session' ? '用户：等会儿再说\nagent：要我等你确认吗？' : undefined),
+    lastActive: async id => lastActive.get(id),
+    ask: async (_id, text) => { prompts.push(text); return '好的' },
+  }
+  const { notify, sessions } = setup(conversations, () => now)
+  await sessions.set('fake:ou_1', 'old-session')
+  const reply = await notify.inbound({ actor, text: '今天的日常跑了吗' })
+  assert.equal(sessions.get('fake:ou_1'), 'new-1')
+  // The date in this machine's time zone: the 27th or 28th.
+  assert.match(prompts[0]!, /^（上次聊天是 2026\/10\/2[78] .*可能早就过时了[\s\S]*agent：要我等你确认吗？[\s\S]*今天的日常跑了吗$/)
+  assert.doesNotMatch(replyMarkdown(reply), /新对话/, 'no note for the person')
+
+  await sessions.set('fake:ou_1', 'fresh-session')
+  await notify.inbound({ actor, text: '好' })
+  assert.equal(sessions.get('fake:ou_1'), 'fresh-session', 'an hour is not idle')
+  assert.equal(prompts[1], '好')
 })
 
 test('replies render the same content as markdown or plain text; long step lists keep their ends', () => {

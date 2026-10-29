@@ -108,6 +108,8 @@ export interface Conversations {
   exists(sessionId: string): Promise<boolean>
   /** The session's last few messages as text, to carry into a new one. */
   recent?(sessionId: string): Promise<string | undefined>
+  /** When the session last changed (epoch ms). Absent: conversations never start over for being idle. */
+  lastActive?(sessionId: string): Promise<number | undefined>
 }
 
 export interface NotifyOptions {
@@ -130,6 +132,13 @@ interface Sent {
 
 const KEEP_NOTICES = 200
 const REPLY_WINDOW_MS = 24 * 3_600_000
+/**
+ * A chat conversation untouched this long starts over: a new session, with the
+ * last messages carried over as dated background. A long conversation is
+ * compacted into a summary without dates, and the model then takes old open
+ * questions for current ones.
+ */
+const IDLE_RESTART_MS = 12 * 3_600_000
 
 export class Notify {
   readonly #options: NotifyOptions
@@ -248,12 +257,17 @@ export class Notify {
     let sessionId = this.#options.sessions.get(key)
     let prompt = text
     let note: string | undefined
-    if (sessionId === undefined || !(await conversations.exists(sessionId))) {
-      // The old one can no longer work (deleted, or its folder renamed): start again with its last messages.
+    const lastActive = sessionId === undefined ? undefined : await conversations.lastActive?.(sessionId).catch(() => undefined)
+    const idle = lastActive !== undefined && this.#now() - lastActive >= IDLE_RESTART_MS
+    if (sessionId === undefined || idle || !(await conversations.exists(sessionId))) {
+      // Idle for long, or it can no longer work (deleted, or its folder renamed): start again with its last messages.
       const earlier = sessionId === undefined ? undefined : await conversations.recent?.(sessionId).catch(() => undefined)
       sessionId = await conversations.create(`${message_.actor.channel === 'feishu' ? '飞书' : message_.actor.channel}：${message_.actor.name ?? message_.actor.userId}`)
       await this.#options.sessions.set(key, sessionId)
-      if (earlier !== undefined) {
+      if (earlier !== undefined && idle) {
+        // Quietly: for the person it is the same conversation.
+        prompt = `（上次聊天是 ${new Date(lastActive).toLocaleString('zh-CN', { hour12: false })}，已经开了新对话。下面是那时最后几条消息，仅供参考，里面的事可能早就过时了，需要时先查现在的情况：）\n${earlier}\n\n（现在的消息：）\n${text}`
+      } else if (earlier !== undefined) {
         prompt = `（之前的对话没法继续了，换成了这个新对话。下面是之前最后几条消息，供参考：）\n${earlier}\n\n（现在的消息：）\n${text}`
         note = '（之前的对话没法继续了：被删掉了，或者它所在的文件夹改了名、挪了地方。已经换成新对话，带上了最近几条消息。）'
       }

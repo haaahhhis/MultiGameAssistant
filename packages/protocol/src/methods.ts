@@ -20,6 +20,7 @@ import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
 import { SkillsRequests } from './skills.ts'
 import { SkillHubNotifications, SkillHubRequests } from './skillhub.ts'
 import { PersonaRequests } from './persona.ts'
+import { CompactionRequests } from './compaction.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -268,6 +269,15 @@ export const Requests = {
     params: z.object({ sessionId: z.string() }),
     result: Accepted,
   },
+  /**
+   * Replace the older part of the conversation with a summary (dsh's `/compact`).
+   * The agent loses the details in it: ask the person first. Only while the agent is idle.
+   */
+  'session/compact': {
+    capability: 'chat',
+    params: z.object({ sessionId: z.string() }),
+    result: z.object({ compacted: z.boolean(), message: z.string() }),
+  },
   /** A waiting message: put it into the running turn now (`steer`), or take it back (`remove`). */
   'session/queue/update': {
     capability: 'chat',
@@ -411,6 +421,7 @@ export const Requests = {
   ...SkillsRequests,
   ...SkillHubRequests,
   ...PersonaRequests,
+  ...CompactionRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [

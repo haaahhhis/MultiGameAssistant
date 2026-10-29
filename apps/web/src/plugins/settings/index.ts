@@ -1,6 +1,7 @@
 import type { UiPlugin } from '../../plugins.ts'
 import { AboutPage } from './AboutPage.tsx'
 import { ApiKeysPage } from './ApiKeysPage.tsx'
+import { CompactionPage } from './CompactionPage.tsx'
 import { PermissionsPage } from './PermissionsPage.tsx'
 import { PersonaPage } from './PersonaPage.tsx'
 
@@ -23,6 +24,13 @@ export const personaPlugin: UiPlugin = {
   title: '回复风格',
   requires: ['persona'],
   settingsPages: [{ id: 'persona', title: '回复风格', order: 2, component: PersonaPage }],
+}
+
+export const compactionPlugin: UiPlugin = {
+  id: 'compaction',
+  title: '对话压缩',
+  requires: ['compaction'],
+  settingsPages: [{ id: 'compaction', title: '对话压缩', order: 3, component: CompactionPage }],
 }
 
 /** Version, license and source: always there, nothing on the host needed. */

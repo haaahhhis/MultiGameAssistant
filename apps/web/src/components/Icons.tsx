@@ -36,6 +36,7 @@ const paths = {
   send: 'M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4 17-6.5Z',
   power: 'M12 3.5v8M7.2 6.5a7 7 0 1 0 9.6 0',
   download: 'M12 4v11M7 10.5l5 5 5-5M5 20h14',
+  compress: 'M12 3v6M9 6l3 3 3-3M12 21v-6M9 18l3-3 3 3M4 12h16',
 } as const
 
 export type IconName = keyof typeof paths

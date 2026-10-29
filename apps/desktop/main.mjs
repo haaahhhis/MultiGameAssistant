@@ -93,6 +93,8 @@ let everReady = false
 let failure = ''
 const restarts = []
 const logTail = []
+/** Agent services stopHost ended: their exit is not a crash to recover from. */
+const stoppedOnPurpose = new WeakSet()
 /** @type {ReturnType<typeof createUpdater> | null} Only for an installed build: from the repository, git pull. */
 let updater = null
 
@@ -185,6 +187,15 @@ async function start() {
       app.quit()
     }
     return false
+  })
+  // 「重启 agent 服务」 (设置 → 对话压缩): dsh reads some settings only when it starts.
+  ipcMain.handle('adg:restart-service', async event => {
+    if (win === null || event.sender !== win.webContents || onSplash) return
+    startupLog('[desktop] restarting the agent service (asked from the window)')
+    restarts.length = 0
+    stopHost()
+    await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: slowHint() })
+    void launchHost()
   })
   // For 「设置 → 关于」: which build this is.
   ipcMain.handle('adg:app-info', () => ({
@@ -508,7 +519,8 @@ async function launchHost() {
     logFile.end(`=== dsh exited (code ${code}, signal ${signal}) ===\n`)
     if (host === child) host = null
     try { if (JSON.parse(readFileSync(HOST_FILE(), 'utf8')).pid === child.pid) rmSync(HOST_FILE(), { force: true }) } catch { /* not there */ }
-    if (quitting || reported) return
+    // Stopped on purpose (restarting, quitting): whoever stopped it starts the next one.
+    if (quitting || reported || stoppedOnPurpose.has(child)) return
     // Unattended: bring dsh back by itself a few times before asking.
     const now = Date.now()
     while (restarts.length > 0 && now - restarts[0] > RESTART_WINDOW_MS) restarts.shift()
@@ -627,6 +639,7 @@ function stopHost() {
   const child = host
   host = null
   if (child === null || child.exitCode !== null || child.pid === undefined) return
+  stoppedOnPurpose.add(child)
   if (process.platform === 'win32') {
     // Kill the whole tree: dsh spawns shells and language servers.
     execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {})

@@ -117,6 +117,11 @@ export class SessionHandle {
     await this.#transport.call('session/cancel', { sessionId: this.id })
   }
 
+  /** Replace the older conversation with a summary; the agent loses its details. Only while idle. */
+  async compact(): Promise<{ compacted: boolean; message: string }> {
+    return this.#transport.call('session/compact', { sessionId: this.id })
+  }
+
   async loadOlder(): Promise<void> {
     const s = this.state.get()
     const first = s.events[0]
