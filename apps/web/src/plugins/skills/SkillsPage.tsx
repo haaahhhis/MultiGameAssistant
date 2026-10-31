@@ -124,6 +124,11 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
                   <span className="badge">{groupOf(current)}</span>
                   {current.modelInvocable && <span className="badge ok" title="agent 遇到相关的事会自己读这个技能">agent 自动使用</span>}
                   {current.userInvocable && <span className="badge" title="在对话里输入 /名字 来用它">可以用 /{current.name} 调用</span>}
+                  {current.owner !== undefined && (
+                    <span className="badge warn" title="技能隔离：只有在处理这些脚本或游戏的对话里，agent 才看得到、用得了这个技能">
+                      只给 {[...(current.owner.scripts ?? []), ...(current.owner.games ?? [])].join('、')} 用
+                    </span>
+                  )}
                 </div>
                 <p className="skill-desc">{current.description}</p>
                 {current.whenToUse !== undefined && <p className="muted small">什么时候用：{current.whenToUse}</p>}

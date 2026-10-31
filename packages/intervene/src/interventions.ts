@@ -214,7 +214,8 @@ export class Interventions {
     const limitMs = this.#deps.timeoutMs ?? 15 * 60_000
     const timeout = AbortSignal.timeout(limitMs)
     try {
-      const sessionId = await conversations.create(`干预：${incident.title}`, { defaultModel: true })
+      // It sees that script's skills (and its game's), not other scripts'.
+      const sessionId = await conversations.create(`干预：${incident.title}`, { defaultModel: true, focus: { scripts: [incident.scriptId] } })
       item.sessionId = sessionId
       this.#bySession.set(sessionId, item.id)
       this.#changed(item)

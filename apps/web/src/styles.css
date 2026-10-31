@@ -1464,3 +1464,11 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .ui-switch-error { display: inline-flex; min-width: 0; align-items: center; gap: 4px; color: var(--error); }
 .ui-switch-error > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ui-switch-error .icon-button { width: 20px; height: 20px; }
+
+/* The pack card's 「脚本更新了，检查脚本包？」 and the documents a draft was written from (PackCards.tsx). */
+.pack-review { flex-wrap: wrap; }
+.pack-review > span:first-of-type { flex: 1 1 260px; }
+.pack-review .key-actions { margin-left: auto; }
+.draft-docs { margin: 4px 0 8px; }
+.draft-docs ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); }
+.draft-docs code { font-size: 11px; }

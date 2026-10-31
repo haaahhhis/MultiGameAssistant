@@ -7,7 +7,11 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { errorText } from './data.ts'
 import { Select } from '../../components/Select.tsx'
 
-/** Pack drafts the agent proposed for this script, to accept or reject; plus asking the agent to analyze it. */
+/**
+ * Pack drafts the agent proposed for this script, to accept or reject (with the
+ * documents each was written from); asking the agent to analyze it; and, after
+ * the script updated past its pack's version, asking whether to check the pack.
+ */
 export function PackCard({ client, script, openSession }: { client: AdgClient; script: ScriptInfo; openSession: (id: string) => void }) {
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
@@ -33,12 +37,17 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
   }
 
   const analyze = () => act(async () => {
-    const { sessionId } = await client.connection.call('sessions/create', {})
+    const { sessionId } = await client.connection.call('sessions/create', { focus: { scripts: [script.id] } })
     await client.connection.call('session/prompt', {
       sessionId, requestId: `analyze-${Date.now()}`, mode: 'queue',
-      text: `请按 script-analysis 技能分析脚本库里的「${script.name}」（id: ${script.id}），${script.packId === undefined ? '为它生成' : '检查并改进它的'}脚本包，用 pack_propose 提交草稿。`,
+      text: `请按 script-analysis 技能分析脚本库里的「${script.name}」（id: ${script.id}），${script.packId === undefined ? '为它生成' : '检查并改进它的'}脚本包：先找到并读完这个项目自己的文档（目录里的说明、仓库 README、Wiki、文档站），再结合代码核对补全，实在没有文档才直接看代码。用 pack_propose 提交草稿，docs 里写明依据的文档。`,
     })
     openSession(sessionId)
+  })
+
+  const review = (decision: 'check' | 'keep') => act(async () => {
+    const { sessionId } = await client.connection.call('scripts/packReview', { id: script.id, decision })
+    if (sessionId !== undefined) openSession(sessionId)
   })
 
   const draft = drafts[0]
@@ -51,6 +60,16 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
         </div>
         <button className="small-button" disabled={busy || status.state !== 'open'} onClick={() => void analyze()}><Icon name="sparkles" />{script.packId === undefined ? '让 agent 分析' : '让 agent 改进'}</button>
       </div>
+      {script.packReview !== undefined && draft === undefined && (
+        <div className="notice left pack-review">
+          <Icon name="refresh" />
+          <span>{script.name} 从 {script.packReview.from ?? '旧版本'} 更新到了 {script.packReview.to}，脚本包是按旧版本写的。要让 agent 先读这次的更新日志，再检查脚本包要不要改吗？</span>
+          <span className="key-actions">
+            <button className="small-button" disabled={busy} onClick={() => void review('keep')}>不用改</button>
+            <button className="primary small-button" disabled={busy || status.state !== 'open'} onClick={() => void review('check')}>让 agent 检查</button>
+          </span>
+        </div>
+      )}
       {draft !== undefined && (
         <div className="draft">
           <div className="draft-head">
@@ -58,6 +77,13 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
             <span className="muted small">{relativeTime(draft.proposedAt, now)}提交 · 任务：{draft.tasks.map(t => t.title).join('、') || '无'}</span>
           </div>
           <p className="draft-summary">{draft.summary}</p>
+          {draft.docs !== undefined && draft.docs.length > 0 && (
+            <details className="draft-docs">
+              <summary className="muted small">依据的文档（{draft.docs.length}）</summary>
+              <ul>{draft.docs.map(d => <li key={d.source}><code>{d.source}</code>：{d.used}</li>)}</ul>
+            </details>
+          )}
+          {draft.noDocs !== undefined && <p className="muted small">没有找到项目文档，按代码分析：{draft.noDocs}</p>}
           {draft.current !== undefined && <p className="muted small">接受后会替换当前的{draft.current.builtin ? '内置' : ''}脚本包（之前的版本会保留在历史里）。</p>}
           <div className="segmented draft-tabs">
             <label className={open === 'manifest' ? 'active' : ''}><input type="checkbox" checked={open === 'manifest'} onChange={() => setOpen(o => o === 'manifest' ? null : 'manifest')} />adg.script.yaml</label>

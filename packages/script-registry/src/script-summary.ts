@@ -23,8 +23,8 @@ export function scriptSummaries(ctx: Context, library: ScriptLibrary, log: { war
       if (running.has(id) && previous?.state === 'running' && previous.sessionId !== undefined) return previous.sessionId
       const material = await library.summaryMaterial(id)
       const name = library.get(id).name
-      const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
-      const sessionId = await conversations.create(`脚本介绍：${name}`)
+      const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (sessionId, focus) => ctx.get('adgGateway')?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve())
+      const sessionId = await conversations.create(`脚本介绍：${name}`, { focus: { scripts: [id] } })
       running.add(id)
       await library.setSummary(id, { state: 'running', at: Date.now(), sessionId, ...(previous?.text === undefined || previous.state !== 'done' ? {} : { text: previous.text }) })
       const prompt = [

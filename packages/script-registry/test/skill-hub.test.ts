@@ -29,6 +29,7 @@ function setup(taken: Record<string, string> = {}) {
     } as Record<string, string>,
     downloads: [] as string[],
     registered: new Map<string, string>(),
+    owners: new Map<string, unknown>(),
     clock: 1_000_000,
   }
   const hub = new SkillHub({
@@ -40,7 +41,7 @@ function setup(taken: Record<string, string> = {}) {
     },
     extract: async (archive, dest) => { await extract(archive, dest) },
     taken: async () => new Map(Object.entries(taken)),
-    register: (name, entry) => { if (entry === undefined) state.registered.delete(name); else state.registered.set(name, entry.content) },
+    register: (name, entry) => { if (entry === undefined) state.registered.delete(name); else { state.registered.set(name, entry.content); state.owners.set(name, entry.owner) } },
     now: () => state.clock,
     log: { info() {}, warn() {} },
   })
@@ -74,6 +75,7 @@ test('downloaded, changed by the user, updated: unchanged is replaced, changed i
   const file = join(dir, 'skills', 'game-arknights', 'SKILL.md')
   assert.match(readFileSync(file, 'utf8'), /活动页在右上角/)
   assert.match(state.registered.get('game-arknights') ?? '', /活动页在右上角/, 'registered with the agents')
+  assert.deepEqual(state.owners.get('game-arknights'), { games: ['arknights'] }, 'only for the sessions working on its game (skill isolation)')
 
   // A new version, nothing changed here: replaced.
   state.files['games/arknights/SKILL.md'] = skill('game-arknights', '明日方舟的活动和进度', '# 明日方舟\n活动页在右上角。\n商店在左下。\n')

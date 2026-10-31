@@ -73,6 +73,31 @@ test('analysis reports layout, configs, logs and a family suggestion', async () 
   assert.equal(guiReport.readme?.file, 'README.md')
 })
 
+test('the project’s own documents are found before any code: docs folders, manuals, changelogs, and the doc links in its README', async () => {
+  const dir = tmp('docs')
+  mkdirSync(join(dir, 'docs', 'zh-cn'), { recursive: true })
+  mkdirSync(join(dir, 'debug'))
+  mkdirSync(join(dir, 'src'))
+  writeFileSync(join(dir, 'Tool.exe'), 'MZ')
+  writeFileSync(join(dir, 'README.md'), '# Tool\n文档：https://tool.example.com/docs/start ，Wiki：https://github.com/Owner/Tool/wiki 。![badge](https://img.shields.io/badge/x) 下载：https://github.com/Owner/Tool/releases/download/v1/Tool.zip')
+  writeFileSync(join(dir, 'CHANGELOG.md'), '# 1.0')
+  writeFileSync(join(dir, '使用说明.txt'), '先打开设置')
+  writeFileSync(join(dir, 'docs', 'zh-cn', 'tasks.md'), '# 任务')
+  writeFileSync(join(dir, 'docs', 'logo.png'), 'png')
+  writeFileSync(join(dir, 'debug', 'gui.log'), 'line')
+  writeFileSync(join(dir, 'src', 'main.py'), 'print()')
+  const report = await analyzeDir(dir)
+  assert.deepEqual(report.docs.map(d => d.file).sort(), ['CHANGELOG.md', 'README.md', 'docs/zh-cn/tasks.md', '使用说明.txt'])
+  assert.equal(report.docs[0]?.file, 'CHANGELOG.md', 'changelogs first, then READMEs')
+  assert.deepEqual(report.docLinks, ['https://tool.example.com/docs/start', 'https://github.com/Owner/Tool/wiki'], 'no badges, no downloads')
+
+  const bare = tmp('bare')
+  writeFileSync(join(bare, 'Tool.exe'), 'MZ')
+  const none = await analyzeDir(bare)
+  assert.deepEqual(none.docs, [])
+  assert.ok(none.notes.some(n => n.includes('找不到再看代码')))
+})
+
 const MANIFEST = 'id: tool\nname: Tool\nlaunch:\n  exe: Tool.exe\ntasks:\n  - id: run\n    title: 运行\n'
 const SKILL = '---\nname: tool\ndescription: 运行 Tool。\n---\n\n# Tool\n'
 

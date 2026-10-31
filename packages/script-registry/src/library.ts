@@ -52,6 +52,8 @@ export interface LibraryOptions {
   readonly onJob: (job: ScriptJob) => void
   /** An install or update the agent did not ask for downloaded a setup program: start the agent on it. @returns its conversation. */
   readonly onSetup?: (setup: PendingSetup) => Promise<string>
+  /** A script with a pack of the user's (or the agent's) moved to a new version: ask whether to check the pack. Once per version. */
+  readonly onPackReview?: (script: ScriptInfo) => void
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
@@ -1077,6 +1079,10 @@ export class ScriptLibrary {
     const pack = this.#packs.get(packId)
     if (pack === undefined) throw new Error(`没有脚本包 ${packId}`)
     script.packId = packId
+    // Written (or accepted) for the version it is at now.
+    const version = versionOf(script)
+    if (version === undefined) delete script.packVersion
+    else script.packVersion = version
     if (pack.manifest.family !== undefined) script.family = pack.manifest.family
     await this.#save()
     this.#options.onChanged(scriptId)
@@ -1254,6 +1260,86 @@ export class ScriptLibrary {
       ...(script.update === undefined ? {} : { update: script.update }),
       ...(job === undefined ? {} : { jobId: job.id }),
       ...(script.summary === undefined ? {} : { summary: script.summary }),
+      ...(this.#packReview(script) === undefined ? {} : { packReview: this.#packReview(script)! }),
+    }
+  }
+
+  /**
+   * The script is at a newer version than its pack was written for. Built-in
+   * packs are kept up to date with the app, so only the user's (and the
+   * agent's) packs are asked about.
+   */
+  #packReview(script: StoredScript): { from?: string; to: string } | undefined {
+    const pack = script.packId === undefined ? undefined : this.#packs.get(script.packId)
+    const now = versionOf(script)
+    if (pack === undefined || pack.builtin || now === undefined || script.packVersion === undefined) return undefined
+    // Newer only: going back to an older version (a rollback) is not something the pack has to catch up with.
+    if (compareVersions(now, script.packVersion) <= 0) return undefined
+    return { from: script.packVersion, to: now }
+  }
+
+  /** The pack was checked against the version the script is at now (and needs no change, or was just changed). */
+  async packReviewed(id: string): Promise<ScriptInfo> {
+    const script = this.#script(id)
+    const version = versionOf(script)
+    if (version !== undefined) script.packVersion = version
+    await this.#save()
+    this.#options.onChanged(id)
+    return this.#info(script)
+  }
+
+  /**
+   * What changed between two versions, for checking a pack after an update:
+   * the release notes on GitHub (each release after `from` up to `to`),
+   * Mirror酱's note for its latest version, and the changelog files in the
+   * script's folder. `from` defaults to the version its pack was written for,
+   * `to` to the version it is at.
+   */
+  async changelog(id: string, options: { from?: string | undefined; to?: string | undefined; signal?: AbortSignal | undefined } = {}): Promise<Changelog> {
+    const script = this.#script(id)
+    const from = options.from ?? script.packVersion
+    const to = options.to ?? versionOf(script)
+    const channels = this.#channels(script)
+    const problems: string[] = []
+    const releases: Changelog['releases'] = []
+    let budget = CHANGELOG_BUDGET
+    if (channels.github !== undefined) {
+      try {
+        for (const release of await this.#github().releases(channels.github.repo, 40, options.signal)) {
+          const version = versionOfTag(release.tag)
+          if (from !== undefined && compareVersions(version, from) <= 0) continue
+          if (to !== undefined && compareVersions(version, to) > 0) continue
+          const notes = (release.notes ?? '（这个版本没有写发布说明）').slice(0, Math.max(0, Math.min(RELEASE_NOTES_MAX, budget)))
+          budget -= notes.length
+          releases.push({ version, name: release.name, notes, ...(release.publishedAt === undefined ? {} : { publishedAt: release.publishedAt }), ...(release.url === undefined ? {} : { url: release.url }) })
+          if (budget <= 0 || releases.length >= 20) break
+        }
+      } catch (error) {
+        problems.push(`GitHub（${channels.github.repo}）：${errorText(error)}`)
+      }
+    }
+    let mirror: Changelog['mirror']
+    if (channels.mirror !== undefined && releases.length === 0) {
+      try {
+        const latest = await mirrorLatest(channels.mirror.resource, this.#mirrorOptions(undefined, options.signal ?? undefined))
+        if (latest.releaseNote !== undefined) mirror = { version: versionOfTag(latest.version), notes: latest.releaseNote.slice(0, RELEASE_NOTES_MAX) }
+      } catch (error) {
+        problems.push(`Mirror酱（${channels.mirror.resource.rid}）：${errorText(error)}`)
+      }
+    }
+    const dir = this.#info(script).dir
+    const files: Changelog['files'] = []
+    for (const rel of dir === undefined ? [] : await changelogFiles(dir)) {
+      const text = await readFile(join(dir!, rel), 'utf8').catch(() => undefined)
+      if (text !== undefined) files.push({ file: rel, text: text.slice(0, CHANGELOG_FILE_MAX), truncated: text.length > CHANGELOG_FILE_MAX })
+    }
+    return {
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+      releases, files,
+      ...(mirror === undefined ? {} : { mirror }),
+      ...(problems.length === 0 ? {} : { problems }),
+      ...(releases.length === 0 && mirror === undefined && files.length === 0 ? { note: '没有找到更新日志：去项目主页或仓库的 Releases、CHANGELOG 看看，还是没有再直接比较新旧版本的文件' } : {}),
     }
   }
 
@@ -1314,9 +1400,54 @@ export class ScriptLibrary {
     return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
   }
 
-  #save(): Promise<void> {
-    return this.#store.save(this.#state)
+  /** Write the state; a script that moved past its pack's version is asked about once (onPackReview). */
+  async #save(): Promise<void> {
+    const ask: StoredScript[] = []
+    for (const script of this.#state.scripts) {
+      // A pack from before versions were tracked counts as written for the version the script is at.
+      const version = versionOf(script)
+      if (script.packId !== undefined && script.packVersion === undefined && version !== undefined) script.packVersion = version
+      const review = this.#packReview(script)
+      if (review !== undefined && script.packReviewAsked !== review.to) {
+        script.packReviewAsked = review.to
+        ask.push(script)
+      }
+    }
+    await this.#store.save(this.#state)
+    for (const script of ask) this.#options.onPackReview?.(this.#info(script))
   }
+}
+
+/** What `changelog` found. */
+export interface Changelog {
+  readonly from?: string
+  readonly to?: string
+  readonly releases: { version: string; name: string; notes: string; publishedAt?: string; url?: string }[]
+  readonly mirror?: { version: string; notes: string }
+  readonly files: { file: string; text: string; truncated: boolean }[]
+  readonly problems?: string[]
+  readonly note?: string
+}
+
+const CHANGELOG_BUDGET = 30_000
+const RELEASE_NOTES_MAX = 4000
+const CHANGELOG_FILE_MAX = 8000
+const CHANGELOG_NAME = /^(changelog|changes|history|release[-_ ]?notes?|更新日志|更新说明|版本说明)[^/]*.(md|txt|markdown)$/i
+
+/** Changelog files at the top of a script's folder and in its docs folder. */
+async function changelogFiles(dir: string): Promise<string[]> {
+  const out: string[] = []
+  for (const sub of ['', 'docs', 'doc', '文档']) {
+    for (const name of await readdir(join(dir, sub)).catch(() => [] as string[])) {
+      if (CHANGELOG_NAME.test(name)) out.push(sub === '' ? name : `${sub}/${name}`)
+    }
+  }
+  return out.slice(0, 4)
+}
+
+/** The version a script is at: what a local import's folder says, else the installed version in use. */
+function versionOf(script: StoredScript): string | undefined {
+  return script.source.kind === 'local' ? script.localVersion?.version : script.current
 }
 
 /** A script's update channels, resolved (see `#channels`). */

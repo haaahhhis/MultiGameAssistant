@@ -15,6 +15,10 @@ export const PackDraft = z.object({
   sessionId: z.string().optional(),
   /** What the agent says it changed or found. */
   summary: z.string(),
+  /** The project's documents it was written from (paths in the script's folder, or URLs), and what each told. */
+  docs: z.array(z.object({ source: z.string(), used: z.string() })).optional(),
+  /** Why it was written from the code alone: no documentation was found. */
+  noDocs: z.string().optional(),
   manifest: z.string(),
   skill: z.string(),
   /** The pack in use now, for comparison. */

@@ -20,6 +20,7 @@ import { InstallSettings } from '@adg/protocol'
 import { z } from 'zod'
 import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
+import { packReview } from './pack-review.ts'
 import { startSkillHub } from './skill-hub-plugin.ts'
 import { scriptSummaries } from './script-summary.ts'
 import { setupHandOff } from './setup-handoff.ts'
@@ -67,6 +68,7 @@ export class AdgScripts extends Service {
     const ref = (value: string) => value as CredentialRef
     const handOff = setupHandOff(ctx, () => this.library, { info: message => log.info(message), warn: message => log.warn(message) })
 
+    const review = packReview(ctx, () => this.library, { warn: message => log.warn(message) })
     this.library = new ScriptLibrary({
       toolsDir: spec.toolsDir,
       dataDir: spec.dataDir,
@@ -77,6 +79,7 @@ export class AdgScripts extends Service {
       onChanged: id => ctx.get('adgGateway')?.broadcast('scripts/changed', id === undefined ? {} : { id }),
       onJob: job => ctx.get('adgGateway')?.broadcast('scripts/job', job),
       onSetup: handOff,
+      onPackReview: script => review.ask(script),
       log: { info: message => log.info(message), warn: message => log.warn(message) },
     })
     const library = this.library
@@ -102,11 +105,18 @@ export class AdgScripts extends Service {
 
     const summaries = scriptSummaries(ctx, library, { warn: message => log.warn(message) })
     ctx.inject(['adgGateway'], scoped => {
+      // Skill isolation: a script in a session's focus also stands for its pack and the game it plays.
+      scoped.adgGateway.skillScope.resolveScripts(id => {
+        let pack
+        try { pack = library.packOf(id) } catch { pack = library.pack(id) }
+        const game = pack?.manifest.game?.name
+        return { aliases: pack === undefined ? [] : [pack.manifest.id], games: game === undefined ? [] : [game] }
+      })
       const capability = scriptsCapability(library, summaries, async id => {
         const setup = library.pendingSetup(id)
         if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
         return handOff(setup)
-      })
+      }, review)
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

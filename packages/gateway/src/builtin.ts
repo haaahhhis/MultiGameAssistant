@@ -118,6 +118,8 @@ export interface BuiltinDeps {
   readonly notify: <M extends NotificationMethod>(call: MethodContext, method: M, params: NotificationParams<M>) => void
   /** Working folder for sessions created without one. */
   readonly workspaceDir?: string
+  /** The scripts and games a new conversation is about (skill-scope.ts). */
+  readonly focus?: (sessionId: string, focus: { scripts?: string[] | undefined; games?: string[] | undefined }) => Promise<unknown>
   /** 「压缩对话」 (compact.ts). Absent: session/compact fails. */
   readonly compact?: (sessionId: string, signal: AbortSignal) => Promise<{ compacted: boolean; message: string }>
 }
@@ -151,6 +153,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
         const cwd = params.cwd ?? deps.workspaceDir
         const created = await sessions.create(cwd === undefined ? {} : { cwd })
+        if (params.focus !== undefined) await deps.focus?.(created.sessionId, params.focus)
         return { sessionId: created.sessionId }
       },
       'sessions/rename': async (params: RequestParams<'sessions/rename'>) => {

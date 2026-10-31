@@ -24,8 +24,11 @@ type Snapshot = Extract<SessionFollowFrame, { type: 'snapshot' }>
 /** Messages carried over when a conversation has to start again. */
 const RECENT_MESSAGES = 10
 
-/** @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir). */
-export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined): Conversations {
+/**
+ * @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir).
+ * @param focus - set what a new conversation is about (the gateway's skill scope), for `create`'s `focus`.
+ */
+export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>): Conversations {
   const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<Reply> => {
     const controller = new AbortController()
     const abort = () => controller.abort(signal.reason)
@@ -55,6 +58,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       const created = await sessions.create(dir === undefined ? {} : { cwd: dir })
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
+      if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)
       return created.sessionId
     },
     async exists(sessionId) {

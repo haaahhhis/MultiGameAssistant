@@ -239,7 +239,10 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         if (result.upToDate) return { ok: true, upToDate: true, version: library.get(a.id).current }
         const job = await followJob(library, result, exec.signal)
         const setup = setupOf(library, a.id)
-        return setup === undefined ? describeJob(job) : { ...describeJob(job), setup }
+        // Its own pack was written for the old version: say so, so the agent asks (changelog first, script-analysis).
+        const review = library.get(a.id).packReview
+        const packReview = review === undefined ? {} : { packReview: `这个脚本的脚本包是按 ${review.from ?? '旧版本'} 写的，现在是 ${review.to}：问用户要不要检查脚本包。用户同意就按技能 script-analysis 的「脚本更新后检查脚本包」做，先用 script_changelog 读更新日志。` }
+        return setup === undefined ? { ...describeJob(job), ...packReview } : { ...describeJob(job), setup, ...packReview }
       },
     }),
     tool({

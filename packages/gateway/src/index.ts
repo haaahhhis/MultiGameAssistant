@@ -31,6 +31,8 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { areaOf, COMPACTION_CAPABILITY, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
+import { invokedSkills, SkillScope, type SkillOwner } from './skill-scope.ts'
+import { skillFocusTool } from './skill-focus-tool.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
 import { compactSession } from './compact.ts'
@@ -49,6 +51,7 @@ export type { QuestionAnswerer } from './questions.ts'
 export { convertRecord, convertRecords } from './convert.ts'
 export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
+export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -85,6 +88,12 @@ export interface Config {
   readonly skillsDir?: string
 }
 
+/** What a skill belongs to, as the 技能 page shows it. */
+function ownerInfo(owner: SkillOwner | undefined): Pick<SkillInfo, 'owner'> {
+  if (owner === undefined) return {}
+  return { owner: { ...(owner.scripts === undefined ? {} : { scripts: [...owner.scripts] }), ...(owner.games === undefined ? {} : { games: [...owner.games] }) } }
+}
+
 /** The slice of dsh's session and permission-preset services the mode needs. */
 interface PresetSession { readonly id: string }
 interface PresetService {
@@ -117,12 +126,18 @@ export class AdgGateway extends Service {
   private readonly approvedCalls = new Set<string>()
   /** Resolved after the listener binds. */
   url: string | undefined
+  /**
+   * Skill isolation (skill-scope.ts): plugins register script and game skills
+   * here with what they belong to, and set what a session they start is about.
+   */
+  readonly skillScope: SkillScope
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'adgGateway')
     const log = ctx.logger('adg-gateway')
     this.workspace = config.workspaceDir
     const token = config.token ?? randomBytes(18).toString('base64url')
+    this.skillScope = new SkillScope(config.dataDir, log)
 
     this.approvals = new ApprovalBroker({
       broadcastRequested: request => this.broadcast('approval/requested', request),
@@ -142,6 +157,7 @@ export class AdgGateway extends Service {
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),
+      focus: (sessionId, focus) => this.skillScope.setFocus(sessionId, { scripts: focus.scripts ?? [], games: focus.games ?? [] }),
       capabilities: () => this.registry.list().filter(c => !c.id.startsWith('$')),
       notify: (call, method, params) => call.peer.notify(method, params),
     })) {
@@ -377,6 +393,7 @@ export class AdgGateway extends Service {
         ...(s.path === undefined ? {} : { path: s.path }),
         modelInvocable: s.invocation.modelInvocable,
         userInvocable: s.invocation.userInvocable,
+        ...ownerInfo(this.skillScope.ownerOf(s.name)),
       })
       const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
       scoped.effect(() => this.registry.register({
@@ -393,6 +410,28 @@ export class AdgGateway extends Service {
         },
       }), 'adg-gateway capability skills')
     })
+
+    // Skill isolation: the app's script and game skills, each shown only to the sessions working on its script or game.
+    ctx.inject(['skills'], scoped => {
+      scoped.skills.registerProvider(control => this.skillScope.provider(control.invalidate) as never)
+    })
+    ctx.inject(['tools'], scoped => {
+      const focus = skillFocusTool(this.skillScope)
+      scoped.tools.register(focus)
+    })
+    // A skill the user invokes by name (`/maa-daily`) brings what it belongs to into the session's focus,
+    // before dsh's skill tool looks it up for that session. Prepended: this runs before the listeners after it.
+    ctx.on('agent/pre-step' as never, (async (payload: PreStep & { messages?: readonly unknown[] }, next: () => Promise<PreStepDecision>) => {
+      try {
+        const owners = invokedSkills(payload.messages ?? []).map(name => this.skillScope.ownerOf(name)).filter(o => o !== undefined)
+        if (owners.length > 0) {
+          await this.skillScope.setFocus(payload.agent.session.id, { scripts: owners.flatMap(o => o.scripts ?? []), games: owners.flatMap(o => o.games ?? []) }, 'add')
+        }
+      } catch (error) {
+        log.warn(`skill focus for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      return next()
+    }) as never, true)
 
     // What the app is called, so the agent names it right (just before the reply style, which may give it a name of its own).
     ctx.inject(['systemPrompt'], scoped => {
@@ -463,7 +502,7 @@ export class AdgGateway extends Service {
             if (name !== undefined && skill.name !== name) continue
             registered.get(skill.name)?.()
             try {
-              registered.set(skill.name, scoped.skills.register({ name: skill.name, description: skill.description, content: skill.content, source: 'custom', path: skill.path, resourceBase: { kind: 'directory', path: dirname(skill.path) } }))
+              registered.set(skill.name, this.skillScope.register({ name: skill.name, description: skill.description, content: skill.content, source: 'custom', path: skill.path, resourceBase: { kind: 'directory', path: dirname(skill.path) }, ...(skill.owner === undefined ? {} : { owner: skill.owner }) }))
             } catch (error) {
               log.warn(`saved skill ${skill.name} not registered: ${error instanceof Error ? error.message : String(error)}`)
             }

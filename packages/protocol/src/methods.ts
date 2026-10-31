@@ -224,7 +224,8 @@ export const Requests = {
   },
   'sessions/create': {
     capability: 'sessions',
-    params: z.object({ cwd: z.string().optional() }),
+    /** `focus`: the scripts and games the conversation is about; it sees their skills (技能隔离). */
+    params: z.object({ cwd: z.string().optional(), focus: z.object({ scripts: z.array(z.string()).optional(), games: z.array(z.string()).optional() }).optional() }),
     result: z.object({ sessionId: z.string() }),
   },
   'sessions/rename': {

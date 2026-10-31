@@ -87,7 +87,7 @@ export interface SkillHubOptions {
   /** Names of skills that are not this hub's (core, packs, the user's): not to be taken. */
   readonly taken: () => Promise<ReadonlyMap<string, string>>
   /** Register (or re-register) a downloaded skill with the agents; undefined unregisters. */
-  readonly register: (name: string, skill: { description: string; content: string; path: string; dir: string } | undefined) => void
+  readonly register: (name: string, skill: { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } } | undefined) => void
   readonly now?: () => number
   readonly log: { info(message: string): void; warn(message: string): void }
 }
@@ -315,7 +315,14 @@ export class SkillHub {
       this.#options.register(name, undefined)
       return
     }
-    this.#options.register(name, { description: front.description, content: front.body, path, dir: join(this.skillsDir, name) })
+    // What it belongs to, from the repository's index as last read (skill isolation: only those scripts' and games' sessions see it).
+    const record = this.#state.installed[name]
+    const listed = record === undefined ? undefined : Object.values(this.#state.read).flatMap(r => r.skills).find(s => s.name === name && s.repo === record.repo) as { games?: unknown; scripts?: unknown } | undefined
+    const ids = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
+    const games = ids(listed?.games)
+    const scripts = ids(listed?.scripts)
+    const owner = games.length + scripts.length === 0 ? undefined : { ...(games.length === 0 ? {} : { games }), ...(scripts.length === 0 ? {} : { scripts }) }
+    this.#options.register(name, { description: front.description, content: front.body, path, dir: join(this.skillsDir, name), ...(owner === undefined ? {} : { owner }) })
   }
 
   async #item(skill: HubSkill, taken: ReadonlyMap<string, string>): Promise<HubItem> {

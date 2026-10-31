@@ -54,13 +54,15 @@ export class AdgAnalyzer extends Service {
     const changed = (packId?: string) => ctx.get('adgGateway')?.broadcast('packs/changed', packId === undefined ? {} : { packId })
 
     // ── skills ──
-    ctx.inject(['skills'], scoped => {
+    // The guide is for every session; a pack's SKILL.md only for the sessions working on its scripts (the gateway's skill scope).
+    ctx.inject(['skills', 'adgGateway'], scoped => {
       let disposers: Array<() => void> = []
       const register = async () => {
         await scripts.ready
         for (const dispose of disposers.splice(0)) dispose()
         const guide = parseSkill(await readFile(GUIDE, 'utf8'), 'script-analysis')
         if (guide !== undefined) disposers.push(scoped.skills.register({ ...guide, source: 'bundled' }))
+        const { scripts: inLibrary } = library.list()
         for (const pack of library.packs()) {
           if (pack.skill === undefined) continue
           const skill = parseSkill(pack.skill, pack.manifest.id)
@@ -68,8 +70,12 @@ export class AdgAnalyzer extends Service {
             log.warn(`pack ${pack.manifest.id}: SKILL.md has no usable frontmatter; not registered as a skill`)
             continue
           }
+          const owner = {
+            scripts: [pack.manifest.id, ...inLibrary.filter(s => s.packId === pack.manifest.id).map(s => s.id)],
+            ...(pack.manifest.game?.name === undefined ? {} : { games: [pack.manifest.game.name] }),
+          }
           try {
-            disposers.push(scoped.skills.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir } }))
+            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir }, owner }))
           } catch (error) {
             log.warn(`pack ${pack.manifest.id}: skill not registered: ${error instanceof Error ? error.message : String(error)}`)
           }
@@ -134,6 +140,8 @@ export class AdgAnalyzer extends Service {
       const currentManifest = current === undefined ? undefined : await readFile(join(current.dir, MANIFEST_FILE), 'utf8').catch(() => undefined)
       return {
         packId: draft.packId, scriptId: draft.scriptId, proposedAt: draft.proposedAt, summary: draft.summary,
+        ...(draft.docs === undefined ? {} : { docs: draft.docs.map(d => ({ ...d })) }),
+        ...(draft.noDocs === undefined ? {} : { noDocs: draft.noDocs }),
         manifest: draft.manifest, skill: draft.skill, tasks,
         ...(draft.sessionId === undefined ? {} : { sessionId: draft.sessionId }),
         ...(current === undefined || currentManifest === undefined ? {} : { current: { manifest: currentManifest, builtin: current.builtin, ...(current.skill === undefined ? {} : { skill: current.skill }) } }),
@@ -172,7 +180,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
   return [
     tool({
       name: 'script_analyze',
-      description: '分析脚本库里的一个脚本目录（只读）：目录结构、可执行文件、README、MaaFramework 的 interface.json 任务和控制器、配置文件和顶层键、日志文件样本、建议的适配家族，以及它现有的脚本包。写脚本包前先调用；按 script-analysis 技能的步骤进行。',
+      description: '分析脚本库里的一个脚本目录（只读）：目录结构、项目自带的文档（docs：README、使用说明、更新日志、帮助）和文档网址（docLinks：仓库、Wiki、文档站）、MaaFramework 的 interface.json、配置文件、日志样本、建议的适配家族，以及它现有的脚本包。写脚本包前先调用；按 script-analysis 技能的步骤进行：先读文档，再看代码。',
       properties: { id },
       required: ['id'],
       kind: 'read',
@@ -184,7 +192,16 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
         const report = await analyzeDir(script.dir)
         const pack = deps.library.packOf(a.id)
         const manifest = pack === undefined ? undefined : await readFile(join(pack.dir, MANIFEST_FILE), 'utf8').catch(() => undefined)
-        return { script: { id: script.id, name: script.name, source: script.source, family: script.family }, ...report, currentPack: pack === undefined ? null : { id: pack.manifest.id, builtin: pack.builtin, manifest, skill: pack.skill } }
+        // Where its documentation is online: the repository it updates from (README, Wiki), and the pages its README links.
+        const repo = script.channels.github?.repo
+        const online = [...(repo === undefined ? [] : [`https://github.com/${repo}`, `https://github.com/${repo}/wiki`]), ...report.docLinks]
+        return {
+          script: { id: script.id, name: script.name, source: script.source, family: script.family },
+          ...report,
+          docLinks: [...new Set(online)],
+          readFirst: '先读文档（docs 里的文件、readme、docLinks 里的网页），再结合代码和配置核对、补全；只有完全找不到文档时才直接从代码分析。',
+          currentPack: pack === undefined ? null : { id: pack.manifest.id, builtin: pack.builtin, manifest, skill: pack.skill },
+        }
       },
     }),
     tool({
@@ -213,6 +230,38 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
       },
     }),
     tool({
+      name: 'script_changelog',
+      description: '读一个脚本这几个版本的更新日志：GitHub 上每个发布版的说明、Mirror酱 最新版的说明，以及脚本目录里的 CHANGELOG / 更新日志文件。脚本更新后检查脚本包时先调用；from 默认是脚本包写成时的版本，to 默认是现在的版本。',
+      properties: {
+        id,
+        from: { type: 'string', description: '从哪个版本之后（不含）；省略为脚本包写成时的版本。' },
+        to: { type: 'string', description: '到哪个版本（含）；省略为现在的版本。' },
+      },
+      required: ['id'],
+      kind: 'read',
+      title: a => `读更新日志：${String(a['id'] ?? '')}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({ id: ScriptId, from: z.string().max(60).nullish(), to: z.string().max(60).nullish() }), args)
+        return deps.library.changelog(a.id, { from: a.from ?? undefined, to: a.to ?? undefined, signal: exec.signal })
+      },
+    }),
+    tool({
+      name: 'pack_reviewed',
+      description: '脚本更新后检查过脚本包、确认不用改时调用：记下脚本包已经对照现在的版本检查过，不再提醒。要改就用 pack_propose 提交，用户接受后会自动记下，不用调用这个。',
+      properties: {
+        id,
+        reason: { type: 'string', description: '为什么不用改（会告诉用户），例如「这几个版本只修了识别问题，任务、配置和日志都没变」。' },
+      },
+      required: ['id', 'reason'],
+      kind: 'edit',
+      title: a => `脚本包不用改：${String(a['id'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: ScriptId, reason: z.string().min(4).max(1000) }), args)
+        const info = await deps.library.packReviewed(a.id)
+        return { ok: true, version: info.localVersion?.version ?? info.current, reason: a.reason }
+      },
+    }),
+    tool({
       name: 'pack_propose',
       description: '提交脚本包草稿（adg.script.yaml 和 SKILL.md）。会按 schema 校验，失败时返回具体字段以便修正后重新提交；通过后保存为草稿，用户在「脚本」页确认后生效。不会修改脚本本身。',
       properties: {
@@ -221,15 +270,32 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
         manifest: { type: 'string', description: 'adg.script.yaml 的完整内容。' },
         skill: { type: 'string', description: 'SKILL.md 的完整内容（以 name / description frontmatter 开头）。' },
         summary: { type: 'string', description: '给用户看的一段话：做了什么、依据是什么、哪些还待确认。' },
+        docs: {
+          type: 'array',
+          description: '写这份脚本包读过的项目文档（先读文档再看代码）：每项写出处（脚本目录里的相对路径或网址）和从中得到了什么。',
+          items: { type: 'object', properties: { source: { type: 'string' }, used: { type: 'string' } }, required: ['source', 'used'], additionalProperties: false },
+        },
+        no_docs: { type: 'string', description: '确实找不到任何文档（目录、仓库、Wiki、文档站都没有）才填：说明找过哪些地方。填了它 docs 可以为空。' },
       },
-      required: ['pack_id', 'script_id', 'manifest', 'skill', 'summary'],
+      required: ['pack_id', 'script_id', 'manifest', 'skill', 'summary', 'docs'],
       kind: 'edit',
       title: a => `提交脚本包草稿：${String(a['pack_id'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ pack_id: ScriptId, script_id: ScriptId, manifest: z.string().min(10).max(200_000), skill: z.string().min(10).max(200_000), summary: z.string().min(1).max(4000) }), args)
+        const a = parse(z.object({
+          pack_id: ScriptId, script_id: ScriptId, manifest: z.string().min(10).max(200_000), skill: z.string().min(10).max(200_000), summary: z.string().min(1).max(4000),
+          docs: z.array(z.object({ source: z.string().min(1).max(500), used: z.string().min(1).max(1000) })).max(40).nullish(),
+          no_docs: z.string().max(1000).nullish(),
+        }), args)
+        const docs = a.docs ?? []
+        // Documentation first (script-analysis): a draft says what it was read from, or where documentation was looked for.
+        if (docs.length === 0 && (a.no_docs ?? '').trim().length < 10) {
+          throw new Error('先读项目的文档再写脚本包：docs 里写出读过的文档（出处和得到了什么）；确实找不到文档时用 no_docs 说明找过哪些地方（脚本目录、仓库 README、Wiki、文档站）')
+        }
         deps.library.get(a.script_id) // must exist
         const result = await deps.drafts.propose({
           packId: a.pack_id, scriptId: a.script_id, proposedAt: Date.now(), summary: a.summary,
+          ...(docs.length === 0 ? {} : { docs }),
+          ...(docs.length > 0 || a.no_docs == null ? {} : { noDocs: a.no_docs.trim() }),
           ...(exec.agent === undefined ? {} : { sessionId: exec.agent.session.id }),
         }, a.manifest, a.skill)
         deps.changed(a.pack_id)

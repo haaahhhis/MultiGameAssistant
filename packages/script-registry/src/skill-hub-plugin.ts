@@ -27,7 +27,7 @@ function takenLabel(source: string): string {
 const MERGE_TIMEOUT_MS = 10 * 60_000
 
 export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promise<void>, approve: Approve, log: { info(m: string): void; warn(m: string): void }): SkillHub {
-  const entries = new Map<string, { description: string; content: string; path: string; dir: string }>()
+  const entries = new Map<string, { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } }>()
   const disposers = new Map<string, () => void>()
   let skills: Context['skills'] | undefined
   const changed = () => ctx.get('adgGateway')?.broadcast('skillhub/changed', {})
@@ -36,9 +36,10 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     disposers.get(name)?.()
     disposers.delete(name)
     const entry = entries.get(name)
-    if (entry === undefined || skills === undefined) return
+    const scope = ctx.get('adgGateway')?.skillScope
+    if (entry === undefined || scope === undefined) return
     try {
-      disposers.set(name, skills.register({ name, description: entry.description, content: entry.content, source: 'hub', path: entry.path, resourceBase: { kind: 'directory', path: entry.dir } }))
+      disposers.set(name, scope.register({ name, description: entry.description, content: entry.content, source: 'hub', path: entry.path, resourceBase: { kind: 'directory', path: entry.dir }, ...(entry.owner === undefined ? {} : { owner: entry.owner }) }))
     } catch (error) {
       log.warn(`skill hub: ${name} not registered: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -62,7 +63,8 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
   })
   const started = ready.then(() => hub.start())
 
-  ctx.inject(['skills'], scoped => {
+  // Registered through the gateway's skill scope (skill isolation); the registry itself only answers what is taken.
+  ctx.inject(['skills', 'adgGateway'], scoped => {
     skills = scoped.skills
     for (const name of entries.keys()) apply(name)
     scoped.effect(() => () => {

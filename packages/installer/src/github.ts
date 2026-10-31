@@ -32,7 +32,7 @@ export class GitHubError extends Error {
 interface ApiAsset { name: string; size: number; browser_download_url: string; digest?: string | null }
 interface ApiRelease {
   tag_name: string; name: string | null; prerelease: boolean; draft: boolean
-  published_at: string | null; html_url?: string; assets: ApiAsset[]
+  published_at: string | null; html_url?: string; assets: ApiAsset[]; body?: string | null
 }
 
 export class GitHubClient {
@@ -120,6 +120,7 @@ function toRelease(r: ApiRelease): ReleaseInfo {
     prerelease: r.prerelease,
     ...(r.published_at === null ? {} : { publishedAt: r.published_at }),
     ...(r.html_url === undefined ? {} : { url: r.html_url }),
+    ...(typeof r.body === 'string' && r.body.trim() !== '' ? { notes: r.body } : {}),
     assets: r.assets.map(a => ({
       name: a.name,
       size: a.size,

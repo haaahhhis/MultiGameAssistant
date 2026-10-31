@@ -138,6 +138,12 @@ export const ScriptInfo = z.object({
   jobId: z.string().optional(),
   addedAt: z.number(),
   summary: ScriptSummary.optional(),
+  /**
+   * The script was updated after its (non-built-in) pack was written or last
+   * checked: `from` the version the pack is for, `to` the version now. The
+   * user is asked whether the agent should read the changelog and check it.
+   */
+  packReview: z.object({ from: z.string().optional(), to: z.string() }).optional(),
 })
 export type ScriptInfo = z.infer<typeof ScriptInfo>
 
@@ -208,6 +214,8 @@ export const ReleaseInfo = z.object({
   assets: z.array(ReleaseAsset),
   /** Asset MultiGameAssistant would pick for this machine. */
   suggestedAsset: z.string().optional(),
+  /** Its release notes (markdown), as published. */
+  notes: z.string().optional(),
 })
 export type ReleaseInfo = z.infer<typeof ReleaseInfo>
 
@@ -386,6 +394,16 @@ export const ScriptRequests = {
       from: z.enum(['mirrorchyan', 'builtin']),
       fetchedAt: z.number().optional(),
     }),
+  },
+  /**
+   * The script updated past its pack's version (ScriptInfo.packReview): `check`
+   * starts the agent on it (changelog first; a changed pack comes back as a
+   * draft), `keep` leaves the pack as it is.
+   */
+  'scripts/packReview': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: z.string(), decision: z.enum(['check', 'keep']) }),
+    result: z.object({ sessionId: z.string().optional() }),
   },
   /** Undo a local import's last in-place update: the old files back, the new ones removed. */
   'scripts/restore': {

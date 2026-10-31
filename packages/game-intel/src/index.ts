@@ -114,7 +114,8 @@ export class AdgGameIntel extends Service {
     ctx.effect(() => () => this.daily.stop(), 'adg-game-intel daily report')
 
     // ── skills: the general guide, reading the web, and each game's GAME.md ──
-    ctx.inject(['skills'], scoped => {
+    // The guides for every session; a game's GAME.md only for the sessions working on that game (the gateway's skill scope).
+    ctx.inject(['skills', 'adgGateway'], scoped => {
       const disposers: Array<() => void> = []
       void (async () => {
         await this.ready
@@ -127,7 +128,8 @@ export class AdgGameIntel extends Service {
           const skill = parseFrontmatter(game.guide)
           if (skill === undefined) { log.warn(`game ${game.manifest.id}: GAME.md has no usable frontmatter`); continue }
           try {
-            disposers.push(scoped.skills.register({ ...skill, source: game.builtin ? 'bundled' : 'custom', path: join(game.dir, GAME_GUIDE_FILE), resourceBase: { kind: 'directory', path: game.dir } }))
+            const owner = { games: [game.manifest.id, game.manifest.name] }
+            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: game.builtin ? 'bundled' : 'custom', path: join(game.dir, GAME_GUIDE_FILE), resourceBase: { kind: 'directory', path: game.dir }, owner }))
           } catch (error) {
             log.warn(`game ${game.manifest.id}: skill not registered: ${error instanceof Error ? error.message : String(error)}`)
           }
@@ -557,8 +559,8 @@ export class AdgGameIntel extends Service {
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir())
-    const sessionId = await conversations.create(`游戏资讯：${manifest.name}`)
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
+    const sessionId = await conversations.create(`游戏资讯：${manifest.name}`, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const where = chosen.length === 0
@@ -582,8 +584,8 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir())
-    const sessionId = await conversations.create(`游戏信息：${manifest.name}`)
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
+    const sessionId = await conversations.create(`游戏信息：${manifest.name}`, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(manifest.id, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const screen = manifest.screen === undefined ? '游戏画面' : manifest.screen.target === 'emulator' ? '模拟器画面（screen_capture target=emulator）' : `游戏窗口（screen_capture target=window${manifest.screen.window === undefined ? '，先 window_list 找窗口' : `，window=${manifest.screen.window}`}）`

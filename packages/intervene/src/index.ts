@@ -78,7 +78,7 @@ export class AdgIntervene extends Service {
       suspend: (pid, resume) => helper.call<number>('suspend', { pid, resume }),
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
+        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
       },
       visionProblem: async () => {
         const selection = ctx.get('agentDefaultModel')?.currentSelection()

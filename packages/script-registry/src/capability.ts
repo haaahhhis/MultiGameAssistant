@@ -5,9 +5,13 @@
 import type { CapabilityRegistration } from '@adg/gateway'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
+import type { PackReview } from './pack-review.ts'
 
-/** @param setupAgent - hand a waiting setup program to the agent; @returns its conversation. */
-export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>): CapabilityRegistration {
+/**
+ * @param setupAgent - hand a waiting setup program to the agent; @returns its conversation.
+ * @param review - answer whether to check a pack after its script updated (pack-review.ts).
+ */
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview): CapabilityRegistration {
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -46,6 +50,10 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
       'scripts/mirrorchyan/match': (params, call) => library.matchMirror((params as RequestParams<'scripts/mirrorchyan/match'>).id, call.signal),
       'scripts/mirrorchyan/lookup': (params, call) => library.lookupMirror((params as RequestParams<'scripts/mirrorchyan/lookup'>).rid, call.signal),
       'scripts/restore': params => library.restore((params as RequestParams<'scripts/restore'>).id),
+      'scripts/packReview': params => {
+        const p = params as RequestParams<'scripts/packReview'>
+        return review.decide(p.id, p.decision)
+      },
       'scripts/setup/open': async params => {
         const { dir } = await library.runSetup((params as RequestParams<'scripts/setup/open'>).id, { quiet: false })
         return { dir }

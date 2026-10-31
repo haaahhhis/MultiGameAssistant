@@ -15,6 +15,10 @@ export interface DraftMeta {
   readonly proposedAt: number
   readonly sessionId?: string
   readonly summary: string
+  /** The documents it was written from, and what each told (script-analysis: documentation first). */
+  readonly docs?: readonly { source: string; used: string }[]
+  /** Why there were none. */
+  readonly noDocs?: string
 }
 
 export interface StoredDraft extends DraftMeta {
