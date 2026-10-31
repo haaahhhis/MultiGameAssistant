@@ -8,9 +8,36 @@ import { execFile } from 'node:child_process'
 import {
   existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const BUNDLE = '@adg/bundle'
+
+/**
+ * DSH_HOME when running from the repository (`pnpm dev:host`, the desktop app
+ * from source, the e2e scripts): the conversations, scripts and settings made
+ * while using it. Never in the checkout, where `git clean -x`, a fresh clone or
+ * deleting the folder takes them along: `%LOCALAPPDATA%\MultiGameAssistant-dev`,
+ * apart from an installed app's data. Moved there from `<repository>/.dev-home`,
+ * where it used to be, the first time; when it cannot be moved (a dsh still
+ * runs from it) the old folder is used as it is and the move is tried next time.
+ * DSH_HOME overrides.
+ * @param {string} root - the repository.
+ */
+export function devHome(root) {
+  if (process.env.DSH_HOME) return process.env.DSH_HOME
+  const home = join(process.env.LOCALAPPDATA ?? join(homedir(), '.local', 'share'), 'MultiGameAssistant-dev')
+  const old = join(root, '.dev-home')
+  if (existsSync(home) || !existsSync(old)) return home
+  try {
+    renameSync(old, home)
+    console.warn(`moved the development data from ${old} to ${home}`)
+    return home
+  } catch (error) {
+    console.warn(`could not move ${old} to ${home} (is a dsh still running from it?): ${error instanceof Error ? error.message : String(error)}`)
+    return old
+  }
+}
 
 /**
  * @param {object} options

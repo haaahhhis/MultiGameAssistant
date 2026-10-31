@@ -27,7 +27,7 @@ import { randomBytes } from 'node:crypto'
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareAdgProfile } from './profile.mjs'
+import { devHome, prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
 import { createOfficialUi } from './official.mjs'
 import { createUpdater } from './updates.mjs'
@@ -55,8 +55,8 @@ const paths = installed !== undefined
         dshBin: join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
         bundleDir: join(root, 'packages', 'bundle'),
         uiDir: join(root, 'apps', 'web', 'dist'),
-        // Development shares sessions with `pnpm dev:host`; DSH_HOME overrides.
-        home: process.env.DSH_HOME ?? join(root, '.dev-home'),
+        // Development shares sessions with `pnpm dev:host`, outside the checkout (profile.mjs devHome).
+        home: devHome(root),
       }
     })()
 /** Files opened directly from a link; the rest are only shown in Explorer. */

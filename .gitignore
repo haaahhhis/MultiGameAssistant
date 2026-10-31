@@ -2,7 +2,12 @@ node_modules/
 packages/*/lib/
 apps/*/dist/
 *.tsbuildinfo
+# Where development data used to be (now outside the checkout: apps/desktop/profile.mjs devHome).
 .dev-home/
+# What browser and planning tools leave behind (Playwright snapshots, spec-workflow).
+.playwright-cli/
+.playwright-mcp/
+.spec-workflow/
 .env
 *.log
 # Except the logs tests replay.

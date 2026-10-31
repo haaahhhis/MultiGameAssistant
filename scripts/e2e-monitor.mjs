@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { devHome } from '../apps/desktop/profile.mjs'
 import { startFakeFeishu, startFakeLlm } from '../packages/test-kit/lib/index.js'
 import { connectGateway, FAKE_MODEL, FAKE_PROVIDER, removeFakeProvider, saveFakeProvider } from './lib/gateway.mjs'
 
@@ -38,7 +39,7 @@ const APP_ID = 'cli_a1b2c3d4e5f60718'
 const USER = 'ou_7d8a6e2e00000000000000000000e2e1'
 const SECRET_REF = 'ADG_FEISHU_APP_SECRET'
 const FEISHU_PORT = Number(process.env.ADG_FAKE_FEISHU_PORT ?? 3299)
-const dataDir = process.env.ADG_DATA_DIR ?? join(process.env.DSH_HOME ?? join(here, '..', '.dev-home'), 'adg', 'data')
+const dataDir = process.env.ADG_DATA_DIR ?? join(devHome(join(here, '..')), 'adg', 'data')
 const SHELL = process.platform === 'win32' ? 'pwsh' : 'bash'
 
 // ── the script: FakeTool.exe (node) with two scenarios ──

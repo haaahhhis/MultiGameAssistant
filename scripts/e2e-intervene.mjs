@@ -21,12 +21,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { devHome } from '../apps/desktop/profile.mjs'
 import { decodePng, encodePng } from '../packages/intervene/lib/png.js'
 import { startFakeLlm } from '../packages/test-kit/lib/index.js'
 import { connectGateway, FAKE_MODEL, FAKE_PROVIDER, removeFakeProvider, saveFakeProvider } from './lib/gateway.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const dataDir = process.env.ADG_DATA_DIR ?? join(process.env.DSH_HOME ?? join(here, '..', '.dev-home'), 'adg', 'data')
+const dataDir = process.env.ADG_DATA_DIR ?? join(devHome(join(here, '..')), 'adg', 'data')
 const ID = 'e2e-intervene-tool'
 
 const dir = mkdtempSync(join(tmpdir(), 'adg-e2e-iv-'))

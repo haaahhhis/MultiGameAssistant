@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-/** Prepare .dev-home with profile "adg" (see profile.mjs). */
+/** Prepare the development DSH_HOME (outside the checkout, profile.mjs devHome) with profile "adg". */
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareAdgProfile } from '../apps/desktop/profile.mjs'
+import { devHome, prepareAdgProfile } from '../apps/desktop/profile.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const profile = await prepareAdgProfile({
-  home: process.env.DSH_HOME ?? join(root, '.dev-home'),
+  home: devHome(root),
   bundleDir: join(root, 'packages', 'bundle'),
   dshBin: join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
 })
