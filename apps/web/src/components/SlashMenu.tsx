@@ -29,7 +29,7 @@ export function useSkills(client: AdgClient): readonly SlashSkill[] {
  * Tab or a click completes, Enter sends a command that takes nothing more,
  * Esc closes. `submit` gets what was typed (expand it with `expand`).
  */
-export function useSlash({ client, text, setText, area, submit, placement = 'above' }: {
+export function useSlash({ client, text, setText, area, submit, placement = 'above', inSession = false }: {
   client: AdgClient
   text: string
   setText: (text: string) => void
@@ -37,11 +37,13 @@ export function useSlash({ client, text, setText, area, submit, placement = 'abo
   /** Sends a command chosen from the list; leave out where Enter only completes. */
   submit?: ((typed: string) => void) | undefined
   placement?: 'above' | 'below'
+  /** In an open conversation: its own commands (/压缩) are offered too. */
+  inSession?: boolean
 }): { menu: ReactNode; onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean; expand: (typed: string) => string } {
   const skills = useSkills(client)
   const [pick, setPick] = useState(0)
   const [closed, setClosed] = useState(false)
-  const options = closed ? [] : slashOptions(text, skills)
+  const options = closed ? [] : slashOptions(text, skills, inSession)
   const first = text.split(/\s/)[0]
   useEffect(() => { setPick(0); setClosed(false) }, [first])
   const active = Math.min(pick, Math.max(0, options.length - 1))

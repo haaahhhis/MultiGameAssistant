@@ -16,6 +16,10 @@
  *
  * Updates (installed only, updates.mjs): newer releases on GitHub are offered
  * in the window and the tray; installing one quits and runs its installer.
+ *
+ * 「官方界面」 (official.mjs): the switch in the title bar, or the tray, shows
+ * dsh's own stock web UI in this window instead, a separate dsh with its own
+ * conversations; the agent service keeps running behind it.
  */
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
@@ -25,6 +29,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
+import { createOfficialUi } from './official.mjs'
 import { createUpdater } from './updates.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -97,6 +102,8 @@ const logTail = []
 const stoppedOnPurpose = new WeakSet()
 /** @type {ReturnType<typeof createUpdater> | null} Only for an installed build: from the repository, git pull. */
 let updater = null
+/** @type {ReturnType<typeof createOfficialUi> | null} */
+let official = null
 
 // The desktop shell's own folder (logs, theme) moves with the rename too, before anything opens a file in it.
 if (installed !== undefined) movedFromLegacy(app.getPath('userData'))
@@ -114,6 +121,7 @@ app.on('window-all-closed', () => {})
 app.on('before-quit', () => {
   quitting = true
   stopHost()
+  official?.stop()
 })
 
 async function start() {
@@ -232,6 +240,31 @@ async function start() {
     if (action === 'install') { await installUpdate(); return updater.state() }
     return updater.state()
   })
+  official = createOfficialUi({
+    window: win,
+    dshBin: paths.dshBin,
+    // Inside the data folder, so it moves, stays and is removed with it; its own dsh home all the same.
+    home: join(paths.home, 'official'),
+    top: TITLE_BAR_HEIGHT,
+    logFile: join(logDir(), 'dsh-official.log'),
+    background,
+    prepare: (contents, origin) => {
+      guardContents(contents, origin, false)
+      windowChrome(contents)
+    },
+    endLeftover,
+    onChange: state => {
+      win?.webContents.send('adg:ui-mode', state)
+      tray?.setContextMenu(trayMenu())
+    },
+  })
+  // The title bar's switch (apps/web UiSwitch.tsx): MultiGameAssistant's page or dsh's own.
+  ipcMain.handle('adg:ui-mode', async (event, action) => {
+    if (win === null || event.sender !== win.webContents || official === null) return null
+    if (action === 'official' && !onSplash) return official.show()
+    if (action === 'adg') return official.hide()
+    return official.state()
+  })
   win.on('close', event => {
     if (quitting) return
     // Keep running for schedules; the tray brings the window back.
@@ -290,23 +323,34 @@ function startupLog(line) {
  */
 const HOST_FILE = () => join(paths.home, 'adg', 'desktop-host.json')
 async function endLeftoverHost() {
-  let pid
-  try { pid = JSON.parse(readFileSync(HOST_FILE(), 'utf8')).pid } catch { return }
-  if (!Number.isInteger(pid) || pid === host?.pid) return
-  try { process.kill(pid, 0) } catch (error) { if (error?.code !== 'EPERM') { rmSync(HOST_FILE(), { force: true }); return } }
-  // Only if it is still our program: the id may belong to something else by now.
-  const image = await new Promise(resolve => execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (_e, out) => resolve(String(out ?? '').split(',')[0]?.replaceAll('"', '').trim().toLowerCase() ?? '')))
-  if (image !== basename(process.execPath).toLowerCase()) { rmSync(HOST_FILE(), { force: true }); return }
-  startupLog(`[desktop] an agent service from an earlier start is still running (pid ${pid}): ending it`)
-  await new Promise(resolve => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve(undefined)))
+  if (!await endLeftover(HOST_FILE())) return
   // Its schedule lock (packages/scheduler/src/lock.ts) would otherwise hold the new one back for a minute and a half.
   rmSync(join(paths.home, 'adg', 'data', 'schedule.lock'), { force: true })
-  rmSync(HOST_FILE(), { force: true })
+}
+
+/**
+ * End the dsh whose id `file` holds, when it is still running and still ours.
+ * @returns whether one was ended.
+ */
+async function endLeftover(file) {
+  let pid
+  try { pid = JSON.parse(readFileSync(file, 'utf8')).pid } catch { return false }
+  if (!Number.isInteger(pid) || pid === host?.pid) return false
+  try { process.kill(pid, 0) } catch (error) { if (error?.code !== 'EPERM') { rmSync(file, { force: true }); return false } }
+  // Only if it is still our program: the id may belong to something else by now.
+  const image = await new Promise(resolve => execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (_e, out) => resolve(String(out ?? '').split(',')[0]?.replaceAll('"', '').trim().toLowerCase() ?? '')))
+  if (image !== basename(process.execPath).toLowerCase()) { rmSync(file, { force: true }); return false }
+  startupLog(`[desktop] a dsh from an earlier start is still running (pid ${pid}, ${file}): ending it`)
+  await new Promise(resolve => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve(undefined)))
+  rmSync(file, { force: true })
+  return true
 }
 
 /** The splash: loaded once, then updated in place so its animation does not restart. */
 async function showSplash(state) {
   if (win === null) return
+  // Over the official UI the startup screen (and what went wrong) would not be seen.
+  official?.hide()
   if (onSplash) {
     const pushed = await win.webContents.executeJavaScript(`window.adgSplash ? (window.adgSplash.set(${JSON.stringify(state)}), true) : false`).catch(() => false)
     if (pushed) return
@@ -394,13 +438,22 @@ function logDir() {
 function createTray() {
   tray = new Tray(nativeImage.createFromBuffer(trayIconPng(32)))
   tray.setToolTip(autoStarted ? 'MultiGameAssistant（开机自动启动）' : woken ? 'MultiGameAssistant（定时唤醒）' : 'MultiGameAssistant')
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开 MultiGameAssistant', click: () => showWindow() },
-    { type: 'separator' },
-    { label: '退出', click: () => { quitting = true; app.quit() } },
-  ]))
+  tray.setContextMenu(trayMenu())
   tray.on('click', () => showWindow())
   tray.on('balloon-click', () => showWindow())
+}
+
+function trayMenu() {
+  const officialShown = official?.state().mode === 'official'
+  return Menu.buildFromTemplate([
+    { label: '打开 MultiGameAssistant', click: () => showWindow() },
+    officialShown
+      ? { label: '切回 MultiGameAssistant 界面', click: () => { official?.hide(); showWindow() } }
+      // Not over the startup screen: that would hide it.
+      : { label: '切换到 dsh 官方界面', click: () => { showWindow(); if (!onSplash) void official?.show() } },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit() } },
+  ])
 }
 
 /**
@@ -554,8 +607,9 @@ async function openUi(url) {
  * any other link or navigation goes to the system browser.
  * @param {Electron.WebContents} contents
  * @param {string} origin
+ * @param {boolean} [bridge] - its windows get the preload (adgDesktop); not dsh's own page's.
  */
-function guardContents(contents, origin) {
+function guardContents(contents, origin, bridge = true) {
   const sameOrigin = target => {
     try { return new URL(target).origin === origin } catch { return false }
   }
@@ -570,7 +624,7 @@ function guardContents(contents, origin) {
           minHeight: 360,
           backgroundColor: background(),
           ...titleBar(),
-          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(here, 'preload.cjs') },
+          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, ...(bridge ? { preload: join(here, 'preload.cjs') } : {}) },
         },
       }
     }
@@ -578,7 +632,7 @@ function guardContents(contents, origin) {
     return { action: 'deny' }
   })
   contents.on('did-create-window', child => {
-    guardContents(child.webContents, origin)
+    guardContents(child.webContents, origin, bridge)
     windowChrome(child.webContents)
   })
   contents.on('will-navigate', (event, target) => {

@@ -313,8 +313,30 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .banner { padding: 8px 24px; font-size: 12.5px; }
 .banner.error { background: color-mix(in srgb, var(--error) 9%, transparent); color: var(--error); }
 .banner.info { background: var(--sunken); color: var(--text-2); }
-.compact-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.compact-note .small-button { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+/* /压缩 in the composer, and the context meter beside the message box (ContextMeter.tsx) */
+.composer-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; padding: 6px 10px 6px 12px; border-radius: var(--r-md); background: var(--sunken); color: var(--text-2); }
+.composer-note .small-button { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+.context-meter { position: relative; display: inline-flex; flex: none; }
+.context-trigger { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: none; border-radius: var(--r-sm, 6px); background: transparent; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.context-trigger:hover, .context-trigger[aria-expanded="true"] { background: var(--sunken); color: var(--text-2); }
+.context-track { fill: none; stroke: var(--border-strong); stroke-width: 2px; }
+.context-fill { fill: none; stroke: currentColor; stroke-width: 2px; stroke-linecap: round; }
+.context-meter.raised .context-trigger { color: var(--warn); }
+.context-meter.high .context-trigger { color: var(--error); }
+.context-panel { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); font-size: 12px; line-height: 20px; color: var(--text-2); }
+.context-head { display: flex; align-items: center; gap: 6px; }
+.context-head strong { color: var(--text); font-weight: 600; }
+.context-figures { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; }
+.context-bar { display: flex; gap: 1px; height: 4px; margin: 10px 0 12px; overflow: hidden; border-radius: 999px; background: var(--sunken); }
+.context-segment { flex: none; min-width: 2px; height: 100%; border-radius: 1px; }
+.context-segment.system, .context-swatch.system { background: #8b9bb4; }
+.context-segment.tools, .context-swatch.tools { background: #a78bfa; }
+.context-segment.messages, .context-swatch.messages { background: var(--accent-fill); }
+.context-rows { margin: 0; }
+.context-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.context-rows dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.context-swatch { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+.context-tip { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); color: var(--muted); }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .popped { height: 100%; padding: 10px; background: var(--bg); }
 .popped > .main { height: 100%; }
@@ -1431,3 +1453,14 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .install-bar .progress { height: 6px; }
 .install-numbers { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .install-bytes { font-family: var(--mono); font-size: 12px; }
+
+/* The title bar's switch to dsh's own UI and back (UiSwitch.tsx; desktop app only). Above the drag strip (boot.css .title-bar). */
+.ui-switch { position: fixed; top: 0; left: 10px; z-index: 2001; display: flex; align-items: center; gap: 8px; height: var(--title-bar, 0px); max-width: calc(100vw - 180px); font-size: 12px; -webkit-app-region: no-drag; app-region: no-drag; }
+.ui-switch-button { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.ui-switch-button:hover:not(:disabled) { background: var(--sunken); color: var(--text-2); }
+.ui-switch-button.active { border-color: var(--border); background: var(--raised); color: var(--accent); }
+.ui-switch-button:disabled { cursor: progress; }
+.ui-switch-button svg { width: 14px; height: 14px; }
+.ui-switch-error { display: inline-flex; min-width: 0; align-items: center; gap: 4px; color: var(--error); }
+.ui-switch-error > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ui-switch-error .icon-button { width: 20px; height: 20px; }

@@ -10,7 +10,7 @@ import type {
 import {
   ErrorCode, RpcError,
   type ModelCatalog, type ModelSelection, type SessionModel, type NotificationMethod, type NotificationParams, type RequestMethod, type RequestParams,
-  type QueuedPrompt, type RequestResult, type SessionItem,
+  type QueuedPrompt, type RequestResult, type SessionContext, type SessionItem,
 } from '@adg/protocol'
 import { convertLiveBaseline, convertLiveFrame, convertRecord, convertRecords } from './convert.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
@@ -37,6 +37,23 @@ const sid = (id: string) => id as SessionId
  * order they will run: `next-step` ones go into the running turn first.
  * Other inbox entries (a subagent's report, a reminder) are not shown.
  */
+/** dsh's contextPressure and contextBreakdown projection values as the protocol's SessionContext; undefined until known. */
+export function toContext(pressure: unknown, breakdown: unknown): SessionContext | undefined {
+  const p = (pressure ?? {}) as { contextWindow?: unknown; pressureTokens?: unknown; projectedTokens?: unknown }
+  const used = typeof p.projectedTokens === 'number' ? p.projectedTokens : typeof p.pressureTokens === 'number' ? p.pressureTokens : undefined
+  if (used === undefined || typeof p.contextWindow !== 'number' || p.contextWindow <= 0) return undefined
+  const b = (breakdown ?? {}) as { systemTokens?: unknown; toolsTokens?: unknown; messageTokens?: unknown }
+  const whole = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.round(n)) : undefined)
+  const system = whole(b.systemTokens)
+  const tools = whole(b.toolsTokens)
+  const messages = whole(b.messageTokens)
+  return {
+    contextWindow: Math.round(p.contextWindow),
+    usedTokens: Math.max(0, Math.round(used)),
+    ...(system === undefined || tools === undefined || messages === undefined ? {} : { breakdown: { systemTokens: system, toolsTokens: tools, messageTokens: messages } }),
+  }
+}
+
 export function toQueue(inbox: unknown): QueuedPrompt[] {
   const items: QueuedPrompt[] = []
   for (const placement of ['next-step', 'next-turn'] as const) {
@@ -178,6 +195,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
           title: titleOf(snapshot.projections.values),
           live: convertLiveBaseline(snapshot.assistantStream),
           queue: toQueue((snapshot.projections.values as { inbox?: unknown }).inbox),
+          ...contextOf(snapshot.projections.values),
         }
       },
       'session/close': (params: RequestParams<'session/close'>, call: MethodContext) => {
@@ -194,6 +212,12 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         return { events: convertRecords(page.records), hasMore: page.hasMore }
       },
     }),
+  }
+
+  function contextOf(values: unknown): { context?: SessionContext } {
+    const v = (values ?? {}) as { contextPressure?: unknown; contextBreakdown?: unknown }
+    const context = toContext(v.contextPressure, v.contextBreakdown)
+    return context === undefined ? {} : { context }
   }
 
   async function pump(iterator: AsyncIterator<SessionFollowFrame>, subscriptionId: string, call: MethodContext): Promise<void> {

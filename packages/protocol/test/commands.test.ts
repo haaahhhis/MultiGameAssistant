@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { expandSlash, slashOptions, splitSlash } from '../src/commands.ts'
+import { expandSlash, localCommand, slashOptions, splitSlash } from '../src/commands.ts'
 
 const SKILLS = [
   { name: 'game-arknights', description: '明日方舟的活动和进度' },
@@ -26,4 +26,15 @@ test('a command or skill goes out as the typed line and its instruction; the cha
   assert.equal(expandSlash('  帮我看看 ', SKILLS), '帮我看看')
   assert.deepEqual(splitSlash('/maa 更新一下\n\n使用技能「maa」：…'), { typed: '/maa 更新一下', expansion: '使用技能「maa」：…' })
   assert.equal(splitSlash('普通的话\n\n第二段'), undefined)
+})
+
+test('/压缩 is the app\'s own: offered only in a conversation, never sent to the model', () => {
+  assert.deepEqual(slashOptions('/压', SKILLS), [], 'not on the home page or in a pipeline step')
+  assert.deepEqual(slashOptions('/压', SKILLS, true).map(o => o.name), ['压缩'])
+  assert.deepEqual(slashOptions('/comp', SKILLS, true).map(o => o.name), ['压缩'], 'by its alias')
+  assert.equal(localCommand('/压缩'), 'compact')
+  assert.equal(localCommand(' /COMPACT '), 'compact')
+  assert.equal(localCommand('/资讯'), undefined)
+  assert.equal(localCommand('压缩一下'), undefined)
+  assert.equal(expandSlash('/压缩', SKILLS), '/压缩', 'no instruction for the model')
 })

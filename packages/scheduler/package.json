@@ -32,7 +32,7 @@
     "@adg/gateway": "workspace:*",
     "@adg/orchestrator": "workspace:*",
     "@adg/runner": "workspace:*",
-    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/cordis": "4.0.5",
     "@types/node": "^24.13.3"
   }
 }

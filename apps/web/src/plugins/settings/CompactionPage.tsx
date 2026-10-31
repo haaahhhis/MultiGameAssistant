@@ -93,7 +93,7 @@ export function CompactionPage({ client }: { client: AdgClient }) {
       )}
       <section className="card">
         <h3>手动压缩</h3>
-        <p className="muted small">在对话页右上角点「压缩对话」按钮（<Icon name="compress" />），会先说明代价再确认。对话变慢、或报上下文超长时用；agent 正在工作时不能压缩。</p>
+        <p className="muted small">在对话框里输入 <kbd>/压缩</kbd>，会先说明代价再确认。对话框旁边的小圆圈显示上下文用了多少，点开能看到各部分占多少。对话变慢、或报上下文超长时用；agent 正在工作时不能压缩。</p>
       </section>
       {state === null && error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </div>

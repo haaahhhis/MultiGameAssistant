@@ -6,6 +6,9 @@
  * of the agent's skills, which the agent then loads before acting. The
  * message keeps the typed line first, so the conversation shows what was
  * asked; the expansion follows after a blank line.
+ *
+ * A few commands are the app's own and never reach the model (`local`):
+ * `/压缩` compacts the conversation it is typed in.
  */
 
 export const SAVE_SKILL_PROMPT = [
@@ -25,6 +28,8 @@ export interface SlashCommand {
   /** What may follow the command, for the hint. */
   readonly arg?: string
   readonly expand: (arg: string) => string
+  /** Done by the app itself in an open conversation, not sent to the model. */
+  readonly local?: 'compact'
 }
 
 export const COMMANDS: readonly SlashCommand[] = [
@@ -71,7 +76,20 @@ export const COMMANDS: readonly SlashCommand[] = [
       '3. 给出怎么改：改哪项配置、游戏里要做什么、要不要重跑。先不要改任何东西、不要重跑，等我决定。',
     ].join('\n'),
   },
+  {
+    name: '压缩',
+    aliases: ['compact'],
+    title: '压缩这个对话：较早的部分换成摘要，agent 会忘掉其中的细节',
+    expand: () => '',
+    local: 'compact',
+  },
 ]
+
+/** The app's own command `text` runs (`/压缩`), or undefined for anything to send. */
+export function localCommand(text: string): SlashCommand['local'] {
+  const word = /^\/(\S+)/.exec(text.trim())?.[1]?.toLowerCase()
+  return word === undefined ? undefined : COMMANDS.find(c => c.local !== undefined && (c.name === word || c.aliases.includes(word)))?.local
+}
 
 /** A skill as the slash menu needs it (protocol SkillInfo has more). */
 export interface SlashSkill {
@@ -100,6 +118,7 @@ export function expandSlash(text: string, skills: readonly SlashSkill[]): string
   const word = match[1]!
   const arg = (match[2] ?? '').trim()
   const command = COMMANDS.find(c => c.name === word.toLowerCase() || c.aliases.includes(word.toLowerCase()))
+  if (command?.local !== undefined) return typed
   if (command !== undefined) return `${typed}\n\n${command.expand(arg)}`
   const skill = skills.find(s => s.name === word)
   return skill === undefined ? typed : `${typed}\n\n${skillInstruction(skill.name, arg)}`
@@ -112,13 +131,16 @@ export function splitSlash(text: string): { typed: string; expansion: string } |
   return at < 0 ? undefined : { typed: text.slice(0, at), expansion: text.slice(at + 2) }
 }
 
-/** Menu entries for what is typed after the slash (before any space): commands first, then skills; name starts first, then contains. */
-export function slashOptions(text: string, skills: readonly SlashSkill[]): SlashOption[] {
+/**
+ * Menu entries for what is typed after the slash (before any space): commands first, then skills; name starts first, then contains.
+ * `inSession`: typed in an open conversation, so its own commands (`/压缩`) are offered too.
+ */
+export function slashOptions(text: string, skills: readonly SlashSkill[], inSession = false): SlashOption[] {
   const match = /^\/(\S*)$/.exec(text)
   if (match === null) return []
   const typed = match[1]!.toLowerCase()
   const commands: SlashOption[] = COMMANDS
-    .filter(c => [c.name, ...c.aliases].some(n => n.toLowerCase().includes(typed)))
+    .filter(c => (inSession || c.local === undefined) && [c.name, ...c.aliases].some(n => n.toLowerCase().includes(typed)))
     .map(c => ({ kind: 'command', name: c.name, description: c.title, ...(c.arg === undefined ? {} : { arg: c.arg }), command: c }))
   const rank = (name: string) => (name.toLowerCase().startsWith(typed) ? 0 : 1)
   const found: SlashOption[] = skills

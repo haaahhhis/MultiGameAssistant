@@ -5,7 +5,7 @@
  * The handle re-opens itself after every reconnect (new connection
  * generation) and after the gateway ends its subscription unexpectedly.
  */
-import type { PromptImage, QueuedPrompt,
+import type { PromptImage, QueuedPrompt, SessionContext,
   LiveFrame, RequestInput, RequestMethod, RequestResult, SessionEvent, SessionHeader,
 } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
@@ -43,6 +43,8 @@ export interface SessionState {
   readonly pending: readonly PendingPrompt[]
   /** Messages waiting in the host's queue (sent while busy); kept by the host, so they survive switching away. */
   readonly queue: readonly QueuedPrompt[]
+  /** How full the model's context is for the next request; null until a request reported its usage. */
+  readonly context: SessionContext | null
   /** A turn is open in the loaded window, or output is streaming. */
   readonly running: boolean
   /** Bumped on every change, including in-place live delta appends. */
@@ -52,7 +54,7 @@ export interface SessionState {
 
 const INITIAL: SessionState = {
   status: 'opening', header: null, title: null, events: [], cursor: -1, hasMore: false,
-  loadingOlder: false, live: null, pending: [], queue: [], running: false, version: 0, error: null,
+  loadingOlder: false, live: null, pending: [], queue: [], context: null, running: false, version: 0, error: null,
 }
 
 type Delta = Extract<LiveFrame, { type: 'delta' }>
@@ -214,6 +216,11 @@ export class SessionHandle {
     this.#update(s => ({ ...s, queue, pending: withoutQueued(s.pending, queue) }))
   }
 
+  /** The context meter changed. @internal */
+  receiveContext(context: SessionContext | null): void {
+    this.#update(s => ({ ...s, context }))
+  }
+
   /** Update the title from list-level notifications. @internal */
   receiveTitle(title: string | null): void {
     this.#update(s => (s.title === title ? s : { ...s, title }))
@@ -247,6 +254,7 @@ export class SessionHandle {
             live,
             pending: withoutQueued(s.pending.filter(p => !echoed.has(p.requestId)), opened.queue ?? []),
             queue: opened.queue ?? [],
+            context: opened.context ?? s.context,
             running: computeRunning(opened.events, live),
             loadingOlder: false,
             error: null,

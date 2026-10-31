@@ -84,6 +84,9 @@ export class AdgClient {
     c.on('session/queue', ({ sessionId, items }) => {
       this.#handles.get(sessionId)?.handle.receiveQueue(items)
     })
+    c.on('session/context', ({ sessionId, context }) => {
+      this.#handles.get(sessionId)?.handle.receiveContext(context)
+    })
     c.on('session/event', ({ subscriptionId, event }) => this.#bySubscription.get(subscriptionId)?.receiveEvent(event))
     c.on('session/live', ({ subscriptionId, frame }) => this.#bySubscription.get(subscriptionId)?.receiveLive(frame))
     c.on('session/closed', ({ subscriptionId, reason }) => {

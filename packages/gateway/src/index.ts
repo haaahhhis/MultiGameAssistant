@@ -37,7 +37,7 @@ import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
-import { builtinCapabilities, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -106,6 +106,8 @@ export class AdgGateway extends Service {
   private readonly registry = new CapabilityRegistry()
   private readonly workspace: string | undefined
   private archived = new Set<string>()
+  /** The latest context projections per session (control frames carry one key at a time). */
+  private readonly contexts = new Map<string, { pressure?: unknown; breakdown?: unknown }>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
   private readonly questions: QuestionBroker
@@ -651,6 +653,12 @@ export class AdgGateway extends Service {
             this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(frame.value) })
           } else if (frame.key === 'inbox') {
             this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(frame.value) })
+          } else if (frame.key === 'contextPressure' || frame.key === 'contextBreakdown') {
+            // The two arrive separately; the meter needs both.
+            const known = this.contexts.get(frame.sessionId) ?? {}
+            const next = frame.key === 'contextPressure' ? { ...known, pressure: frame.value } : { ...known, breakdown: frame.value }
+            this.contexts.set(frame.sessionId, next)
+            this.broadcast('session/context', { sessionId: frame.sessionId, context: toContext(next.pressure, next.breakdown) ?? null })
           }
         }
       } catch (error) {

@@ -14,6 +14,24 @@ export interface DesktopBridge {
   restartService?(): Promise<void>
   /** Updates from GitHub Releases; every call answers the state, null when run from the repository. */
   updates?: UpdatesBridge
+  /** The window shows this UI or dsh's own stock one, a separate dsh with its own conversations. */
+  uiMode?: UiModeBridge
+}
+
+export interface UiMode {
+  mode: 'adg' | 'official'
+  /** The official dsh is starting (the first switch takes a while). */
+  starting: boolean
+  /** The last switch failed, or the official dsh exited: why. */
+  error?: string
+}
+
+export interface UiModeBridge {
+  state(): Promise<UiMode | null>
+  /** 'adg' also clears the last error. */
+  set(mode: UiMode['mode']): Promise<UiMode | null>
+  /** @returns the unsubscriber. */
+  onChange(listener: (state: UiMode) => void): () => void
 }
 
 export interface UpdateState {

@@ -30,21 +30,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
   const connection = useStore(client.connection.status)
   const views = viewsFor(useSessionViews(client), state)
   const [tab, setTab] = useState(() => readTab())
-  const [compacting, setCompacting] = useState(false)
-  const [compactNote, setCompactNote] = useState<{ text: string; error: boolean } | null>(null)
-  const compact = async () => {
-    if (!window.confirm(COMPACT_WARNING)) return
-    setCompacting(true)
-    setCompactNote(null)
-    try {
-      const result = await session.compact()
-      setCompactNote({ text: result.message, error: false })
-    } catch (e) {
-      setCompactNote({ text: e instanceof Error ? e.message : String(e), error: true })
-    } finally {
-      setCompacting(false)
-    }
-  }
   const active = views.find(v => v.id === tab) ?? views[0]
   useEffect(() => writeTab(tab), [tab])
 
@@ -68,10 +53,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
               </button>
             ))}
           </nav>
-          <button className="icon-button compact-button" disabled={state.running || compacting || connection.state !== 'open'}
-            title={state.running ? '压缩对话：等 agent 停下再压缩' : '压缩对话：较早的部分换成摘要（会丢失细节）'} aria-label="压缩对话" onClick={() => void compact()}>
-            <Icon name="compress" />
-          </button>
           {active !== undefined && (
             <button className="icon-button popout-button" title={`在新窗口打开「${active.title}」`} aria-label={`在新窗口打开「${active.title}」`}
               onClick={() => window.open(popoutUrl(active.id, session.id), `dsh-${active.id}-${session.id}`)}>
@@ -81,13 +62,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent }
         </div>
       </header>
       {state.error !== null && <div className="banner error">{state.error}</div>}
-      {compacting && <div className="banner info" role="status">正在压缩对话：模型在写摘要，可能要一两分钟…</div>}
-      {compactNote !== null && (
-        <div className={`banner compact-note ${compactNote.error ? 'error' : 'info'}`} role="status">
-          <span>{compactNote.text}</span>
-          <button className="ghost small-button" onClick={() => setCompactNote(null)}>知道了</button>
-        </div>
-      )}
       <div className="view">
         {active === undefined
           ? <div className="empty">当前连接没有提供可用的视图插件。</div>
@@ -172,17 +146,6 @@ function SessionTitle({ title, onRename }: { title: string | null; onRename: (ti
     </span>
   )
 }
-
-/** What 「压缩对话」 costs, said before it happens. */
-const COMPACT_WARNING = [
-  '压缩会把这个对话较早的部分换成一份由模型写的摘要，之后 agent 只能看到这份摘要：',
-  '',
-  '· 早先的细节会丢失，agent 不再记得：具体的命令和输出、日志、截图、你说过的原话；',
-  '· 摘要可能漏掉或写错内容；',
-  '· 不能撤销。界面上的聊天记录还在，但 agent 看不到了。',
-  '',
-  '对话很长、回复变慢或报上下文超长时再压缩。确定压缩吗？',
-].join('\n')
 
 function RunState({ running }: { running: boolean }) {
   return running

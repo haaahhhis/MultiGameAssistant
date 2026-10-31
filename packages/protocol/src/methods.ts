@@ -89,6 +89,22 @@ export const QueuedPrompt = z.object({
 })
 export type QueuedPrompt = z.infer<typeof QueuedPrompt>
 
+/**
+ * How full the model's context is for the session's next request (dsh's
+ * token meter: its `contextPressure` and `contextBreakdown` projections).
+ * Known once a request has reported its usage; the breakdown is an estimate.
+ */
+export const SessionContext = z.object({
+  contextWindow: z.number().int().positive(),
+  usedTokens: z.number().int().nonnegative(),
+  breakdown: z.object({
+    systemTokens: z.number().int().nonnegative(),
+    toolsTokens: z.number().int().nonnegative(),
+    messageTokens: z.number().int().nonnegative(),
+  }).optional(),
+})
+export type SessionContext = z.infer<typeof SessionContext>
+
 export const SessionHeader = z.object({
   id: z.string(),
   createdAt: z.number(),
@@ -234,6 +250,8 @@ export const Requests = {
       live: LiveAttempt.nullable(),
       /** Messages still waiting in the queue. */
       queue: z.array(QueuedPrompt).optional(),
+      /** How full the model's context is; absent until a request reported its usage. */
+      context: SessionContext.optional(),
     }),
   },
   'session/close': {
@@ -451,6 +469,8 @@ export const Notifications = {
   'session/error': z.object({ sessionId: z.string(), message: z.string() }),
   /** A session's waiting messages changed (sent, inserted, taken back, or admitted). */
   'session/queue': z.object({ sessionId: z.string(), items: z.array(QueuedPrompt) }),
+  /** How full a session's context is changed (a request reported its usage, or the conversation was compacted). */
+  'session/context': z.object({ sessionId: z.string(), context: SessionContext.nullable() }),
   'approval/requested': ApprovalRequested,
   'approval/resolved': z.object({ approvalId: z.string(), outcome: z.string() }),
   /** A stored credential changed (set, unset, or edited on disk). Never carries the value. */

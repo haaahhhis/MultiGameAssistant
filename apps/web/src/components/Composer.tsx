@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
-import { MAX_IMAGE_BASE64, type PromptImage, type QueuedPrompt } from '@adg/protocol'
+import { localCommand, MAX_IMAGE_BASE64, type PromptImage, type QueuedPrompt } from '@adg/protocol'
 import type { SessionHandle, AdgClient } from '@adg/client-core'
 import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
 import { usePermissionMode, useStore } from '../hooks.ts'
 import { ModelPicker } from './ModelPicker.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
 import { useSlash } from './SlashMenu.tsx'
+import { ContextMeter } from './ContextMeter.tsx'
 
 export function Composer({ client, session, running, disabled, initialPrompt, onInitialSent }: {
   client: AdgClient
@@ -16,11 +17,13 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   onInitialSent?: (() => void) | undefined
 }) {
   const capabilities = useStore(client.capabilities)
-  const { queue } = useStore(session.state)
+  const { queue, context } = useStore(session.state)
   // What was typed here before switching away comes back (drafts.ts).
   const [text, setText] = useState(() => readDraft(session.id))
   const [steer, setSteer] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** What /压缩 is doing or did. */
+  const [note, setNote] = useState<string | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
   const handedOff = useRef(false)
@@ -65,17 +68,30 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     area.current?.focus()
   }, [initialPrompt, disabled, session, onInitialSent])
 
+  // The app's own commands (/压缩): done here, nothing is sent. @returns whether `typed` was one.
+  const runLocal = (typed: string): boolean => {
+    if (localCommand(typed) !== 'compact') return false
+    setText('')
+    setError(null)
+    if (running) { setError('agent 正在工作，等它停下再压缩'); return true }
+    if (!window.confirm(COMPACT_WARNING)) return true
+    setNote('正在压缩对话：模型在写摘要，可能要一两分钟…')
+    session.compact().then(r => setNote(r.message), e => { setNote(null); setError(e instanceof Error ? e.message : String(e)) })
+    return true
+  }
+
   // Slash commands and skills (SlashMenu.tsx): a command goes out as its full instruction, headed by what was typed.
   const slash = useSlash({
-    client, text, setText, area,
+    client, text, setText, area, inSession: true,
     submit: typed => {
-      if (disabled) return
+      if (disabled || runLocal(typed)) return
       setError(null)
       session.prompt(slash.expand(typed), running && steer ? 'steer' : 'queue').catch(e => setError(e instanceof Error ? e.message : String(e)))
     },
   })
 
   const send = () => {
+    if (!disabled && images.length === 0 && runLocal(text)) return
     const value = slash.expand(text)
     if ((value === '' && images.length === 0) || disabled) return
     const sending = images.map(({ url: _url, ...image }) => image)
@@ -108,6 +124,12 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   return (
     <div className="composer">
       {error !== null && <div className="error small composer-error">{error}</div>}
+      {note !== null && (
+        <div className="composer-note small" role="status">
+          <span>{note}</span>
+          <button type="button" className="ghost small-button" onClick={() => setNote(null)}>知道了</button>
+        </div>
+      )}
       {queue.length > 0 && (
         <div className="queue" aria-label="等待发送的消息">
           {queue.map(item => (
@@ -155,6 +177,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
             <button type="button" className="full-access-chip" title="agent 做事不再请求确认，点这里修改" onClick={() => { location.hash = '#/settings/permissions' }}><Icon name="alert" />完全访问</button>
           )}
           <span className="spacer" />
+          <ContextMeter context={context} />
           {running && (
             <label className="steer-toggle" title="把消息插入正在进行的轮次，而不是等下一轮">
               <input type="checkbox" checked={steer} onChange={e => setSteer(e.target.checked)} />插入当前轮次
@@ -173,6 +196,17 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     </div>
   )
 }
+
+/** What /压缩 costs, said before it happens. */
+const COMPACT_WARNING = [
+  '压缩会把这个对话较早的部分换成一份由模型写的摘要，之后 agent 只能看到这份摘要：',
+  '',
+  '· 会丢失记忆：早先的细节 agent 不再记得（具体的命令和输出、日志、截图、你说过的原话）；',
+  '· 摘要可能漏掉或写错内容；',
+  '· 不能撤销。界面上的聊天记录还在，但 agent 看不到了。',
+  '',
+  '对话很长、回复变慢或报上下文超长时再压缩。确定压缩吗？',
+].join('\n')
 
 const MAX_IMAGES = 4
 const KEEP_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])

@@ -9,6 +9,7 @@ import { SettingsView } from './components/SettingsView.tsx'
 import { ModelPicker } from './components/ModelPicker.tsx'
 import { useSlash } from './components/SlashMenu.tsx'
 import { SessionList, relativeTime, sessionTitle } from './components/SessionList.tsx'
+import { UiSwitch } from './components/UiSwitch.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
 import { readDraft, saveDraft } from './drafts.ts'
@@ -96,6 +97,7 @@ export function App({ client }: { client: AdgClient }) {
         />
       )}
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
+      <UiSwitch />
     </div>
   )
 }
