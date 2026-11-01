@@ -6,7 +6,7 @@
  * tests depend on this package; it never ships in the installer.
  */
 export { parseScenario, runScenario, type Scenario, type ScenarioStep, type ScenarioIo } from './fake-script.ts'
-export { startFakeGitHub, type FakeAsset, type FakeFault, type FakeGitHub, type FakeGitHubOptions, type FakeRelease } from './fake-github.ts'
+export { startFakeGitHub, type FakeAsset, type FakeCommit, type FakeFault, type FakeGitHub, type FakeGitHubOptions, type FakeRelease, type FakeSource } from './fake-github.ts'
 export { startFakeLlm, type FakeLlm, type FakeLlmOptions, type FakeReply } from './fake-llm.ts'
 export { ManualClock, type Clock } from './clock.ts'
 export { makeZip, type ZipEntries } from './zip.ts'

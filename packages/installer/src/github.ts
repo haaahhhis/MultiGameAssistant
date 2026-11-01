@@ -1,9 +1,11 @@
 /**
- * GitHub REST client for the installer: releases, the latest release, and
- * repository search. Only public data is read; a token is optional and only
- * raises the rate limit.
+ * GitHub REST client for the installer: releases, the latest release,
+ * repository facts, branch heads and repository search. Only public data is
+ * read; a token is optional and only raises the rate limit. Also reads the
+ * links people paste (`parseGitHubLink`).
  */
 import type { ReleaseInfo } from '@adg/protocol'
+export { parseGitHubLink, type GitHubLink } from '@adg/protocol'
 
 export interface GitHubOptions {
   /** e.g. `https://api.github.com`. */
@@ -13,6 +15,17 @@ export interface GitHubOptions {
   readonly fetch?: typeof globalThis.fetch
   readonly userAgent?: string
   readonly timeoutMs?: number
+}
+
+export interface RepoInfo {
+  readonly repo: string
+  readonly description?: string
+  readonly stars: number
+  readonly fork: boolean
+  readonly archived: boolean
+  readonly defaultBranch: string
+  /** ISO time of the last push. */
+  readonly pushedAt?: string
 }
 
 /** A failed GitHub request, with the rate-limit facts when that was the cause. */
@@ -70,6 +83,28 @@ export class GitHubClient {
       if (newest !== undefined) return newest
     }
     throw new GitHubError(`${repo} 没有${options.includePrereleases === true ? '' : '正式'}发布版本`, 404)
+  }
+
+  /** What a repository is: for deciding whether to trust an unknown one, and its default branch. */
+  async repoInfo(repo: string, signal?: AbortSignal): Promise<RepoInfo> {
+    const r = await this.#get<{ full_name: string; description: string | null; stargazers_count: number; fork: boolean; archived: boolean; default_branch: string; pushed_at: string | null; html_url?: string }>(`/repos/${repo}`, signal)
+    return {
+      repo: r.full_name, stars: r.stargazers_count, fork: r.fork, archived: r.archived, defaultBranch: r.default_branch,
+      ...(r.description === null ? {} : { description: r.description }),
+      ...(r.pushed_at === null ? {} : { pushedAt: r.pushed_at }),
+    }
+  }
+
+  /** The commit a branch or tag points at, and when it was made. */
+  async commit(repo: string, ref: string, signal?: AbortSignal): Promise<{ sha: string; date: string }> {
+    const c = await this.#get<{ sha: string; commit: { committer?: { date?: string }; author?: { date?: string } } }>(`/repos/${repo}/commits/${encodeURIComponent(ref)}`, signal)
+    return { sha: c.sha, date: c.commit.committer?.date ?? c.commit.author?.date ?? new Date(0).toISOString() }
+  }
+
+  /** Where to download a commit's source as a zip (through the download mirror when it is GitHub's own). */
+  sourceZipUrl(repo: string, sha: string): string {
+    const base = this.#options.apiBase.replace(/\/+$/, '')
+    return /^https:\/\/api\.github\.com$/i.test(base) ? `https://codeload.github.com/${repo}/zip/${sha}` : `${base}/repos/${repo}/zipball/${sha}`
   }
 
   async search(query: string, limit = 10, signal?: AbortSignal): Promise<{ repo: string; description?: string; stars: number }[]> {

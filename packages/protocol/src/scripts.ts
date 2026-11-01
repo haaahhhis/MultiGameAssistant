@@ -323,6 +323,8 @@ export const ScriptRequests = {
       tag: z.string().min(1).max(200).optional(),
       /** Asset name; omitted takes the suggested one. */
       asset: z.string().min(1).max(300).optional(),
+      /** Install this branch's source instead of a release (a repository without releases gets its default branch anyway). */
+      branch: z.string().min(1).max(200).optional(),
       /** Script id; omitted uses the matching pack's id, else the repo name. */
       id: ScriptId.optional(),
     }).refine(p => (p.repo === undefined) !== (p.mirrorchyan === undefined), 'give either repo or mirrorchyan'),

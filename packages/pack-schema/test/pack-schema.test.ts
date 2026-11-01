@@ -158,3 +158,12 @@ recovery:
   assert.throws(() => parseManifest(`${MAA}recovery:\n  - { on: nope, do: restart }\n`), /recovery\.0\.on: no log rule has tag nope/)
   assert.throws(() => parseManifest(`${MAA}logs:\n  stallAfter: soon\n`), /stallAfter/)
 })
+
+test('equally good files that are different builds are offered, not guessed', () => {
+  const tied = chooseAsset([asset('Tool-v2-win-x64-cpu.zip'), asset('Tool-v2-win-x64-gpu.zip'), asset('Tool-v2-linux.tar.gz')])
+  assert.deepEqual(tied.alternatives?.map(a => a.name), ['Tool-v2-win-x64-cpu.zip', 'Tool-v2-win-x64-gpu.zip'])
+  // The same package in two formats is no choice.
+  const formats = chooseAsset([asset('Tool-v2-win-x64.zip'), asset('Tool-v2-win-x64.7z')])
+  assert.equal(formats.alternatives, undefined)
+  assert.equal(chooseAsset([asset('Tool-v2-win-x64.zip')]).alternatives, undefined)
+})

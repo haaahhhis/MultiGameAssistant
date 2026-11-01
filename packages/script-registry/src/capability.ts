@@ -27,7 +27,7 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
         const p = params as RequestParams<'scripts/install'>
         const mirror = p.mirrorchyan === undefined ? undefined : await library.lookupMirror(p.mirrorchyan, call.signal)
         const { job } = library.install(mirror === undefined
-          ? { repo: p.repo, tag: p.tag, asset: p.asset, id: p.id }
+          ? { repo: p.repo, tag: p.tag, asset: p.asset, branch: p.branch, id: p.id }
           : { mirrorchyan: mirror, id: p.id })
         return { jobId: job.id, scriptId: job.scriptId }
       },

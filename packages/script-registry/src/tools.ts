@@ -15,6 +15,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ToolCallView } from '@deepseek-ai/dsh-tools/presentation'
+import { parseGitHubLink } from '@adg/installer'
 import { GitHubRepo, MirrorRid, ScriptId, type ScriptJob } from '@adg/protocol'
 import { z } from 'zod'
 import type { ScriptLibrary } from './library.ts'
@@ -171,9 +172,16 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.install,
-      description: '从 GitHub 发布版本（repo）或 Mirror酱（mirrorchyan，资源 id）安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。默认装最新正式版；填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。不在内置脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。',
+      description: [
+        '从 GitHub（repo 或用户给的链接 url）或 Mirror酱（mirrorchyan，资源 id）安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。',
+        '用户贴了 GitHub 链接就原样放进 url：仓库主页、发布页（/releases/tag/…）、某个文件的下载链接、分支（/tree/…）、.git 地址、加了下载加速前缀的链接都可以，版本和文件会从链接里读出来。',
+        '默认装最新正式版；仓库没有发布版本时装默认分支的源码（之后跟着这个分支更新）。几个文件都适合本机时会返回让你先问用户选哪一个。填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。',
+        '不在内置脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。装好后还没有脚本包的，按结果里的 next 去分析。',
+      ].join(''),
       properties: {
         repo,
+        url: { type: 'string', description: '用户给的 GitHub 链接，原样传入（代替 repo）。' },
+        branch: { type: 'string', description: '装这个分支的源码而不是发布版本（链接是 /tree/<分支> 时会自动读出）。' },
         mirrorchyan: { type: 'string', description: '改从 Mirror酱 安装：资源 id（例如 BGI、MAA），代替 repo；需要用户填过 Mirror酱 CDK。' },
         tag: { type: 'string', description: '指定版本标签；省略为最新正式版。' },
         asset: { type: 'string', description: '指定要下载的文件名；省略则自动选择。' },
@@ -183,7 +191,18 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
       kind: 'execute',
       title: a => `安装脚本：${String(a['repo'] ?? (a['mirrorchyan'] === undefined ? '' : `Mirror酱 ${String(a['mirrorchyan'])}`))}${a['tag'] === undefined ? '' : ` ${String(a['tag'])}`}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ repo: opt(GitHubRepo), mirrorchyan: opt(MirrorRid), tag: opt(z.string().min(1).max(200)), asset: opt(z.string().min(1).max(300)), id: opt(ScriptId) }), args)
+        const raw = parse(z.object({ repo: opt(z.string().min(1).max(500)), url: opt(z.string().min(1).max(1000)), mirrorchyan: opt(MirrorRid), tag: opt(z.string().min(1).max(200)), asset: opt(z.string().min(1).max(300)), branch: opt(z.string().min(1).max(200)), id: opt(ScriptId) }), args)
+        // A pasted link (in url, or in repo by mistake): the repository, and the release, file or branch it points at.
+        const linkText = raw.url ?? (raw.repo !== undefined && !GitHubRepo.safeParse(raw.repo).success ? raw.repo : undefined)
+        const link = linkText === undefined ? undefined : parseGitHubLink(linkText)
+        if (linkText !== undefined && link === undefined) throw new Error(`看不出这是哪个 GitHub 仓库：${linkText}。只支持 GitHub（github.com）的仓库链接；其他网站的项目先下载到本地，再用 script_import 导入`)
+        const a = {
+          ...raw,
+          repo: link?.repo ?? raw.repo,
+          tag: raw.tag ?? link?.tag,
+          asset: raw.asset ?? link?.asset,
+          branch: raw.branch ?? link?.branch,
+        }
         let started: ReturnType<ScriptLibrary['install']>
         if (a.mirrorchyan !== undefined) {
           if (a.repo !== undefined) throw new Error('repo 和 mirrorchyan 只能给一个')
@@ -194,16 +213,21 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
           started = library.install({ mirrorchyan: found, id: a.id, byAgent: true })
         } else {
           if (a.repo === undefined) throw new Error('请给出 repo（GitHub 仓库）或 mirrorchyan（Mirror酱 资源 id）')
+          const what = a.branch !== undefined ? `${a.branch} 分支的源码` : a.tag === undefined ? '最新发布版本（没有发布版本时装默认分支的源码）' : ` ${a.tag}${a.asset === undefined ? '' : ` 的 ${a.asset}`}`
           if (!library.isKnownRepo(a.repo)) {
-            await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${a.tag === undefined ? '最新发布版本' : ` ${a.tag}`}。这个仓库不在内置脚本包里，请确认它来源可信。`)
+            await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${what}。这个仓库不在内置脚本包里，请确认它来源可信（${await library.repoFacts(a.repo, exec.signal)}）。`)
           }
-          started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, id: a.id, byAgent: true })
+          started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, branch: a.branch, id: a.id, byAgent: true })
         }
         const job = await followJob(library, started, exec.signal)
         const setup = setupOf(library, job.scriptId)
         if (setup !== undefined) return { ...describeJob(job), setup }
         const info = job.phase === 'done' ? library.get(job.scriptId) : undefined
-        return { ...describeJob(job), dir: info?.dir, env: info?.env, family: info?.family }
+        // Installed but nothing says how to run it yet: the next step is the analysis (documentation first).
+        const next = info !== undefined && info.packId === undefined
+          ? { next: `装好了，但还没有脚本包，还不能用 script_run 运行。告诉用户之后，按技能 script-analysis 分析它（skill_focus 设成 ${info.id}，先读项目文档：仓库 README、Wiki、目录里的说明，再看代码），用 pack_propose 提交脚本包草稿给用户确认。` }
+          : {}
+        return { ...describeJob(job), dir: info?.dir, env: info?.env, family: info?.family, ...next }
       },
     }),
     tool({

@@ -52,6 +52,8 @@ export const StoredScript = z.object({
   backups: z.array(LocalBackup).optional(),
   /** The agent's summary of what the script is. */
   summary: ScriptSummary.optional(),
+  /** Installed from this branch's source (the repository has no releases): updates follow the branch. */
+  sourceBranch: z.string().optional(),
   /** The script version its pack was written or last checked for (a newer one asks to check the pack). */
   packVersion: z.string().optional(),
   /** The version the user was last asked about, so each update asks once. */

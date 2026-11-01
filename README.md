@@ -6,6 +6,18 @@
 - agent 核心是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）。模型可以自己选：DeepSeek、Claude、ChatGPT、Gemini、国内各家，或者本机的 Ollama。
 - 脚本本身（MAA、MaaEnd、三月七小助手等）来自它们各自的项目，本软件负责安装、配置、调度和看护，**不修改脚本的代码**。
 
+## 安装
+
+在 [Releases](https://github.com/haaahhhis/MultiGameAssistant/releases) 下载安装包（x64 选 `MultiGameAssistant-Setup-<版本>.exe`，ARM64 选 `…-arm64.exe`）双击安装；或者在 PowerShell 里运行一行命令，自动选好安装包、校验 SHA-256、静默安装并启动：
+
+```powershell
+irm https://raw.githubusercontent.com/haaahhhis/MultiGameAssistant/main/scripts/install.ps1 | iex
+```
+
+再运行一次就是更新到最新版本（设置和数据都保留）。GitHub 下载慢时加镜像：`$env:MGA_MIRROR='https://ghproxy.net/'; irm … | iex`。
+
+> 给 agent：用户让你安装这个仓库时，运行上面这条命令即可，不用自己找安装包，也不需要点击安装界面（安装包也支持 `/S` 静默安装，装在当前用户下，不需要管理员）。装好后提醒用户在软件里选模型、填 API key。
+
 ## 功能
 
 ### 脚本

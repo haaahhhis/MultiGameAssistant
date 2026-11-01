@@ -31,6 +31,12 @@ export interface AssetChoice<A extends { readonly name: string }> {
   readonly asset: A | undefined
   /** Why it was chosen (or why none was), for the UI and the agent. */
   readonly reason: string
+  /**
+   * Other files that fit just as well and are not the same package in another
+   * format (e.g. a CPU and a GPU build): someone should pick, not a guess.
+   * `asset` is the one a guess would take.
+   */
+  readonly alternatives?: readonly A[]
 }
 
 /**
@@ -64,7 +70,14 @@ export function chooseAsset<A extends { readonly name: string; readonly size?: n
     .sort((a, b) => b.score - a.score || (b.asset.size ?? 0) - (a.asset.size ?? 0))
   const best = scored[0]
   if (best === undefined || best.score <= 0) return { asset: undefined, reason: '没有适合本机（Windows x64）的文件，请手动选择' }
-  return { asset: best.asset, reason: `按文件名判断适合 ${platform}-${arch}` }
+  const base = (name: string) => name.toLowerCase().replace(/\.(zip|7z|tar\.gz|tgz|tar\.xz|tar\.zst|exe|msi)$/, '')
+  const seen = new Set([base(best.asset.name)])
+  const others = scored.filter(e => e.score === best.score && !seen.has(base(e.asset.name)) && (seen.add(base(e.asset.name)), true)).map(e => e.asset)
+  return {
+    asset: best.asset,
+    reason: `按文件名判断适合 ${platform}-${arch}`,
+    ...(others.length === 0 ? {} : { alternatives: [best.asset, ...others] }),
+  }
 }
 
 const OTHER_PLATFORM: Record<string, RegExp> = {

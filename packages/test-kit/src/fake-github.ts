@@ -2,13 +2,16 @@
  * Fake GitHub releases API on loopback.
  *
  * Serves the subset the installer uses: `GET /repos/{owner}/{repo}/releases`,
- * `.../releases/latest`, `.../releases/tags/{tag}`, and asset downloads. Faults
+ * `.../releases/latest`, `.../releases/tags/{tag}`, asset downloads, and for
+ * source installs the repository itself, `.../commits/{ref}` and
+ * `.../zipball/{sha}`. Faults
  * (rate limiting, server errors, dropped connections) can be switched on per
  * test, so failure paths are exercised without the network.
  */
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { makeZip, type ZipEntries } from './zip.ts'
 
 export interface FakeAsset {
   readonly name: string
@@ -33,9 +36,29 @@ export interface FakeRelease {
   readonly assets: readonly FakeAsset[]
 }
 
+/** A commit a branch or tag points at, and the files in it. */
+export interface FakeCommit {
+  readonly sha: string
+  /** ISO time. */
+  readonly date: string
+  readonly files: ZipEntries
+}
+
+/** A repository's source, for installs without releases. */
+export interface FakeSource {
+  /** Default: `main`. */
+  readonly defaultBranch?: string
+  readonly stars?: number
+  readonly description?: string
+  /** Branch or tag name → commit; a test may change these to move a branch. */
+  readonly refs: Record<string, FakeCommit>
+}
+
 export interface FakeGitHubOptions {
   /** `owner/repo` → releases. */
   readonly repos: Readonly<Record<string, readonly FakeRelease[]>>
+  /** `owner/repo` → its branches and tags; a repository listed only here has no releases. */
+  readonly sources?: Readonly<Record<string, FakeSource>>
   /** Send downloads at this speed, like a slow connection (default: at once). */
   readonly bytesPerSecond?: number
 }
@@ -121,10 +144,38 @@ export async function startFakeGitHub(options: FakeGitHubOptions): Promise<FakeG
         .map(repo => ({ full_name: repo, description: `fake ${repo}`, stargazers_count: 1 }))
       return json(res, 200, { total_count: items.length, items })
     }
+    const info = /^\/repos\/([^/]+\/[^/]+)$/.exec(path)
+    if (info !== null) {
+      const repo = decodeURIComponent(info[1]!)
+      const source = options.sources?.[repo]
+      if (source === undefined && options.repos[repo] === undefined) return json(res, 404, { message: 'Not Found' })
+      return json(res, 200, {
+        full_name: repo, description: source?.description ?? `fake ${repo}`, stargazers_count: source?.stars ?? 1,
+        fork: false, archived: false, default_branch: source?.defaultBranch ?? 'main', pushed_at: '2026-10-01T00:00:00Z',
+      })
+    }
+    const commit = /^\/repos\/([^/]+\/[^/]+)\/commits\/(.+)$/.exec(path)
+    if (commit !== null) {
+      const found = options.sources?.[decodeURIComponent(commit[1]!)]?.refs[decodeURIComponent(commit[2]!)]
+      if (found === undefined) return json(res, 404, { message: 'No commit found' })
+      return json(res, 200, { sha: found.sha, commit: { committer: { date: found.date } } })
+    }
+    const zipball = /^\/repos\/([^/]+)\/([^/]+)\/zipball\/([^/]+)$/.exec(path)
+    if (zipball !== null) {
+      const [, owner, name, sha] = zipball.map(decodeURIComponent) as [string, string, string, string]
+      const found = Object.values(options.sources?.[`${owner}/${name}`]?.refs ?? {}).find(c => c.sha === sha)
+      if (found === undefined) return json(res, 404, { message: 'Not Found' })
+      // Like GitHub's: everything inside one `owner-repo-sha7/` folder.
+      const root = `${owner}-${name}-${sha.slice(0, 7)}/`
+      const body = makeZip({ [root]: '', ...Object.fromEntries(Object.entries(found.files).map(([p, c]) => [root + p, c])) })
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-length': body.length })
+      send(res, body)
+      return
+    }
     const api = /^\/repos\/([^/]+\/[^/]+)\/releases(?:\/(latest|tags\/(.+)))?$/.exec(path)
     if (api === null) return json(res, 404, { message: 'Not Found' })
     const repo = decodeURIComponent(api[1]!)
-    const releases = options.repos[repo]
+    const releases = options.repos[repo] ?? (options.sources?.[repo] === undefined ? undefined : [])
     if (releases === undefined) return json(res, 404, { message: 'Not Found' })
     const published = [...releases].filter(r => r.draft !== true)
       .sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''))

@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { MirrorLookup, MirrorSearchItem, ReleaseInfo, ScriptJob } from '@adg/protocol'
+import { parseGitHubLink, type MirrorLookup, type MirrorSearchItem, type ReleaseInfo, type ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { errorText, formatBytes, PHASE_LABEL } from './data.ts'
 import { Select } from '../../components/Select.tsx'
 
 /**
- * Install from a GitHub release: pick the repository, then the release and
- * file (the suggested file is preselected). Starting the install is the user's
+ * Install from a GitHub release: pick the repository (any GitHub link works:
+ * one to a release or a file preselects it), then the release and file (the
+ * suggested file is preselected). A repository without releases, or a link to
+ * a branch, installs that branch's source instead. Starting the install is the user's
  * explicit confirmation of where the code comes from. The panel then follows
  * the install (steps, bytes, speed) until it is done, failed or cancelled.
  */
@@ -23,7 +25,7 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, o
   onClose: () => void
 }) {
   const [repo, setRepo] = useState(initialRepo ?? '')
-  const [loaded, setLoaded] = useState<{ repo: string; packId?: string | undefined; releases: ReleaseInfo[] } | null>(null)
+  const [loaded, setLoaded] = useState<{ repo: string; packId?: string | undefined; releases: ReleaseInfo[]; branch?: string | undefined } | null>(null)
   const [tag, setTag] = useState<string>('')
   const [asset, setAsset] = useState<string>('')
   const [busy, setBusy] = useState(false)
@@ -31,21 +33,23 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, o
   const [started, setStarted] = useState<{ jobId: string; scriptId: string; tag: string; asset: string; size?: number | undefined } | null>(null)
 
   const load = async (value = repo) => {
-    const target = value.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$|\/$/g, '')
-    if (!/^[\w.-]+\/[\w.-]+$/.test(target)) {
-      setError('请输入 owner/repo，或粘贴 GitHub 仓库地址')
+    const link = parseGitHubLink(value)
+    if (link === undefined) {
+      setError('请输入 owner/repo，或粘贴 GitHub 上的仓库、发布或文件链接')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const result = await client.connection.call('scripts/releases', { repo: target, limit: 10 })
-      setRepo(target)
-      setLoaded(result)
-      const first = result.releases.find(r => !r.prerelease) ?? result.releases[0]
+      const result = await client.connection.call('scripts/releases', { repo: link.repo, limit: 10 })
+      setRepo(link.repo)
+      setLoaded({ ...result, branch: link.branch })
+      // The release and file the link points at, else the latest stable and its suggested file.
+      const linked = result.releases.find(r => r.tag === link.tag)
+      const first = linked ?? result.releases.find(r => !r.prerelease) ?? result.releases[0]
       setTag(first?.tag ?? '')
-      setAsset(first?.suggestedAsset ?? '')
-      if (result.releases.length === 0) setError('这个仓库还没有发布版本')
+      setAsset(first?.assets.find(a => a.name === link.asset)?.name ?? first?.suggestedAsset ?? '')
+      if (link.tag !== undefined && linked === undefined && result.releases.length > 0) setError(`最近的发布里没有 ${link.tag}，已改选最新版本`)
     } catch (e) {
       setLoaded(null)
       setError(errorText(e))
@@ -60,6 +64,21 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, o
   }, [initialRepo])
 
   const release = loaded?.releases.find(r => r.tag === tag)
+  // A branch's source: what a branch link asks for, and all a repository without releases has.
+  const source = loaded !== null && (loaded.branch !== undefined || loaded.releases.length === 0)
+  const installSource = async () => {
+    if (loaded === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { jobId, scriptId } = await client.connection.call('scripts/install', { repo: loaded.repo, ...(loaded.branch === undefined ? {} : { branch: loaded.branch }) })
+      setStarted({ jobId, scriptId, tag: loaded.branch === undefined ? '默认分支' : `${loaded.branch} 分支`, asset: '源码压缩包' })
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
   const install = async () => {
     if (loaded === null || release === undefined || asset === '') return
     setBusy(true)
@@ -89,10 +108,19 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, o
         <button className="icon-button" aria-label="关闭" onClick={onClose}><Icon name="close" /></button>
       </div>
       <form className="field-row" onSubmit={e => { e.preventDefault(); void load() }}>
-        <input className="text-input plain" aria-label="GitHub 仓库" value={repo} onChange={e => setRepo(e.target.value)} placeholder="owner/repo，例如 MaaAssistantArknights/MaaAssistantArknights" spellCheck={false} disabled={busy} />
+        <input className="text-input plain" aria-label="GitHub 仓库" value={repo} onChange={e => setRepo(e.target.value)} placeholder="owner/repo 或 GitHub 链接，例如 MaaAssistantArknights/MaaAssistantArknights" spellCheck={false} disabled={busy} />
         <button type="submit" disabled={busy || repo.trim() === ''}>{busy && loaded === null ? '读取中…' : '读取发布'}</button>
       </form>
 
+      {source && (
+        <div className="key-actions">
+          <span className="muted small">{loaded.branch !== undefined
+            ? `链接指向 ${loaded.branch} 分支：会下载这个分支当前的源码，之后跟着它更新。`
+            : '这个仓库还没有发布版本：可以下载默认分支当前的源码，之后跟着这个分支更新。'}</span>
+          <span className="spacer" />
+          <button className={loaded.releases.length === 0 ? 'primary' : ''} onClick={() => void installSource()} disabled={busy}>安装{loaded.branch === undefined ? '源码' : ` ${loaded.branch} 分支`}</button>
+        </div>
+      )}
       {loaded !== null && loaded.releases.length > 0 && (
         <>
           <label className="field-label" htmlFor="release-select">版本{loaded.packId !== undefined && <span className="chip subtle">内置脚本包 {loaded.packId}</span>}</label>

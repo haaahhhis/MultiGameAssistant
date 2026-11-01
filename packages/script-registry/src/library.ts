@@ -17,7 +17,7 @@
 import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  applyFix, archiveKind, checkEnvironment, compareVersions, contentKind, detectVersion, download, extract, GitHubClient, matchesDetect, mirrorCatalogue, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, runSetup,
+  applyFix, archiveKind, checkEnvironment, compareVersions, contentKind, detectVersion, download, extract, GitHubClient, GitHubError, matchesDetect, mirrorCatalogue, MirrorChyanError, mirrorLatest, probeProject, readMirrorChanges, runSetup,
   SETUP_NAMES, setupExitText, setupKind, systemHost,
   type DetectedVersion, type EnvChecker, type EnvHost, type FixPlan, type MirrorLatest, type MirrorProject, type MirrorResource, type SetupKind,
 } from '@adg/installer'
@@ -64,8 +64,13 @@ export interface InstallRequest {
   readonly mirrorchyan?: MirrorResource | undefined
   readonly tag?: string | undefined
   readonly asset?: string | undefined
+  /** Install this branch's source instead of a release (a link to `/tree/<branch>`); also what a repository without releases gets. */
+  readonly branch?: string | undefined
   readonly id?: string | undefined
-  /** The agent asked: a setup program is left to it (the job says so) rather than to a new conversation. */
+  /**
+   * The agent asked: a setup program is left to it (the job says so) rather than to a new conversation,
+   * and when several files fit equally it is told to ask the user instead of one being guessed.
+   */
   readonly byAgent?: boolean | undefined
 }
 
@@ -448,7 +453,7 @@ export class ScriptLibrary {
     const channels = existing !== undefined
       ? this.#channels(existing)
       : this.#newChannels(source, pack)
-    const use: Channels = request.tag !== undefined || request.asset !== undefined ? (channels.github === undefined ? {} : { github: channels.github }) : channels
+    const use: Channels = request.tag !== undefined || request.asset !== undefined || request.branch !== undefined ? (channels.github === undefined ? {} : { github: channels.github }) : channels
     return this.#jobs.start(existing === undefined ? 'install' : 'update', scriptId, ctl => this.#installJob(scriptId, source, request, use, pack, ctl))
   }
 
@@ -472,9 +477,10 @@ export class ScriptLibrary {
       if (found !== undefined) script.localVersion = found
       current = script.localVersion?.version
     }
-    const version = await this.#latestVersion(channels, pack, signal)
+    const version = await this.#latestVersion(channels, pack, signal, script.sourceBranch)
     const managed = script.source.kind !== 'local'
-    const available = current === undefined || compareVersions(version, current) > 0 || (managed && compareVersions(version, current) === 0 && version !== current)
+    // Following a branch: any other head is the update (two commits of one day do not compare by their ids).
+    const available = current === undefined || (script.sourceBranch !== undefined ? version !== current : compareVersions(version, current) > 0 || (managed && compareVersions(version, current) === 0 && version !== current))
     script.update = { latest: version, available, checkedAt: this.#now() }
     await this.#save()
     this.#options.onChanged(id)
@@ -521,11 +527,21 @@ export class ScriptLibrary {
     return this.#info(script)
   }
 
-  async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset' | 'byAgent'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
+  async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset' | 'branch' | 'byAgent'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
     const script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
     const have = (version: string) => script?.versions.some(v => v.version === version) === true
-    const fetched = await this.#fetch(scriptId, channels, pack, previous?.version, ctl, request, have)
+    // A script installed from a branch keeps following it, unless a release is asked for.
+    const branch = request.branch ?? (request.tag === undefined && request.asset === undefined ? script?.sourceBranch : undefined)
+    const previousAsset = script?.versions.find(v => v.version === previous?.version)?.asset?.name
+    const fetched = await this.#fetch(scriptId, channels, pack, previous?.version, ctl, { ...request, branch, previousAsset }, have)
+    const followBranch = async () => {
+      const added = this.#state.scripts.find(s => s.id === scriptId)
+      if (added === undefined || added.sourceBranch === fetched.branch) return
+      if (fetched.branch === undefined) delete added.sourceBranch
+      else added.sourceBranch = fetched.branch
+      await this.#save()
+    }
     const { version, archive } = fetched
     if (archive === undefined && script !== undefined) {
       script.current = version
@@ -567,6 +583,7 @@ export class ScriptLibrary {
     }
     await rm(archive!, { force: true })
     await this.#addVersion(scriptId, source, pack, version, versionDir, fetched.asset, ctl)
+    await followBranch()
     return version
   }
 
@@ -906,9 +923,9 @@ export class ScriptLibrary {
    * incremental package from `from` when it has one), else GitHub. A script
    * only on Mirror酱 needs the CDK, and says so.
    */
-  async #fetch(scriptId: string, channels: Channels, pack: LoadedPack | undefined, from: string | undefined, ctl: JobControl, request: Pick<InstallRequest, 'tag' | 'asset'> = {}, have?: (version: string) => boolean): Promise<Fetched> {
+  async #fetch(scriptId: string, channels: Channels, pack: LoadedPack | undefined, from: string | undefined, ctl: JobControl, request: FetchRequest = {}, have?: (version: string) => boolean): Promise<Fetched> {
     const onlyMirror = channels.github === undefined
-    if (channels.mirror !== undefined) {
+    if (channels.mirror !== undefined && request.branch === undefined) {
       const fetched = await this.#fromMirror(scriptId, channels.mirror.resource, from, ctl, onlyMirror, have)
       if (fetched !== undefined) return fetched
     }
@@ -916,18 +933,42 @@ export class ScriptLibrary {
     return this.#fromGitHub(scriptId, { repo: channels.github.repo, ...request }, pack, ctl, have)
   }
 
-  /** The release's file from GitHub (through the download mirror); no download when `have` says the version is already there. */
-  async #fromGitHub(scriptId: string, request: { repo: string; tag?: string | undefined; asset?: string | undefined }, pack: LoadedPack | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
+  /**
+   * The release's file from GitHub (through the download mirror); no download when `have` says the version is already there.
+   * A repository without releases (or a branch asked for) gets its source instead (`#fromSource`).
+   */
+  async #fromGitHub(scriptId: string, request: FetchRequest & { repo: string }, pack: LoadedPack | undefined, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
     const settings = this.#state.settings
+    if (request.branch !== undefined) return this.#fromSource(scriptId, request.repo, { branch: request.branch }, ctl, have)
     ctl.phase('resolving', { message: `读取 ${request.repo} 的发布信息` })
     const github = this.#github()
-    const release = request.tag === undefined
-      ? await github.latest(request.repo, { includePrereleases: this.#prereleases(pack), signal: ctl.signal })
-      : await github.release(request.repo, request.tag, ctl.signal)
+    let release: ReleaseInfo
+    try {
+      release = request.tag === undefined
+        ? await github.latest(request.repo, { includePrereleases: this.#prereleases(pack), signal: ctl.signal })
+        : await github.release(request.repo, request.tag, ctl.signal)
+    } catch (error) {
+      if (!(error instanceof GitHubError) || error.status !== 404) throw error
+      // A tag without a release: that tag's source.
+      if (request.tag !== undefined) return this.#fromSource(scriptId, request.repo, { tag: request.tag }, ctl, have)
+      if ((await github.releases(request.repo, 1, ctl.signal)).length > 0) {
+        throw new Error(`${request.repo} 只有预发布版本：在「设置 → 脚本安装」打开「安装预发布版本」，或指定一个版本标签`)
+      }
+      // No releases at all (scripts published as source): the default branch's source.
+      return this.#fromSource(scriptId, request.repo, {}, ctl, have)
+    }
     const asset = request.asset === undefined
       ? (() => {
         const choice = chooseAsset(release.assets, { ...globsOf(pack), tag: release.tag })
         if (choice.asset === undefined) throw new Error(`${choice.reason}。可选文件：${release.assets.map(a => a.name).join('、') || '（无）'}`)
+        if (choice.alternatives === undefined) return choice.asset
+        // An update takes the one like last time (the same name but for the version).
+        const shape = (name: string) => name.toLowerCase().replace(/\d+/g, '#')
+        const same = request.previousAsset === undefined ? undefined : choice.alternatives.find(a => shape(a.name) === shape(request.previousAsset!))
+        if (same !== undefined) return same
+        if (request.byAgent === true) {
+          throw new AssetChoiceError(`${release.tag} 有几个文件都适合本机：${choice.alternatives.map(a => a.name).join('、')}。先问用户要哪一个（说明它们的区别，例如 CPU / GPU 版、完整 / 精简版），再用 asset 参数指定后重新安装`)
+        }
         return choice.asset
       })()
       : release.assets.find(a => a.name === request.asset) ?? (() => { throw new Error(`${release.tag} 里没有文件 ${request.asset}`) })()
@@ -948,6 +989,54 @@ export class ScriptLibrary {
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
     })
     return { version, archive, asset: { name: asset.name, size: asset.size }, incremental: false }
+  }
+
+  /**
+   * A commit's source as the "release": for repositories that publish none
+   * (scripts run from source, e.g. Python projects) or a branch asked for.
+   * Versions are the commit's date and id (`2026.10.31-1a2b3c4`), so a newer
+   * commit counts as newer; a tag keeps its own version.
+   */
+  async #fromSource(scriptId: string, repo: string, ref: { branch?: string; tag?: string }, ctl: JobControl, have?: (version: string) => boolean): Promise<Fetched> {
+    const github = this.#github()
+    const branch = ref.tag !== undefined ? undefined : ref.branch ?? (await github.repoInfo(repo, ctl.signal)).defaultBranch
+    const name = ref.tag ?? branch!
+    ctl.phase('resolving', { message: ref.branch === undefined && ref.tag === undefined ? `${repo} 没有发布版本：用 ${name} 分支的源码` : `读取 ${repo} 的 ${name}` })
+    const head = await github.commit(repo, name, ctl.signal)
+    const version = ref.tag !== undefined ? versionOfTag(ref.tag) : sourceVersion(head.date, head.sha)
+    const file = `${repo.split('/')[1]}-${head.sha.slice(0, 7)}.zip`
+    if (have?.(version) === true) return { version, asset: { name: file, size: 0 }, incremental: false, ...(branch === undefined ? {} : { branch }) }
+    const settings = this.#state.settings
+    const archive = join(this.toolsDir, scriptId, '.downloads', file)
+    ctl.phase('downloading', { message: `${file}（${name} 的源码）`, received: 0 })
+    await download({
+      url: github.sourceZipUrl(repo, head.sha),
+      dest: archive,
+      mirror: settings.downloadMirror,
+      mirrorFallback: settings.mirrorFallback,
+      signal: ctl.signal,
+      onProgress: (received, total) => ctl.phase('downloading', { message: file, received, ...(total === undefined ? {} : { total }) }),
+      ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+    })
+    const size = await stat(archive).then(s => s.size, () => 0)
+    return { version, archive, asset: { name: file, size }, incremental: false, ...(branch === undefined ? {} : { branch }) }
+  }
+
+  /** What a repository is, for deciding whether to trust one that no pack describes. */
+  async repoFacts(repo: string, signal?: AbortSignal): Promise<string> {
+    try {
+      const info = await this.#github().repoInfo(repo, signal)
+      const pushed = info.pushedAt === undefined ? undefined : new Date(info.pushedAt).toLocaleDateString('zh-CN')
+      return [
+        `${info.stars} 星`,
+        ...(pushed === undefined ? [] : [`最近更新 ${pushed}`]),
+        ...(info.fork ? ['是别人项目的分支（fork）'] : []),
+        ...(info.archived ? ['已归档、不再维护'] : []),
+        ...(info.description === undefined ? [] : [`简介：${info.description}`]),
+      ].join('，')
+    } catch {
+      return '读不到仓库信息'
+    }
   }
 
   /**
@@ -1009,7 +1098,12 @@ export class ScriptLibrary {
    * The newest version where the update will come from: Mirror酱 with a CDK
    * (or when it is the only channel; asking needs no CDK), else GitHub.
    */
-  async #latestVersion(channels: Channels, pack: LoadedPack | undefined, signal?: AbortSignal): Promise<string> {
+  async #latestVersion(channels: Channels, pack: LoadedPack | undefined, signal?: AbortSignal, sourceBranch?: string): Promise<string> {
+    // Installed from a branch: its newest commit.
+    if (sourceBranch !== undefined && channels.github !== undefined) {
+      const head = await this.#github().commit(channels.github.repo, sourceBranch, signal)
+      return sourceVersion(head.date, head.sha)
+    }
     const mirror = channels.mirror?.resource
     const cdk = mirror === undefined ? undefined : await this.#options.credential(this.#state.settings.cdkRef)
     if (mirror !== undefined && ((cdk !== undefined && cdk !== '') || channels.github === undefined)) {
@@ -1477,7 +1571,31 @@ function describeSource(source: ScriptSource): string {
 }
 
 /** A release file downloaded for an install or update. */
+/** What an install or update asks of a download channel. */
+interface FetchRequest {
+  readonly tag?: string | undefined
+  readonly asset?: string | undefined
+  readonly branch?: string | undefined
+  readonly byAgent?: boolean | undefined
+  /** The file the version in use came from: an update picks the same kind among equally good files. */
+  readonly previousAsset?: string | undefined
+}
+
+/** Several files fit equally well and the agent should ask which (InstallRequest.byAgent). */
+export class AssetChoiceError extends Error {
+  override readonly name = 'AssetChoiceError'
+}
+
+/** A commit as a version: its UTC date, then its id (`2026.10.31-1a2b3c4`). */
+function sourceVersion(date: string, sha: string): string {
+  const d = new Date(date)
+  const day = Number.isNaN(d.getTime()) ? '0.0.0' : `${d.getUTCFullYear()}.${d.getUTCMonth() + 1}.${d.getUTCDate()}`
+  return `${day}-${sha.slice(0, 7)}`
+}
+
 interface Fetched {
+  /** Installed from this branch's source (StoredScript.sourceBranch). */
+  readonly branch?: string
   readonly version: string
   /** Undefined when that version was already there and nothing was downloaded. */
   readonly archive?: string
