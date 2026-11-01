@@ -21,7 +21,7 @@
  * dsh's own stock web UI in this window instead, a separate dsh with its own
  * conversations; the agent service keeps running behind it.
  */
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, session, shell, Tray } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -132,6 +132,11 @@ async function start() {
   createTray()
   // The theme the user picked in the UI, so the splash before it matches.
   nativeTheme.themeSource = savedTheme()
+  // The windows only ever show pages from this machine (127.0.0.1); the system
+  // proxy would otherwise get them too when it is set to include loopback, and
+  // a proxy tool that has stopped leaves the window at ERR_PROXY_CONNECTION_FAILED.
+  // Downloads and model calls run in Node and dsh, not here, so they keep theirs.
+  await session.defaultSession.setProxy({ mode: 'direct' })
   win = new BrowserWindow({
     width: 1280,
     height: 820,
