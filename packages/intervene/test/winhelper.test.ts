@@ -11,6 +11,7 @@ import { errorLines, WinHelper } from '../src/winhelper.ts'
 // desktop, so they are checked on a real machine.
 test('the Windows helper compiles, answers, keeps Unicode, lists windows, and suspends and resumes a process tree', { skip: process.platform !== 'win32', timeout: 120_000 }, async () => {
   const helper = new WinHelper()
+  let child: ReturnType<typeof spawn> | undefined
   try {
     assert.equal(await helper.call('ping'), 'pong')
     assert.equal(await helper.call('echo', { text: '任务出错：更新弹窗 ✓' }), '任务出错：更新弹窗 ✓')
@@ -18,11 +19,12 @@ test('the Windows helper compiles, answers, keeps Unicode, lists windows, and su
     await assert.rejects(helper.call('keys', { keys: 'ctrl+nope' }), /不认识的按键：nope/)
 
     // A child that prints a tick every 50 ms stops ticking while suspended.
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => process.stdout.write("."), 50)'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    child = spawn(process.execPath, ['-e', 'setInterval(() => process.stdout.write("."), 50)'], { stdio: ['ignore', 'pipe', 'ignore'] })
     let ticks = 0
-    child.stdout.on('data', chunk => { ticks += String(chunk).length })
-    await delay(600)
-    assert.ok(ticks > 0)
+    child.stdout!.on('data', chunk => { ticks += String(chunk).length })
+    // Node can take seconds to start on a busy machine: wait for the first tick.
+    for (let waited = 0; ticks === 0 && waited < 15_000; waited += 100) await delay(100)
+    assert.ok(ticks > 0, 'the child never ticked')
     assert.ok((await helper.call<number>('suspend', { pid: child.pid, resume: false })) >= 1)
     await delay(300)
     const frozen = ticks
@@ -31,8 +33,10 @@ test('the Windows helper compiles, answers, keeps Unicode, lists windows, and su
     await helper.call('suspend', { pid: child.pid, resume: true })
     await delay(600)
     assert.ok(ticks > frozen + 3, 'ticks again after resume')
-    child.kill()
   } finally {
+    // Also when an assertion failed: a child left suspended keeps the test run from ending.
+    if (child?.pid !== undefined) await helper.call('suspend', { pid: child.pid, resume: true }).catch(() => {})
+    child?.kill()
     helper.dispose()
   }
 })
