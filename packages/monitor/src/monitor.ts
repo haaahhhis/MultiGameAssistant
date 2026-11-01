@@ -104,6 +104,8 @@ export class Monitor {
   readonly #chains = new Map<string, string>()
   /** Incident → the release of its hold on the run (see Runner.hold). */
   readonly #holds = new Map<string, () => void>()
+  /** Incidents whose run a person is stopping from the incident (act stop): they close in its own words. */
+  readonly #stopping = new Set<string>()
   /** chain → recovery entry index → times used. */
   readonly #used = new Map<string, Map<number, number>>()
   readonly #incidents: Incident[] = []
@@ -177,11 +179,17 @@ export class Monitor {
     if (action === 'stop') {
       const run = this.#deps.runner.get(incident.runId)
       if (run.endedAt !== undefined) throw new Error(`这次运行已经结束（${run.outcome ?? run.state}）`)
-      await this.#deps.runner.stop(incident.runId, `按异常处理停止${by}`)
+      // Closed below in its own words, not as one of the stopped run's other incidents.
+      this.#stopping.add(incident.id)
+      try {
+        await this.#deps.runner.stop(incident.runId, `按异常处理停止${by}`)
+      } finally {
+        this.#stopping.delete(incident.id)
+      }
       this.#step(incident, { action: 'stop', by: who.by, ok: true, detail: `已停止运行${by}` })
       this.#resolve(incident, `已停止${by}`)
     } else if (action === 'retry') {
-      const next = await this.#deps.runner.restart(incident.runId, `按异常处理重试${by}`)
+      const next = await this.#deps.runner.restart(incident.runId, `按异常处理重试${by}`, { byUser: who.by === 'user' })
       if (next.state === 'failed') throw new Error(`重新运行没有启动：${next.outcome ?? ''}`)
       this.#step(incident, { action: 'restart', by: who.by, ok: true, detail: `已重新运行${by}（${next.id}）` })
       this.#resolve(incident, `已重新运行${by}`)
@@ -247,6 +255,8 @@ export class Monitor {
       }
     }
     if (line.level !== 'error' && line.level !== 'warning') return
+    // What a run prints while it is being stopped (or after it was stopped on purpose) is the stop, not a problem.
+    if (run.halted === true || run.state === 'stopping') return
     const tag = line.tag ?? line.level
     if (this.#incidents.some(i => i.runId === run.id && i.tag === tag && i.status === 'open')) return
     this.#raise(run, line.level, tag, line.text)
@@ -255,6 +265,18 @@ export class Monitor {
   #onState(run: RunInfo): void {
     if (run.kind !== 'task') return
     const watched = this.#track(run)
+    // Stopped on purpose (the user, a pipeline being stopped), from the moment it is asked: nothing more to handle
+    // for it or the runs it restarted, and an agent handling one of them stops too (it must not launch the game again).
+    if (run.halted === true) {
+      const chain = this.#chains.get(run.id) ?? run.id
+      for (const incident of this.#incidents) {
+        if (incident.status !== 'open' || this.#stopping.has(incident.id) || (incident.runId !== run.id && this.#chains.get(incident.runId) !== chain)) continue
+        this.#deps.intervene?.()?.cancel?.(incident.id, '停止')
+        this.#resolve(incident, '运行已被停止，不再处理')
+      }
+      if (run.endedAt !== undefined) this.#watched.delete(watched.run.id)
+      return
+    }
     if (run.endedAt === undefined) return
     this.#watched.delete(watched.run.id)
     const open = this.#incidents.filter(i => i.runId === run.id && i.status === 'open')
@@ -318,7 +340,9 @@ export class Monitor {
   /** L0 recovery, then the screenshot and the notice for whatever is left. */
   /** @returns whether the user was told (a notice went out). */
   async #handle(incident: Incident): Promise<boolean> {
+    if (this.#settled(incident)) return false
     const recovered = await this.#recover(incident)
+    if (this.#settled(incident)) return false
     if (incident.severity === 'warning' && !this.#settings.notifyWarnings) return false
     if (recovered) return false
     let image: Buffer | undefined
@@ -327,7 +351,7 @@ export class Monitor {
     // L1/L2: the agent looks (and in `act` mode handles it, the script paused) before the user is told.
     let agent: Awaited<ReturnType<InterventionPort['handle']>> | undefined
     const port = this.#deps.intervene?.()
-    if (incident.severity === 'error' && this.#settings.intervene !== 'off' && port !== undefined && incident.status === 'open') {
+    if (incident.severity === 'error' && this.#settings.intervene !== 'off' && port !== undefined && !this.#settled(incident)) {
       if (port.countToday() >= this.#settings.interventionsPerDay) {
         this.#step(incident, { action: 'intervene', by: 'rule', ok: false, detail: `今天的 agent 处理次数（${this.#settings.interventionsPerDay}）已用完，直接交给你` })
       } else {
@@ -387,6 +411,8 @@ export class Monitor {
     this.#used.set(chain, used)
     let acted = false
     for (const { entry, index } of entries) {
+      // Stopped meanwhile: no restart behind the user's back.
+      if (this.#settled(incident)) return true
       const count = used.get(index) ?? 0
       if (count >= entry.max) {
         this.#step(incident, { action: entry.do, by: 'rule', ok: false, detail: `${DO[entry.do]}已用过 ${count} 次（上限 ${entry.max}），交给你处理` })
@@ -447,6 +473,11 @@ export class Monitor {
   #step(incident: Incident, step: Omit<IncidentStep, 'at'>): void {
     incident.steps.push({ at: this.#now(), ...step })
     this.#changed(incident)
+  }
+
+  /** Nothing more to do for it: it was settled, or its run was stopped on purpose. */
+  #settled(incident: Incident): boolean {
+    return incident.status !== 'open' || safeGet(this.#deps.runner, incident.runId)?.halted === true
   }
 
   #resolve(incident: Incident, resolution: string): void {

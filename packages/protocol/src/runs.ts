@@ -103,6 +103,11 @@ export const RunInfo = z.object({
   kind: z.enum(['task', 'settings']),
   /** This run restarts that one (L0 recovery or the user's retry). */
   retryOf: z.string().optional(),
+  /**
+   * Stopped on purpose (the user, a pipeline being stopped, the agent), not
+   * restarted: nothing runs it again by itself, and its incidents are closed.
+   */
+  halted: z.boolean().optional(),
   /** The config profile it ran with (absent in runs from before profiles). */
   profile: z.string().optional(),
   profileName: z.string().optional(),

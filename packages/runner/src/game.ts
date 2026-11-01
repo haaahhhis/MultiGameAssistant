@@ -88,6 +88,8 @@ export interface GameStart {
   readonly android: AndroidPort | undefined
   readonly signal: AbortSignal
   readonly line: (text: string) => void
+  /** The game was started here (not found running): a run stopped before its script starts closes it again. */
+  readonly launched?: (where: 'emulator' | 'pc') => void
   /** Injected for tests. */
   readonly processRunning?: (name: string) => Promise<boolean>
   readonly startProgram?: (exe: string) => void
@@ -166,6 +168,7 @@ export async function ensureGame(start: GameStart): Promise<void> {
     }
     line(`在模拟器里启动${name}（${pkg}）`)
     await start.android.launchApp(start.address, pkg)
+    start.launched?.('emulator')
     if (startupMs > 0) {
       line(`等${name}启动 ${startupMs / 1000} 秒`)
       await sleep(startupMs, start.signal)
@@ -185,12 +188,14 @@ export async function ensureGame(start: GameStart): Promise<void> {
     }
     if (maaend) {
       line(`通过 MaaEnd LaunchGamePC 启动${name}（官方启动器）`)
+      start.launched?.('pc')
       await (start.launchMaaEnd ?? launchMaaEnd)(start)
       return
     }
     if (exe === undefined) return
     line(`启动${name}：${exe}`)
     ;(start.startProgram ?? startProgram)(exe)
+    start.launched?.('pc')
     // Wait for it to show up (launchers may take a while), then give it time to load.
     for (let waited = 0; processName !== undefined && waited < 90_000 && !(await running(processName)); waited += 2000) await sleep(2000, start.signal)
     if (startupMs > 0) {

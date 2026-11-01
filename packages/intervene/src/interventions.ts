@@ -271,7 +271,7 @@ export class Interventions {
     if (item.state === 'running') this.takeover(id)
     if (item.runId === undefined) return item
     if (then === 'resume') await this.#resume(item)
-    else if (then === 'restart') { await this.#deps.runner.restart(item.runId, '处理完后重新运行'); item.paused = false }
+    else if (then === 'restart') { await this.#deps.runner.restart(item.runId, '处理完后重新运行', { byUser: true }); item.paused = false }
     else { await this.#deps.runner.stop(item.runId, '处理异常后停止'); item.paused = false }
     this.#changed(item)
     return item

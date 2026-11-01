@@ -280,3 +280,32 @@ test('L1/L2: what L0 leaves goes to the agent first; fixed is not pushed, given 
   await capped.runner.stop(run3.id)
   capped.monitor.stop()
 })
+
+test('stopping a run while the agent handles it: the agent is called off, the incident closes, nothing is pushed or restarted', async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }')
+  const steps = { steps: [{ logFile: 'debug/gui.log', line: '[ERR] 重连失败，连接断开！' }, { sleepMs: 60_000 }] }
+  const cancelled: string[] = []
+  let callOff: (() => void) | undefined
+  const port: InterventionPort = {
+    // The agent works until it is called off.
+    handle: () => new Promise(resolve => { callOff = () => resolve({ state: 'taken-over', summary: '已停止', paused: false }) }),
+    countToday: () => 0,
+    resumeRun: async () => true,
+    cancel: (incidentId, why) => { cancelled.push(why); callOff?.() },
+  }
+  const { runner, monitor, notices } = setup(pack, { 'daily.json': steps }, port)
+  await monitor.start(0)
+  const run = await runner.start('maa', 'daily')
+  while (callOff === undefined) await new Promise(resolve => setTimeout(resolve, 20))
+  await runner.stop(run.id, '流水线「日常」已取消')
+  await runner.finished(run.id)
+  await monitor.idle()
+  const incident = monitor.incidents({ status: 'all' })[0]!
+  assert.equal(incident.status, 'resolved')
+  assert.match(incident.resolution ?? '', /运行已被停止/)
+  assert.deepEqual(cancelled, ['停止'], 'the agent was called off as soon as the run was stopped')
+  assert.equal(notices.length, 0, 'nothing pushed about a run the user stopped')
+  assert.equal(runner.list().filter(r => r.retryOf === run.id).length, 0, 'not restarted')
+  await assert.rejects(runner.restart(run.id, '自动重启'), /不再重新运行/)
+  monitor.stop()
+})

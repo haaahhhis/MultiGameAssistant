@@ -273,7 +273,8 @@ export class Engine {
     const signal = active.controller.signal
     switch (node.kind) {
       case 'script-task': {
-        let current: RunInfo = await this.#deps.runner.start(node.scriptId, node.taskId, node.params, { profile: node.profile })
+        // Stopping the pipeline stops the run also while it is still starting (emulator, game): the run has no id here yet.
+        let current: RunInfo = await this.#deps.runner.start(node.scriptId, node.taskId, node.params, { profile: node.profile, signal })
         for (;;) {
           this.#addRun(active, node.id, current)
           if (current.endedAt !== undefined && current.state === 'failed') return { ok: false, detail: current.outcome ?? '没有启动' }

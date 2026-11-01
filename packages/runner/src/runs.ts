@@ -86,6 +86,8 @@ interface ActiveRun {
   stopRequested: boolean
   /** Why it was stopped, when not by a plain user request. */
   stopReason?: string
+  /** Stopped on purpose, not to be restarted (`RunInfo.halted`). */
+  halted?: boolean
   doneSeen: boolean
   errorLine?: string
   controller: AbortController
@@ -127,6 +129,8 @@ export class Runner {
   readonly #listeners = new Set<RunListener>()
   /** Runs being restarted → the restart (resolves undefined when it did not start). */
   readonly #successors = new Map<string, Promise<RunInfo | undefined>>()
+  /** Cancels the start of a run's restart (stopping the run it replaces stops that too). */
+  readonly #successorAborts = new Map<string, AbortController>()
   /** Runs someone is still deciding about (the monitor handling an incident) → how many, and who waits. */
   readonly #holds = new Map<string, { count: number; waiters: (() => void)[] }>()
   readonly #now: () => number
@@ -434,7 +438,11 @@ export class Runner {
    * Start a task. Resolves once the program has started (or the run failed to start).
    * @throws Error before anything ran: unknown script or task, bad parameters; BusyError for busy resources.
    */
-  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string; profile?: string | undefined } = {}): Promise<RunInfo> {
+  /**
+   * @param options.signal - stops the run when it aborts, also while it is still starting (preparing the
+   *   emulator, launching the game): whoever started it (a pipeline) can call it off before it has an id.
+   */
+  async start(scriptId: string, taskId: string, params: Readonly<Record<string, unknown>> = {}, options: { manifest?: ScriptManifest; mode?: 'task' | 'settings'; retryOf?: string; profile?: string | undefined; signal?: AbortSignal | undefined } = {}): Promise<RunInfo> {
     const script = this.#options.library.get(scriptId)
     const pack = this.#options.library.packOf(scriptId)
     if (pack === undefined) throw new Error(`${script.name} 没有脚本包，还不知道怎么运行它`)
@@ -467,12 +475,23 @@ export class Runner {
     run.info.resources = keys.filter(k => !k.startsWith('script:'))
     this.#runs.set(runId, run)
     this.#prune()
+    const signal = options.signal
+    if (signal !== undefined) {
+      const callOff = () => void this.stop(runId, signal.reason instanceof Error ? signal.reason.message : '已停止').catch(() => {})
+      if (signal.aborted) callOff()
+      else {
+        signal.addEventListener('abort', callOff, { once: true })
+        run.release.push(() => signal.removeEventListener('abort', callOff))
+      }
+    }
     const runDir = join(this.#options.dataDir, 'runs', runId)
     await mkdir(runDir, { recursive: true })
     // Saved now too, so a run cut off by a crash still has a record (marked on the next start).
     await writeFile(join(runDir, 'run.json'), JSON.stringify(run.info, null, 2)).catch(() => {})
     this.#publish(run)
 
+    /** Where this run started the game itself (see the catch below). */
+    let launchedGame: 'emulator' | 'pc' | undefined
     try {
       const vars: Record<string, string> = { dir: script.dir }
       let emulatorManaged = false
@@ -519,6 +538,7 @@ export class Runner {
         await ensureGame({
           manifest, settings: await this.launch.get(scriptId), input: resources.input, scriptDir: script.dir, address: vars['adb'],
           android: this.#options.emulators?.(), signal: run.controller.signal, line: text => this.#line(run, 'adg', text),
+          launched: where => { launchedGame = where },
           ...this.#options.game,
         })
         run.controller.signal.throwIfAborted()
@@ -542,6 +562,14 @@ export class Runner {
       return run.info
     } catch (error) {
       await this.#finish(run, run.stopRequested ? 'cancelled' : 'failed', run.stopRequested ? run.stopReason ?? '已停止' : error instanceof Error ? error.message : String(error))
+      // Stopped while the game it just started was still loading: the game was only for this run, close it again.
+      if (run.halted === true && launchedGame !== undefined) {
+        const where = launchedGame
+        await this.closeGame(scriptId, where, AbortSignal.timeout(60_000)).then(
+          () => this.#options.log.info(`run ${runId}: stopped while starting; closed the game it had started`),
+          closing => this.#options.log.warn(`run ${runId}: closing the game it had started failed: ${closing instanceof Error ? closing.message : String(closing)}`),
+        )
+      }
       return run.info
     }
   }
@@ -577,9 +605,18 @@ export class Runner {
    * Ask a run to stop: the program's process tree is ended and configs restored.
    * @param reason shown as the outcome instead of "stopped as requested".
    */
-  async stop(runId: string, reason?: string): Promise<void> {
+  async stop(runId: string, reason?: string, options: { restarting?: boolean } = {}): Promise<void> {
     const run = this.#run(runId)
-    if (run.info.endedAt !== undefined) return
+    // Stopped on purpose: not restarted, also not by a restart already on its way (which is called off).
+    if (options.restarting !== true) {
+      run.halted = true
+      run.info.halted = true
+      this.#successorAborts.get(runId)?.abort(new Error(reason ?? '已停止'))
+    }
+    if (run.info.endedAt !== undefined) {
+      this.#publish(run)
+      return
+    }
     run.stopRequested = true
     if (reason !== undefined) run.stopReason ??= reason
     run.controller.abort(new Error('stopped by user'))
@@ -610,19 +647,25 @@ export class Runner {
 
   /**
    * Stop a run (if it is still going) and start its task again with the same
-   * parameters; the new run records `retryOf`.
+   * parameters; the new run records `retryOf`. A run stopped on purpose is
+   * not restarted unless a person asks for it (`byUser`).
    * @throws Error when the task cannot start again (e.g. its resources are busy).
    */
-  async restart(runId: string, reason: string): Promise<RunInfo> {
+  async restart(runId: string, reason: string, options: { byUser?: boolean } = {}): Promise<RunInfo> {
     const run = this.#run(runId)
     if (run.mode !== 'task') throw new Error('设置会话不能重启')
+    if (run.halted === true && options.byUser !== true) throw new Error('这次运行已经被停止了，不再重新运行')
+    const abort = new AbortController()
+    this.#successorAborts.set(runId, abort)
     const next = (async () => {
       if (run.info.endedAt === undefined) {
         this.#line(run, 'adg', `重启：${reason}`)
-        await this.stop(runId, `已重启：${reason}`)
+        await this.stop(runId, `已重启：${reason}`, { restarting: true })
       }
       await run.finished
-      return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId, profile: run.info.profile })
+      // Stopped for good while it was ending (the user, a pipeline): no new run.
+      if (abort.signal.aborted || (run.halted === true && options.byUser !== true)) throw new Error('这次运行已经被停止了，不再重新运行')
+      return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId, profile: run.info.profile, signal: abort.signal })
     })()
     this.#successors.set(runId, next.catch(() => undefined))
     return next

@@ -17,7 +17,7 @@ import { summarizeToolArgs } from '@adg/protocol'
 import type { Conversations } from './notify.ts'
 import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
-type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'>
+type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel'>>
 type SessionId = SessionSummary['sessionId']
 type Snapshot = Extract<SessionFollowFrame, { type: 'snapshot' }>
 
@@ -31,7 +31,12 @@ const RECENT_MESSAGES = 10
 export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>): Conversations {
   const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<Reply> => {
     const controller = new AbortController()
-    const abort = () => controller.abort(signal.reason)
+    // Called off (a stopped run, a timeout): the agent's turn stops too, not only our following it —
+    // an agent left running would go on acting (e.g. launch the game again).
+    const abort = () => {
+      controller.abort(signal.reason)
+      if (sessions.cancel !== undefined) void Promise.resolve().then(() => sessions.cancel!({ sessionId: sessionId as SessionId })).catch(() => {})
+    }
     signal.addEventListener('abort', abort, { once: true })
     try {
       const iterator = sessions.follow({ address: { kind: 'session', sessionId: sessionId as SessionId }, assistantStream: true, maxMessages: 1 }, controller.signal)[Symbol.asyncIterator]()
