@@ -12,6 +12,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./agent": {
+      "types": "./lib/agent.d.ts",
+      "default": "./lib/agent.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

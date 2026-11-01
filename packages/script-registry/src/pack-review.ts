@@ -34,7 +34,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
     const sessions = ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const gateway = ctx.get('adgGateway')
-    const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (sessionId, focus) => gateway?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve())
+    const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (sessionId, focus) => gateway?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => gateway)
     const sessionId = await conversations.create(`检查脚本包：${script.name}`, { focus: { scripts: [id] } })
     const from = script.packReview?.from ?? '旧版本'
     const to = script.packReview?.to ?? script.localVersion?.version ?? script.current ?? '新版本'

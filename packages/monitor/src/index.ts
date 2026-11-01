@@ -74,9 +74,11 @@ export class AdgMonitor extends Service {
       }), 'adg-monitor notice actions')
     })
 
-    ctx.inject(['tools'], scoped => {
-      scoped.tools.register(incidentsTool(monitor, this.ready))
-    })
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-monitor tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
+      registered.push(agent.tools.register(incidentsTool(monitor, this.ready)))
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     ctx.inject(['adgGateway'], scoped => {
       scoped.adgGateway.register({

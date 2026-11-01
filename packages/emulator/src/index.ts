@@ -95,10 +95,12 @@ export class AdgEmulators extends Service {
       scoped.effect(() => scoped.adgScripts.library.registerEnvChecker('emulator', checker), 'adg-emulators env check')
     })
 
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-emulator tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       // 设置 → 权限 decides per area (the gateway's guardTool).
-      for (const tool of this.tools()) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
-    })
+      for (const tool of this.tools()) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     ctx.inject(['adgGateway'], scoped => {
       const changed = () => scoped.adgGateway.broadcast('emulators/changed', {})

@@ -5,15 +5,11 @@
  *
  *   pnpm package:plugin [--skip-build] [--version 1.1.0] [--out <folder>]
  *
- * Installed into a profile of its own, made from dsh's web template (the
- * gateway needs its session, settings and workspace APIs), so its patch
- * (permission presets, the agent preset, the working folder) never changes
- * the person's other dsh chats; then started like any profile, the gateway
- * opening its page instead of dsh's:
- *
- *   dsh --profile mga --from-default-profile web --help   (once: it resets the profile)
- *   dsh plugin --profile mga add dsh-multigameassistant
- *   dsh mga --no-open
+ * Installed into the person's own dsh (dsh desktop: Plugins → Add plugin;
+ * otherwise `dsh plugin add`), beside their other chats: the gateway runs
+ * shared (packages/gateway/src/shared.ts), its sessions run the app's own
+ * agent preset, and its UI is a 「多游戏助手」 entry in dsh's sidebar, served
+ * under dsh's web server at /adg/.
  *
  * What goes in:
  * 1. The plugins packages/bundle mounts, bundled by esbuild into
@@ -25,8 +21,11 @@
  *    and `lib/games` (@adg/packs looks beside its module, which is now a file
  *    in lib/), the core skills at `skills/` (`../skills/` from lib/), and the
  *    built UI at `web/`, which the gateway serves when nothing else is named.
- * 3. packages/bundle's cordis.patch.yml with each `@adg/<x>` entry renamed to
- *    `<package>/<x>`, a subpath this package exports.
+ * 3. A patch of its own made from packages/bundle's cordis.patch.yml: the
+ *    app's plugins (each `@adg/<x>` renamed to `<package>/<x>`, a subpath this
+ *    package exports), the gateway set to share, and the app's agent preset;
+ *    none of dsh's own rows. The package root is an entry too, for the
+ *    sidebar entry's browser half (apps/web/dsh-client.js as `lib/client.js`).
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -68,7 +67,11 @@ if (plugins.length === 0) throw new Error('no @adg plugins found in packages/bun
 
 step(`esbuild: ${plugins.length} plugins → lib/`)
 const result = await build({
-  entryPoints: plugins.map(name => ({ in: join(root, 'packages', name, 'lib', 'index.js'), out: name })),
+  entryPoints: [
+    ...plugins.map(name => ({ in: join(root, 'packages', name, 'lib', 'index.js'), out: name })),
+    // The app's part of its agent preset (packages/gateway/src/agent.ts).
+    { in: join(root, 'packages', 'gateway', 'lib', 'agent.js'), out: 'agent' },
+  ],
   outdir: join(staging, 'lib'),
   bundle: true,
   splitting: true,
@@ -111,17 +114,58 @@ for (const pkg of ['analyzer', 'game-intel', 'orchestrator']) {
   }
 }
 cpSync(join(root, 'apps', 'web', 'dist'), join(staging, 'web'), { recursive: true })
+// dsh's sidebar entry for that UI (apps/web/dsh-client.js), loaded by dsh's own page. dsh looks for a
+// package's browser half (dsh.client) on the Loader entry named after the package itself, so the package
+// root is an entry too, with nothing to do on the host.
+cpSync(join(root, 'apps', 'web', 'dsh-client.js'), join(staging, 'lib', 'client.js'))
+writeFileSync(join(staging, 'lib', 'index.js'), [
+  "// The package's own Loader entry: it carries the sidebar entry (dsh.client, lib/client.js); the app's plugins are the subpaths.",
+  "export const name = 'multigameassistant'",
+  'export function apply() {}',
+  '',
+].join('\n'))
 cpSync(join(root, 'LICENSE'), join(staging, 'LICENSE'))
 
-// Nothing else shows the UI here (no desktop window): the gateway opens it in the browser.
+// The plugin shares the dsh it goes into (dsh desktop's own profile, or another of the person's): its patch
+// adds the app's plugins and its own agent preset, and restates none of dsh's rows. The bundle's permission
+// presets, working folder and standard preset are the desktop app's, which has a dsh of its own.
+const cut = (from, to) => {
+  const start = patch.indexOf(from)
+  const end = patch.indexOf(to, start)
+  if (start < 0 || end < 0) throw new Error(`packages/bundle/cordis.patch.yml changed shape (${JSON.stringify(from)} … ${JSON.stringify(to)})`)
+  return patch.slice(start + 1, end)
+}
 const gatewayEntry = "      name: '@adg/gateway'\n      config:\n"
-if (!patch.includes(gatewayEntry)) throw new Error('packages/bundle/cordis.patch.yml: the adg-gateway entry changed shape')
+const presetHead = '    id: standard\n    order: 1\n'
+const rows = cut('\n- insert:\n', '\n# M4 of the plan')
+const preset = cut('\n- id: preset-standard\n', '\n# <<< preset-standard')
+if (!rows.includes(gatewayEntry) || !preset.includes(presetHead)) throw new Error('packages/bundle/cordis.patch.yml: the gateway or the standard preset changed shape')
+const appPreset = `${preset
+  .replace('- id: preset-standard\n', '- id: preset-mga\n')
+  .replace(presetHead, '    id: mga\n    name: 多游戏助手\n    description: MultiGameAssistant：安装、运行和编排游戏脚本，处理运行中的问题，查活动\n    order: 50\n')}
+      - id: adg-agent
+        name: '@adg/gateway/agent'`
 writeFileSync(join(staging, 'cordis.patch.yml'), [
-  `# ${NAME} ${version}: packages/bundle/cordis.patch.yml with each @adg/<plugin> as ${NAME}/<plugin>, and the gateway opening the UI.`,
-  patch.replace(gatewayEntry, `${gatewayEntry}        openBrowser: true\n`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`),
-].join('\n'))
+  `# ${NAME} ${version}: the app's plugins (packages/bundle/cordis.patch.yml, each @adg/<plugin> as ${NAME}/<plugin>)`,
+  "# sharing the dsh with the person's other chats, and the app's agent preset (dsh's standard one with the app's",
+  '# tools and prompts, and compaction as 设置 → 对话压缩 says). No row of dsh is restated.',
+  rows.replace(gatewayEntry, `${gatewayEntry}        # Only its own sessions are its concern; the UI is under dsh's web server, at /adg/.\n        shared: true\n        listen: false\n`).trimEnd(),
+  '',
+  "    # The package itself: dsh's page loads its sidebar entry (「多游戏助手」) from it.",
+  '    - id: adg-sidebar',
+  `      name: '${NAME}'`,
+  '',
+  "    # The app's agent preset: its sessions run this one (the gateway creates them so).",
+  appPreset.split('\n').map(line => line === '' ? line : `    ${line}`).join('\n'),
+  '',
+].join('\n').replace(/name: '@adg\/gateway\/agent'/g, `name: '${NAME}/agent'`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`))
 
-const exports = Object.fromEntries(plugins.map(name => [`./${name}`, `./lib/${name}.js`]))
+const exports = {
+  '.': './lib/index.js',
+  ...Object.fromEntries(plugins.map(name => [`./${name}`, `./lib/${name}.js`])),
+  './agent': './lib/agent.js',
+  './client': './lib/client.js',
+}
 writeFileSync(join(staging, 'package.json'), `${JSON.stringify({
   name: NAME,
   version,
@@ -137,7 +181,7 @@ writeFileSync(join(staging, 'package.json'), `${JSON.stringify({
   engines: { dsh: DSH_RANGE, node: '>=22' },
   os: ['win32'],
   peerDependencies: Object.fromEntries([...peers].sort().map(name => [name, '*'])),
-  dsh: { bundle: { patch: './cordis.patch.yml' } },
+  dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },
 }, null, 2)}\n`)
 
 writeFileSync(join(staging, 'README.md'), `# ${NAME}
@@ -146,17 +190,14 @@ writeFileSync(join(staging, 'README.md'), `# ${NAME}
 
 ## 安装
 
-装进单独的 profile（它会改权限预设和 agent 的设置，放在单独的 profile 里就不影响你平时的 dsh 对话）。第一行只在第一次运行（它会重置这个 profile）：
+插件包在 [Releases](https://github.com/haaahhhis/MultiGameAssistant/releases) 里（\`${NAME}-<版本>.tgz\`），复制它的链接：
 
-\`\`\`sh
-dsh --profile mga --from-default-profile web --help
-dsh plugin --profile mga add ${NAME}
-dsh mga --no-open
-\`\`\`
+- **dsh 桌面版**：「Plugins」→「Add plugin」，填插件包的链接 →「Install」→「Enable now」。
+- **命令行的 dsh**：\`dsh plugin add <插件包的链接>\`，再 \`dsh web\`。
 
-启动后会在浏览器里打开界面，终端里也会打印地址（\`adg gateway: http://127.0.0.1:3290/?token=…\`），地址在两次启动之间不变，可以收藏。以后启动只要 \`dsh mga --no-open\`；更新：\`dsh plugin --profile mga update ${NAME}@latest\`。
+侧边栏会多出「多游戏助手」，点开就是它的界面。它和你平时的 dsh 对话互不影响：它的对话用自己的 agent 预设「多游戏助手」，工具、提示词、技能和权限设置只在这些对话里。
 
-和桌面版相比，没有托盘、开机自启和定时唤醒电脑：定时任务只在 \`dsh mga\` 运行时执行。需要这些就用[桌面版安装包](https://github.com/haaahhhis/MultiGameAssistant/releases)。
+和桌面版相比，没有自己的托盘、开机自启和定时唤醒电脑：定时任务在 dsh 开着时执行。需要这些就用[桌面版安装包](https://github.com/haaahhhis/MultiGameAssistant/releases)。
 `)
 
 step('npm pack')

@@ -69,7 +69,7 @@ export class AdgOrchestrator extends Service {
       notices: () => ctx.get('adgNotify'),
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
+        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
       },
       skills: async () => {
         const registry = ctx.get('skills')
@@ -105,21 +105,23 @@ export class AdgOrchestrator extends Service {
     })
 
     // The planning guide (hardware first, serial by default, failures do not block the rest).
-    ctx.inject(['skills'], scoped => {
+    ctx.inject(['skills', 'adgGateway'], scoped => {
       let dispose: (() => void) | undefined
       void readFile(GUIDE, 'utf8').then(text => {
         const skill = parseGuide(text)
         if (skill === undefined) { log.warn('skills/pipeline-planning.md has no usable frontmatter'); return }
-        dispose = scoped.skills.register({ ...skill, source: 'bundled' })
+        dispose = scoped.adgGateway.generalSkill({ ...skill, source: 'bundled' }, () => scoped.skills.register({ ...skill, source: 'bundled' }))
       }, error => log.warn(`pipeline-planning skill not loaded: ${String(error)}`))
       scoped.effect(() => () => dispose?.(), 'adg-orchestrator skill')
     })
 
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-orchestrator tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       for (const tool of pipelineTools(pipelines, engine, library)) {
-        scoped.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
+        registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
       }
-    })
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     ctx.inject(['adgGateway'], scoped => {
       scoped.adgGateway.register({

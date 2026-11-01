@@ -78,7 +78,7 @@ export class AdgIntervene extends Service {
       suspend: (pid, resume) => helper.call<number>('suspend', { pid, resume }),
       conversations: () => {
         const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
+        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => ctx.get('adgGateway'))
       },
       visionProblem: async () => {
         const selection = ctx.get('agentDefaultModel')?.currentSelection()
@@ -104,7 +104,8 @@ export class AdgIntervene extends Service {
     this.interventions = interventions
     this.ready = interventions.load()
 
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-intervene tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       const tools = screenTools({
         screens,
         interventions,
@@ -133,8 +134,9 @@ export class AdgIntervene extends Service {
         },
       })
       // 设置 → 权限 decides per area (the gateway's guardTool).
-      for (const tool of tools) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
-    })
+      for (const tool of tools) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     ctx.inject(['adgGateway'], scoped => {
       scoped.adgGateway.register({

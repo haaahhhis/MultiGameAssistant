@@ -3,8 +3,31 @@
  * (by the gateway itself, by Electron loading the gateway URL, or through the
  * Vite dev proxy), so only the token varies. It arrives once as `?token=` and
  * is kept in sessionStorage, then removed from the address bar.
+ *
+ * The dsh plugin also serves it under dsh's own web server at `/adg/`
+ * (`MOUNTED`): dsh's login covers the page and the socket, so there is no
+ * token. Inside dsh desktop the page's own address is `dsh-app://app`, which
+ * has no socket; dsh's page names where its streams go
+ * (`__DSH_TRANSPORT__.streamBaseUrl`), and this page, shown in a frame of it,
+ * uses the same.
  */
 const TOKEN_KEY = 'adg.token'
+
+/** Served under dsh's web server (the dsh plugin's sidebar entry), not by the gateway's own port. */
+export const MOUNTED = /^\/adg(\/|$)/.test(location.pathname)
+
+/** dsh's stream address, when this page is in (or is) a dsh page that names one. */
+function dshStreamBase(): string | undefined {
+  for (const candidate of [window, window.parent]) {
+    try {
+      const base = (candidate as { __DSH_TRANSPORT__?: { streamBaseUrl?: unknown } }).__DSH_TRANSPORT__?.streamBaseUrl
+      if (typeof base === 'string' && base !== '') return base
+    } catch {
+      // another origin's frame
+    }
+  }
+  return undefined
+}
 
 export function readToken(): string | null {
   const url = new URL(location.href)
@@ -22,9 +45,13 @@ export function saveToken(token: string): void {
   try { sessionStorage.setItem(TOKEN_KEY, token) } catch { /* private mode */ }
 }
 
-export function gatewayUrl(token: string): string {
+export function gatewayUrl(token: string | null): string {
+  if (MOUNTED) {
+    const base = new URL(dshStreamBase() ?? location.origin)
+    return `${base.protocol === 'https:' ? 'wss' : 'ws'}://${base.host}/adg/rpc`
+  }
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${scheme}://${location.host}/rpc?token=${encodeURIComponent(token)}`
+  return `${scheme}://${location.host}/rpc?token=${encodeURIComponent(token ?? '')}`
 }
 
 /** What the main area shows; kept in the hash so a reload returns to it. */

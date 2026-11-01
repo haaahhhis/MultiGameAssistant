@@ -66,11 +66,13 @@ export class AdgRunner extends Service {
     }
     ctx.effect(() => () => { void runner.dispose() }, 'adg-runner runs')
 
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-runner tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       for (const tool of runnerTools(runner, { library, dataDir: spec.dataDir, profilesChanged })) {
-        scoped.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
+        registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await scripts.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
       }
-    })
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     ctx.inject(['adgGateway'], scoped => {
       scoped.adgGateway.register({

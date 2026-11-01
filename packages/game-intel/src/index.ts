@@ -120,9 +120,9 @@ export class AdgGameIntel extends Service {
       void (async () => {
         await this.ready
         const guide = parseFrontmatter(await readFile(SKILL, 'utf8'))
-        if (guide !== undefined) disposers.push(scoped.skills.register({ ...guide, source: 'bundled' }))
+        if (guide !== undefined) disposers.push(scoped.adgGateway.generalSkill({ ...guide, source: 'bundled' }, () => scoped.skills.register({ ...guide, source: 'bundled' })))
         const web = parseFrontmatter(await readFile(WEB_SKILL, 'utf8'))
-        if (web !== undefined) disposers.push(scoped.skills.register({ ...web, source: 'bundled' }))
+        if (web !== undefined) disposers.push(scoped.adgGateway.generalSkill({ ...web, source: 'bundled' }, () => scoped.skills.register({ ...web, source: 'bundled' })))
         for (const game of this.games) {
           if (game.guide === undefined) continue
           const skill = parseFrontmatter(game.guide)
@@ -139,7 +139,8 @@ export class AdgGameIntel extends Service {
     })
 
     // ── tools ──
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-game-intel tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       for (const tool of gameTools({
         games: () => this.infos(),
         activities: game => calendar.list(game),
@@ -151,8 +152,9 @@ export class AdgGameIntel extends Service {
         sendReport: () => this.sendReport(localDay(this.clock.now())),
         now: () => this.clock.now(),
         add: async (manifest, guide) => { await this.ready; return this.addGame(manifest, guide) },
-      })) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }) // 设置 → 权限 (guardTool)
-    })
+      })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })) // 设置 → 权限 (guardTool)
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     // ── capability ──
     ctx.inject(['adgGateway'], scoped => {
@@ -537,7 +539,7 @@ export class AdgGameIntel extends Service {
   async discover(name: string): Promise<string> {
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir())
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
     const sessionId = await conversations.create(`添加游戏：${name}`)
     const known = SRA_GAMES.map(g => `${g.sra}（${g.name}）`).join('、')
     const prompt = [
@@ -559,7 +561,7 @@ export class AdgGameIntel extends Service {
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
     const sessionId = await conversations.create(`游戏资讯：${manifest.name}`, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
@@ -584,7 +586,7 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve())
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
     const sessionId = await conversations.create(`游戏信息：${manifest.name}`, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(manifest.id, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
@@ -659,7 +661,7 @@ export class AdgGameIntel extends Service {
     const digest = recentDigest(this.reportGames(), this.calendar.list(), settings, now)
     if (digest === undefined) return undefined
     const local = wallClock(now, Intl.DateTimeFormat().resolvedOptions().timeZone)
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir())
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
     try {
       const sessionId = await conversations.create(`日报：${local.month}月${local.day}日`)
       const prompt = [

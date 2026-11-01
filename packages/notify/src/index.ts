@@ -49,7 +49,7 @@ export class AdgNotify extends Service {
       conversations: () => {
         const sessions = ctx.get('sessionController')
         if (sessions === undefined) return undefined
-        const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
+        const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
         // Archived by the user: the person's next message starts a new conversation.
         return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
       },

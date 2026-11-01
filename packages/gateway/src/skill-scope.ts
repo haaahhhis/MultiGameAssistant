@@ -71,6 +71,8 @@ const norm = (value: string) => value.trim().toLowerCase()
 export class SkillScope {
   readonly #skills = new Map<string, ScopedSkillInput>()
   readonly #focus = new Map<string, Focus>()
+  /** The sessions that see the app's skills at all (a dsh shared with other work: the app's own); unset: every one. */
+  #only: ((sessionId: string) => boolean) | undefined
   readonly #file: string | undefined
   #invalidate: () => void = () => {}
   #relations: (scriptId: string) => ScriptRelations = () => ({ aliases: [], games: [] })
@@ -92,11 +94,19 @@ export class SkillScope {
       name: PROVIDER,
       list: async options => {
         await this.#loaded
-        const focus = this.focusOf(sessionOf(options.scope))
+        const session = sessionOf(options.scope)
+        if (session !== undefined && this.#only?.(session) === false) return []
+        const focus = this.focusOf(session)
         return [...this.#skills.values()].filter(skill => focus === undefined || this.visible(skill.owner, focus)).map(candidate)
       },
       get: async ({ locator }) => definition(locator as ScopedSkillInput),
     }
+  }
+
+  /** Show the app's skills only to some sessions; lists without a session still show them all. */
+  limitTo(only: (sessionId: string) => boolean): void {
+    this.#only = only
+    this.#invalidate()
   }
 
   /**

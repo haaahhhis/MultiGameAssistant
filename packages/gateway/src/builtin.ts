@@ -122,6 +122,12 @@ export interface BuiltinDeps {
   readonly focus?: (sessionId: string, focus: { scripts?: string[] | undefined; games?: string[] | undefined }) => Promise<unknown>
   /** 「压缩对话」 (compact.ts). Absent: session/compact fails. */
   readonly compact?: (sessionId: string, signal: AbortSignal) => Promise<{ compacted: boolean; message: string }>
+  /** The agent preset new sessions run (the app's own when the dsh is shared, shared.ts); absent: dsh's default. */
+  readonly agentPreset?: string
+  /** Whether a session is the app's (a shared dsh lists only those). Absent: every session is. */
+  readonly isOwn?: (sessionId: string) => boolean
+  /** Count a session just created as the app's. */
+  readonly adopt?: (sessionId: string) => Promise<void>
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -148,11 +154,12 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
     methods: handlers({
       'sessions/list': async (_params: RequestParams<'sessions/list'>, call: MethodContext) => {
         const value = await sessions.list({}, call.signal)
-        return { items: value.items.map(toSessionItem) }
+        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(toSessionItem) }
       },
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
         const cwd = params.cwd ?? deps.workspaceDir
-        const created = await sessions.create(cwd === undefined ? {} : { cwd })
+        const created = await sessions.create({ ...(cwd === undefined ? {} : { cwd }), ...(deps.agentPreset === undefined ? {} : { agentPreset: deps.agentPreset }) })
+        await deps.adopt?.(created.sessionId)
         if (params.focus !== undefined) await deps.focus?.(created.sessionId, params.focus)
         return { sessionId: created.sessionId }
       },

@@ -13,9 +13,12 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
+import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { Service, type Context } from '@deepseek-ai/cordis'
+import type { WebSocket } from 'ws'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@deepseek-ai/dsh-api-settings-controller'
@@ -33,7 +36,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { areaOf, COMPACTION_CAPABILITY, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
-import { invokedSkills, SkillScope, type SkillOwner } from './skill-scope.ts'
+import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
 import { skillFocusTool } from './skill-focus-tool.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
@@ -45,7 +48,8 @@ import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel 
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
-import { startServer } from './server.ts'
+import { createSockets, MOUNT, serveMounted, startServer, type Sockets } from './server.ts'
+import { AGENT_PRESET, AgentParts, OwnSessions, type AgentPart } from './shared.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
 export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
@@ -54,6 +58,7 @@ export { convertRecord, convertRecords } from './convert.ts'
 export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
+export { AGENT_PRESET, type AgentPart } from './shared.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -127,6 +132,18 @@ export interface Config {
   readonly dataDir?: string
   /** Where the skills the agent saves are kept (this app's data, e.g. `<data>/skills`). Absent: no `skill_save`. */
   readonly skillsDir?: string
+  /**
+   * The dsh is shared with the person's other work (the plugin in a profile
+   * of theirs, such as dsh desktop's): only the sessions this app created are
+   * its concern, and what it gives its agents goes into its agent preset
+   * (`@adg/gateway/agent`, shared.ts) instead of to every agent. @default false
+   */
+  readonly shared?: boolean
+  /**
+   * Listen on a port of its own (what the desktop app loads). Off: the UI is
+   * only under dsh's own web server, at `/adg/`. @default true
+   */
+  readonly listen?: boolean
 }
 
 /** What a skill belongs to, as the 技能 page shows it. */
@@ -135,8 +152,21 @@ function ownerInfo(owner: SkillOwner | undefined): Pick<SkillInfo, 'owner'> {
   return { owner: { ...(owner.scripts === undefined ? {} : { scripts: [...owner.scripts] }), ...(owner.games === undefined ? {} : { games: [...owner.games] }) } }
 }
 
+/** The slice of dsh's web server (dsh-host-webserver) and its login (dsh-client-connection) the mount uses. */
+interface WebServerSlice {
+  register(route: { kind: 'prefix'; path: string; handler: (req: IncomingMessage, res: ServerResponse) => void }): () => void
+  registerUpgrade(route: { path: string; handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void }): () => void
+}
+interface ConnectionSlice {
+  requestRejection(request: { headers: Readonly<Record<string, string | readonly string[] | undefined>> }): 401 | 403 | undefined
+}
+
 /** The slice of dsh's session and permission-preset services the mode needs. */
-interface PresetSession { readonly id: string }
+interface PresetSession {
+  readonly id: string
+  /** Record a session event (how dsh's own preset service sets the sandbox and approval knobs). */
+  append?(type: string, data: unknown): void
+}
 interface PresetService {
   current(session: PresetSession): string
   set(session: PresetSession, name: string): void
@@ -172,13 +202,24 @@ export class AdgGateway extends Service {
    * here with what they belong to, and set what a session they start is about.
    */
   readonly skillScope: SkillScope
+  /** The dsh is shared with other work (Config.shared). */
+  readonly shared: boolean
+  private readonly own: OwnSessions
+  private readonly parts: AgentParts
+  private readonly sockets: Sockets
+  /** Bring one session's permission preset in line with the mode. */
+  private presetOf: (sessionId: string) => void = () => {}
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'adgGateway')
     const log = ctx.logger('adg-gateway')
     this.workspace = config.workspaceDir
-    const token = config.token ?? keptToken(config.dataDir, log)
+    this.shared = config.shared === true
+    this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
+    this.parts = new AgentParts(log)
     this.skillScope = new SkillScope(config.dataDir, log)
+    if (this.shared) this.skillScope.limitTo(sessionId => this.isOwn(sessionId))
+    this.sockets = createSockets(socket => this.accept(socket, config.validateResults ?? false, log))
 
     this.approvals = new ApprovalBroker({
       broadcastRequested: request => this.broadcast('approval/requested', request),
@@ -195,6 +236,9 @@ export class AdgGateway extends Service {
     for (const capability of builtinCapabilities({
       sessions: ctx.sessionController,
       ...(config.workspaceDir === undefined ? {} : { workspaceDir: config.workspaceDir }),
+      ...this.sessionPreset(),
+      isOwn: sessionId => this.isOwn(sessionId),
+      adopt: sessionId => this.adopt(sessionId),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),
@@ -209,6 +253,8 @@ export class AdgGateway extends Service {
     // dsh's own remote bridge (dsh-api-remotes) holds a request for its browser
     // client even when none is attached, so answerers after it never run.
     ctx.on('approval/request', (request, next) => {
+      // Another chat in a shared dsh: dsh's own page answers it, as it would without this app.
+      if (!this.isOwn(request.agent.session.id)) return next()
       // An area's own setting (设置 → 权限) comes before the mode: allowed, refused, or asked even under full access.
       const policy = this.permissions.policyFor(request.toolName)
       if (request.callId !== undefined && this.approvedCalls.has(request.callId)) return Promise.resolve('allowed-once' as const)
@@ -240,7 +286,7 @@ export class AdgGateway extends Service {
     // and claimed only while someone here can answer them.
     ctx.on('user-questions/request', (request, next) => {
       const sessionId = request.agent?.session.id
-      if (sessionId === undefined || (!this.hasClients() && !this.questions.hasActiveAnswerer(sessionId))) return next()
+      if (sessionId === undefined || !this.isOwn(sessionId) || (!this.hasClients() && !this.questions.hasActiveAnswerer(sessionId))) return next()
       return this.questions.ask({
         sessionId,
         ...(request.wait?.callId === undefined ? {} : { callId: request.wait.callId }),
@@ -265,17 +311,34 @@ export class AdgGateway extends Service {
     this.permissions = new Permissions(config.dataDir === undefined ? undefined : join(config.dataDir, 'permissions.json'))
     const presetFor = (session: PresetSession) => {
       const presets = ctx.get('permissionPresets' as never) as PresetService | undefined
-      if (presets === undefined) return
+      if (presets === undefined || !this.isOwn(session.id)) return
+      const name = PRESET[this.permissions.mode]
       try {
-        if (presets.current(session) !== PRESET[this.permissions.mode]) presets.set(session, PRESET[this.permissions.mode])
+        // A shared dsh keeps the person's own preset table, which has no full-access (no sandbox, approvals
+        // still asked: dsh's `never` would refuse the app's own approvals). Its two settings go on directly,
+        // as a preset would put them (dsh-sandbox-policy setSandboxMode, dsh-user-approval setApprovalPolicy).
+        if (this.shared && this.permissions.mode === 'full') {
+          if (presets.current(session) !== 'custom') {
+            session.append?.('sandbox/mode', { mode: 'danger-full-access' })
+            session.append?.('approval/policy', { policy: 'ask' })
+          }
+          return
+        }
+        if (presets.current(session) !== name) presets.set(session, name)
       } catch (error) {
         log.warn(`permission preset for ${session.id}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    const liveSessions = () => (ctx.get('sessions' as never) as { list(): PresetSession[] } | undefined)?.list() ?? []
     const everySession = () => {
-      for (const session of (ctx.get('sessions' as never) as { list(): PresetSession[] } | undefined)?.list() ?? []) presetFor(session)
+      for (const session of liveSessions()) presetFor(session)
     }
-    this.permissionsReady = this.permissions.load().then(everySession)
+    // A shared dsh's session becomes the app's after it is created (session/created came first).
+    this.presetOf = sessionId => {
+      const session = liveSessions().find(s => s.id === sessionId)
+      if (session !== undefined) void this.permissionsReady.then(() => presetFor(session))
+    }
+    this.permissionsReady = Promise.all([this.permissions.load(), this.own.loaded]).then(everySession)
     ctx.on('session/created' as never, ((session: PresetSession) => { void this.permissionsReady.then(() => presetFor(session)) }) as never)
     ctx.effect(() => this.registry.register({
       id: PERMISSIONS_CAPABILITY,
@@ -456,13 +519,10 @@ export class AdgGateway extends Service {
     ctx.inject(['skills'], scoped => {
       scoped.skills.registerProvider(control => this.skillScope.provider(control.invalidate) as never)
     })
-    ctx.inject(['tools'], scoped => {
-      const focus = skillFocusTool(this.skillScope)
-      scoped.tools.register(focus)
-    })
+    this.agentPart('adg-gateway skill_focus', ['tools'], agent => agent.tools.register(skillFocusTool(this.skillScope)))
     // A skill the user invokes by name (`/maa-daily`) brings what it belongs to into the session's focus,
     // before dsh's skill tool looks it up for that session. Prepended: this runs before the listeners after it.
-    ctx.on('agent/pre-step' as never, (async (payload: PreStep & { messages?: readonly unknown[] }, next: () => Promise<PreStepDecision>) => {
+    this.agentPart('adg-gateway skill focus hook', [], agent => agent.on('agent/pre-step' as never, (async (payload: PreStep & { messages?: readonly unknown[] }, next: () => Promise<PreStepDecision>) => {
       try {
         const owners = invokedSkills(payload.messages ?? []).map(name => this.skillScope.ownerOf(name)).filter(o => o !== undefined)
         if (owners.length > 0) {
@@ -472,17 +532,15 @@ export class AdgGateway extends Service {
         log.warn(`skill focus for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
       }
       return next()
-    }) as never, true)
+    }) as never, true))
 
     // What the app is called, so the agent names it right (just before the reply style, which may give it a name of its own).
-    ctx.inject(['systemPrompt'], scoped => {
-      scoped.effect(() => scoped.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }), 'adg-gateway identity section')
-    })
+    this.agentPart('adg-gateway identity section', ['systemPrompt'], agent => agent.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }))
 
     // Reminders that earlier parts may be out of date (time-context.ts): appended to the history, so the prompt cache keeps working.
     // Prepended, so the note goes in whatever other listeners do with the step's messages.
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    ctx.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
+    this.agentPart('adg-gateway stale-context hook', [], agent => agent.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
       const decision = await next()
       if (decision.kind !== 'enter' || payload.signal.aborted) return decision
       try {
@@ -493,7 +551,7 @@ export class AdgGateway extends Service {
         log.warn(`stale-context reminder for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
         return decision
       }
-    }) as never, true)
+    }) as never, true))
 
     // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.
     if (config.dataDir !== undefined) {
@@ -508,15 +566,13 @@ export class AdgGateway extends Service {
           'persona/set': async params => { await loaded; await persona.set((params as RequestParams<'persona/set'>).persona); return answer() },
         },
       }), 'adg-gateway capability persona')
-      ctx.inject(['systemPrompt'], scoped => {
-        scoped.effect(() => scoped.systemPrompt.section({
-          name: 'adg:persona',
-          // After the harness's own guidance, before the deployment suffix (10200).
-          order: 10_100,
-          interpolate: false,
-          text: () => personaPrompt(persona.current),
-        }), 'adg-gateway persona section')
-      })
+      this.agentPart('adg-gateway persona section', ['systemPrompt'], agent => agent.systemPrompt.section({
+        name: 'adg:persona',
+        // After the harness's own guidance, before the deployment suffix (10200).
+        order: 10_100,
+        interpolate: false,
+        text: () => personaPrompt(persona.current),
+      }))
     }
 
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
@@ -536,7 +592,8 @@ export class AdgGateway extends Service {
     // registered for its agents only, not in a skill folder other agents on the machine read.
     if (config.skillsDir !== undefined) {
       const dir = config.skillsDir
-      ctx.inject(['tools', 'skills'], scoped => {
+      let savedSkills: { registered: ReadonlyMap<string, unknown>; register(name?: string): Promise<void> } | undefined
+      ctx.inject(['skills'], scoped => {
         const registered = new Map<string, () => void>()
         const register = async (name?: string) => {
           for (const skill of await userSkills(dir)) {
@@ -551,30 +608,31 @@ export class AdgGateway extends Service {
         }
         void register().catch(error => log.warn(`saved skills not loaded: ${String(error)}`))
         scoped.effect(() => () => { for (const dispose of registered.values()) dispose(); registered.clear() }, 'adg-gateway saved skills')
-        const save = skillSaveTool({
-          dir,
-          taken: async () => (await scoped.skills.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) })).filter(s => !registered.has(s.name)).map(s => s.name),
-          saved: name => register(name),
-        })
-        scoped.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } })
+        savedSkills = { registered, register }
       })
+      const save = skillSaveTool({
+        dir,
+        taken: async () => (await ctx.get('skills')?.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) }) ?? []).filter(s => savedSkills?.registered.has(s.name) !== true).map(s => s.name),
+        saved: async name => { await savedSkills?.register(name) },
+      })
+      this.agentPart('adg-gateway skill_save', ['tools'], agent => agent.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } }))
     }
 
-    // Session list deltas come from the controller's own lifecycle events.
+    // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
     ctx.on('api-session/added', summary => {
-      this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary) })
+      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary) })
     })
     ctx.on('api-session/removed', sessionId => {
-      this.broadcast('sessions/changed', { kind: 'removed', sessionId })
+      if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'removed', sessionId })
     })
     ctx.on('api-session/status', (sessionId, running) => {
-      this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, running } })
+      if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, running } })
     })
     ctx.on('api-session/activity', (sessionId, updatedAt) => {
-      this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, updatedAt } })
+      if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, updatedAt } })
     })
     ctx.on('api-session/error', (sessionId, message) => {
-      this.broadcast('session/error', { sessionId, message })
+      if (this.isOwn(sessionId)) this.broadcast('session/error', { sessionId, message })
     })
 
     // Titles change through projections, so follow the host-wide control stream.
@@ -584,46 +642,139 @@ export class AdgGateway extends Service {
       return () => controller.abort()
     }, 'adg-gateway title feed')
 
+    const staticDir = config.staticDir ?? (existsSync(join(BUNDLED_UI, 'index.html')) ? BUNDLED_UI : undefined)
+
+    // Under dsh's own web server, at /adg/: its login guards the page and the socket, so no token (the dsh plugin).
+    ctx.inject(['webServer', 'connection'], scoped => {
+      const web = scoped.get('webServer' as never) as unknown as WebServerSlice
+      const connection = scoped.get('connection' as never) as unknown as ConnectionSlice
+      const denied = (headers: IncomingMessage['headers']) => connection.requestRejection({ headers })
+      scoped.effect(() => web.register({
+        kind: 'prefix',
+        path: MOUNT,
+        handler: (req, res) => {
+          const rejection = denied(req.headers)
+          if (rejection !== undefined) {
+            res.writeHead(rejection, { 'content-type': 'text/plain; charset=utf-8' }).end('请从 dsh 的界面打开')
+            return
+          }
+          serveMounted(staticDir, req, res)
+        },
+      }), 'adg-gateway mount')
+      scoped.effect(() => web.registerUpgrade({
+        path: `${MOUNT}/rpc`,
+        handler: (req, socket, head) => {
+          const rejection = denied(req.headers)
+          if (rejection !== undefined) {
+            socket.end(`HTTP/1.1 ${rejection} ${rejection === 401 ? 'Unauthorized' : 'Forbidden'}
+Connection: close
+Content-Length: 0
+
+`)
+            return
+          }
+          this.sockets.upgrade(req, socket, head)
+        },
+      }), 'adg-gateway mount socket')
+      log.info(`UI under dsh's web server at ${MOUNT}/`)
+    })
+
+    ctx.effect(() => () => {
+      for (const peer of this.peers) peer.close()
+      this.peers.clear()
+      void this.sockets.close()
+    }, 'adg-gateway sockets')
+
+    if (config.listen === false) return
+    const token = config.token ?? keptToken(config.dataDir, log)
     ctx.effect(async () => {
       const server = await startServer({
         host: config.host ?? '127.0.0.1',
         port: config.port ?? 3290,
         token,
-        ...(config.staticDir === undefined ? (existsSync(join(BUNDLED_UI, 'index.html')) ? { staticDir: BUNDLED_UI } : {}) : { staticDir: config.staticDir }),
+        ...(staticDir === undefined ? {} : { staticDir }),
         trustedHosts: config.trustedHosts ?? [],
-        onSocket: socket => {
-          const peer = new Peer(socket, {
-            registry: this.registry,
-            validateResults: config.validateResults ?? false,
-            log,
-            onInitialized: ready => {
-              for (const request of this.approvals.open()) ready.notify('approval/requested', request)
-              for (const request of this.questions.open()) ready.notify('question/requested', request)
-            },
-          })
-          this.peers.add(peer)
-          socket.on('message', (data, isBinary) => {
-            if (!isBinary) peer.receive(data.toString())
-          })
-          socket.on('close', () => {
-            this.peers.delete(peer)
-            peer.close()
-          })
-          socket.on('error', error => log.warn(`socket error: ${error.message}`))
-        },
+        sockets: this.sockets,
       })
       const host = (config.host ?? '127.0.0.1').includes(':') ? `[${config.host}]` : (config.host ?? '127.0.0.1')
       this.url = `http://${host}:${server.port}/?token=${token}`
       // stderr, like the launcher's own URL line: stdout may belong to another protocol.
-      process.stderr.write(`adg gateway: ${this.url}\n`)
+      process.stderr.write(`adg gateway: ${this.url}
+`)
       if (config.openBrowser === true) openInBrowser(this.url, log)
       log.info(`protocol endpoint: ws://${host}:${server.port}/rpc?token=${token}`)
-      return async () => {
-        for (const peer of this.peers) peer.close()
-        this.peers.clear()
-        await server.close()
-      }
+      return () => server.close()
     }, 'adg-gateway server')
+  }
+
+  /** One protocol client's socket, from the own port or dsh's web server. */
+  private accept(socket: WebSocket, validateResults: boolean, log: ReturnType<Context['logger']>): void {
+    const peer = new Peer(socket, {
+      registry: this.registry,
+      validateResults,
+      log,
+      onInitialized: ready => {
+        for (const request of this.approvals.open()) if (this.isOwn(request.sessionId)) ready.notify('approval/requested', request)
+        for (const request of this.questions.open()) if (this.isOwn(request.sessionId)) ready.notify('question/requested', request)
+      },
+    })
+    this.peers.add(peer)
+    socket.on('message', (data, isBinary) => {
+      if (!isBinary) peer.receive(data.toString())
+    })
+    socket.on('close', () => {
+      this.peers.delete(peer)
+      peer.close()
+    })
+    socket.on('error', error => log.warn(`socket error: ${error.message}`))
+  }
+
+  /** Is this one of the app's sessions? Every session is, unless the dsh is shared (Config.shared). */
+  isOwn(sessionId: string): boolean {
+    return !this.shared || this.own.has(sessionId)
+  }
+
+  /** What a new session of the app's is created with besides its folder: its agent preset when the dsh is shared. */
+  sessionPreset(): { agentPreset?: string } {
+    return this.shared ? { agentPreset: AGENT_PRESET } : {}
+  }
+
+  /** Count a session the app just created as its own (session/created came before it was). */
+  async adopt(sessionId: string): Promise<void> {
+    if (!this.shared) return
+    await this.own.add(sessionId)
+    this.presetOf(sessionId)
+  }
+
+  /**
+   * Give the app's agents something: a tool, a prompt section, a step hook.
+   * `needs` are the services the part uses. With a dsh of its own, every
+   * agent gets it, as soon as those are there; shared, the app's agent preset
+   * does (agent.ts), so the person's other chats never see it. Belongs to the
+   * calling plugin's fiber.
+   */
+  agentPart(label: string, needs: readonly string[], part: AgentPart): void {
+    if (this.shared) {
+      this.ctx.effect(() => this.parts.add(label, part), label)
+      return
+    }
+    if (needs.length === 0) this.ctx.effect(() => part(this.ctx), label)
+    else this.ctx.inject([...needs], scoped => { scoped.effect(() => part(scoped), label) })
+  }
+
+  /**
+   * One of the app's general skills (a core skill every one of its sessions
+   * sees). Shared, it goes through the skill scope, which shows it to the
+   * app's sessions only; otherwise `register` registers it with dsh as usual.
+   * @returns the disposer.
+   */
+  generalSkill(skill: ScopedSkillInput, register: () => () => void): () => void {
+    return this.shared ? this.skillScope.register(skill) : register()
+  }
+
+  /** The agent preset's scope (agent.ts) takes every part, and later ones. @returns its disposer. */
+  attachAgentScope(scope: Context): () => void {
+    return this.parts.attach(scope)
   }
 
   /**
@@ -725,7 +876,7 @@ export class AdgGateway extends Service {
     while (!signal.aborted) {
       try {
         for await (const frame of this.ctx.sessionController.control(signal)) {
-          if (frame.type !== 'projection') continue
+          if (frame.type !== 'projection' || !this.isOwn(frame.sessionId)) continue
           if (frame.key === 'title') {
             const title = typeof frame.value === 'string' ? frame.value : null
             this.broadcast('session/title', { sessionId: frame.sessionId, title })

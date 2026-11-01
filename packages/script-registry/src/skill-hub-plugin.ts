@@ -79,7 +79,7 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     const sessions = ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const { base, mine, theirs, file, skill } = await hub.mergeInputs(name, signal)
-    const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir())
+    const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
     const sessionId = await conversations.create(`合并技能：${name}`)
     const prompt = [
       `技能库里的技能「${name}」有了新版本，但用户改过自己的这份。把新版本的改动合并进用户的版本，写回 ${file}（只改这一个文件）。`,
@@ -138,11 +138,13 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     })
   })
 
-  ctx.inject(['tools'], scoped => {
+  ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-skill-hub tools', ['tools'], agent => {
+    const registered: Array<() => void> = []
     for (const tool of hubTools(hub, approve, changed)) {
-      scoped.tools.register({ ...tool, execute: async (args, exec) => { await started; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
+      registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await started; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
     }
-  })
+    return () => { for (const dispose of registered) dispose() }
+  }))
 
   return hub
 }

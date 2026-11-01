@@ -3,13 +3,20 @@
  * optional static hosting of a built UI. Every upgrade must present the
  * gateway token; Host and Origin are checked against loopback (plus any
  * configured authorities) to block DNS rebinding and cross-site sockets.
+ *
+ * The same sockets and UI are also served under dsh's own web server at
+ * `MOUNT` (index.ts), where dsh's login stands in for the token.
  */
 import { createReadStream, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
+import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
+
+/** Where the UI and its socket are under dsh's web server. */
+export const MOUNT = '/adg'
 
 export interface ServerOptions {
   readonly host: string
@@ -19,7 +26,24 @@ export interface ServerOptions {
   readonly staticDir?: string
   /** Extra `host[:port]` authorities accepted in Host/Origin beyond loopback. */
   readonly trustedHosts: readonly string[]
-  readonly onSocket: (socket: WebSocket) => void
+  readonly sockets: Sockets
+}
+
+/** The protocol's WebSocket endpoint, shared by the own port and dsh's web server. */
+export interface Sockets {
+  upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void
+  close(): Promise<void>
+}
+
+export function createSockets(onSocket: (socket: WebSocket) => void): Sockets {
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 })
+  return {
+    upgrade: (req, socket, head) => wss.handleUpgrade(req, socket, head, ws => onSocket(ws)),
+    close: () => new Promise<void>(done => {
+      for (const client of wss.clients) client.close(1001, 'gateway stopping')
+      wss.close(() => done())
+    }),
+  }
 }
 
 const RPC_PATH = '/rpc'
@@ -63,8 +87,29 @@ function tokenMatches(expected: string, given: string | null): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function serveStatic(root: string, req: IncomingMessage, res: ServerResponse): void {
-  const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://local').pathname)
+/**
+ * Answer a request under dsh's web server: the UI at `MOUNT/` (its assets
+ * are relative, so the bare mount redirects to the trailing slash).
+ */
+export function serveMounted(root: string | undefined, req: IncomingMessage, res: ServerResponse): void {
+  const pathname = new URL(req.url ?? '/', 'http://local').pathname
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405).end()
+    return
+  }
+  if (pathname === MOUNT) {
+    res.writeHead(308, { location: `${MOUNT}/` }).end()
+    return
+  }
+  if (root === undefined) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('这个安装没有带界面')
+    return
+  }
+  serveStatic(resolve(root), req, res, pathname.slice(MOUNT.length))
+}
+
+function serveStatic(root: string, req: IncomingMessage, res: ServerResponse, path?: string): void {
+  const pathname = decodeURIComponent(path ?? new URL(req.url ?? '/', 'http://local').pathname)
   const target = normalize(join(root, pathname))
   const inside = target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)
   let file = inside ? target : join(root, 'index.html')
@@ -93,7 +138,6 @@ function serveStatic(root: string, req: IncomingMessage, res: ServerResponse): v
  * @returns the bound server and its resolved port.
  */
 export async function startServer(options: ServerOptions): Promise<{ server: Server; port: number; close(): Promise<void> }> {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 })
   const staticRoot = options.staticDir === undefined ? undefined : resolve(options.staticDir)
 
   const server = createServer((req, res) => {
@@ -137,7 +181,7 @@ export async function startServer(options: ServerOptions): Promise<{ server: Ser
       if (!authorityAllowed(originHost, options.trustedHosts)) return reject(403, 'Forbidden')
     }
     if (!tokenMatches(options.token, url.searchParams.get('token'))) return reject(401, 'Unauthorized')
-    wss.handleUpgrade(req, socket, head, ws => options.onSocket(ws))
+    options.sockets.upgrade(req, socket, head)
   })
 
   await new Promise<void>((resolveListen, rejectListen) => {
@@ -153,8 +197,6 @@ export async function startServer(options: ServerOptions): Promise<{ server: Ser
     server,
     port,
     close: () => new Promise<void>(done => {
-      for (const client of wss.clients) client.close(1001, 'gateway stopping')
-      wss.close()
       server.close(() => done())
       server.closeAllConnections()
     }),

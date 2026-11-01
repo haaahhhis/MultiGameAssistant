@@ -61,7 +61,7 @@ export class AdgAnalyzer extends Service {
         await scripts.ready
         for (const dispose of disposers.splice(0)) dispose()
         const guide = parseSkill(await readFile(GUIDE, 'utf8'), 'script-analysis')
-        if (guide !== undefined) disposers.push(scoped.skills.register({ ...guide, source: 'bundled' }))
+        if (guide !== undefined) disposers.push(scoped.adgGateway.generalSkill({ ...guide, source: 'bundled' }, () => scoped.skills.register({ ...guide, source: 'bundled' })))
         const { scripts: inLibrary } = library.list()
         for (const pack of library.packs()) {
           if (pack.skill === undefined) continue
@@ -93,10 +93,12 @@ export class AdgAnalyzer extends Service {
       const outcome = await approval.request({ agent: exec.agent, toolName: exec.name, callId: exec.callId, reason, signal: exec.signal })
       if (outcome !== 'allowed-once') throw new Error(outcome === 'rejected' ? '用户拒绝了这个操作' : `没有得到用户批准（${outcome}）`)
     }
-    ctx.inject(['tools'], scoped => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-analyzer tools', ['tools'], agent => {
+      const registered: Array<() => void> = []
       // 设置 → 权限 decides per area (the gateway's guardTool).
-      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) scoped.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })
-    })
+      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
+      return () => { for (const dispose of registered) dispose() }
+    }))
 
     // ── capability ──
     ctx.inject(['adgGateway'], scoped => {
