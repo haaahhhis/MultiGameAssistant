@@ -62,6 +62,8 @@ const paths = installed !== undefined
 /** Files opened directly from a link; the rest are only shown in Explorer. */
 const VIEWABLE = /\.(txt|log|md|json|jsonl|ya?ml|toml|ini|cfg|conf|csv|xml|html?|png|jpe?g|gif|webp|bmp|pdf)$/i
 const READY_TIMEOUT_MS = 180_000
+/** The UI page's HTML should be there in moments (it is a local file); past this the window would only stay blank. */
+const UI_LOAD_TIMEOUT_MS = 30_000
 /** The page's --bg, so the window never flashes another colour while pages change. */
 const BACKGROUND = { light: '#f2f2f0', dark: '#0b0b0c' }
 /** The window's own title bar (no menu, icon or title): the page draws it, Windows keeps the three buttons. */
@@ -185,6 +187,8 @@ async function start() {
       stopHost()
       await showSplash({ step: 'service', title: '正在重新启动 agent 服务', slowHint: slowHint() })
       void launchHost()
+    } else if (action === 'reload' && uiUrl !== null) {
+      void openUi(uiUrl)
     } else if (action === 'logs') {
       await shell.openPath(logDir())
     } else if (action === 'copy') {
@@ -277,6 +281,7 @@ async function start() {
   })
   win.on('closed', () => { win = null })
   windowChrome(win.webContents)
+  watchUi(win.webContents)
   win.once('ready-to-show', () => { if (!autoStarted && !woken) win?.show() })
   await showSplash({ step: 'env', title: '正在准备运行环境' })
 
@@ -588,17 +593,85 @@ async function launchHost() {
   })
 }
 
+/** The UI's address (with its token), for 「重新载入」 after it did not load. */
+let uiUrl = null
+/** Counts the UI loads, so a watchdog only speaks for its own. */
+let uiLoads = 0
+
 async function openUi(url) {
   if (win === null) return
+  uiUrl = url
   await showSplash({ step: 'ui', title: '正在载入界面' })
   onSplash = false
   guardContents(win.webContents, new URL(url).origin)
-  win.webContents.on('render-process-gone', (_event, details) => {
+  const load = ++uiLoads
+  const started = Date.now()
+  // Until the page's own startup screen is up, a stuck load is a blank window: say so instead.
+  const watchdog = setTimeout(() => {
+    if (load !== uiLoads || onSplash || win === null) return
+    startupLog(`[desktop] the UI did not load within ${UI_LOAD_TIMEOUT_MS / 1000} s (${withoutToken(url)})`)
+    void uiFailed('界面没有载入', `${UI_LOAD_TIMEOUT_MS / 1000} 秒内没有收到界面（${withoutToken(url)}）。agent 服务可能正忙，可以重新载入；一直这样就重新启动。`)
+  }, UI_LOAD_TIMEOUT_MS)
+  win.webContents.once('dom-ready', () => {
+    clearTimeout(watchdog)
+    if (load === uiLoads && !onSplash) startupLog(`[desktop] UI loaded in ${Date.now() - started} ms`)
+  })
+  // A failed load is reported by did-fail-load (watchUi).
+  await win.loadURL(url).catch(() => {})
+  // The startup screen came before the UI in this window: mouse back must not go there.
+  win?.webContents.navigationHistory.clear()
+}
+
+/**
+ * What happens to the UI page goes to dsh.log, the only trace from a computer
+ * we cannot look at: a load that failed (shown on the startup screen, not as a
+ * blank window), the page's own errors, a hang and a crash.
+ * @param {Electron.WebContents} contents
+ */
+function watchUi(contents) {
+  let logged = 0
+  contents.on('did-start-navigation', details => { if (details.isMainFrame && !details.isSameDocument) logged = 0 })
+  contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    // -3: replaced by another load (the startup screen, a reload): nothing went wrong.
+    if (!isMainFrame || code === -3 || onSplash) return
+    startupLog(`[desktop] the UI did not load: ${description} (${code}) ${withoutToken(url)}`)
+    void uiFailed('界面没能载入', `${description}（${code}）\n${withoutToken(url)}`)
+  })
+  contents.on('console-message', event => {
+    if (onSplash || event.level !== 'error' || logged >= 30) return
+    logged += 1
+    startupLog(`[ui] ${event.message.slice(0, 500)}${event.sourceId ? ` (${withoutToken(event.sourceId)}:${event.lineNumber})` : ''}`)
+  })
+  contents.on('unresponsive', () => startupLog('[desktop] the UI page stopped responding'))
+  contents.on('responsive', () => startupLog('[desktop] the UI page responds again'))
+  contents.on('render-process-gone', (_event, details) => {
+    startupLog(`[desktop] the UI process is gone: ${details.reason} (exit code ${details.exitCode})`)
     if (!quitting) void fail('界面进程崩溃', details.reason, false)
   })
-  await win.loadURL(url)
-  // The startup screen came before the UI in this window: mouse back must not go there.
-  win.webContents.navigationHistory.clear()
+}
+
+/** The UI did not come up: the startup screen says why, with a reload beside the restart. */
+async function uiFailed(title, detail) {
+  if (win === null) return
+  failure = `${title}\n\n${detail}\n\n完整日志：${join(logDir(), 'dsh.log')}`
+  await showSplash({
+    step: 'ui', title,
+    error: {
+      title, detail,
+      actions: [
+        { id: 'reload', label: '重新载入', primary: true },
+        { id: 'restart', label: '重新启动' },
+        { id: 'copy', label: '复制错误信息' },
+        { id: 'logs', label: '打开日志文件夹' },
+      ],
+    },
+  })
+  showWindow()
+}
+
+/** An address for the log: the token stays out. */
+function withoutToken(url) {
+  return String(url).replace(/([?&]token=)[^&#]+/, '$1…')
 }
 
 /**
