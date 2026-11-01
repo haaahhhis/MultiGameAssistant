@@ -73,13 +73,22 @@ jobs:
           pnpm package:desktop --skip-build --arch arm64 --out dist/arm64 @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: dsh plugin package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $extra = if ($env:VERSION) { @('--version', $env:VERSION) } else { @() }
+          pnpm package:plugin --skip-build --out dist/plugin @extra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: SHA-256
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/release | Out-Null
-          Copy-Item dist/x64/*.exe, dist/arm64/*.exe dist/release/
+          Copy-Item dist/x64/*.exe, dist/arm64/*.exe, dist/plugin/*.tgz dist/release/
           # The format sha256sum -c reads: "<hash>  <file>", with \n line ends (it is checked again on Linux).
-          $lines = Get-ChildItem dist/release/*.exe | Sort-Object Name | ForEach-Object {
+          $lines = Get-ChildItem dist/release/*.exe, dist/release/*.tgz | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           }
           [IO.File]::WriteAllText("$PWD/dist/release/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
@@ -114,6 +123,7 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           x64=$(ls *.exe | grep -v -- '-arm64\.exe$')
           arm64=$(ls *-arm64.exe)
+          plugin=$(ls *.tgz)
           # What changed: the tag's message (pnpm release drafts it from the feat and fix commits);
           # a lightweight tag has none. A signature at its end is not part of the notes.
           ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
@@ -126,9 +136,10 @@ jobs:
             echo
             echo "- Windows x64（大多数电脑）：\`$x64\`"
             echo "- Windows ARM64（骁龙等 ARM 处理器的电脑）：\`$arm64\`"
+            echo "- 已经装了 dsh：dsh 插件版 \`$plugin\`（安装方法见 README「已经装了 dsh」）"
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
-          # Only the installers: GitHub shows each file's SHA-256, and the app's updater checks against that.
-          gh release create "$TAG" *.exe --repo "$GITHUB_REPOSITORY" --verify-tag \
+          # The installers and the dsh plugin: GitHub shows each file's SHA-256, and the app's updater checks against that.
+          gh release create "$TAG" *.exe *.tgz --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md "${flags[@]}"

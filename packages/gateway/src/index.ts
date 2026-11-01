@@ -10,9 +10,11 @@
  * registration is an effect on the caller's fiber, so unloading that plugin
  * removes its capability and methods.
  */
+import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
@@ -60,15 +62,54 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/**
+ * The UI the dsh plugin package carries beside its code
+ * (scripts/package-plugin.mjs); a checkout and the desktop app have none
+ * here (the desktop app names its own).
+ */
+const BUNDLED_UI = fileURLToPath(new URL('../web/', import.meta.url))
+
+/** Show the UI in the default browser; failing only costs the person a click on the printed address. */
+function openInBrowser(url: string, log: { warn(message: string): void }): void {
+  const [command, args] = process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+    : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]]
+  execFile(command, args, { windowsHide: true }, error => { if (error !== null) log.warn(`could not open the browser: ${error.message}`) })
+}
+
+/** The token kept in the data folder, made the first time; a new random one when there is no folder or it cannot be kept. */
+function keptToken(dataDir: string | undefined, log: { warn(message: string): void }): string {
+  const fresh = () => randomBytes(18).toString('base64url')
+  if (dataDir === undefined) return fresh()
+  const file = join(dataDir, 'gateway-token')
+  try {
+    const saved = readFileSync(file, 'utf8').trim()
+    if (/^[\w-]{16,}$/.test(saved)) return saved
+  } catch { /* not made yet */ }
+  const token = fresh()
+  try {
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(file, `${token}\n`)
+  } catch (error) {
+    log.warn(`the gateway token could not be kept in ${file}; the address changes on every start: ${String(error)}`)
+  }
+  return token
+}
+
 export interface Config {
   /** Listen address; loopback by default. */
   readonly host?: string
   /** Listen port; 0 picks a free port. @default 3290 */
   readonly port?: number
-  /** Connection token; a random one is generated (and printed) when omitted. */
+  /**
+   * Connection token. Omitted: the one kept in `dataDir` (made the first
+   * time), so the address stays the same between starts; without a data
+   * folder, a new random one each start. It is printed either way.
+   */
   readonly token?: string
-  /** Built UI directory to serve at `/`. */
+  /** Built UI directory to serve at `/`; default: the UI a plugin install carries (`web/` beside `lib/`), if any. */
   readonly staticDir?: string
+  /** Open the UI in the default browser once listening (the dsh plugin build: nothing else shows it). @default false */
+  readonly openBrowser?: boolean
   /** Extra `host[:port]` authorities accepted beyond loopback. */
   readonly trustedHosts?: readonly string[]
   /** Log protocol violations in handler results. @default false */
@@ -136,7 +177,7 @@ export class AdgGateway extends Service {
     super(ctx, 'adgGateway')
     const log = ctx.logger('adg-gateway')
     this.workspace = config.workspaceDir
-    const token = config.token ?? randomBytes(18).toString('base64url')
+    const token = config.token ?? keptToken(config.dataDir, log)
     this.skillScope = new SkillScope(config.dataDir, log)
 
     this.approvals = new ApprovalBroker({
@@ -548,7 +589,7 @@ export class AdgGateway extends Service {
         host: config.host ?? '127.0.0.1',
         port: config.port ?? 3290,
         token,
-        ...(config.staticDir === undefined ? {} : { staticDir: config.staticDir }),
+        ...(config.staticDir === undefined ? (existsSync(join(BUNDLED_UI, 'index.html')) ? { staticDir: BUNDLED_UI } : {}) : { staticDir: config.staticDir }),
         trustedHosts: config.trustedHosts ?? [],
         onSocket: socket => {
           const peer = new Peer(socket, {
@@ -575,6 +616,7 @@ export class AdgGateway extends Service {
       this.url = `http://${host}:${server.port}/?token=${token}`
       // stderr, like the launcher's own URL line: stdout may belong to another protocol.
       process.stderr.write(`adg gateway: ${this.url}\n`)
+      if (config.openBrowser === true) openInBrowser(this.url, log)
       log.info(`protocol endpoint: ws://${host}:${server.port}/rpc?token=${token}`)
       return async () => {
         for (const peer of this.peers) peer.close()

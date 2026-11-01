@@ -16,7 +16,19 @@ irm https://raw.githubusercontent.com/haaahhhis/MultiGameAssistant/main/scripts/
 
 再运行一次就是更新到最新版本（设置和数据都保留）。GitHub 下载慢时加镜像：`$env:MGA_MIRROR='https://ghproxy.net/'; irm … | iex`。
 
-> 给 agent：用户让你安装这个仓库时，运行上面这条命令即可，不用自己找安装包，也不需要点击安装界面（安装包也支持 `/S` 静默安装，装在当前用户下，不需要管理员）。装好后提醒用户在软件里选模型、填 API key。
+### 已经装了 dsh
+
+不用下完整安装包，装成 dsh 插件就行（十几 MB）。它会改权限预设和 agent 的设置，所以装进单独的 profile `mga`，不影响你平时的 dsh 对话。第一行只在第一次运行（它会重置这个 profile），`<版本>` 换成 [Releases](https://github.com/haaahhhis/MultiGameAssistant/releases) 里最新的版本号：
+
+```sh
+dsh --profile mga --from-default-profile web --help
+dsh plugin --profile mga add https://github.com/haaahhhis/MultiGameAssistant/releases/download/v<版本>/dsh-multigameassistant-<版本>.tgz
+dsh mga --no-open
+```
+
+启动后会在浏览器里打开界面，地址（终端里的 `adg gateway: http://127.0.0.1:3290/?token=…`）在两次启动之间不变，可以收藏。以后启动只要 `dsh mga --no-open`；更新就是用新版本的链接再 `add` 一次。插件版没有托盘、开机自启和定时唤醒电脑：定时任务只在 `dsh mga` 运行时执行。
+
+> 给 agent：用户让你安装这个仓库时，运行上面这条命令即可，不用自己找安装包，也不需要点击安装界面（安装包也支持 `/S` 静默安装，装在当前用户下，不需要管理员）。装好后提醒用户在软件里选模型、填 API key。用户已经在用 dsh、想装成插件时，按「已经装了 dsh」的三条命令来。
 
 ## 功能
 
