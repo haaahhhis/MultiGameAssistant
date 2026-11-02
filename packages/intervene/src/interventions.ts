@@ -22,6 +22,7 @@ import type { Incident, Intervention } from '@adg/protocol'
 import type { Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
 import { writeFileAtomic } from '@adg/protocol/node'
+import type { RunWindow } from './hidden.ts'
 
 export interface InterventionDeps {
   readonly runner: Pick<Runner, 'get' | 'processId' | 'restart' | 'stop' | 'note'>
@@ -38,6 +39,12 @@ export interface InterventionDeps {
   readonly visionProblem: () => Promise<string | undefined>
   /** Where the agent can act, in words, for the prompt (e.g. "模拟器 127.0.0.1:16384（target=emulator）"). */
   readonly describeTargets: (run: { resources: readonly string[] }) => string
+  /**
+   * The run's windows on the desktop (its processes' and its game's), topmost
+   * first, after bringing any out of sight (an error box behind another
+   * window) to the front. Called before the script is paused: a paused window does not move.
+   */
+  readonly revealWindows?: (runId: string) => Promise<readonly RunWindow[]>
   readonly onChange: (intervention: Intervention) => void
   readonly dataDir: string
   readonly timeoutMs?: number
@@ -195,6 +202,7 @@ export class Interventions {
     let run: ReturnType<InterventionDeps['runner']['get']> | undefined
     try { run = this.#deps.runner.get(incident.runId) } catch { run = undefined }
     const alive = run !== undefined && run.endedAt === undefined
+    const windows = await this.#deps.revealWindows?.(incident.runId).catch(error => { this.#deps.log.warn(`listing the windows of ${incident.runId} failed: ${String(error)}`); return [] }) ?? []
     // Pause the script so it and the agent do not both drive the screen.
     if (mode === 'act' && alive) {
       const pid = this.#deps.runner.processId(incident.runId)
@@ -219,7 +227,7 @@ export class Interventions {
       item.sessionId = sessionId
       this.#bySession.set(sessionId, item.id)
       this.#changed(item)
-      answer = await conversations.ask(sessionId, this.#prompt(incident, mode, item.paused, alive, run?.resources ?? []), AbortSignal.any([active.controller.signal, timeout]), screenshot === undefined ? [] : [screenshot])
+      answer = await conversations.ask(sessionId, this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows), AbortSignal.any([active.controller.signal, timeout]), screenshot === undefined ? [] : [screenshot])
     } catch (error) {
       if (item.state === 'taken-over') return { state: 'taken-over', summary: item.summary ?? '你接管了', paused: item.paused }
       if (timeout.aborted && active.done === undefined) return finish('timeout', `agent 在 ${Math.round(limitMs / 60_000)} 分钟内没有处理完`, imageOf(active, screenshot))
@@ -294,7 +302,7 @@ export class Interventions {
     try { this.#deps.runner.note(item.runId, '异常已处理，脚本继续运行') } catch { /* the run is gone */ }
   }
 
-  #prompt(incident: Incident, mode: 'diagnose' | 'act', paused: boolean, alive: boolean, resources: readonly string[]): string {
+  #prompt(incident: Incident, mode: 'diagnose' | 'act', paused: boolean, alive: boolean, resources: readonly string[], windows: readonly RunWindow[] = []): string {
     const targets = this.#deps.describeTargets({ resources })
     return [
       `自动脚本运行中出了问题，需要你看一下。`,
@@ -307,6 +315,7 @@ export class Interventions {
       `（完整日志用 script_run_log 查看，run_id 是 ${incident.runId}，可以搜索文字或只看错误）`,
       '',
       '附图是发现问题时的截图。',
+      ...windowLines(windows),
       '',
       mode === 'act'
         ? [
@@ -337,6 +346,16 @@ export class Interventions {
   #file(): string {
     return join(this.#deps.dataDir, 'intervene', 'interventions.json')
   }
+}
+
+/** The run's windows for the prompt: an error box is the first thing to read. */
+function windowLines(windows: readonly RunWindow[]): string[] {
+  if (windows.length === 0) return []
+  const name = (s: RunWindow) => `「${s.window.title}」${s.window.dialog === true ? '（对话框）' : ''}${s.window.minimized ? '（最小化）' : s.covered ? '（被别的窗口挡住）' : ''}`
+  const lines = [`这次运行在桌面上的窗口（从上到下）：${windows.slice(0, 12).map(name).join('、')}。`]
+  if (windows.some(s => s.window.dialog === true)) lines.push('有对话框时多半就是报错或提示，先看清它写了什么。')
+  if (windows.some(s => s.window.minimized || s.covered)) lines.push('被挡住或最小化的窗口在桌面截图里看不到：用 screen_capture（target=window，window 填它的标题）单独截它；对 window 目标点击、按键或输入前会先把它切到最前。')
+  return lines
 }
 
 function imageOf(active: Active, fallback: Buffer | undefined): Partial<Outcome> {

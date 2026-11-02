@@ -625,7 +625,7 @@ export class Runner {
       this.#publish(run)
       // Windows: everything the script started, also what a launcher that already exited left behind (sweep.ts).
       if (process.platform === 'win32' && run.child.pid !== undefined) {
-        const swept = await sweepTree(run.child.pid, run.info.startedAt, await this.#gameProcesses(run.info.scriptId)).catch(() => undefined)
+        const swept = await sweepTree(run.child.pid, run.info.startedAt, await this.gameProcesses(run.info.scriptId)).catch(() => undefined)
         if (swept !== undefined && swept.failed.length > 0) this.warn(runId, `有 ${swept.failed.length} 个进程没能结束：${swept.failed.join('；')}`)
         else if (swept !== undefined && swept.ended.length > 1) this.note(runId, `已结束脚本的 ${swept.ended.length} 个进程${swept.kept.length > 0 ? `（游戏和模拟器留着：${swept.kept.join('、')}）` : ''}`)
       }
@@ -634,7 +634,7 @@ export class Runner {
   }
 
   /** The script's game executable(s): a stop leaves the game running (closing it is game_close / 关闭游戏). */
-  async #gameProcesses(scriptId: string): Promise<string[]> {
+  async gameProcesses(scriptId: string): Promise<string[]> {
     try {
       const settings = await this.launch.get(scriptId)
       const game = this.#options.library.packOf(scriptId)?.manifest.game

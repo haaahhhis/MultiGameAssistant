@@ -31,6 +31,7 @@ export { Interventions, type Active, type InterventionDeps, type Outcome } from 
 export { Screens, toDevice, type AdbPort, type Frame, type Shot, type TargetKind } from './screens.ts'
 export { screenTools, type ScreenToolDeps } from './tools.ts'
 export { WinHelper, type WinWindow } from './winhelper.ts'
+export { coveredShare, ownedBy, runWindows, toRaise, unseen, type RunOwner, type RunWindow } from './hidden.ts'
 export { decodePng, encodePng, fitPng, pngSize, shrink, type Raster } from './png.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -53,6 +54,9 @@ export class AdgIntervene extends Service {
   static inject = ['adgRunner']
   readonly interventions: Interventions
   readonly ready: Promise<void>
+  readonly screens: Screens
+  /** Whose windows are a run's: its process tree (while it runs) and its game's executable. */
+  readonly runOwner: (runId: string) => Promise<{ pid: number | undefined; processes: string[] }>
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'adgIntervene')
@@ -63,7 +67,14 @@ export class AdgIntervene extends Service {
     const helper = new WinHelper({ cacheDir: join(spec.dataDir, 'intervene', 'bin') })
     ctx.effect(() => () => helper.dispose(), 'adg-intervene helper')
 
-    const screens = new Screens({ adb: () => ctx.get('adgEmulators'), win: helper, maxEdge: () => spec.maxEdge })
+    const screens = this.screens = new Screens({ adb: () => ctx.get('adgEmulators'), win: helper, maxEdge: () => spec.maxEdge })
+    const ownerOf = this.runOwner = async runId => {
+      let pid: number | undefined
+      try { pid = runner.processId(runId) } catch { pid = undefined }
+      let scriptId: string | undefined
+      try { scriptId = runner.get(runId).scriptId } catch { scriptId = undefined }
+      return { pid, processes: scriptId === undefined ? [] : await runner.gameProcesses(scriptId) }
+    }
 
     /** Whether a model accepts images. */
     const sees = async (provider: string, model: string, signal?: AbortSignal): Promise<boolean> => {
@@ -85,6 +96,7 @@ export class AdgIntervene extends Service {
         if (selection === undefined) return undefined
         return (await sees(selection.provider, selection.model)) ? undefined : `默认模型 ${selection.model} 不能看图片，agent 没法查看截图；在「设置 → 模型」把默认模型换成能看图的（例如 Claude、GPT-4o、Gemini、通义 VL）`
       },
+      revealWindows: async runId => process.platform === 'win32' ? (await screens.reveal(await ownerOf(runId))).windows : [],
       describeTargets: run => {
         const parts = run.resources.flatMap(r => r.startsWith('adb:') ? [`模拟器 ${r.slice(4)}（target=emulator）`] : r === 'desktop' ? ['桌面（target=desktop；用 window_list 找到游戏窗口后也可以 target=window 只截这个窗口）'] : [])
         return parts.length > 0 ? parts.join('；') : '没有（这个任务不用模拟器也不用桌面，只能截图查看、更新或重新运行脚本）'
@@ -153,6 +165,15 @@ export class AdgIntervene extends Service {
         },
       })
     })
+  }
+
+  /**
+   * The desktop for an incident of a run, with the run's windows brought in
+   * front first when one is out of sight (an error box behind another window).
+   * @throws Error off Windows or when the desktop cannot be captured.
+   */
+  captureDesktop(runId: string): Promise<{ png: Buffer; raised: string[]; hidden: string[] }> {
+    return this.runOwner(runId).then(owner => this.screens.captureFor(owner))
   }
 
   /** The monitor hands over an incident. Never throws. */

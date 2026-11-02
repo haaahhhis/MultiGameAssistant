@@ -46,6 +46,12 @@ export interface InterventionPort {
   resumeRun(runId: string): Promise<boolean>
   /** The user acted on the incident while the agent is still on it: the agent stops. */
   cancel?(incidentId: string, why: string): void
+  /**
+   * The desktop, after bringing the run's windows in front when one of them
+   * was out of sight (an error box behind another window, or minimized).
+   * `raised`: titles brought into sight; `hidden`: still out of sight.
+   */
+  captureDesktop?(runId: string): Promise<{ png: Buffer; raised: readonly string[]; hidden: readonly string[] }>
 }
 
 export interface MonitorDeps {
@@ -457,17 +463,43 @@ export class Monitor {
     const address = run?.resources.find(r => r.startsWith('adb:'))?.slice(4)
     try {
       const bridge = this.#deps.emulators()
-      const png = address !== undefined && bridge?.screencap !== undefined
-        ? await bridge.screencap(address, AbortSignal.timeout(30_000))
-        : await this.#deps.desktopScreenshot()
+      let png: Buffer
+      let detail: string
+      if (address !== undefined && bridge?.screencap !== undefined) {
+        png = await bridge.screencap(address, AbortSignal.timeout(30_000))
+        detail = `已截取模拟器画面（${address}）`
+      } else {
+        const desktop = await this.#desktop(incident.runId)
+        png = desktop.png
+        detail = `已截取桌面${desktop.note}`
+      }
       await this.#deps.store.saveScreenshot(incident.id, png)
       incident.screenshot = true
-      this.#step(incident, { action: 'screenshot', by: 'rule', ok: true, detail: address === undefined ? '已截取桌面' : `已截取模拟器画面（${address}）` })
+      this.#step(incident, { action: 'screenshot', by: 'rule', ok: true, detail })
       return png
     } catch (error) {
       this.#step(incident, { action: 'screenshot', by: 'rule', ok: false, detail: `截图失败：${message(error)}` })
       return undefined
     }
+  }
+
+  /** The desktop, with the run's covered windows brought forward when the intervene plugin can; else as it is. */
+  async #desktop(runId: string): Promise<{ png: Buffer; note: string }> {
+    const port = this.#deps.intervene?.()
+    if (port?.captureDesktop !== undefined) {
+      try {
+        const shot = await port.captureDesktop(runId)
+        const titles = (list: readonly string[]) => list.slice(0, 3).map(t => `「${t}」`).join('、')
+        const notes = [
+          ...(shot.raised.length > 0 ? [`先把被挡住的${titles(shot.raised)}提到了最前`] : []),
+          ...(shot.hidden.length > 0 ? [`${titles(shot.hidden)}还被挡着（可能在置顶窗口下面，或以管理员身份运行）`] : []),
+        ]
+        return { png: shot.png, note: notes.length > 0 ? `（${notes.join('；')}）` : '' }
+      } catch (error) {
+        this.#deps.log.warn(`capturing the run's windows failed, taking the desktop as it is: ${message(error)}`)
+      }
+    }
+    return { png: await this.#deps.desktopScreenshot(), note: '' }
   }
 
   #step(incident: Incident, step: Omit<IncidentStep, 'at'>): void {

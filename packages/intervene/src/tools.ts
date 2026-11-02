@@ -11,6 +11,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { Holder } from '@adg/runner'
 import { z } from 'zod'
+import { coveredShare } from './hidden.ts'
 import type { Interventions } from './interventions.ts'
 import type { Frame, Screens, TargetKind } from './screens.ts'
 
@@ -199,15 +200,18 @@ export function screenTools(deps: ScreenToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'window_list',
-      description: '列出桌面上可见的窗口（标题、进程、位置大小），用来找游戏或脚本的窗口。',
+      description: '列出桌面上可见的窗口（从最上面的开始：标题、进程、位置大小、是不是对话框、有没有被挡住），用来找游戏或脚本的窗口和被挡住的报错框。',
       properties: { filter: { type: 'string', description: '只看标题或进程名里含这段文字的。' } },
       readOnly: true,
       title: () => '查看窗口',
       execute: async args => {
         const a = parse(z.object({ filter: z.string().nullish() }), args)
         const want = (a.filter ?? '').toLowerCase()
-        const windows = (await deps.screens.windows()).filter(w => want === '' || w.title.toLowerCase().includes(want) || (w.process ?? '').toLowerCase().includes(want))
-        return { windows: windows.slice(0, 40).map(w => ({ title: w.title, process: w.process, x: w.x, y: w.y, width: w.width, height: w.height, minimized: w.minimized })) }
+        const all = await deps.screens.windows()
+        const listed = all.flatMap((w, i) => want === '' || w.title.toLowerCase().includes(want) || (w.process ?? '').toLowerCase().includes(want)
+          ? [{ title: w.title, process: w.process, x: w.x, y: w.y, width: w.width, height: w.height, minimized: w.minimized, dialog: w.dialog === true, covered: !w.minimized && coveredShare(w, all.slice(0, i)) >= 0.25 }]
+          : [])
+        return { windows: listed.slice(0, 40) }
       },
     }),
     tool({

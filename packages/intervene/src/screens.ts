@@ -10,6 +10,7 @@
  * screenshot of that target and are mapped back here, so the model never
  * deals with DPI, window offsets or scaling.
  */
+import { ownedBy, runWindows, toRaise, unseen, type RunOwner, type RunWindow } from './hidden.ts'
 import { fitPng } from './png.ts'
 import type { WinHelper, WinWindow } from './winhelper.ts'
 
@@ -99,10 +100,53 @@ export class Screens {
     return this.#win.windows()
   }
 
+  /** A run's windows (its processes' and its game's), topmost first, and which are covered. */
+  async runWindows(owner: { pid: number | undefined; processes: readonly string[] }): Promise<RunWindow[]> {
+    const pids = new Set(owner.pid === undefined ? [] : await this.#win.tree(owner.pid).catch(() => [owner.pid!]))
+    const own: RunOwner = { pids, processes: owner.processes }
+    return runWindows(await this.#win.windows(), ownedBy(own))
+  }
+
+  /**
+   * Bring a run's windows in front of the others when one of them is out of
+   * sight: an error box behind another window is then on the screen, and taps
+   * at its place land on it. Needs the run not paused (a paused window moves
+   * only once it runs again).
+   * @returns the run's windows now; `raised`: titles brought into sight; `hidden`: still out of sight (behind an always-on-top window, or one run as administrator).
+   */
+  async reveal(owner: { pid: number | undefined; processes: readonly string[] }): Promise<{ windows: RunWindow[]; raised: string[]; hidden: string[] }> {
+    const before = await this.runWindows(owner)
+    const raise = toRaise(before)
+    let after = before
+    if (raise.length > 0) {
+      await this.#win.raise(raise.map(w => w.hwnd))
+      after = await this.runWindows(owner)
+    }
+    const out = new Set(after.filter(unseen).map(s => s.window.hwnd))
+    return {
+      windows: after,
+      raised: before.filter(s => unseen(s) && !out.has(s.window.hwnd)).map(s => s.window.title),
+      hidden: after.filter(s => out.has(s.window.hwnd)).map(s => s.window.title),
+    }
+  }
+
+  /** The whole desktop (raw PNG) after `reveal`. */
+  async captureFor(owner: { pid: number | undefined; processes: readonly string[] }): Promise<{ png: Buffer; raised: string[]; hidden: string[] }> {
+    const { raised, hidden } = await this.reveal(owner)
+    return { png: (await this.#win.capture(0)).png, raised, hidden }
+  }
+
   async focus(title: string): Promise<WinWindow> {
     const found = await this.findWindow(title)
-    await this.#win.call('focus', { hwnd: found.hwnd })
+    await this.#win.focus(found.hwnd)
     return found
+  }
+
+  /** @throws Error when the window would not take the keyboard (keys would go elsewhere). */
+  async #focusFor(frame: Frame, keyboard: boolean): Promise<void> {
+    if (frame.hwnd === undefined) return
+    const focused = await this.#win.focus(frame.hwnd)
+    if (keyboard && !focused) throw new Error(`没能把${frame.label}切到最前（按键会落到别的窗口上）；先点一下这个窗口再试`)
   }
 
   async tap(frame: Frame, x: number, y: number, options: { button?: 'left' | 'right'; double?: boolean } = {}): Promise<void> {
@@ -112,7 +156,7 @@ export class Screens {
       if (options.double === true) await this.#shell(frame, ['input', 'tap', String(at.x), String(at.y)])
       return
     }
-    if (frame.hwnd !== undefined) await this.#win.call('focus', { hwnd: frame.hwnd })
+    await this.#focusFor(frame, false)
     await this.#win.call('click', { x: at.x, y: at.y, button: options.button ?? 'left', double: options.double === true })
   }
 
@@ -121,7 +165,7 @@ export class Screens {
     const b = toDevice(frame, x2, y2)
     const duration = Math.max(50, Math.min(5000, Math.round(ms)))
     if (frame.target === 'emulator') return void await this.#shell(frame, ['input', 'swipe', String(a.x), String(a.y), String(b.x), String(b.y), String(duration)])
-    if (frame.hwnd !== undefined) await this.#win.call('focus', { hwnd: frame.hwnd })
+    await this.#focusFor(frame, false)
     await this.#win.call('drag', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ms: duration }, duration + 10_000)
   }
 
@@ -141,7 +185,7 @@ export class Screens {
       if (code === undefined) throw new Error(`模拟器上能按的键：${Object.keys(ANDROID_KEYS).join('、')}`)
       return void await this.#shell(frame, ['input', 'keyevent', String(code)])
     }
-    if (frame.hwnd !== undefined) await this.#win.call('focus', { hwnd: frame.hwnd })
+    await this.#focusFor(frame, true)
     await this.#win.call('keys', { keys: key })
   }
 
@@ -151,7 +195,7 @@ export class Screens {
       // `input text` takes %s for spaces; quote everything else for the device shell.
       return void await this.#shell(frame, ['input', 'text', `'${text.replace(/ /g, '%s').replace(/'/g, `'\\''`)}'`])
     }
-    if (frame.hwnd !== undefined) await this.#win.call('focus', { hwnd: frame.hwnd })
+    await this.#focusFor(frame, true)
     await this.#win.call('type', { text })
   }
 

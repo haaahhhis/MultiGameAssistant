@@ -11,7 +11,8 @@ import { Interventions } from '../src/interventions.ts'
 import { decodePng, encodePng, fitPng, pngSize, shrink } from '../src/png.ts'
 import { Screens, toDevice, type Frame } from '../src/screens.ts'
 import { screenTools } from '../src/tools.ts'
-import type { WinHelper } from '../src/winhelper.ts'
+import { ownedBy, runWindows, toRaise, unseen, type RunWindow } from '../src/hidden.ts'
+import type { WinHelper, WinWindow } from '../src/winhelper.ts'
 
 /** A w×h PNG: red left half, blue right half. */
 function picture(w: number, h: number): Buffer {
@@ -41,11 +42,14 @@ test('coordinates in a shrunk window screenshot map back to the screen', () => {
   assert.throws(() => toDevice(frame, 961, 10), /不在截图里/)
 })
 
-function fakeWin() {
+function fakeWin(options: { windows?: () => WinWindow[]; focused?: boolean; tree?: number[]; onRaise?: (hwnds: readonly number[]) => void } = {}) {
   const calls: Record<string, unknown>[] = []
   const win = {
     call: async (op: string, args: Record<string, unknown> = {}) => { calls.push({ op, ...args }); return true },
-    windows: async () => [{ hwnd: 42, title: '终末地', pid: 7, process: 'Endfield', x: 100, y: 50, width: 1280, height: 720, minimized: false }],
+    focus: async (hwnd: number) => { calls.push({ op: 'focus', hwnd }); return options.focused ?? true },
+    tree: async (pid: number) => options.tree ?? [pid],
+    raise: async (hwnds: readonly number[]) => { calls.push({ op: 'raise', hwnds: [...hwnds] }); options.onRaise?.(hwnds) },
+    windows: async () => options.windows?.() ?? [{ hwnd: 42, title: '终末地', pid: 7, process: 'Endfield', x: 100, y: 50, width: 1280, height: 720, minimized: false }],
     capture: async (hwnd = 0) => ({ png: picture(hwnd === 0 ? 2560 : 1280, hwnd === 0 ? 1440 : 720), x: hwnd === 0 ? 0 : 100, y: hwnd === 0 ? 0 : 50, width: 1, height: 1 }),
   }
   return { win: win as unknown as WinHelper, calls }
@@ -79,7 +83,7 @@ test('screens: the emulator through ADB, a window through the helper, in screens
   await assert.rejects(screens.findWindow('记事本'), /没有标题包含「记事本」的窗口。现有窗口：终末地/)
 })
 
-function interventions(over: { ask?: (sessionId: string, text: string, images: readonly Buffer[]) => Promise<string>; vision?: string; run?: Partial<RunInfo> } = {}) {
+function interventions(over: { ask?: (sessionId: string, text: string, images: readonly Buffer[]) => Promise<string>; vision?: string; run?: Partial<RunInfo>; windows?: RunWindow[] } = {}) {
   const suspended: string[] = []
   const restarted: string[] = []
   let made = 0
@@ -98,6 +102,7 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
     }),
     visionProblem: async () => over.vision,
     describeTargets: r => r.resources.join('、'),
+    ...(over.windows === undefined ? {} : { revealWindows: async () => { suspended.push('reveal'); return over.windows! } }),
     onChange: () => {},
     dataDir: mkdtempSync(join(tmpdir(), 'adg-iv-')),
     timeoutMs: 500,
@@ -227,4 +232,82 @@ test('a conclusion after the intervention ended (it timed out) still reruns or r
   assert.deepEqual(late.restarted, ['run-1'])
   assert.deepEqual([late.iv().list()[0]!.state, late.iv().list()[0]!.paused], ['retried', false])
   await assert.rejects(late.iv().done('some-other-session', 'retry', 'x'), /不是在处理异常.*script_run/)
+})
+
+/** A window for the z-order tests. */
+function w(hwnd: number, title: string, pid: number, process: string, x: number, y: number, width: number, height: number, extra: Partial<WinWindow> = {}): WinWindow {
+  return { hwnd, title, pid, process, x, y, width, height, minimized: false, ...extra }
+}
+
+test("a run's windows a screenshot misses: an error box under another app's window, a minimized one, Windows' crash box", () => {
+  const desktop = [
+    w(1, 'NVIDIA GeForce Overlay', 50, 'NVIDIA Share', 0, 0, 2560, 1440, { topmost: true, transparent: true }),
+    w(2, 'MultiGameAssistant', 60, 'MultiGameAssistant', 300, 200, 1600, 1000),
+    w(3, '错误', 71, 'March7th Assistant', 900, 600, 400, 200, { dialog: true, className: '#32770' }),
+    w(4, '三月七小助手', 70, 'March7th Assistant', 0, 0, 1920, 1080),
+    w(5, '崩坏：星穹铁道', 80, 'StarRail', 0, 0, 2560, 1440),
+    w(6, 'StarRail.exe 已停止工作', 90, 'WerFault', 1000, 600, 500, 250, { dialog: true, minimized: true }),
+    w(7, '记事本', 91, 'notepad', 0, 0, 800, 600),
+  ]
+  const owns = ownedBy({ pids: new Set([70, 71]), processes: ['starrail.EXE'] })
+  const states = runWindows(desktop, owns)
+  assert.deepEqual(states.map(s => [s.window.title, s.covered, s.coveredByOthers, unseen(s)]), [
+    ['错误', true, true, true],
+    ['三月七小助手', true, true, true],
+    ['崩坏：星穹铁道', true, true, true],
+    ['StarRail.exe 已停止工作', false, false, true],
+  ], "the click-through overlay hides nothing; notepad is not the run's")
+  assert.deepEqual(toRaise(states).map(x => x.hwnd), [3, 6, 4, 5], 'the hidden dialogs on top, the rest in their own order')
+
+  const inSight = [desktop[2]!, desktop[3]!, w(2, 'MultiGameAssistant', 60, 'MultiGameAssistant', 2000, 1200, 500, 200)]
+  assert.deepEqual(toRaise(runWindows(inSight, owns)), [], 'nothing out of sight: nothing is moved')
+  const underItsScript = [w(4, '三月七小助手', 70, 'March7th Assistant', 0, 0, 1920, 1080), w(3, '错误', 71, 'March7th Assistant', 900, 600, 400, 200, { dialog: true })]
+  const box = runWindows(underItsScript, owns)[1]!
+  assert.ok(box.covered && !box.coveredByOthers && unseen(box), "a dialog under its own script's window is out of sight too")
+})
+
+test("screens: the run's hidden windows are brought forward before the desktop shot; what stays hidden is reported", async () => {
+  let z = [w(2, 'MultiGameAssistant', 60, 'MultiGameAssistant', 0, 0, 1920, 1080), w(3, '错误', 71, 'maa', 800, 500, 300, 150, { dialog: true }), w(4, 'MAA', 70, 'maa', 0, 0, 1280, 720)]
+  const { win, calls } = fakeWin({ windows: () => z, tree: [70, 71], onRaise: () => { z = [z[1]!, z[2]!, z[0]!] } })
+  const screens = new Screens({ adb: () => undefined, win, maxEdge: () => 1280 })
+  const shot = await screens.captureFor({ pid: 70, processes: [] })
+  assert.deepEqual(calls.filter(c => c['op'] === 'raise'), [{ op: 'raise', hwnds: [3, 4] }])
+  assert.deepEqual([shot.raised, shot.hidden], [['错误', 'MAA'], []])
+  assert.deepEqual(pngSize(shot.png), { width: 2560, height: 1440 }, 'the raw desktop, not shrunk')
+
+  // Behind an always-on-top window (or run as administrator): raising does nothing.
+  z = [w(9, '置顶播放器', 99, 'player', 0, 0, 1920, 1080, { topmost: true }), w(3, '错误', 71, 'maa', 800, 500, 300, 150, { dialog: true })]
+  const stuck = fakeWin({ windows: () => z, tree: [71] })
+  const again = await new Screens({ adb: () => undefined, win: stuck.win, maxEdge: () => 1280 }).captureFor({ pid: 71, processes: [] })
+  assert.deepEqual([again.raised, again.hidden], [[], ['错误']])
+
+  // Nothing hidden: no window is moved.
+  const calm = fakeWin({ windows: () => [w(3, '错误', 71, 'maa', 800, 500, 300, 150, { dialog: true })], tree: [71] })
+  await new Screens({ adb: () => undefined, win: calm.win, maxEdge: () => 1280 }).captureFor({ pid: 71, processes: [] })
+  assert.equal(calm.calls.filter(c => c['op'] === 'raise').length, 0)
+})
+
+test('screens: keys and text into a window that would not take the focus are refused; a tap still goes', async () => {
+  const { win, calls } = fakeWin({ focused: false })
+  const screens = new Screens({ adb: () => undefined, win, maxEdge: () => 1280 })
+  const shot = await screens.capture('window', { window: '终末地', signal: AbortSignal.timeout(5000) })
+  await assert.rejects(screens.key(shot.frame, 'enter'), /没能把窗口「终末地」切到最前/)
+  await assert.rejects(screens.type(shot.frame, 'ok'), /没能把窗口「终末地」切到最前/)
+  await screens.tap(shot.frame, 10, 10)
+  assert.equal(calls.at(-1)?.['op'], 'click')
+  assert.equal(calls.filter(c => c['op'] === 'keys' || c['op'] === 'type').length, 0)
+})
+
+test("the agent is told about the run's windows, which are brought forward before the script is paused", async () => {
+  let prompt = ''
+  const windows: RunWindow[] = [
+    { window: w(3, '错误', 71, 'maa', 800, 500, 300, 150, { dialog: true }), covered: false, coveredByOthers: false },
+    { window: w(4, 'MAA', 70, 'maa', 0, 0, 1280, 720, { minimized: true }), covered: false, coveredByOthers: false },
+  ]
+  const env = interventions({ windows, ask: async (sessionId, text) => { prompt = text; env.iv().done(sessionId, 'resolved', '关掉了报错框'); return '好' } })
+  await env.iv().handle(incident, 'act', Buffer.from('png'))
+  assert.deepEqual(env.suspended.slice(0, 2), ['reveal', 'suspend 4242'], 'a paused window does not move: revealed first')
+  assert.match(prompt, /这次运行在桌面上的窗口（从上到下）：「错误」（对话框）、「MAA」（最小化）/)
+  assert.match(prompt, /先看清它写了什么/)
+  assert.match(prompt, /screen_capture（target=window/)
 })

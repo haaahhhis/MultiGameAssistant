@@ -309,3 +309,35 @@ test('stopping a run while the agent handles it: the agent is called off, the in
   await assert.rejects(runner.restart(run.id, '自动重启'), /不再重新运行/)
   monitor.stop()
 })
+
+test("a desktop task's screenshot brings its hidden windows forward first; when that fails, the desktop as it is", async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }').replace('success: done-log', 'success: exit-code')
+  const steps = { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { sleepMs: 100 }, { exit: 3 }] }
+  const seen: Array<Buffer | undefined> = []
+  const port = (capture: InterventionPort['captureDesktop']): InterventionPort => ({
+    handle: async (_incident, _mode, shot) => { seen.push(shot); return { state: 'gave-up', summary: '处理不了', paused: false } },
+    countToday: () => 0,
+    resumeRun: async () => false,
+    ...(capture === undefined ? {} : { captureDesktop: capture }),
+  })
+  const asked: string[] = []
+  const raised = setup(pack, { 'daily.json': steps }, port(async runId => { asked.push(runId); return { png: Buffer.from('raised'), raised: ['错误'], hidden: ['管理员窗口'] } }))
+  await raised.monitor.start(0)
+  const run = await raised.runner.finished((await raised.runner.start('maa', 'daily')).id)
+  await raised.monitor.idle()
+  assert.deepEqual(asked, [run.id])
+  const incident = raised.monitor.incidents({ status: 'all' })[0]!
+  assert.equal(raised.shots.get(incident.id)?.toString(), 'raised')
+  assert.equal(seen[0]?.toString(), 'raised', 'the agent gets the same picture')
+  assert.match(incident.steps.find(s => s.action === 'screenshot')!.detail, /已截取桌面（先把被挡住的「错误」提到了最前；「管理员窗口」还被挡着/)
+  raised.monitor.stop()
+
+  const failing = setup(pack, { 'daily.json': steps }, port(async () => { throw new Error('桌面助手没能启动') }))
+  await failing.monitor.start(0)
+  await failing.runner.finished((await failing.runner.start('maa', 'daily')).id)
+  await failing.monitor.idle()
+  const plain = failing.monitor.incidents({ status: 'all' })[0]!
+  assert.equal(failing.shots.get(plain.id)?.toString(), 'desktop')
+  assert.equal(plain.steps.find(s => s.action === 'screenshot')!.detail, '已截取桌面')
+  failing.monitor.stop()
+})

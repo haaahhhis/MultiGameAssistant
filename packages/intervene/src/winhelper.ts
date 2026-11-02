@@ -41,9 +41,16 @@ public static class AdgWin {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT rect, int size);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int max);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+  [DllImport("user32.dll")] static extern int GetWindowLongW(IntPtr hwnd, int index);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
-  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
+  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hwnd, int command);
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
@@ -61,7 +68,8 @@ public static class AdgWin {
     try { SetProcessDPIAware(); } catch {}
   }
 
-  public class Win { public long hwnd; public string title; public uint pid; public int x, y, width, height; public bool minimized; }
+  /** dialog: a standard dialog box (message boxes are) or a window owned by another; transparent: clicks pass through it (overlays). */
+  public class Win { public long hwnd; public string title; public string className; public uint pid; public int x, y, width, height; public bool minimized, dialog, topmost, transparent; }
 
   static RECT Bounds(IntPtr hwnd) {
     RECT r;
@@ -69,20 +77,51 @@ public static class AdgWin {
     return r;
   }
 
+  /** Visible titled top-level windows, topmost first (z-order). Cloaked ones (apps on another virtual desktop, suspended store apps) are not on the screen. */
   public static Win[] Windows() {
     var list = new List<Win>();
     EnumWindows((h, p) => {
       if (!IsWindowVisible(h)) return true;
       int n = GetWindowTextLengthW(h);
       if (n == 0) return true;
+      int cloaked;
+      if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
       var sb = new StringBuilder(n + 1);
       GetWindowTextW(h, sb, sb.Capacity);
+      var cls = new StringBuilder(256);
+      GetClassNameW(h, cls, cls.Capacity);
       uint pid; GetWindowThreadProcessId(h, out pid);
       var r = Bounds(h);
-      list.Add(new Win { hwnd = h.ToInt64(), title = sb.ToString(), pid = pid, x = r.Left, y = r.Top, width = r.Right - r.Left, height = r.Bottom - r.Top, minimized = IsIconic(h) });
+      int ex = GetWindowLongW(h, -20);
+      list.Add(new Win {
+        hwnd = h.ToInt64(), title = sb.ToString(), className = cls.ToString(), pid = pid, x = r.Left, y = r.Top, width = r.Right - r.Left, height = r.Bottom - r.Top, minimized = IsIconic(h),
+        dialog = cls.ToString() == "#32770" || GetWindow(h, 4) != IntPtr.Zero, topmost = (ex & 0x8) != 0, transparent = (ex & 0x20) != 0,
+      });
       return true;
     }, IntPtr.Zero);
     return list.ToArray();
+  }
+
+  /** Whether the window's thread answers within half a second: not when its process is suspended or hung. */
+  static bool Responds(IntPtr hwnd) {
+    IntPtr result;
+    return SendMessageTimeoutW(hwnd, 0, IntPtr.Zero, IntPtr.Zero, 0x2, 500, out result) != IntPtr.Zero;
+  }
+
+  const uint RAISE = 0x0001 | 0x0002 | 0x0010 | 0x4000; // no size, no move, no activate, async
+  /**
+   * Bring windows above the other (non-topmost) windows without taking the
+   * focus, listed topmost first; minimized ones are restored. Async: a window
+   * whose thread is suspended or hung does not block the helper.
+   */
+  public static void Raise(long[] hwnds) {
+    for (int i = hwnds.Length - 1; i >= 0; i--) {
+      var handle = new IntPtr(hwnds[i]);
+      if (IsIconic(handle)) ShowWindowAsync(handle, 4);
+      SetWindowPos(handle, new IntPtr(-1), 0, 0, 0, 0, RAISE);
+      SetWindowPos(handle, new IntPtr(-2), 0, 0, 0, 0, RAISE);
+    }
+    System.Threading.Thread.Sleep(400);
   }
 
   /** Whole virtual screen, or one window (PrintWindow works for windows behind others). Returns x, y, width, height. */
@@ -96,14 +135,20 @@ public static class AdgWin {
       using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(x, y, 0, 0, bmp.Size);
     } else {
       var handle = new IntPtr(hwnd);
-      if (IsIconic(handle)) ShowWindow(handle, 9);
+      // PrintWindow waits for the window to paint itself: never for one whose script is paused.
+      bool responds = Responds(handle);
+      if (IsIconic(handle)) { ShowWindowAsync(handle, 9); System.Threading.Thread.Sleep(300); }
+      if (!responds) Raise(new long[] { hwnd });
       var r = Bounds(handle);
       x = r.Left; y = r.Top;
       bmp = new Bitmap(Math.Max(1, r.Right - r.Left), Math.Max(1, r.Bottom - r.Top), PixelFormat.Format32bppArgb);
       using (var g = Graphics.FromImage(bmp)) {
-        IntPtr hdc = g.GetHdc();
-        bool ok = PrintWindow(handle, hdc, 2);
-        g.ReleaseHdc(hdc);
+        bool ok = false;
+        if (responds) {
+          IntPtr hdc = g.GetHdc();
+          ok = PrintWindow(handle, hdc, 2);
+          g.ReleaseHdc(hdc);
+        }
         if (!ok) g.CopyFromScreen(x, y, 0, 0, bmp.Size);
       }
     }
@@ -113,10 +158,20 @@ public static class AdgWin {
     return result;
   }
 
-  public static void Focus(long hwnd) {
+  /**
+   * Bring a window to the front and give it the keyboard. Windows refuses the
+   * focus to a background process; a tap of Alt first lifts that.
+   * @returns whether it has the focus now.
+   */
+  public static bool Focus(long hwnd) {
     var handle = new IntPtr(hwnd);
-    if (IsIconic(handle)) ShowWindow(handle, 9);
-    SetForegroundWindow(handle);
+    Raise(new long[] { hwnd });
+    if (!SetForegroundWindow(handle) || GetForegroundWindow() != handle) {
+      try { Send(Key(0x12, 0, 0), Key(0x12, 0, 2)); } catch {}
+      SetForegroundWindow(handle);
+      System.Threading.Thread.Sleep(100);
+    }
+    return GetForegroundWindow() == handle;
   }
 
   static INPUT Mouse(uint flags, uint data) { var i = new INPUT { type = 0 }; i.u.mi.dwFlags = flags; i.u.mi.mouseData = data; return i; }
@@ -196,9 +251,11 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $result = switch ($req.op) {
       'ping' { 'pong' }
       'echo' { $req.text }
-      'windows' { @([AdgWin]::Windows() | ForEach-Object { @{ hwnd = $_.hwnd; title = $_.title; pid = $_.pid; x = $_.x; y = $_.y; width = $_.width; height = $_.height; minimized = $_.minimized; process = (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName } }) }
+      'windows' { @([AdgWin]::Windows() | ForEach-Object { @{ hwnd = $_.hwnd; title = $_.title; className = $_.className; pid = $_.pid; x = $_.x; y = $_.y; width = $_.width; height = $_.height; minimized = $_.minimized; dialog = $_.dialog; topmost = $_.topmost; transparent = $_.transparent; process = (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName } }) }
+      'tree' { @(Get-Tree ([int]$req.pid)) }
+      'raise' { [AdgWin]::Raise([long[]]@($req.hwnds)); $true }
       'capture' { $r = [AdgWin]::Capture([long]$req.hwnd, [string]$req.path); @{ x = $r[0]; y = $r[1]; width = $r[2]; height = $r[3] } }
-      'focus' { [AdgWin]::Focus([long]$req.hwnd); $true }
+      'focus' { [AdgWin]::Focus([long]$req.hwnd) }
       'click' { [AdgWin]::Click([int]$req.x, [int]$req.y, [string]$req.button, [bool]$req.double); $true }
       'drag' { [AdgWin]::Drag([int]$req.x1, [int]$req.y1, [int]$req.x2, [int]$req.y2, [int]$req.ms); $true }
       'scroll' { [AdgWin]::Scroll([int]$req.x, [int]$req.y, [int]$req.notches); $true }
@@ -225,6 +282,12 @@ export interface WinWindow {
   readonly width: number
   readonly height: number
   readonly minimized: boolean
+  readonly className?: string
+  /** A standard dialog box (message boxes are) or a window owned by another. */
+  readonly dialog?: boolean
+  readonly topmost?: boolean
+  /** Clicks pass through it (an overlay): it hides nothing that matters. */
+  readonly transparent?: boolean
 }
 
 /** One PowerShell helper, started on first use and kept for the life of the plugin. */
@@ -253,6 +316,21 @@ export class WinHelper {
 
   windows(): Promise<WinWindow[]> {
     return this.call<WinWindow[] | WinWindow | null>('windows').then(r => (r === null ? [] : Array.isArray(r) ? r : [r]))
+  }
+
+  /** A process and all its descendants. */
+  tree(pid: number): Promise<number[]> {
+    return this.call<number[] | number | null>('tree', { pid }).then(r => (r === null ? [] : Array.isArray(r) ? r : [r]))
+  }
+
+  /** Bring windows (topmost first) above the others without taking the focus; minimized ones are restored. */
+  async raise(hwnds: readonly number[]): Promise<void> {
+    if (hwnds.length > 0) await this.call('raise', { hwnds })
+  }
+
+  /** @returns whether the window has the keyboard focus now. */
+  focus(hwnd: number): Promise<boolean> {
+    return this.call<boolean>('focus', { hwnd })
   }
 
   /** A PNG of the desktop (hwnd 0) or one window, with where it is on the screen. */
