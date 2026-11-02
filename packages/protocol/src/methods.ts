@@ -17,6 +17,7 @@ import { InterveneNotifications, InterveneRequests } from './intervene.ts'
 import { GamesNotifications, GamesRequests } from './games.ts'
 import { PermissionsNotifications, PermissionsRequests } from './permissions.ts'
 import { QuestionsNotifications, QuestionsRequests } from './questions.ts'
+import { InstancesNotifications, InstancesRequests } from './instances.ts'
 import { SkillsRequests } from './skills.ts'
 import { SkillHubNotifications, SkillHubRequests } from './skillhub.ts'
 import { PersonaRequests } from './persona.ts'
@@ -437,6 +438,7 @@ export const Requests = {
   ...GamesRequests,
   ...PermissionsRequests,
   ...QuestionsRequests,
+  ...InstancesRequests,
   ...SkillsRequests,
   ...SkillHubRequests,
   ...PersonaRequests,
@@ -495,6 +497,7 @@ export const Notifications = {
   ...GamesNotifications,
   ...PermissionsNotifications,
   ...QuestionsNotifications,
+  ...InstancesNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests

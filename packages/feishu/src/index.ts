@@ -7,6 +7,7 @@
  * the long connection, so no public address is needed. Contributes the
  * `feishu@1` capability.
  */
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
@@ -94,6 +95,11 @@ export class AdgFeishu extends Service {
 
     const view = () => ({ settings: bot.state.settings, secretConfigured: bot.state.secretConfigured, pending: bot.state.pending })
     ctx.inject(['adgGateway'], scoped => {
+      // Two copies of the app on one bot split its messages and buttons (gateway instances.ts); the App ID itself stays here.
+      scoped.effect(() => scoped.adgGateway.instances.fact('feishu', () => {
+        const { enabled, appId } = bot.state.settings
+        return enabled && appId !== undefined ? createHash('sha256').update(appId).digest('hex').slice(0, 16) : undefined
+      }), 'adg-feishu bot in use')
       scoped.adgGateway.register({
         id: FEISHU_CAPABILITY,
         version: 1,

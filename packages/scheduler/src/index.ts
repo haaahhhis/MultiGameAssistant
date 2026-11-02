@@ -171,6 +171,7 @@ export class AdgScheduler extends Service {
       }
     }
     ctx.inject(['adgGateway'], scoped => {
+      scoped.effect(() => scoped.adgGateway.instances.fact('schedules', () => scheduler.upcoming(1).length > 0), 'adg-scheduler schedules in use')
       scoped.adgGateway.register({
         id: SCHEDULE_CAPABILITY,
         version: 1,

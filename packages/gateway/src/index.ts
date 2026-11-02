@@ -33,7 +33,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { areaOf, COMPACTION_CAPABILITY, ErrorCode, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -49,6 +49,7 @@ import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
 import { createSockets, MOUNT, serveMounted, startServer, type Sockets } from './server.ts'
+import { copyLabel, Instances } from './instances.ts'
 import { AGENT_PRESET, AgentParts, OwnSessions, type AgentPart } from './shared.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
@@ -59,6 +60,7 @@ export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
+export { clashes, copyLabel, Instances, INSTANCES_DIR, type CopyRecord, type Fact } from './instances.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -139,6 +141,8 @@ export interface Config {
    * (`@adg/gateway/agent`, shared.ts) instead of to every agent. @default false
    */
   readonly shared?: boolean
+  /** Where the copies of the app running on this computer keep their heartbeats (instances.ts). @default INSTANCES_DIR */
+  readonly instancesDir?: string
   /**
    * Listen on a port of its own (what the desktop app loads). Off: the UI is
    * only under dsh's own web server, at `/adg/`. @default true
@@ -204,6 +208,11 @@ export class AdgGateway extends Service {
   readonly skillScope: SkillScope
   /** The dsh is shared with other work (Config.shared). */
   readonly shared: boolean
+  /**
+   * Other copies of the app running on this computer (the desktop app and the
+   * plugin both open). Plugins report what must not be used twice with `fact`.
+   */
+  readonly instances: Instances
   private readonly own: OwnSessions
   private readonly parts: AgentParts
   private readonly sockets: Sockets
@@ -220,6 +229,20 @@ export class AdgGateway extends Service {
     this.skillScope = new SkillScope(config.dataDir, log)
     if (this.shared) this.skillScope.limitTo(sessionId => this.isOwn(sessionId))
     this.sockets = createSockets(socket => this.accept(socket, config.validateResults ?? false, log))
+    this.instances = new Instances({
+      label: copyLabel(this.shared), log,
+      ...(config.dataDir === undefined ? {} : { dataDir: config.dataDir }),
+      ...(config.instancesDir === undefined ? {} : { dir: config.instancesDir }),
+    })
+    ctx.effect(() => {
+      this.instances.start(30_000, others => this.broadcast('instances/changed', { others }))
+      return () => void this.instances.stop()
+    }, 'adg-gateway instances')
+    ctx.effect(() => this.registry.register({
+      id: INSTANCES_CAPABILITY,
+      version: 1,
+      methods: { 'instances/others': async () => { await this.instances.beat(); return { others: this.instances.others() } } },
+    }), 'adg-gateway capability instances')
 
     this.approvals = new ApprovalBroker({
       broadcastRequested: request => this.broadcast('approval/requested', request),

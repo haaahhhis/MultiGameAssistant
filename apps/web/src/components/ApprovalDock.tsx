@@ -3,13 +3,14 @@ import type { ApprovalRequested, QuestionAnswerItem, QuestionItem, QuestionReque
 import type { AdgClient } from '@adg/client-core'
 import { useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
+import { OtherCopiesCard } from './OtherCopies.tsx'
 import { PowerCard, usePowerStatus } from './PowerCard.tsx'
 import { UpdateCard } from './Updates.tsx'
 
 /**
  * Pending approvals and the agent's questions: the current session's in full,
  * others as a count; and a sleep or shutdown on its way after a pipeline, on
- * every page.
+ * every page; another copy of the app open at the same time.
  */
 export function ApprovalDock({ client, sessionId, onSelect }: {
   client: AdgClient
@@ -33,6 +34,7 @@ export function ApprovalDock({ client, sessionId, onSelect }: {
           <span className="approval-dot" />另有 {new Set(elsewhere.map(e => e.sessionId)).size} 个会话在等你{waiting}<Icon name="chevron" />
         </button>
       )}
+      <OtherCopiesCard client={client} />
       <UpdateCard />
     </div>
   )
