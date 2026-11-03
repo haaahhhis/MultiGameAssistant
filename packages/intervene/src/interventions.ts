@@ -18,7 +18,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Incident, Intervention } from '@adg/protocol'
+import type { Incident, Intervention, QuestionAnswerItem } from '@adg/protocol'
 import type { Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
 import { writeFileAtomic } from '@adg/protocol/node'
@@ -74,6 +74,7 @@ export interface Outcome {
 const KEEP = 100
 /** Sessions whose latest screenshot is kept. */
 const KEEP_SHOTS = 20
+const UNATTENDED = '没有人在旁边回答（这是自动处理异常）。按你自己的判断继续；需要用户做的事写进 intervention_done 的 summary，然后调用 intervention_done。'
 
 export class Interventions {
   readonly #deps: InterventionDeps
@@ -113,6 +114,17 @@ export class Interventions {
   forSession(sessionId: string | undefined): Active | undefined {
     const id = sessionId === undefined ? undefined : this.#bySession.get(sessionId)
     return id === undefined ? undefined : this.#active.get(id)
+  }
+
+  /**
+   * The answer to a question the agent asks (ask_user_question) while handling
+   * an incident: nobody may be there, and waiting for someone held the paused
+   * script until the time limit.
+   * @returns undefined when the session is not handling one.
+   */
+  unattended(sessionId: string, questions: readonly { id: string }[]): QuestionAnswerItem[] | undefined {
+    if (this.forSession(sessionId) === undefined) return undefined
+    return questions.map(q => ({ id: q.id, selected: [], custom: UNATTENDED }))
   }
 
   /** Interventions today (for the daily cap). */
@@ -236,8 +248,10 @@ export class Interventions {
       this.#active.delete(item.id)
     }
     if (item.state === 'taken-over') return { state: 'taken-over', summary: item.summary ?? '你接管了', paused: item.paused }
+    // Stopping the agent at the limit ends its turn without an error: the reply is just cut short.
+    if (timeout.aborted && active.done === undefined) return finish('timeout', `agent 在 ${Math.round(limitMs / 60_000)} 分钟内没有处理完`, imageOf(active, screenshot))
 
-    const done = active.done ?? { result: 'give-up' as const, summary: answer.slice(0, 600) || 'agent 没有给出结论' }
+    const done = active.done ??{ result: 'give-up' as const, summary: answer.slice(0, 600) || 'agent 没有给出结论' }
     if (done.result === 'resolved') {
       await this.#resume(item)
       return finish('resolved', done.summary)

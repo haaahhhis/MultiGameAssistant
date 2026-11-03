@@ -151,6 +151,15 @@ export class AdgIntervene extends Service {
     }))
 
     ctx.inject(['adgGateway'], scoped => {
+      // The agent's questions while it handles an incident are answered at once: nobody may be there.
+      scoped.adgGateway.addQuestionAnswerer({
+        active: sessionId => interventions.forSession(sessionId) !== undefined,
+        asked: request => {
+          const answers = interventions.unattended(request.sessionId, request.questions)
+          if (answers !== undefined) scoped.adgGateway.respondQuestion(request.questionId, answers)
+        },
+        resolved: () => {},
+      })
       scoped.adgGateway.register({
         id: INTERVENE_CAPABILITY,
         version: 1,

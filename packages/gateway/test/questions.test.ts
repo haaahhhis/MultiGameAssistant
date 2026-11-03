@@ -52,3 +52,12 @@ test('typed text is kept and trimmed; blank text counts as no text', async () =>
   broker.respond(id, [{ id: 'a', selected: [], custom: '  小明 ' }, { id: 'b', selected: [], custom: '   ' }])
   assert.deepEqual(await answer, { answers: [{ id: 'a', selected: [], custom: '小明' }, { id: 'b', selected: [] }] })
 })
+
+test('an answerer that answers on the spot settles it; the ones after it are not asked', async () => {
+  const broker = new QuestionBroker({ broadcastRequested: () => {}, broadcastResolved: () => {} })
+  const later: string[] = []
+  broker.addAnswerer({ active: () => true, asked: r => { broker.respond(r.questionId, [{ id: 'q', selected: [], custom: '没有人在旁边' }]) }, resolved: () => {} })
+  broker.addAnswerer({ active: () => true, asked: r => later.push(r.questionId), resolved: () => {} })
+  assert.deepEqual(await broker.ask({ sessionId: 's', questions: [{ id: 'q', question: '?' }] }), { answers: [{ id: 'q', selected: [], custom: '没有人在旁边' }] })
+  assert.deepEqual(later, [], 'no card for a question already answered')
+})

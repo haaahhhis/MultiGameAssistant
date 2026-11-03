@@ -140,6 +140,22 @@ test('an intervention pauses the script, hands the agent the incident and screen
   assert.equal(env.iv().countToday(), 1)
 })
 
+test("the agent's questions while it handles an incident get an answer at once; other sessions' do not", async () => {
+  let answers: ReturnType<Interventions['unattended']>
+  const env = interventions({
+    ask: async s => {
+      answers = env.iv().unattended(s, [{ id: 'q1' }, { id: 'q2' }])
+      env.iv().done(s, 'give-up', '需要输入验证码，交给你')
+      return ''
+    },
+  })
+  await env.iv().handle(incident, 'act', undefined)
+  assert.deepEqual(answers!.map(a => [a.id, a.selected]), [['q1', []], ['q2', []]])
+  assert.match(answers![0]!.custom!, /没有人在旁边.*intervention_done/)
+  assert.equal(env.iv().unattended('s-1', [{ id: 'q1' }]), undefined, 'the intervention is over')
+  assert.equal(env.iv().unattended('chat', [{ id: 'q1' }]), undefined, 'not an intervention')
+})
+
 test('retry runs the task again; give-up leaves it paused for the user; diagnose mode never pauses', async () => {
   const retry = interventions({ ask: async s => { retry.iv().done(s, 'retry', '脚本版本过旧，已更新'); return '' } })
   assert.equal((await retry.iv().handle(incident, 'act', undefined)).state, 'retried')
@@ -165,6 +181,10 @@ test('no image-capable model, a timeout, and a takeover', async () => {
 
   const slow = interventions({ ask: () => new Promise((_, reject) => setTimeout(() => reject(new Error('aborted')), 800)) })
   assert.equal((await slow.iv().handle(incident, 'act', undefined)).state, 'timeout')
+  // The agent stopped at the limit: its turn just ends, without an error and without words.
+  const cut = interventions({ ask: () => new Promise(resolve => setTimeout(() => resolve('（agent 没有回复文字）'), 800)) })
+  const cutShort = await cut.iv().handle(incident, 'act', undefined)
+  assert.deepEqual([cutShort.state, cutShort.summary, cutShort.paused],['timeout', 'agent 在 0 分钟内没有处理完', true])
 
   const taken = interventions({ ask: (s) => new Promise((_, reject) => { setTimeout(() => { taken.iv().takeover(taken.iv().list()[0]!.id) ; reject(new Error('aborted')) }, 50) }) })
   const t = await taken.iv().handle(incident, 'act', undefined)

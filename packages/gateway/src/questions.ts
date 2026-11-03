@@ -101,7 +101,11 @@ export class QuestionBroker {
       })
       ask.signal?.addEventListener('abort', onAbort, { once: true })
       this.options.broadcastRequested(request)
-      for (const answerer of this.answerers) if (safely(() => answerer.active(request.sessionId), false)) safely(() => answerer.asked(request), undefined)
+      for (const answerer of this.answerers) {
+        // One may answer on the spot (an intervention's unattended answer): the rest are not asked then.
+        if (!this.pending.has(questionId)) break
+        if (safely(() => answerer.active(request.sessionId), false)) safely(() => answerer.asked(request), undefined)
+      }
     })
   }
 
