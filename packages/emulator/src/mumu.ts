@@ -90,22 +90,29 @@ export class MuMuManager {
    * @throws Error when it does not become ready within `timeoutMs`.
    */
   async ensureReady(index: number, options: { timeoutMs: number; signal?: AbortSignal; onStatus?: (text: string) => void; pollMs?: number }): Promise<EmulatorInstance> {
-    let state = await this.instance(index)
-    if (state === undefined) throw new Error(`MuMu 没有实例 ${index}；可用实例：${(await this.instances()).map(i => `${i.index}（${i.name}）`).join('、') || '无'}`)
-    if (state.ready) return state
-    if (!state.running) {
-      options.onStatus?.(`启动 MuMu 实例 ${index}（${state.name}）`)
-      await this.launch(index)
+    // While an instance starts (launched just now, maybe by an earlier run), MuMu can answer
+    // queries about it with an error ("player index not found"): waited out like the boot itself.
+    let problem: unknown
+    const look = () => this.instance(index).then(found => { problem = undefined; return found }, (error: unknown) => { problem = error; return undefined })
+    let state = await look()
+    if (problem === undefined) {
+      if (state === undefined) throw new Error(`MuMu 没有实例 ${index}；可用实例：${(await this.instances()).map(i => `${i.index}（${i.name}）`).join('、') || '无'}`)
+      if (state.ready) return state
+      if (!state.running) {
+        options.onStatus?.(`启动 MuMu 实例 ${index}（${state.name}）`)
+        await this.launch(index)
+      }
     }
     options.onStatus?.('等待安卓系统启动完成…')
     const deadline = Date.now() + options.timeoutMs
     while (Date.now() < deadline) {
       options.signal?.throwIfAborted()
       await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 2000))
-      state = await this.instance(index)
+      state = await look()
       if (state?.ready === true) return state
     }
-    throw new Error(`MuMu 实例 ${index} 在 ${Math.round(options.timeoutMs / 1000)} 秒内没有启动完成`)
+    const last = problem === undefined ? '' : `（最后一次查询：${problem instanceof Error ? problem.message : String(problem)}）`
+    throw new Error(`MuMu 实例 ${index} 在 ${Math.round(options.timeoutMs / 1000)} 秒内没有启动完成${last}`)
   }
 
   async #run(args: readonly string[], what: string): Promise<string> {

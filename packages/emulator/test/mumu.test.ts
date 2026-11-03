@@ -57,6 +57,24 @@ test('ensureReady launches a stopped instance and waits for Android', async () =
   await assert.rejects(mumu.ensureReady(7, { timeoutMs: 100, pollMs: 10 }), /没有实例 7；可用实例：0（MuMu安卓设备）、1（多开-1）/)
 })
 
+test('query errors while an instance starts are waited out, before and after launching', async () => {
+  const notFound = { code: -200, stdout: '{"errcode":-200,"errmsg":"player index not found","info_source":"rpc"}', stderr: '' }
+  // Launched by this run: the first polls fail.
+  const { exec, calls, state } = fakeMuMu()
+  let failing = 0
+  const flaky: Exec = async (file, args, o) => (args[0] === 'info' && calls.includes('control -v 1 launch') && failing++ < 2 ? notFound : exec(file, args, o))
+  assert.equal((await new MuMuManager('mgr.exe', flaky).ensureReady(1, { timeoutMs: 5000, pollMs: 10 })).ready, true)
+  // Being launched by an earlier run: even the first look fails, and it is not launched twice.
+  state[1] = { process: true, android: false, polls: 0 }
+  const before = calls.length
+  let first = true
+  const busy: Exec = async (file, args, o) => (args[0] === 'info' && first ? (first = false, notFound) : exec(file, args, o))
+  assert.equal((await new MuMuManager('mgr.exe', busy).ensureReady(1, { timeoutMs: 5000, pollMs: 10 })).ready, true)
+  assert.ok(!calls.slice(before).includes('control -v 1 launch'))
+  // Never answering: the timeout says what MuMu said last.
+  await assert.rejects(new MuMuManager('mgr.exe', async () => notFound).ensureReady(0, { timeoutMs: 50, pollMs: 10 }), /内没有启动完成（最后一次查询：MuMu 查询失败（退出码 -200）.*player index not found/)
+})
+
 test('an instance that never boots times out; a missing manager is reported', async () => {
   const exec: Exec = async (_f, args) => args[0] === 'info'
     ? { code: 0, stdout: JSON.stringify({ index: '0', name: 'x', is_process_started: true, is_android_started: false }), stderr: '' }
