@@ -73,6 +73,8 @@ export const SessionItem = z.object({
   origin: z.enum(['subagent']).optional(),
   /** The role agent the session belongs to (`roles/list`); absent: the main agent's (the person's own chats, chat channels). */
   role: z.string().optional(),
+  /** Who asked for a role agent's work, in words: 监控, 定时, 你, 流水线「…」. */
+  requestedBy: z.string().optional(),
 })
 export type SessionItem = z.infer<typeof SessionItem>
 

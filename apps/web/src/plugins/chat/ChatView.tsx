@@ -2,7 +2,9 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type React
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { MAIN, agentIdOf, useRoles } from '../../agents.ts'
 import { Markdown } from '../../components/Markdown.tsx'
+import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
@@ -12,10 +14,14 @@ import { SkillOffer } from './SkillOffer.tsx'
 const STICK_THRESHOLD = 80
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
-/** A rendered row: one chat item, or a run of consecutive tool calls. */
+/**
+ * A rendered row: one chat item, a run of consecutive tool calls, or the
+ * steps a turn took before its reply, folded into one line (`process`).
+ */
 type Row =
   | { readonly kind: 'item'; readonly item: ChatItem; readonly header: TurnHeader | null }
   | { readonly kind: 'tools'; readonly id: string; readonly tools: readonly ToolItem[]; readonly header: TurnHeader | null }
+  | { readonly kind: 'process'; readonly id: string; readonly items: readonly ChatItem[]; readonly header: TurnHeader | null }
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
@@ -27,6 +33,9 @@ export function ChatView({ client, session, state }: SessionViewProps) {
     [state.events, state.live, state.pending, state.version],
   )
   const rows = useMemo(() => groupRows(items), [items])
+  const roles = useRoles(client)
+  const item = useStore(client.sessions).items.find(i => i.id === session.id)
+  const agentName = roles.find(r => r.id === (item === undefined ? undefined : agentIdOf(item, roles)))?.name ?? MAIN.name
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
 
@@ -69,9 +78,11 @@ export function ChatView({ client, session, state }: SessionViewProps) {
             <p>一个问题、一段代码，或一个还不成熟的想法。<br />在下方写下来，让对话开始。</p>
           </div>
         )}
-        {rows.map(row => row.kind === 'tools'
-          ? <Turn key={row.id} header={row.header}><ToolGroup tools={row.tools} /></Turn>
-          : <Turn key={row.item.id} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
+        {rows.map((row, index) => row.kind === 'tools'
+          ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
+          : row.kind === 'process'
+            ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
+            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
         {!state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
@@ -80,44 +91,70 @@ export function ChatView({ client, session, state }: SessionViewProps) {
   )
 }
 
-/** Merge consecutive tool calls, and mark where each turn's agent output starts. */
+/**
+ * Lay out the chat by turns (each starts at a user message): the steps an
+ * agent took before its reply — tool calls and what it said between them —
+ * fold into one `process` row, so the reply leads. Still on view: a step
+ * waiting for your approval, notices, and a turn's steps with no tool call.
+ * The first agent row of each turn carries the turn header.
+ */
 function groupRows(items: readonly ChatItem[]): Row[] {
   const rows: Row[] = []
-  let headed = false
-  const header = (from: number): TurnHeader | null => {
-    if (headed) return null
-    headed = true
-    for (let i = from; i < items.length && items[i]!.kind !== 'user'; i++) {
-      const item = items[i]!
-      if (item.kind === 'assistant' && item.model !== undefined) return { model: item.model }
-    }
-    return { model: undefined }
-  }
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!
-    if (item.kind === 'user') {
-      headed = false
-      rows.push({ kind: 'item', item, header: null })
-    } else if (item.kind === 'tool') {
-      const last = rows.at(-1)
-      if (last?.kind === 'tools') rows[rows.length - 1] = { ...last, tools: [...last.tools, item] }
-      else rows.push({ kind: 'tools', id: `tools-${item.id}`, tools: [item], header: header(i) })
-    } else if (item.kind === 'assistant') {
-      rows.push({ kind: 'item', item, header: header(i) })
-    } else {
-      rows.push({ kind: 'item', item, header: null })
-    }
+  let start = 0
+  for (let i = 0; i <= items.length; i++) {
+    if (i < items.length && items[i]!.kind !== 'user') continue
+    turnRows(items.slice(start, i), rows)
+    if (i < items.length) rows.push({ kind: 'item', item: items[i]!, header: null })
+    start = i + 1
   }
   return rows
 }
 
-function Turn({ header, children }: { header: TurnHeader | null; children: ReactNode }) {
+function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
+  let headed = false
+  const model = turn.find(item => item.kind === 'assistant' && item.model !== undefined)
+  const header = (): TurnHeader | null => {
+    if (headed) return null
+    headed = true
+    return { model: model?.kind === 'assistant' ? model.model : undefined }
+  }
+  const plain = (item: ChatItem) => {
+    if (item.kind === 'tool') {
+      const last = rows.at(-1)
+      if (last?.kind === 'tools') rows[rows.length - 1] = { ...last, tools: [...last.tools, item] }
+      else rows.push({ kind: 'tools', id: `tools-${item.id}`, tools: [item], header: header() })
+    } else rows.push({ kind: 'item', item, header: item.kind === 'assistant' ? header() : null })
+  }
+  let steps: ChatItem[] = []
+  const fold = () => {
+    if (steps.some(item => item.kind === 'tool')) rows.push({ kind: 'process', id: `process-${steps[0]!.id}`, items: steps, header: header() })
+    else for (const item of steps) plain(item)
+    steps = []
+  }
+  // The reply: the turn's last agent message with text. None yet: all of it is steps.
+  let reply = turn.length
+  for (let i = turn.length - 1; i >= 0; i--) {
+    const item = turn[i]!
+    if (item.kind === 'assistant' && item.text.trim() !== '') { reply = i; break }
+  }
+  for (let i = 0; i < reply; i++) {
+    const item = turn[i]!
+    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && item.approval === 'asked')) {
+      fold()
+      plain(item)
+    } else steps.push(item)
+  }
+  fold()
+  for (let i = reply; i < turn.length; i++) plain(turn[i]!)
+}
+
+function Turn({ name, header, children }: { name: string; header: TurnHeader | null; children: ReactNode }) {
   if (header === null) return <>{children}</>
   return (
     <>
       <div className="turn-header">
         <AdgMark size="sm" />
-        <span className="turn-name">agent</span>
+        <span className="turn-name">{name}</span>
         {header.model !== undefined && <span className="turn-model">{header.model}</span>}
       </div>
       {children}
@@ -187,6 +224,43 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       return <div className={`notice ${item.tone}`}>{item.tone === 'error' && <Icon name="alert" />}{item.text}</div>
   }
 })
+
+/**
+ * The steps a turn took before its reply, folded to one line: how many, how
+ * many failed, and while the agent is still at it (`active`), what it is
+ * doing now. Open, it shows them in order.
+ */
+function ProcessGroup({ items, active, onDismiss }: { items: readonly ChatItem[]; active: boolean; onDismiss: (requestId: string) => void }) {
+  const tools = items.filter((item): item is ToolItem => item.kind === 'tool')
+  const running = tools.filter(t => t.status === 'running').length
+  const failed = tools.filter(t => t.status === 'error').length
+  const [open, setOpen] = useState(false)
+  const now = active && !open ? activity(items.at(-1)!) : undefined
+  return (
+    <div className="tool-group process-group">
+      <button className="tool-group-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Icon name="terminal" />
+        <span className="tool-group-title">{`执行了 ${tools.length} 个步骤`}</span>
+        {now !== undefined && now !== '' && <span className="process-now">{now}</span>}
+        <span className="tool-group-meta">
+          {running > 0 && <span className="tone-running">{running} 个进行中</span>}
+          {failed > 0 && <span className="tone-failed">{failed} 个失败</span>}
+        </span>
+        <Icon name="chevron-down" className={`chevron-icon ${open ? 'open' : ''}`} />
+      </button>
+      {open && items.map(item => item.kind === 'tool'
+        ? <ToolRow key={item.id} item={item} />
+        : <div key={item.id} className="process-note"><ChatRow item={item} onDismiss={onDismiss} /></div>)}
+    </div>
+  )
+}
+
+/** What a step is doing, in a line: the tool and its argument, or what the agent said. */
+function activity(item: ChatItem): string {
+  if (item.kind === 'tool') return `${item.name} ${summarizeToolArgs(item.arguments)}`.trim()
+  if (item.kind === 'assistant') return item.text.trim().split('\n')[0] || '正在思考…'
+  return ''
+}
 
 /** A run of tool calls as one quiet timeline card. */
 function ToolGroup({ tools }: { tools: readonly ToolItem[] }) {

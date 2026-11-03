@@ -21,7 +21,7 @@ function fakeSessions(lastUsed: { provider: string; model: string } | undefined)
 const gateway = (roleModel: { provider: string; model: string } | undefined, tagged: string[]) => () => ({
   sessionPreset: () => ({}),
   adopt: async () => {},
-  tagSession: async (sessionId: string, role: string) => { tagged.push(`${sessionId}:${role}`) },
+  tagSession: async (sessionId: string, role: string, by?: string) => { tagged.push(by === undefined ? `${sessionId}:${role}` : `${sessionId}:${role}:${by}`) },
   roleModel: (role: string) => role === 'intervene' ? roleModel : undefined,
 })
 
@@ -29,8 +29,8 @@ test("a role agent's session is put under its role and gets the role agents' mod
   const { sessions, calls } = fakeSessions({ provider: 'deepseek', model: 'deepseek-pro' })
   const tagged: string[] = []
   const conversations = sessionConversations(sessions, () => undefined, undefined, gateway({ provider: 'deepseek', model: 'deepseek-flash' }, tagged))
-  await conversations.create('干预：MAA 出错', { defaultModel: true, role: 'intervene' })
-  assert.deepEqual(tagged, ['s1:intervene'])
+  await conversations.create('干预：MAA 出错', { defaultModel: true, role: 'intervene', by: '监控' })
+  assert.deepEqual(tagged, ['s1:intervene:监控'], 'with who asked for it')
   assert.deepEqual(calls, ['create', 'rename 干预：MAA 出错', 'model deepseek-flash'])
 })
 

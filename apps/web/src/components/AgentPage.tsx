@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { ModelSelection, SessionItem } from '@adg/protocol'
-import { agentIdOf, agentOf, useLastReplies, useRoles } from '../agents.ts'
+import { agentIdOf, agentOf, requestedLabel, useLastReplies, useRoles } from '../agents.ts'
 import { useNow, useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
 import { relativeTime, sessionTitle } from './SessionList.tsx'
@@ -55,7 +55,7 @@ export function AgentPage({ client, agentId, onOpen, onStart, onMain }: {
     .filter(item => item.origin !== 'subagent' && !item.blank && !archived.has(item.id) && agentIdOf(item, roles) === agentId)
     .sort((a, b) => b.updatedAt - a.updatedAt), [sessions.items, archived, roles, agentId])
   const shown = all ? tasks : tasks.slice(0, SHOWN)
-  const replies = useLastReplies(client, shown.map(t => ({ id: t.id, updatedAt: t.updatedAt })))
+  const replies = useLastReplies(client, shown.map(t => ({ id: t.id, updatedAt: t.updatedAt, running: t.running })))
   const running = tasks.filter(t => t.running).length
 
   if (agent === undefined) {
@@ -134,7 +134,10 @@ function TaskCard({ task, roleName, reply, now, onOpen }: { task: SessionItem; r
         {task.running ? <span className="agent-working"><span className="run-dot" />进行中</span> : <span className="session-time">{relativeTime(task.updatedAt, now)}</span>}
       </span>
       <span className="task-reply">{reply === undefined ? '…' : reply ?? (task.running ? '正在处理' : '没有留下结论')}</span>
-      <span className="task-open">查看过程<Icon name="chevron" /></span>
+      <span className="task-foot">
+        {task.requestedBy !== undefined && <span className="task-by">{requestedLabel(task.requestedBy)}</span>}
+        <span className="task-open">查看过程<Icon name="chevron" /></span>
+      </span>
     </button>
   )
 }

@@ -96,7 +96,7 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew 
   }, [sessions.items, archived, agents, roles, selected])
 
   const latest = agents.map(a => byAgent.get(a.id)?.[0]).filter((i): i is SessionItem => i !== undefined)
-  const replies = useLastReplies(client, latest.map(i => ({ id: i.id, updatedAt: i.updatedAt })))
+  const replies = useLastReplies(client, latest.map(i => ({ id: i.id, updatedAt: i.updatedAt, running: i.running })))
 
   // What you are looking at counts as seen; an agent never looked at starts as seen, so nothing is unread on a first start.
   useEffect(() => {

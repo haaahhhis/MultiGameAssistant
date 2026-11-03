@@ -295,7 +295,7 @@ export class Engine {
       case 'agent': {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
-        active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`, { role: PIPELINE_ROLE.id })
+        active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`, { role: PIPELINE_ROLE.id, by: `流水线「${active.pipeline.name}」` })
         // `/command` or `/skill` heads the step's instruction as in the chat box (protocol commands.ts).
         const prompt = node.prompt.trimStart().startsWith('/') ? expandSlash(node.prompt, await this.#deps.skills?.().catch(() => []) ?? []) : node.prompt
         const answer = await conversations.ask(active.agentSession, `${prompt}\n\n${NO_QUESTIONS}`, signal)

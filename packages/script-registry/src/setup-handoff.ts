@@ -25,7 +25,7 @@ export function setupHandOff(ctx: Context, library: () => ScriptLibrary, log: { 
     const sessions = ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (sessionId, focus) => ctx.get('adgGateway')?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`安装脚本：${setup.name}`, { focus: { scripts: [setup.scriptId] }, role: SCRIPT_ROLE.id })
+    const sessionId = await conversations.create(`安装脚本：${setup.name}`, { focus: { scripts: [setup.scriptId] }, role: SCRIPT_ROLE.id, by: '你' })
     log.info(`${setup.scriptId}: setup program handed to session ${sessionId}`)
     await library().setSetupAgent(setup.scriptId, { sessionId, state: 'running' })
     // Still waiting once the turn is over, and still this session's: the agent did not finish it.

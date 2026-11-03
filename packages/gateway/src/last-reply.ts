@@ -2,7 +2,8 @@
  * What a session last said: the agent's last reply, shortened, for the
  * agent roster's second line and the role agents' task cards (docs/design/
  * agent-roles.md §9). Read from the session's last few records; kept per
- * session until it changes again.
+ * session until it changes again. A running session's is read each time: its
+ * reply can land without its updatedAt moving.
  */
 import type { SessionController, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
 import { convertRecords } from './convert.ts'
@@ -26,11 +27,12 @@ export class LastReplies {
   }
 
   /** @param updatedAt - the session's last change: a newer one reads it again. */
-  async of(sessionId: string, updatedAt: number, signal: AbortSignal): Promise<string | null> {
+  async of(sessionId: string, updatedAt: number, signal: AbortSignal, running = false): Promise<string | null> {
     const kept = this.#cache.get(sessionId)
-    if (kept !== undefined && kept.at >= updatedAt) return kept.text
+    if (!running && kept !== undefined && kept.at >= updatedAt) return kept.text
     const text = await this.#read(sessionId, signal)
     this.#cache.delete(sessionId)
+    if (running) return text
     this.#cache.set(sessionId, { at: updatedAt, text })
     while (this.#cache.size > KEPT) this.#cache.delete(this.#cache.keys().next().value!)
     return text

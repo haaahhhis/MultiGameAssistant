@@ -110,6 +110,7 @@ export function App({ client }: { client: AdgClient }) {
           key={route.id} client={client} sessionId={route.id}
           initialPrompt={handoff?.sessionId === route.id ? handoff.text : undefined}
           onInitialSent={() => setHandoff(null)}
+          onAgent={openAgent}
           reminder={<ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} />}
         />
       )}

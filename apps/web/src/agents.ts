@@ -47,20 +47,27 @@ export function agentIdOf(item: { role?: string | undefined }, roles: readonly R
   return item.role !== undefined && roles.some(r => r.id === item.role) ? item.role : MAIN_AGENT
 }
 
+/** Who asked for a role agent's task, as its card says it: 你布置的, 来自监控, 来自定时, 来自流水线「…」. */
+export function requestedLabel(by: string): string {
+  return by === '你' ? '你布置的' : `来自${by}`
+}
+
 /**
  * Each session's last reply as one line (`sessions/lastReplies`), read again
- * when the session changes. Asks only for the sessions given, a batch at a time.
+ * when the session changes or stops running (its reply can land without its
+ * updatedAt moving). Asks only for the sessions given, a batch at a time.
  */
-export function useLastReplies(client: AdgClient, items: readonly { id: string; updatedAt: number }[]): ReadonlyMap<string, string | null> {
+export function useLastReplies(client: AdgClient, items: readonly { id: string; updatedAt: number; running: boolean }[]): ReadonlyMap<string, string | null> {
   const status = useStore(client.connection.status)
   const [replies, setReplies] = useState<ReadonlyMap<string, string | null>>(new Map())
-  const known = useRef(new Map<string, number>())
-  const key = items.map(i => `${i.id}@${i.updatedAt}`).join(',')
+  const known = useRef(new Map<string, string>())
+  const version = (i: { updatedAt: number; running: boolean }) => `${i.updatedAt}${i.running ? '+' : ''}`
+  const key = items.map(i => `${i.id}@${version(i)}`).join(',')
   useEffect(() => {
     if (status.state !== 'open') return
-    const stale = items.filter(i => known.current.get(i.id) !== i.updatedAt).slice(0, 60)
+    const stale = items.filter(i => known.current.get(i.id) !== version(i)).slice(0, 60)
     if (stale.length === 0) return
-    for (const i of stale) known.current.set(i.id, i.updatedAt)
+    for (const i of stale) known.current.set(i.id, version(i))
     client.connection.call('sessions/lastReplies', { sessionIds: stale.map(i => i.id) }).then(r => {
       setReplies(prev => {
         const next = new Map(prev)

@@ -96,9 +96,10 @@ export function toSessionModel(value: unknown): SessionModel {
 }
 
 /** @param roleOf - the role agent a session belongs to (roles.ts); absent: none has one. */
-export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: string, title: string | null) => string | undefined): SessionItem {
+export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: string, title: string | null) => string | undefined, requestedByOf?: (sessionId: string) => string | undefined): SessionItem {
   const title = titleOf(summary.projections?.values)
   const role = roleOf?.(summary.sessionId, title)
+  const requestedBy = role === undefined ? undefined : requestedByOf?.(summary.sessionId)
   return {
     id: summary.sessionId,
     title,
@@ -110,6 +111,7 @@ export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: stri
     ...(summary.parentSessionId === undefined ? {} : { parentId: summary.parentSessionId }),
     ...(summary.origin === undefined ? {} : { origin: summary.origin }),
     ...(role === undefined ? {} : { role }),
+    ...(requestedBy === undefined ? {} : { requestedBy }),
   }
 }
 
@@ -137,6 +139,8 @@ export interface BuiltinDeps {
   readonly roles?: () => Role[]
   /** The role agent a session belongs to (roles.ts). */
   readonly roleOf?: (sessionId: string, title: string | null) => string | undefined
+  /** Who asked for a role session's work (roles.ts). */
+  readonly requestedByOf?: (sessionId: string) => string | undefined
   /** Put a new session under a role agent; returns the model role agents' sessions are created with, if one is chosen. */
   readonly tagRole?: (sessionId: string, role: string) => Promise<ModelSelection | undefined>
   /** Sessions' last replies (last-reply.ts). */
@@ -167,7 +171,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
     methods: handlers({
       'sessions/list': async (_params: RequestParams<'sessions/list'>, call: MethodContext) => {
         const value = await sessions.list({}, call.signal)
-        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf)) }
+        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf, deps.requestedByOf)) }
       },
       'roles/list': () => ({ items: deps.roles?.() ?? [] }),
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
@@ -185,9 +189,12 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         const replies = deps.lastReplies
         if (replies === undefined || params.sessionIds.length === 0) return { items: [] }
         const { items } = await sessions.list({}, call.signal)
-        const updated = new Map(items.map(s => [String(s.sessionId), s.updatedAt]))
-        const wanted = params.sessionIds.filter(id => updated.has(id) && (deps.isOwn?.(id) ?? true))
-        return { items: await Promise.all(wanted.map(async sessionId => ({ sessionId, text: await replies.of(sessionId, updated.get(sessionId)!, call.signal) }))) }
+        const summaries = new Map(items.map(s => [String(s.sessionId), s]))
+        const wanted = params.sessionIds.filter(id => summaries.has(id) && (deps.isOwn?.(id) ?? true))
+        return { items: await Promise.all(wanted.map(async sessionId => {
+          const summary = summaries.get(sessionId)!
+          return { sessionId, text: await replies.of(sessionId, summary.updatedAt, call.signal, summary.running) }
+        })) }
       },
       'sessions/rename': async (params: RequestParams<'sessions/rename'>) => {
         const renamed = await sessions.rename({ sessionId: sid(params.sessionId), title: params.title })

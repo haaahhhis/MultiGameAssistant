@@ -5,9 +5,10 @@
  * session list shows them under it, apart from the person's own chats with
  * the main agent (docs/design/agent-roles.md).
  *
- * A session's role is kept in `<dataDir>/session-roles.json`, not in dsh's
- * session. Sessions from before roles have none: the title prefix their
- * plugin opened them with (`干预：…`) stands in for it.
+ * A session's role, and who asked for its work (监控, 定时, 你, …), are kept
+ * in `<dataDir>/session-roles.json`, not in dsh's session. Sessions from
+ * before roles have none: the title prefix their plugin opened them with
+ * (`干预：…`) stands in for the role.
  */
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
@@ -25,7 +26,7 @@ const MAX_KEPT = 5000
 export class SessionRoles {
   readonly #file: string | undefined
   readonly #roles = new Map<string, RoleSpec>()
-  readonly #tags = new Map<string, string>()
+  readonly #tags = new Map<string, { readonly role: string; readonly by?: string }>()
   readonly #changed: () => void
   readonly loaded: Promise<void>
 
@@ -57,7 +58,7 @@ export class SessionRoles {
    * plugin is not loaded.
    */
   of(sessionId: string, title: string | null | undefined): string | undefined {
-    const tagged = this.#tags.get(sessionId)
+    const tagged = this.#tags.get(sessionId)?.role
     if (tagged !== undefined) return this.#roles.has(tagged) ? tagged : undefined
     const prefix = /^([^：:]{1,12})[：:]/.exec(title ?? '')?.[1]
     if (prefix === undefined) return undefined
@@ -65,15 +66,24 @@ export class SessionRoles {
     return undefined
   }
 
-  async tag(sessionId: string, role: string): Promise<void> {
+  /** Who asked for the session's work, in words (监控, 定时, 你, 流水线「…」); undefined: not recorded. */
+  requestedBy(sessionId: string): string | undefined {
+    return this.#tags.get(sessionId)?.by
+  }
+
+  /** @param by - who asked for the work (`requestedBy`). */
+  async tag(sessionId: string, role: string, by?: string): Promise<void> {
     await this.loaded
-    if (this.#tags.get(sessionId) === role) return
+    const kept = this.#tags.get(sessionId)
+    if (kept?.role === role && kept.by === by) return
     this.#tags.delete(sessionId)
-    this.#tags.set(sessionId, role)
+    this.#tags.set(sessionId, by === undefined ? { role } : { role, by })
     while (this.#tags.size > MAX_KEPT) this.#tags.delete(this.#tags.keys().next().value!)
     if (this.#file === undefined) return
     mkdirSync(dirname(this.#file), { recursive: true })
-    await writeFileAtomic(this.#file, `${JSON.stringify(Object.fromEntries(this.#tags))}\n`)
+    // A role alone is kept as its id, as before.
+    const saved = Object.fromEntries([...this.#tags].map(([id, tag]) => [id, tag.by === undefined ? tag.role : tag]))
+    await writeFileAtomic(this.#file, `${JSON.stringify(saved)}\n`)
   }
 
   async #load(): Promise<void> {
@@ -81,7 +91,13 @@ export class SessionRoles {
     try {
       const saved = JSON.parse(await readFile(this.#file, 'utf8')) as unknown
       if (saved !== null && typeof saved === 'object' && !Array.isArray(saved)) {
-        for (const [id, role] of Object.entries(saved)) if (typeof role === 'string') this.#tags.set(id, role)
+        for (const [id, tag] of Object.entries(saved)) {
+          if (typeof tag === 'string') this.#tags.set(id, { role: tag })
+          else if (typeof (tag as { role?: unknown } | null)?.role === 'string') {
+            const { role, by } = tag as { role: string; by?: unknown }
+            this.#tags.set(id, typeof by === 'string' ? { role, by } : { role })
+          }
+        }
       }
     } catch {
       // none yet

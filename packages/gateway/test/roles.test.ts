@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -39,6 +39,23 @@ test("a session's role is the one it was opened with, kept across starts", async
   again.register(GAMES)
   await again.loaded
   assert.equal(again.of('s1', null), 'games', 'read back after a restart')
+})
+
+test('who asked for a session is kept with its role, and older files still read', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'adg-roles-')), 'session-roles.json')
+  writeFileSync(file, JSON.stringify({ old: 'games' }))
+  const roles = new SessionRoles(file)
+  roles.register(INTERVENE)
+  roles.register(GAMES)
+  await roles.tag('s1', 'intervene', '监控')
+  assert.equal(roles.of('old', null), 'games', 'a role saved alone, as before')
+  assert.equal(roles.requestedBy('old'), undefined)
+  assert.equal(roles.requestedBy('s1'), '监控')
+  const again = new SessionRoles(file)
+  again.register(INTERVENE)
+  await again.loaded
+  assert.equal(again.of('s1', null), 'intervene')
+  assert.equal(again.requestedBy('s1'), '监控', 'read back after a restart')
 })
 
 test('sessions from before roles fall under the role whose title prefix they have', () => {

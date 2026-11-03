@@ -1904,6 +1904,9 @@
               },
               "role": {
                 "type": "string"
+              },
+              "requestedBy": {
+                "type": "string"
               }
             },
             "required": [
@@ -19691,6 +19694,9 @@
                   ]
                 },
                 "role": {
+                  "type": "string"
+                },
+                "requestedBy": {
                   "type": "string"
                 }
               },

@@ -275,8 +275,10 @@ export class AdgGateway extends Service {
       adopt: sessionId => this.adopt(sessionId),
       roles: () => this.roles.list(),
       roleOf: (sessionId, title) => this.roles.of(sessionId, title),
+      requestedByOf: sessionId => this.roles.requestedBy(sessionId),
+      // A task given on a role agent's page: you asked for it.
       tagRole: async (sessionId, role) => {
-        await this.tagSession(sessionId, role)
+        await this.tagSession(sessionId, role, '你')
         return this.roleModel(role)
       },
       lastReplies: new LastReplies(ctx.sessionController),
@@ -681,7 +683,7 @@ export class AdgGateway extends Service {
 
     // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
     ctx.on('api-session/added', summary => {
-      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title)) })
+      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title), id => this.roles.requestedBy(id)) })
     })
     ctx.on('api-session/removed', sessionId => {
       if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'removed', sessionId })
@@ -813,10 +815,10 @@ Content-Length: 0
     return this.roles.list().some(r => r.id === role) ? this.roleModelStore.get() : undefined
   }
 
-  /** Put a session the app opened under a role agent (`role`). */
-  async tagSession(sessionId: string, role: string): Promise<void> {
-    await this.roles.tag(sessionId, role)
-    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role } })
+  /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */
+  async tagSession(sessionId: string, role: string, by?: string): Promise<void> {
+    await this.roles.tag(sessionId, role, by)
+    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }) } })
   }
 
   /** Count a session the app just created as its own (session/created came before it was). */

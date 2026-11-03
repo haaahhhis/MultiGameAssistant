@@ -544,7 +544,7 @@ export class AdgGameIntel extends Service {
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`添加游戏：${name}`, { role: GAME_ROLE.id })
+    const sessionId = await conversations.create(`添加游戏：${name}`, { role: GAME_ROLE.id, by: '你' })
     const known = SRA_GAMES.map(g => `${g.sra}（${g.name}）`).join('、')
     const prompt = [
       `用户想在游戏页看到「${name}」的活动和资讯。先 game_list 看是不是已经有了（名字或别名对得上就告诉用户在哪，不用再加）。没有的话，按技能 web-reading 找它的来源：`,
@@ -566,7 +566,7 @@ export class AdgGameIntel extends Service {
     const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`游戏资讯：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id })
+    const sessionId = await conversations.create(`游戏资讯：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id, by: '你' })
     await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const where = chosen.length === 0
@@ -591,7 +591,7 @@ export class AdgGameIntel extends Service {
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`游戏信息：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id })
+    const sessionId = await conversations.create(`游戏信息：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id, by: '你' })
     await this.calendar.setReading(manifest.id, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const screen = manifest.screen === undefined ? '游戏画面' : manifest.screen.target === 'emulator' ? '模拟器画面（screen_capture target=emulator）' : `游戏窗口（screen_capture target=window${manifest.screen.window === undefined ? '，先 window_list 找窗口' : `，window=${manifest.screen.window}`}）`
@@ -667,7 +667,7 @@ export class AdgGameIntel extends Service {
     const local = wallClock(now, Intl.DateTimeFormat().resolvedOptions().timeZone)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
     try {
-      const sessionId = await conversations.create(`日报：${local.month}月${local.day}日`, { role: GAME_ROLE.id })
+      const sessionId = await conversations.create(`日报：${local.month}月${local.day}日`, { role: GAME_ROLE.id, by: '定时' })
       const prompt = [
         '把下面这些近期的游戏活动写成今天发到飞书的日报正文。只根据给出的内容写，不调用工具，不提问。',
         '要求：中文，按游戏分段（段首用【游戏名】），每个游戏一两句；先说快结束且没做完的（写清剩几天、还差什么），再说刚开始和即将开始的；用户已做完的不用提醒；不用 Markdown 标题、加粗或表格；整篇不超过 12 行。语气、称呼和自称按你的「回复风格」来（没有设定就平实地写）：可以用一句符合风格的话开头，内容照上面的要求，不要客套的结束语。',
