@@ -19,6 +19,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Incident, Intervention, QuestionAnswerItem } from '@adg/protocol'
+import type { RoleSpec } from '@adg/gateway'
 import type { Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
 import { writeFileAtomic } from '@adg/protocol/node'
@@ -70,6 +71,9 @@ export interface Outcome {
   readonly image?: Buffer
   readonly sessionId?: string
 }
+
+/** The role agent that handles incidents: intervention sessions are listed under it. */
+export const INTERVENE_ROLE: RoleSpec = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
 
 const KEEP = 100
 /** Sessions whose latest screenshot is kept. */
@@ -235,7 +239,7 @@ export class Interventions {
     const timeout = AbortSignal.timeout(limitMs)
     try {
       // It sees that script's skills (and its game's), not other scripts'.
-      const sessionId = await conversations.create(`干预：${incident.title}`, { defaultModel: true, focus: { scripts: [incident.scriptId] } })
+      const sessionId = await conversations.create(`干预：${incident.title}`, { defaultModel: true, focus: { scripts: [incident.scriptId] }, role: INTERVENE_ROLE.id })
       item.sessionId = sessionId
       this.#bySession.set(sessionId, item.id)
       this.#changed(item)

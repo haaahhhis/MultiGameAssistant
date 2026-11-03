@@ -71,8 +71,27 @@ export const SessionItem = z.object({
   cwd: z.string().optional(),
   parentId: z.string().optional(),
   origin: z.enum(['subagent']).optional(),
+  /** The role agent the session belongs to (`roles/list`); absent: the main agent's (the person's own chats, chat channels). */
+  role: z.string().optional(),
 })
 export type SessionItem = z.infer<typeof SessionItem>
+
+/**
+ * A role agent: a kind of work the app hands to an agent of its own
+ * (handling an incident, reading games, installing scripts), registered by
+ * the plugin that does it. Its sessions are listed under it, apart from the
+ * person's own chats.
+ */
+export const Role = z.object({
+  id: z.string(),
+  /** Its name in the session list, e.g. 干预. */
+  name: z.string(),
+  /** What it does, in a sentence. */
+  description: z.string(),
+  /** Position in the list (smaller first). */
+  order: z.number(),
+})
+export type Role = z.infer<typeof Role>
 
 /**
  * A message sent while the agent was busy, still waiting in the session's
@@ -228,6 +247,12 @@ export const Requests = {
     /** `focus`: the scripts and games the conversation is about; it sees their skills (技能隔离). */
     params: z.object({ cwd: z.string().optional(), focus: z.object({ scripts: z.array(z.string()).optional(), games: z.array(z.string()).optional() }).optional() }),
     result: z.object({ sessionId: z.string() }),
+  },
+  /** The role agents (their sessions carry `role`). */
+  'roles/list': {
+    capability: 'sessions',
+    params: Empty,
+    result: z.object({ items: z.array(Role) }),
   },
   'sessions/rename': {
     capability: 'sessions',
@@ -480,6 +505,8 @@ export const Notifications = {
   'credentials/changed': z.object({ ref: z.string() }),
   /** The archived set changed (here or in dsh's own page). */
   'sessions/archived': z.object({ sessionIds: z.array(z.string()) }),
+  /** The role agents changed (a plugin loaded or unloaded); the whole list. */
+  'roles/changed': z.object({ items: z.array(Role) }),
   /** Provider routes or their models changed; re-read `providers/list` and `models/catalog`. */
   'providers/changed': z.object({}),
   /** A session's model selection changed. */

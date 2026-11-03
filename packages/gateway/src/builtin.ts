@@ -10,7 +10,7 @@ import type {
 import {
   ErrorCode, RpcError,
   type ModelCatalog, type ModelSelection, type SessionModel, type NotificationMethod, type NotificationParams, type RequestMethod, type RequestParams,
-  type QueuedPrompt, type RequestResult, type SessionContext, type SessionItem,
+  type QueuedPrompt, type RequestResult, type Role, type SessionContext, type SessionItem,
 } from '@adg/protocol'
 import { convertLiveBaseline, convertLiveFrame, convertRecord, convertRecords } from './convert.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
@@ -94,10 +94,13 @@ export function toSessionModel(value: unknown): SessionModel {
   return { lastUsed: toSelection(v.lastUsed), next: toSelection(v.next) }
 }
 
-export function toSessionItem(summary: SessionSummary): SessionItem {
+/** @param roleOf - the role agent a session belongs to (roles.ts); absent: none has one. */
+export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: string, title: string | null) => string | undefined): SessionItem {
+  const title = titleOf(summary.projections?.values)
+  const role = roleOf?.(summary.sessionId, title)
   return {
     id: summary.sessionId,
-    title: titleOf(summary.projections?.values),
+    title,
     updatedAt: summary.updatedAt,
     running: summary.running,
     blank: summary.blank,
@@ -105,6 +108,7 @@ export function toSessionItem(summary: SessionSummary): SessionItem {
     ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
     ...(summary.parentSessionId === undefined ? {} : { parentId: summary.parentSessionId }),
     ...(summary.origin === undefined ? {} : { origin: summary.origin }),
+    ...(role === undefined ? {} : { role }),
   }
 }
 
@@ -128,6 +132,10 @@ export interface BuiltinDeps {
   readonly isOwn?: (sessionId: string) => boolean
   /** Count a session just created as the app's. */
   readonly adopt?: (sessionId: string) => Promise<void>
+  /** The role agents (roles.ts). Absent: there are none. */
+  readonly roles?: () => Role[]
+  /** The role agent a session belongs to (roles.ts). */
+  readonly roleOf?: (sessionId: string, title: string | null) => string | undefined
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -154,8 +162,9 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
     methods: handlers({
       'sessions/list': async (_params: RequestParams<'sessions/list'>, call: MethodContext) => {
         const value = await sessions.list({}, call.signal)
-        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(toSessionItem) }
+        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf)) }
       },
+      'roles/list': () => ({ items: deps.roles?.() ?? [] }),
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
         const cwd = params.cwd ?? deps.workspaceDir
         const created = await sessions.create({ ...(cwd === undefined ? {} : { cwd }), ...(deps.agentPreset === undefined ? {} : { agentPreset: deps.agentPreset }) })

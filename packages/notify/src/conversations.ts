@@ -19,10 +19,11 @@ import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.
 
 type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel'>>
 type SessionId = SessionSummary['sessionId']
-/** The gateway's part in creating a conversation (its sessionPreset and adopt). */
+/** The gateway's part in creating a conversation (its sessionPreset, adopt and tagSession). */
 interface AppSessions {
   sessionPreset(): { agentPreset?: string }
   adopt(sessionId: string): Promise<void>
+  tagSession(sessionId: string, role: string): Promise<void>
 }
 type Snapshot = Extract<SessionFollowFrame, { type: 'snapshot' }>
 
@@ -32,7 +33,7 @@ const RECENT_MESSAGES = 10
 /**
  * @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir).
  * @param focus - set what a new conversation is about (the gateway's skill scope), for `create`'s `focus`.
- * @param app - the gateway, for a new conversation's agent preset and to count it as the app's (a dsh shared with other work).
+ * @param app - the gateway, for a new conversation's agent preset, to count it as the app's (a dsh shared with other work) and to put it under its role agent.
  */
 export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations {
   const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<Reply> => {
@@ -68,6 +69,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       const dir = cwd()
       const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...app?.()?.sessionPreset() })
       await app?.()?.adopt(created.sessionId)
+      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role)
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
       if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)

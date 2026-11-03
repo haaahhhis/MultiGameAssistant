@@ -104,9 +104,10 @@ export interface Conversations {
   converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<Reply>
   /**
    * A new session; `defaultModel`: use the default model (else the one last used in the UI);
-   * `focus`: the scripts and games it is about, whose skills it sees (the gateway's skill scope).
+   * `focus`: the scripts and games it is about, whose skills it sees (the gateway's skill scope);
+   * `role`: the role agent it belongs to (the gateway's `role`), listed under it; absent: the main agent's.
    */
-  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] } }): Promise<string>
+  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string }): Promise<string>
   /** False also when the session cannot work any more (its folder is gone). */
   exists(sessionId: string): Promise<boolean>
   /** The session's last few messages as text, to carry into a new one. */

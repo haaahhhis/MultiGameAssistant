@@ -12,6 +12,7 @@
  * with fake scripts.
  */
 import { expandSlash, isMarker, type SlashSkill, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
+import type { RoleSpec } from '@adg/gateway'
 import type { Conversations } from '@adg/notify'
 import { BusyError, type Runner } from '@adg/runner'
 import { checkPipeline, nodeLabel, type CheckLibrary } from './check.ts'
@@ -62,6 +63,9 @@ interface Active {
 }
 
 type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stopPipeline?: boolean }
+
+/** The role agent that runs pipelines' agent steps: their sessions are listed under it. */
+export const PIPELINE_ROLE: RoleSpec = { id: 'pipelines', name: '编排', description: '流水线里交给 agent 的步骤', order: 40, titles: ['编排'] }
 
 const UNATTENDED = new Set<PipelineTrigger['kind']>(['schedule', 'autostart', 'after'])
 
@@ -291,7 +295,7 @@ export class Engine {
       case 'agent': {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
-        active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`)
+        active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`, { role: PIPELINE_ROLE.id })
         // `/command` or `/skill` heads the step's instruction as in the chat box (protocol commands.ts).
         const prompt = node.prompt.trimStart().startsWith('/') ? expandSlash(node.prompt, await this.#deps.skills?.().catch(() => []) ?? []) : node.prompt
         const answer = await conversations.ask(active.agentSession, `${prompt}\n\n${NO_QUESTIONS}`, signal)

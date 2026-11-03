@@ -1343,11 +1343,20 @@ button.fold-head h3 { margin: 0; }
 .fold { display: flex; flex-direction: column; gap: 4px; }
 .card-fold > button.fold-head { padding: 0; }
 .session-group > button.fold-head.sidebar-label { margin: 0; text-transform: none; }
-/* Session list: tabs, archive action */
-.session-tabs { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); }
-.session-tabs button { flex: 1; min-width: 0; height: 28px; padding: 0 4px; border: none; border-radius: 7px; background: none; color: var(--muted); font-size: 12.5px; font-weight: 400; white-space: nowrap; }
-.session-tabs button.active { color: var(--text); background: var(--raised); font-weight: 500; box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
-.tab-count { margin-left: 3px; color: var(--muted); font-size: 11px; }
+/* Session list: role agents (a second level each), archive action */
+.role-nav { display: flex; flex-direction: column; gap: 1px; padding: 3px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); }
+.role-row { min-height: 30px; padding: 4px 8px; font-size: 13px; }
+.role-row .role-chevron { width: 14px; height: 14px; }
+.role-running { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tab-count { margin-left: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.session-level-head { display: flex; align-items: center; gap: 6px; padding: 6px 0 0; }
+button.session-back { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; background: none; color: var(--muted); }
+button.session-back:hover { background: var(--hover); color: var(--text); }
+button.session-back .ui-icon { width: 16px; height: 16px; }
+.session-level-title { display: flex; flex-direction: column; min-width: 0; }
+.session-level-title > span:first-child { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.session-level-title > .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-badge { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 500; }
 .session-row { position: relative; display: flex; align-items: center; }
 .session-row > .session-item { flex: 1; min-width: 0; }
 .session-row-actions { position: absolute; right: 4px; display: none; gap: 2px; }
@@ -1359,7 +1368,6 @@ button.session-action .ui-icon { width: 15px; height: 15px; }
 .session-row:hover > .session-item .session-time, .session-row:hover > .session-item .run-dot { visibility: hidden; }
 button.session-action:hover { color: var(--text); background: var(--hover); }
 .channel-badge { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent-fill) 22%, transparent); color: var(--accent); font-size: 11px; font-weight: 600; }
-.session-list.tab-remote { background: color-mix(in srgb, var(--accent-fill) 5%, transparent); }
 /* Config files */
 .config-file { display: flex; flex-direction: column; gap: 6px; }
 button.config-file-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; padding: 2px 0; border: none; background: none; text-align: left; font-weight: 400; }

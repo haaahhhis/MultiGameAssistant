@@ -22,7 +22,7 @@ import type {} from '@adg/runner'
 import { sessionConversations } from '@adg/notify'
 import { INTERVENE_CAPABILITY, type Incident, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
-import { Interventions, type Outcome } from './interventions.ts'
+import { INTERVENE_ROLE, Interventions, type Outcome } from './interventions.ts'
 import { Screens } from './screens.ts'
 import { screenTools } from './tools.ts'
 import { WinHelper } from './winhelper.ts'
@@ -151,6 +151,7 @@ export class AdgIntervene extends Service {
     }))
 
     ctx.inject(['adgGateway'], scoped => {
+      scoped.effect(() => scoped.adgGateway.role(INTERVENE_ROLE), 'adg-intervene role')
       // The agent's questions while it handles an incident are answered at once: nobody may be there.
       scoped.adgGateway.addQuestionAnswerer({
         active: sessionId => interventions.forSession(sessionId) !== undefined,

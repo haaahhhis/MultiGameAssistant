@@ -45,6 +45,7 @@ import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { SessionRoles, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -60,6 +61,7 @@ export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
+export { SessionRoles, type RoleSpec } from './roles.ts'
 export { clashes, copyLabel, Instances, INSTANCES_DIR, type CopyRecord, type Fact } from './instances.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -214,6 +216,8 @@ export class AdgGateway extends Service {
    */
   readonly instances: Instances
   private readonly own: OwnSessions
+  /** The role agents and which sessions are theirs (roles.ts). */
+  readonly roles: SessionRoles
   private readonly parts: AgentParts
   private readonly sockets: Sockets
   /** Bring one session's permission preset in line with the mode. */
@@ -226,6 +230,7 @@ export class AdgGateway extends Service {
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
     this.parts = new AgentParts(log)
+    this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
@@ -264,6 +269,8 @@ export class AdgGateway extends Service {
       ...this.sessionPreset(),
       isOwn: sessionId => this.isOwn(sessionId),
       adopt: sessionId => this.adopt(sessionId),
+      roles: () => this.roles.list(),
+      roleOf: (sessionId, title) => this.roles.of(sessionId, title),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),
@@ -645,7 +652,7 @@ export class AdgGateway extends Service {
 
     // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
     ctx.on('api-session/added', summary => {
-      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary) })
+      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title)) })
     })
     ctx.on('api-session/removed', sessionId => {
       if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'removed', sessionId })
@@ -762,6 +769,20 @@ Content-Length: 0
   /** What a new session of the app's is created with besides its folder: its agent preset when the dsh is shared. */
   sessionPreset(): { agentPreset?: string } {
     return this.shared ? { agentPreset: AGENT_PRESET } : {}
+  }
+
+  /**
+   * A role agent (roles.ts), from the plugin that does its work: its sessions
+   * are listed under it. Call in an effect; returns how to take it back.
+   */
+  role(spec: RoleSpec): () => void {
+    return this.roles.register(spec)
+  }
+
+  /** Put a session the app opened under a role agent (`role`). */
+  async tagSession(sessionId: string, role: string): Promise<void> {
+    await this.roles.tag(sessionId, role)
+    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role } })
   }
 
   /** Count a session the app just created as its own (session/created came before it was). */
@@ -905,7 +926,8 @@ Content-Length: 0
           if (frame.key === 'title') {
             const title = typeof frame.value === 'string' ? frame.value : null
             this.broadcast('session/title', { sessionId: frame.sessionId, title })
-            this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title } })
+            const role = this.roles.of(frame.sessionId, title)
+            this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title, ...(role === undefined ? {} : { role }) } })
           } else if (frame.key === 'modelSelection') {
             this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(frame.value) })
           } else if (frame.key === 'inbox') {

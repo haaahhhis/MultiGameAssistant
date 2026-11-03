@@ -125,7 +125,8 @@ function Home({ client, onSettings, onOpen, onStart }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
-  const recent = sessions.items.filter(item => item.origin !== 'subagent' && !item.blank).slice(0, 4)
+  // Your own conversations: a role agent's sessions (干预, 日报, …) are under that role in the session list.
+  const recent = sessions.items.filter(item => item.origin !== 'subagent' && !item.blank && item.role === undefined).slice(0, 4)
   const disabled = status.state !== 'open'
 
   // Slash commands and skills, as in the chat box (SlashMenu.tsx); the list opens below, the page continues under it.

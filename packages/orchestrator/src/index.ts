@@ -16,7 +16,7 @@ import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { PIPELINES_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
-import { Engine } from './engine.ts'
+import { Engine, PIPELINE_ROLE } from './engine.ts'
 import { Pipelines } from './pipelines.ts'
 import { PipelineStore } from './store.ts'
 import { pipelineTools } from './tools.ts'
@@ -124,6 +124,7 @@ export class AdgOrchestrator extends Service {
     }))
 
     ctx.inject(['adgGateway'], scoped => {
+      scoped.effect(() => scoped.adgGateway.role(PIPELINE_ROLE), 'adg-orchestrator role')
       scoped.adgGateway.register({
         id: PIPELINES_CAPABILITY,
         version: 1,

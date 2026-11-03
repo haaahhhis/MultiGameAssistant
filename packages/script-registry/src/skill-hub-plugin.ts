@@ -15,6 +15,7 @@ import { z } from 'zod'
 import type { ScriptLibrary } from './library.ts'
 import { SkillHub, type HubItem } from './skill-hub.ts'
 import type { Approve } from './tools.ts'
+import { SCRIPT_ROLE } from './role.ts'
 
 /** Where each kind of skill comes from, in the words of "已有同名的…". */
 function takenLabel(source: string): string {
@@ -80,7 +81,7 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const { base, mine, theirs, file, skill } = await hub.mergeInputs(name, signal)
     const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`合并技能：${name}`)
+    const sessionId = await conversations.create(`合并技能：${name}`, { role: SCRIPT_ROLE.id })
     const prompt = [
       `技能库里的技能「${name}」有了新版本，但用户改过自己的这份。把新版本的改动合并进用户的版本，写回 ${file}（只改这一个文件）。`,
       '规则：用户改过的地方保留用户的；新版本新增或修正、用户没碰过的地方用新版本的；两边改了同一处时以用户的为主，把新版本里有用的信息补进去。保持开头的 frontmatter（name 不变）。写完用一两句话说明合并了什么、哪里两边冲突以及怎么处理的。',

@@ -15,6 +15,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@adg/gateway'
+import { SCRIPT_ROLE } from './role.ts'
 import { PACKS_DIR } from '@adg/packs'
 import { InstallSettings } from '@adg/protocol'
 import { z } from 'zod'
@@ -107,6 +108,7 @@ export class AdgScripts extends Service {
 
     const summaries = scriptSummaries(ctx, library, { warn: message => log.warn(message) })
     ctx.inject(['adgGateway'], scoped => {
+      scoped.effect(() => scoped.adgGateway.role(SCRIPT_ROLE), 'adg-script-registry role')
       // Skill isolation: a script in a session's focus also stands for its pack and the game it plays.
       scoped.adgGateway.skillScope.resolveScripts(id => {
         let pack
