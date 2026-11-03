@@ -92,9 +92,12 @@ export class AdgIntervene extends Service {
         return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => ctx.get('adgGateway'))
       },
       visionProblem: async () => {
-        const selection = ctx.get('agentDefaultModel')?.currentSelection()
+        // The model an intervention session is created with: the role agents' one, else the default.
+        const roleModel = ctx.get('adgGateway')?.roleModel(INTERVENE_ROLE.id)
+        const selection = roleModel ?? ctx.get('agentDefaultModel')?.currentSelection()
         if (selection === undefined) return undefined
-        return (await sees(selection.provider, selection.model)) ? undefined : `默认模型 ${selection.model} 不能看图片，agent 没法查看截图；在「设置 → 模型」把默认模型换成能看图的（例如 Claude、GPT-4o、Gemini、通义 VL）`
+        const which = roleModel === undefined ? '默认模型' : '角色 agent 的模型'
+        return (await sees(selection.provider, selection.model)) ? undefined : `${which} ${selection.model} 不能看图片，agent 没法查看截图；在「设置 → 模型」把${which}换成能看图的（例如 Claude、GPT-4o、Gemini、通义 VL）`
       },
       revealWindows: async runId => process.platform === 'win32' ? (await screens.reveal(await ownerOf(runId))).windows : [],
       describeTargets: run => {

@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { SessionRoles } from '../src/roles.ts'
+import { RoleModel, SessionRoles } from '../src/roles.ts'
 
 const INTERVENE = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
 const GAMES = { id: 'games', name: '游戏', description: '读游戏活动和资讯', order: 20, titles: ['游戏信息', '日报'] }
@@ -59,4 +59,19 @@ test("a role whose plugin is not loaded gives its sessions back to the main agen
   assert.equal(roles.of('s1', '干预：x'), 'intervene')
   drop()
   assert.equal(roles.of('s1', '干预：x'), undefined)
+})
+
+test('the role agents model is kept across starts, and cleared', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'adg-role-model-')), 'role-model.json')
+  const model = new RoleModel(file)
+  await model.loaded
+  assert.equal(model.get(), undefined, 'none chosen at first')
+  await model.set({ provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'low' })
+  const again = new RoleModel(file)
+  await again.loaded
+  assert.deepEqual(again.get(), { provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'low' })
+  await again.set(undefined)
+  const cleared = new RoleModel(file)
+  await cleared.loaded
+  assert.equal(cleared.get(), undefined)
 })

@@ -33,7 +33,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -45,7 +45,7 @@ import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
-import { SessionRoles, type RoleSpec } from './roles.ts'
+import { RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -61,7 +61,7 @@ export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
-export { SessionRoles, type RoleSpec } from './roles.ts'
+export { RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 export { clashes, copyLabel, Instances, INSTANCES_DIR, type CopyRecord, type Fact } from './instances.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -218,6 +218,8 @@ export class AdgGateway extends Service {
   private readonly own: OwnSessions
   /** The role agents and which sessions are theirs (roles.ts). */
   readonly roles: SessionRoles
+  /** The model their sessions use (roles.ts). */
+  private readonly roleModelStore: RoleModel
   private readonly parts: AgentParts
   private readonly sockets: Sockets
   /** Bring one session's permission preset in line with the mode. */
@@ -230,6 +232,7 @@ export class AdgGateway extends Service {
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
     this.parts = new AgentParts(log)
+    this.roleModelStore = new RoleModel(config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
@@ -453,6 +456,26 @@ export class AdgGateway extends Service {
         },
       }), 'adg-gateway capability model-default')
     })
+
+    // 「角色 agent 的模型」: what role agents' sessions are created with (roles.ts RoleModel).
+    ctx.effect(() => this.registry.register({
+      id: 'role-model',
+      version: 1,
+      methods: {
+        'models/roleModel': async () => {
+          await this.roleModelStore.loaded
+          return { model: this.roleModelStore.get() ?? null }
+        },
+        'models/setRoleModel': async params => {
+          const { model } = params as RequestParams<'models/setRoleModel'>
+          await this.roleModelStore.set(model ?? undefined)
+          if (model === null) return {}
+          // Interventions and game reading look at screenshots.
+          const info = await ctx.get('llm')?.resolveModelInfo(model.provider, model.model, AbortSignal.timeout(10_000)).catch(() => undefined)
+          return info !== undefined && info.inputModalities?.includes('image') !== true ? { warning: `${model.model} 不能看图片：干预和读游戏要看截图，换一个能看图的模型。` } : {}
+        },
+      },
+    }), 'adg-gateway capability role-model')
 
     // Archived sessions (dsh's workspace registry keeps the set; its own page shares it).
     ctx.inject(['workspaceController'], scoped => {
@@ -777,6 +800,11 @@ Content-Length: 0
    */
   role(spec: RoleSpec): () => void {
     return this.roles.register(spec)
+  }
+
+  /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */
+  roleModel(role: string): ModelSelection | undefined {
+    return this.roles.list().some(r => r.id === role) ? this.roleModelStore.get() : undefined
   }
 
   /** Put a session the app opened under a role agent (`role`). */

@@ -357,6 +357,18 @@ export const Requests = {
     params: ModelSelection,
     result: Empty,
   },
+  /** The model role agents' sessions use (干预, 游戏, …); null: none chosen, they use what they always did. */
+  'models/roleModel': {
+    capability: 'role-model',
+    params: Empty,
+    result: z.object({ model: ModelSelection.nullable() }),
+  },
+  /** Choose it (null: none); `warning` when the model cannot see images, which their screenshots need. */
+  'models/setRoleModel': {
+    capability: 'role-model',
+    params: z.object({ model: ModelSelection.nullable() }),
+    result: z.object({ warning: z.string().optional() }),
+  },
   'models/catalog': {
     capability: 'models',
     params: Empty,
