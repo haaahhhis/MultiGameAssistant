@@ -112,3 +112,15 @@ test('the role agents model is kept across starts, and cleared', async () => {
   await cleared.loaded
   assert.equal(cleared.get(), undefined)
 })
+
+test("the main agent's call that handed a session its work is kept with its tag", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'adg-roles-')), 'session-roles.json')
+  const roles = new SessionRoles(file)
+  await roles.tag('w1', 'games', '助手', { sessionId: 'main-1', callId: 'call-7' })
+  await roles.tag('w2', 'games')
+  const again = new SessionRoles(file)
+  await again.loaded
+  assert.deepEqual(again.delegatedFrom('w1'), { sessionId: 'main-1', callId: 'call-7' })
+  assert.equal(again.requestedBy('w1'), '助手')
+  assert.equal(again.delegatedFrom('w2'), undefined)
+})

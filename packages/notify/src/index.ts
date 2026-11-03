@@ -13,6 +13,7 @@ import type {} from '@adg/gateway'
 import { NOTIFY_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { sessionConversations } from './conversations.ts'
+import { delegateTool } from './delegate.ts'
 import type { Reply } from './reply.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
@@ -45,14 +46,15 @@ export class AdgNotify extends Service {
     const log = ctx.logger('adg-notify')
     this.sessionsFile = join(spec.dataDir, 'notify', 'sessions.json')
     this.ready = readFile(this.sessionsFile, 'utf8').then(text => { this.sessionMap = JSON.parse(text) as Record<string, string> }, () => {})
+    const conversations = () => {
+      const sessions = ctx.get('sessionController')
+      if (sessions === undefined) return undefined
+      const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
+      // Archived by the user: the person's next message starts a new conversation.
+      return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
+    }
     const notify = new Notify({
-      conversations: () => {
-        const sessions = ctx.get('sessionController')
-        if (sessions === undefined) return undefined
-        const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
-        // Archived by the user: the person's next message starts a new conversation.
-        return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
-      },
+      conversations,
       respondApproval: (id, decision) => ctx.get('adgGateway')?.respondApproval(id, decision) ?? false,
       respondQuestion: (id, answers) => ctx.get('adgGateway')?.respondQuestion(id, answers) ?? false,
       sessions: {
@@ -75,6 +77,8 @@ export class AdgNotify extends Service {
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
       })
+      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them.
+      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations })))
       scoped.adgGateway.addQuestionAnswerer({
         active: sessionId => notify.questionsActive(sessionId),
         asked: request => notify.askQuestion(request),

@@ -23,7 +23,7 @@ type SessionId = SessionSummary['sessionId']
 interface AppSessions {
   sessionPreset(): { agentPreset?: string }
   adopt(sessionId: string): Promise<void>
-  tagSession(sessionId: string, role: string, by?: string): Promise<void>
+  tagSession(sessionId: string, role: string, by?: string, from?: { sessionId: string; callId: string }): Promise<void>
   roleModel(role: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
 }
 type Snapshot = Extract<SessionFollowFrame, { type: 'snapshot' }>
@@ -73,7 +73,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       const dir = cwd()
       const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...app?.()?.sessionPreset() })
       await app?.()?.adopt(created.sessionId)
-      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by)
+      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by, options.from)
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
       if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)

@@ -1916,6 +1916,22 @@
               },
               "requestedBy": {
                 "type": "string"
+              },
+              "delegatedFrom": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "callId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "callId"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -19956,6 +19972,22 @@
                 },
                 "requestedBy": {
                   "type": "string"
+                },
+                "delegatedFrom": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "callId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "callId"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

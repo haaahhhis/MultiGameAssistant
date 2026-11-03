@@ -44,7 +44,7 @@ import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
-import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel, type Delegation } from './builtin.ts'
 import { LastReplies } from './last-reply.ts'
 import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { roleOf, TOOL_GROUPS, UserAgents } from './user-agents.ts'
@@ -189,6 +189,36 @@ interface LiveAgent {
 /** Said to every role agent: its last words are what its task card shows (last-reply.ts). */
 const ROLE_CLOSING = '你最后一段回复就是这件事的结论，会显示在任务卡片上给用户看：写清楚结果，以及需要用户做的事（没有就不写）。'
 
+/**
+ * The main agent (助手, docs/design/agent-roles.md §9): it talks with the
+ * person and hands the work to the role agents (agent_delegate), so of the
+ * app's tools it keeps what it needs to know where things stand and to plan;
+ * doing — screens, emulators, running and installing scripts, games — is the
+ * role agents'. dsh's own tools stay, as with every agent.
+ */
+const MAIN_AGENT: RoleSpec = {
+  id: 'main',
+  name: '助手',
+  description: '',
+  order: 0,
+  tools: [
+    'agent_delegate', 'system_info', 'skill_focus', 'skill_save', 'skill_hub_list',
+    'script_list', 'script_runs', 'script_run_log', 'script_help', 'script_search', 'script_tasks',
+    'game_list', 'game_activities', 'game_report',
+    'pipeline_*', 'schedule_*', 'monitor_incidents', 'emulator_status', 'window_list',
+  ],
+}
+
+/** The main agent's duty, with who it can hand work to; read when the prompt is built, since the roster changes. */
+function mainDuty(roles: readonly { readonly name: string; readonly description: string }[]): string {
+  return [
+    '# 你的角色：助手',
+    '你是用户的助手：和用户对话，弄清要做什么，安排谁来做。截图点击、运行和安装脚本、读游戏这些具体的事交给对应的 agent（agent_delegate），你自己不做。',
+    roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
+    '交给之前把任务写完整：它看不到你和用户的对话。它的回复会交回给你，用户也能在界面上看到你们说了什么；你再用自己的话告诉用户结果和要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
+  ].join('\n\n')
+}
+
 /** The slice of dsh's `agent/pre-step` waterfall (dsh-agent runtime-types) the stale-context reminder uses. */
 interface PreStep {
   readonly agent: { readonly session: { readonly id: string; readonly seq: number; eventAt(seq: number): TimedEvent | undefined } }
@@ -296,6 +326,7 @@ export class AdgGateway extends Service {
       roles: () => this.roles.list(),
       roleOf: (sessionId, title) => this.roles.of(sessionId, title),
       requestedByOf: sessionId => this.roles.requestedBy(sessionId),
+      delegatedFromOf: sessionId => this.roles.delegatedFrom(sessionId),
       // A task given on a role agent's page: you asked for it.
       tagRole: async (sessionId, role) => {
         await this.tagSession(sessionId, role, '你')
@@ -747,7 +778,7 @@ export class AdgGateway extends Service {
 
     // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
     ctx.on('api-session/added', summary => {
-      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title), id => this.roles.requestedBy(id)) })
+      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title), id => this.roles.requestedBy(id), id => this.roles.delegatedFrom(id)) })
     })
     ctx.on('api-session/removed', sessionId => {
       if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'removed', sessionId })
@@ -885,11 +916,12 @@ Content-Length: 0
    * Narrow a role session's agent to its role: hide the app's tools the role
    * does not keep, and add its duty to its system prompt. Both are registered
    * on the agent's own scope, so other agents are untouched and they go with
-   * the agent. A session not (yet) tagged is left as it is.
+   * the agent. A session of the app's not (yet) tagged is the main agent's
+   * (MAIN_AGENT); a shared dsh's other chats are left as they are.
    */
   private narrow(agent: LiveAgent): void {
     const role = this.roles.tagged(agent.session.id)
-    const spec = role === undefined ? undefined : this.roles.spec(role)
+    const spec = role === undefined ? (this.isOwn(agent.session.id) ? MAIN_AGENT : undefined) : this.roles.spec(role)
     const held = this.narrowed.get(agent)
     if (held?.spec === spec) return
     held?.dispose()
@@ -906,8 +938,9 @@ Content-Length: 0
     }
     try {
       const duty = [spec.duty, ROLE_CLOSING].filter(text => text !== undefined && text !== '').join('\n\n')
+      const text = spec === MAIN_AGENT ? () => mainDuty(this.roles.list()) : () => duty
       // After the app's identity, before the reply style.
-      disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text: () => duty }))
+      disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text }))
     } catch (error) {
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -920,13 +953,16 @@ Content-Length: 0
     return this.userAgents.get(role)?.model ?? this.roleModelStore.get()
   }
 
-  /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */
-  async tagSession(sessionId: string, role: string, by?: string): Promise<void> {
-    await this.roles.tag(sessionId, role, by)
+  /**
+   * Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …);
+   * `from`: the main agent's agent_delegate call that asked.
+   */
+  async tagSession(sessionId: string, role: string, by?: string, from?: Delegation): Promise<void> {
+    await this.roles.tag(sessionId, role, by, from)
     // Its agent came with the session, before the tag.
     const agent = this.agents.get(sessionId)
     if (agent !== undefined) this.narrow(agent)
-    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }) } })
+    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }), ...(from === undefined ? {} : { delegatedFrom: from }) } })
   }
 
   /** Count a session the app just created as its own (session/created came before it was). */
@@ -934,6 +970,9 @@ Content-Length: 0
     if (!this.shared) return
     await this.own.add(sessionId)
     this.presetOf(sessionId)
+    // The app's now: its agent is the main agent until it is given a role.
+    const agent = this.agents.get(sessionId)
+    if (agent !== undefined) this.narrow(agent)
   }
 
   /**

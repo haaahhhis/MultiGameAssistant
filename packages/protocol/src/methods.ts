@@ -75,6 +75,8 @@ export const SessionItem = z.object({
   role: z.string().optional(),
   /** Who asked for a role agent's work, in words: 监控, 定时, 你, 流水线「…」. */
   requestedBy: z.string().optional(),
+  /** The main agent's `agent_delegate` call that handed this session its work: in that session, the call with this id. */
+  delegatedFrom: z.object({ sessionId: z.string(), callId: z.string() }).optional(),
 })
 export type SessionItem = z.infer<typeof SessionItem>
 

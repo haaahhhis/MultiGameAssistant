@@ -3,6 +3,7 @@ import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { MAIN, agentIdOf, useRoles } from '../../agents.ts'
+import { DelegationCard, DELEGATE_TOOL, fromMain } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -22,6 +23,8 @@ type Row =
   | { readonly kind: 'item'; readonly item: ChatItem; readonly header: TurnHeader | null }
   | { readonly kind: 'tools'; readonly id: string; readonly tools: readonly ToolItem[]; readonly header: TurnHeader | null }
   | { readonly kind: 'process'; readonly id: string; readonly items: readonly ChatItem[]; readonly header: TurnHeader | null }
+  /** Work 助手 handed to another agent (agent_delegate): what it asked and what came back, never folded. */
+  | { readonly kind: 'delegation'; readonly item: ToolItem; readonly header: TurnHeader | null }
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
@@ -80,6 +83,8 @@ export function ChatView({ client, session, state }: SessionViewProps) {
         )}
         {rows.map((row, index) => row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
+          : row.kind === 'delegation'
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} sessionId={session.id} item={row.item} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
@@ -95,7 +100,8 @@ export function ChatView({ client, session, state }: SessionViewProps) {
  * Lay out the chat by turns (each starts at a user message): the steps an
  * agent took before its reply — tool calls and what it said between them —
  * fold into one `process` row, so the reply leads. Still on view: a step
- * waiting for your approval, notices, and a turn's steps with no tool call.
+ * waiting for your approval, work handed to another agent, notices, and a
+ * turn's steps with no tool call.
  * The first agent row of each turn carries the turn header.
  */
 function groupRows(items: readonly ChatItem[]): Row[] {
@@ -119,7 +125,8 @@ function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
     return { model: model?.kind === 'assistant' ? model.model : undefined }
   }
   const plain = (item: ChatItem) => {
-    if (item.kind === 'tool') {
+    if (item.kind === 'tool' && item.name === DELEGATE_TOOL) rows.push({ kind: 'delegation', item, header: header() })
+    else if (item.kind === 'tool') {
       const last = rows.at(-1)
       if (last?.kind === 'tools') rows[rows.length - 1] = { ...last, tools: [...last.tools, item] }
       else rows.push({ kind: 'tools', id: `tools-${item.id}`, tools: [item], header: header() })
@@ -139,7 +146,7 @@ function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
   }
   for (let i = 0; i < reply; i++) {
     const item = turn[i]!
-    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && item.approval === 'asked')) {
+    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && (item.approval === 'asked' || item.name === DELEGATE_TOOL))) {
       fold()
       plain(item)
     } else steps.push(item)
@@ -176,11 +183,14 @@ function UserText({ text }: { text: string }) {
 
 const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
   switch (item.kind) {
-    case 'user':
+    case 'user': {
+      // Work 助手 handed over (agent_delegate): its words, not the person's.
+      const delegated = fromMain(item.text)
       return (
-        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
+        <div className={`msg user ${item.pending === undefined ? '' : 'pending'} ${delegated === undefined ? '' : 'delegated'}`}>
+          {delegated !== undefined && <div className="msg-from">{MAIN.name} 交给的事</div>}
           <div className="bubble">
-            <UserText text={item.text} />
+            {delegated === undefined ? <UserText text={item.text} /> : delegated}
             {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
             {(item.images > item.imageRefs.length || item.files > 0) && (
               <div className="attachments">
@@ -197,6 +207,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
           )}
         </div>
       )
+    }
     case 'assistant':
       return (
         <div className={`msg assistant ${item.live ? 'live' : ''}`}>

@@ -107,9 +107,9 @@ export interface Conversations {
    * `focus`: the scripts and games it is about, whose skills it sees (the gateway's skill scope);
    * `role`: the role agent it belongs to (the gateway's `role`), listed under it and created with the role agents' model
    * when one is chosen (over `defaultModel`); absent: the main agent's. `by`: who asked for a role agent's work
-   * (监控, 定时, 你, 流水线「…」), shown on its task card.
+   * (监控, 定时, 你, 流水线「…」), shown on its task card; `from`: the main agent's agent_delegate call that asked.
    */
-  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string; by?: string }): Promise<string>
+  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string; by?: string; from?: { sessionId: string; callId: string } }): Promise<string>
   /** False also when the session cannot work any more (its folder is gone). */
   exists(sessionId: string): Promise<boolean>
   /** The session's last few messages as text, to carry into a new one. */

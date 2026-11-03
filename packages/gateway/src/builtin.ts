@@ -96,10 +96,11 @@ export function toSessionModel(value: unknown): SessionModel {
 }
 
 /** @param roleOf - the role agent a session belongs to (roles.ts); absent: none has one. */
-export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: string, title: string | null) => string | undefined, requestedByOf?: (sessionId: string) => string | undefined): SessionItem {
+export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: string, title: string | null) => string | undefined, requestedByOf?: (sessionId: string) => string | undefined, delegatedFromOf?: (sessionId: string) => Delegation | undefined): SessionItem {
   const title = titleOf(summary.projections?.values)
   const role = roleOf?.(summary.sessionId, title)
   const requestedBy = role === undefined ? undefined : requestedByOf?.(summary.sessionId)
+  const delegatedFrom = role === undefined ? undefined : delegatedFromOf?.(summary.sessionId)
   return {
     id: summary.sessionId,
     title,
@@ -112,7 +113,14 @@ export function toSessionItem(summary: SessionSummary, roleOf?: (sessionId: stri
     ...(summary.origin === undefined ? {} : { origin: summary.origin }),
     ...(role === undefined ? {} : { role }),
     ...(requestedBy === undefined ? {} : { requestedBy }),
+    ...(delegatedFrom === undefined ? {} : { delegatedFrom }),
   }
+}
+
+/** The main agent's call that handed a role session its work (roles.ts). */
+export interface Delegation {
+  readonly sessionId: string
+  readonly callId: string
 }
 
 export interface BuiltinDeps {
@@ -141,6 +149,8 @@ export interface BuiltinDeps {
   readonly roleOf?: (sessionId: string, title: string | null) => string | undefined
   /** Who asked for a role session's work (roles.ts). */
   readonly requestedByOf?: (sessionId: string) => string | undefined
+  /** The main agent's call that handed a role session its work (roles.ts). */
+  readonly delegatedFromOf?: (sessionId: string) => Delegation | undefined
   /** Put a new session under a role agent; returns the model role agents' sessions are created with, if one is chosen. */
   readonly tagRole?: (sessionId: string, role: string) => Promise<ModelSelection | undefined>
   /** Sessions' last replies (last-reply.ts). */
@@ -171,7 +181,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
     methods: handlers({
       'sessions/list': async (_params: RequestParams<'sessions/list'>, call: MethodContext) => {
         const value = await sessions.list({}, call.signal)
-        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf, deps.requestedByOf)) }
+        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf, deps.requestedByOf, deps.delegatedFromOf)) }
       },
       'roles/list': () => ({ items: deps.roles?.() ?? [] }),
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {

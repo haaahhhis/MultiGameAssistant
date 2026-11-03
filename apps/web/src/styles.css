@@ -354,6 +354,31 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .msg.user { align-self: flex-end; max-width: 82%; margin-top: 10px; }
 .msg.user .bubble { background: var(--user-bubble); border: 1px solid var(--border); padding: 11px 16px; border-radius: 16px 16px 6px 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.75; box-shadow: var(--shadow-1); }
 .msg.user.pending .bubble { opacity: .6; }
+/* Work 助手 handed over, in the agent's own session: 助手's words, on the left */
+.msg.user.delegated { align-self: flex-start; }
+.msg.user.delegated .bubble { background: var(--raised); border-color: var(--accent-line); border-radius: 6px 16px 16px 16px; }
+.msg-from { margin: 0 0 4px 4px; color: var(--muted); font-size: 12px; }
+/* Work 助手 handed to another agent: who to, what it asked, what came back */
+.delegation { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-1); overflow: hidden; }
+.delegation.running { border-color: var(--accent-line); }
+.delegation-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.agent-avatar.small { width: 22px; height: 22px; }
+.agent-avatar.small .ui-icon { width: 12px; height: 12px; }
+.delegation-who { display: inline-flex; align-items: center; gap: 5px; }
+.delegation-arrow { width: 13px; height: 13px; transform: rotate(90deg); color: var(--muted); }
+.delegation-state { font-size: 12px; }
+.tone-ok { color: var(--muted); }
+a.delegation-open { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 12.5px; text-decoration: none; }
+a.delegation-open .ui-icon { width: 13px; height: 13px; }
+.delegation-said { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; }
+.delegation-said.reply { border-top: 1px solid var(--border); background: var(--bg); }
+.delegation-label { color: var(--muted); font-size: 12px; }
+.delegation-task { white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+.delegation-expecting { color: var(--text-2); font-size: 12.5px; }
+.delegation-now { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 12.5px; }
+.delegation-now span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegation-failed { display: flex; align-items: flex-start; gap: 6px; padding: 9px 14px; border-top: 1px solid var(--border); color: var(--error); font-size: 13px; white-space: pre-wrap; }
+.delegation-failed .ui-icon { flex-shrink: 0; width: 14px; height: 14px; margin-top: 3px; }
 .attachments { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
 .attachments > span { display: inline-flex; align-items: center; gap: 5px; }
 .attachments .ui-icon { width: 14px; height: 14px; }

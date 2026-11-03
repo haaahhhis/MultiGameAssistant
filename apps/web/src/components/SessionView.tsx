@@ -55,7 +55,9 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
           </div>
           <div className="session-meta">
             <RunState running={state.running} />
-            {agentId !== MAIN_AGENT && item?.requestedBy !== undefined && <span>{requestedLabel(item.requestedBy)}</span>}
+            {agentId !== MAIN_AGENT && item?.requestedBy !== undefined && (item.delegatedFrom === undefined
+              ? <span>{requestedLabel(item.requestedBy)}</span>
+              : <a href={`#/s/${encodeURIComponent(item.delegatedFrom.sessionId)}`} title={`回到${MAIN.name}的对话`}>{requestedLabel(item.requestedBy)}</a>)}
           </div>
         </div>
         <div className="session-actions">
