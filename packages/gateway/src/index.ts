@@ -33,7 +33,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -47,6 +47,7 @@ import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { LastReplies } from './last-reply.ts'
 import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
+import { roleOf, TOOL_GROUPS, UserAgents } from './user-agents.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -236,7 +237,10 @@ export class AdgGateway extends Service {
   private presetOf: (sessionId: string) => void = () => {}
   /** Live agents by session, and what narrows each to its role (`narrow`). */
   private readonly agents = new Map<string, LiveAgent>()
-  private readonly narrowed = new Map<LiveAgent, { readonly role: string; readonly dispose: () => void }>()
+  private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly dispose: () => void }>()
+  /** The agents the person made (user-agents.ts), each registered as a role. */
+  readonly userAgents: UserAgents
+  private readonly userRoles = new Map<string, () => void>()
   private readonly log: ReturnType<Context['logger']>
 
   constructor(ctx: Context, config: Config = {}) {
@@ -249,6 +253,8 @@ export class AdgGateway extends Service {
     this.parts = new AgentParts(log)
     this.roleModelStore = new RoleModel(config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
+    this.userAgents = new UserAgents(config.dataDir === undefined ? undefined : join(config.dataDir, 'agents.json'))
+    void this.userAgents.loaded.then(() => { this.userAgents.list().forEach((agent, i) => this.userRoles.set(agent.id, this.role(roleOf(agent, i)))) })
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
@@ -508,6 +514,40 @@ export class AdgGateway extends Service {
         },
       },
     }), 'adg-gateway capability role-model')
+
+    // 新建 agent: the person's own agents (user-agents.ts), roles like the plugins'.
+    ctx.effect(() => this.registry.register({
+      id: AGENTS_CAPABILITY,
+      version: 1,
+      methods: {
+        'agents/list': async () => {
+          await this.userAgents.loaded
+          return { items: [...this.userAgents.list()], groups: TOOL_GROUPS.map(({ id, name, description }) => ({ id, name, description })) }
+        },
+        'agents/save': async params => {
+          const input = params as RequestParams<'agents/save'>
+          const taken = ['助手', ...this.roles.list().filter(r => r.custom !== true).map(r => r.name)]
+          let agent
+          try {
+            agent = await this.userAgents.save(input, taken)
+          } catch (error) {
+            throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
+          }
+          const order = this.userAgents.list().findIndex(a => a.id === agent.id)
+          this.userRoles.set(agent.id, this.role(roleOf(agent, order)))
+          log.info(`agent ${input.id === undefined ? 'made' : 'changed'}: ${agent.name} (${agent.id})`)
+          return { agent }
+        },
+        'agents/delete': async params => {
+          const { id } = params as RequestParams<'agents/delete'>
+          if (!(await this.userAgents.delete(id))) return {}
+          this.userRoles.get(id)?.()
+          this.userRoles.delete(id)
+          log.info(`agent deleted: ${id}`)
+          return {}
+        },
+      },
+    }), 'adg-gateway capability agents')
 
     // Archived sessions (dsh's workspace registry keeps the set; its own page shares it).
     ctx.inject(['workspaceController'], scoped => {
@@ -832,9 +872,13 @@ Content-Length: 0
    */
   role(spec: RoleSpec): () => void {
     const dispose = this.roles.register(spec)
-    // Its sessions' agents already running (resumed before the plugin loaded) get narrowed now.
+    // Its sessions' agents already running (resumed before the plugin loaded, or the role changed) get narrowed now.
     for (const agent of this.agents.values()) if (this.roles.tagged(agent.session.id) === spec.id) this.narrow(agent)
-    return dispose
+    return () => {
+      dispose()
+      // Taken back: its agents still running get their tools back (or the role that replaced it).
+      for (const [agent, held] of this.narrowed) if (held.spec === spec) this.narrow(agent)
+    }
   }
 
   /**
@@ -845,11 +889,11 @@ Content-Length: 0
    */
   private narrow(agent: LiveAgent): void {
     const role = this.roles.tagged(agent.session.id)
+    const spec = role === undefined ? undefined : this.roles.spec(role)
     const held = this.narrowed.get(agent)
-    if (held?.role === role) return
+    if (held?.spec === spec) return
     held?.dispose()
     this.narrowed.delete(agent)
-    const spec = role === undefined ? undefined : this.roles.spec(role)
     if (spec === undefined) return
     const disposers: (() => void)[] = []
     try {
@@ -867,12 +911,13 @@ Content-Length: 0
     } catch (error) {
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
-    this.narrowed.set(agent, { role: spec.id, dispose: () => { for (const dispose of disposers) dispose() } })
+    this.narrowed.set(agent, { spec, dispose: () => { for (const dispose of disposers) dispose() } })
   }
 
   /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */
   roleModel(role: string): ModelSelection | undefined {
-    return this.roles.list().some(r => r.id === role) ? this.roleModelStore.get() : undefined
+    if (!this.roles.list().some(r => r.id === role)) return undefined
+    return this.userAgents.get(role)?.model ?? this.roleModelStore.get()
   }
 
   /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */

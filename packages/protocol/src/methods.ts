@@ -92,6 +92,8 @@ export const Role = z.object({
   description: z.string(),
   /** Position in the list (smaller first). */
   order: z.number(),
+  /** One the person made (`agents/list`): it can be changed and deleted. */
+  custom: z.boolean().optional(),
 })
 export type Role = z.infer<typeof Role>
 
@@ -142,6 +144,37 @@ export const ModelSelection = z.object({
   reasoningEffort: z.string().optional(),
 })
 export type ModelSelection = z.infer<typeof ModelSelection>
+
+/**
+ * `agents`: agents the person makes (新建 agent, docs/design/agent-roles.md
+ * §9.2). Each is a role agent like the ones plugins register — in
+ * `roles/list` with `custom`, its tasks under it — but its name, duty, tools
+ * and model are the person's, kept in the gateway's `agents.json`.
+ */
+export const AGENTS_CAPABILITY = 'agents'
+export const MAX_AGENT_NAME = 12
+export const MAX_AGENT_DUTY = 4000
+
+/** A family of the app's tools an agent can be given (截图和点击, 脚本, …). */
+export const AgentToolGroup = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** What the agent can do with it, in a sentence. */
+  description: z.string(),
+})
+export type AgentToolGroup = z.infer<typeof AgentToolGroup>
+
+export const UserAgent = z.object({
+  id: z.string(),
+  name: z.string().trim().min(1).max(MAX_AGENT_NAME),
+  /** What it is for: a section of its system prompt, every turn. */
+  duty: z.string().trim().min(1).max(MAX_AGENT_DUTY),
+  /** The tool groups it has (`AgentToolGroup.id`); the app's other tools are hidden from it. */
+  tools: z.array(z.string()),
+  /** Its sessions' model; null: the role agents' model (设置 → 模型). */
+  model: ModelSelection.nullable(),
+})
+export type UserAgent = z.infer<typeof UserAgent>
 
 export const ModelCatalog = z.object({
   default: ModelSelection,
@@ -264,6 +297,24 @@ export const Requests = {
     capability: 'sessions',
     params: Empty,
     result: z.object({ items: z.array(Role) }),
+  },
+  /** The agents the person made, and the tool groups to choose from. */
+  'agents/list': {
+    capability: AGENTS_CAPABILITY,
+    params: Empty,
+    result: z.object({ items: z.array(UserAgent), groups: z.array(AgentToolGroup) }),
+  },
+  /** Make one (no `id`) or change one; its agents already running get the new duty and tools, its open sessions keep their model. */
+  'agents/save': {
+    capability: AGENTS_CAPABILITY,
+    params: UserAgent.omit({ id: true }).extend({ id: z.string().optional() }),
+    result: z.object({ agent: UserAgent }),
+  },
+  /** Its sessions stay, listed under 助手. */
+  'agents/delete': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ id: z.string() }),
+    result: Empty,
   },
   'sessions/rename': {
     capability: 'sessions',

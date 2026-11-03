@@ -10,6 +10,7 @@ import { ModelPicker } from './components/ModelPicker.tsx'
 import { useSlash } from './components/SlashMenu.tsx'
 import { AgentRoster, relativeTime, sessionTitle } from './components/SessionList.tsx'
 import { AgentPage } from './components/AgentPage.tsx'
+import { AgentEditor } from './components/AgentEditor.tsx'
 import { MAIN_AGENT, agentIdOf, useRoles } from './agents.ts'
 import { UiSwitch } from './components/UiSwitch.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
@@ -73,7 +74,7 @@ export function App({ client }: { client: AdgClient }) {
   const selected = route.kind === 'session' ? route.id : null
   const selectedItem = selected === null ? undefined : sessions.items.find(i => i.id === selected)
   // The agent in front: the role agent's page, the agent of the open session, else 助手.
-  const agent = route.kind === 'agent' ? route.id : selectedItem !== undefined ? agentIdOf(selectedItem, roles) : MAIN_AGENT
+  const agent = route.kind === 'agent' ? route.id : route.kind === 'agentEdit' ? route.id ?? '' : selectedItem !== undefined ? agentIdOf(selectedItem, roles) : MAIN_AGENT
   // 助手: its latest conversation (the start page when it has none); a role agent: its page.
   const openAgent = (id: string) => {
     if (id !== MAIN_AGENT) { setRoute({ kind: 'agent', id }); return }
@@ -89,13 +90,14 @@ export function App({ client }: { client: AdgClient }) {
   if (route.kind === 'window') return <PoppedView client={client} viewId={route.view} sessionId={route.sessionId} />
 
   const rail: RailTarget = shown.kind === 'page' ? { kind: 'page', id: shown.id } : route.kind === 'settings' ? { kind: 'settings' } : { kind: 'chat' }
-  const chatArea = route.kind === 'home' || route.kind === 'session' || route.kind === 'agent'
+  const chatArea = route.kind === 'home' || route.kind === 'session' || route.kind === 'agent' || route.kind === 'agentEdit'
 
   return (
     <div className={`app ${chatArea || route.kind === 'settings' ? 'with-sidebar' : ''}`}>
       <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={() => openSettings()} />
       {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={route.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
-      {chatArea && <AgentRoster client={client} agent={agent} selected={selected} onAgent={openAgent} onSelect={openSession} onNew={goHome} />}
+      {chatArea && <AgentRoster client={client} agent={agent} selected={selected} onAgent={openAgent} onSelect={openSession} onNew={goHome}
+        onNewAgent={() => setRoute({ kind: 'agentEdit', id: null })} />}
       {shown.kind === 'page' && (page === undefined
         ? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>
         : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />)}
@@ -103,7 +105,14 @@ export function App({ client }: { client: AdgClient }) {
         <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession} onStart={startSession} />
       )}
       {route.kind === 'agent' && (
-        <AgentPage key={route.id} client={client} agentId={route.id} onOpen={openSession} onStart={startSession} onMain={() => openAgent(MAIN_AGENT)} />
+        <AgentPage key={route.id} client={client} agentId={route.id} onOpen={openSession} onStart={startSession} onMain={() => openAgent(MAIN_AGENT)}
+          onEdit={() => setRoute({ kind: 'agentEdit', id: route.id })} />
+      )}
+      {route.kind === 'agentEdit' && (
+        <AgentEditor key={route.id ?? 'new'} client={client} agentId={route.id}
+          onSaved={id => { replacing.current = true; setRoute({ kind: 'agent', id }) }}
+          onCancel={() => (route.id === null ? openAgent(MAIN_AGENT) : setRoute({ kind: 'agent', id: route.id }))}
+          onDeleted={() => { replacing.current = true; openAgent(MAIN_AGENT) }} />
       )}
       {route.kind === 'session' && (
         <SessionView

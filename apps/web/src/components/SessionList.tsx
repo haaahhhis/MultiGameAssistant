@@ -18,7 +18,7 @@ const MAIN_SHOWN = 12
  * and whether something came in since you last looked. 助手's own
  * conversations open under its row; a role agent's tasks are its page.
  */
-export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew }: {
+export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew, onNewAgent }: {
   client: AdgClient
   /** The agent whose page or session is open. */
   agent: string
@@ -27,6 +27,8 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew 
   onSelect: (sessionId: string) => void
   /** A new conversation with 助手: the start page; the session is created when the first message is sent. */
   onNew: () => void
+  /** 新建 agent (AgentEditor.tsx). */
+  onNewAgent: () => void
 }) {
   const sessions = useStore(client.sessions)
   const status = useStore(client.connection.status)
@@ -241,6 +243,11 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew 
             </div>
           )
         })}
+        {!searching && capabilities.has('agents') && (
+          <button className="nav-item new-agent" onClick={onNewAgent} disabled={status.state !== 'open'} title="自己建一个 agent：名字、职责、能用的工具">
+            <Icon name="plus" /><span className="nav-item-label">新建 agent</span>
+          </button>
+        )}
         {!searching && canArchive && archivedItems.length > 0 && (
           <div className="agent-entry archive-entry">
             <button className="nav-item role-row" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>

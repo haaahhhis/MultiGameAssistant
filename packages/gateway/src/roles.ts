@@ -13,6 +13,7 @@
  * A role's agent is narrowed to its work (`tools`, `duty`): the gateway hides
  * the app's other tools from it and gives it its duty, on that agent alone
  * (index.ts `narrow`); dsh's own tools stay. The main agent keeps everything.
+ * The person's own agents (user-agents.ts) are roles too, with `custom`.
  */
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
@@ -76,7 +77,8 @@ export class SessionRoles {
   }
 
   list(): Role[] {
-    return [...this.#roles.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)).map(({ id, name, description, order }) => ({ id, name, description, order }))
+    return [...this.#roles.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+      .map(({ id, name, description, order, custom }) => ({ id, name, description, order, ...(custom === true ? { custom } : {}) }))
   }
 
   /**

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { ModelSelection, SessionItem } from '@adg/protocol'
-import { agentIdOf, agentOf, requestedLabel, useLastReplies, useRoles } from '../agents.ts'
+import { agentIdOf, agentOf, requestedLabel, useLastReplies, useRoles, useUserAgents } from '../agents.ts'
 import { useNow, useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
 import { relativeTime, sessionTitle } from './SessionList.tsx'
@@ -15,15 +15,18 @@ const SHOWN = 20
  * newest first. A card opens the task's session; the box at the top gives it
  * a new task.
  */
-export function AgentPage({ client, agentId, onOpen, onStart, onMain }: {
+export function AgentPage({ client, agentId, onOpen, onStart, onMain, onEdit }: {
   client: AdgClient
   agentId: string
   onOpen: (sessionId: string) => void
   /** A task just created: open it and send its first message. */
   onStart: (sessionId: string, text: string) => void
   onMain: () => void
+  /** Change the agent (one the person made). */
+  onEdit: () => void
 }) {
   const roles = useRoles(client)
+  const userAgents = useUserAgents(client)
   const sessions = useStore(client.sessions)
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
@@ -51,6 +54,8 @@ export function AgentPage({ client, agentId, onOpen, onStart, onMain }: {
 
   const role = roles.find(r => r.id === agentId)
   const agent = role === undefined ? undefined : agentOf(role)
+  const own = role?.custom === true ? userAgents?.items.find(a => a.id === agentId) : undefined
+  const ownModel = own?.model ?? null
   const tasks = useMemo(() => sessions.items
     .filter(item => item.origin !== 'subagent' && !item.blank && !archived.has(item.id) && agentIdOf(item, roles) === agentId)
     .sort((a, b) => b.updatedAt - a.updatedAt), [sessions.items, archived, roles, agentId])
@@ -96,10 +101,18 @@ export function AgentPage({ client, agentId, onOpen, onStart, onMain }: {
             <p className="muted">{agent.description}</p>
             <p className="muted small">
               {tasks.length === 0 ? '还没有做过事' : `做过 ${tasks.length} 件事${running > 0 ? `，${running} 件正在做` : ''}`}
-              {model !== undefined && <> · 模型：{model === null ? '默认模型' : model.model}</>}
+              {ownModel !== null ? <> · 模型：{ownModel.model}</> : model !== undefined && <> · 模型：{model === null ? '默认模型' : model.model}</>}
             </p>
           </div>
+          {role?.custom === true && <button className="agent-edit" onClick={onEdit}><Icon name="pencil" />编辑</button>}
         </div>
+        {own !== undefined && (
+          <details className="agent-duty">
+            <summary>职责和工具</summary>
+            <p className="agent-duty-text">{own.duty}</p>
+            <p className="muted small">本软件的工具：{own.tools.length === 0 ? '无' : own.tools.map(id => userAgents?.groups.find(g => g.id === id)?.name ?? id).join('、')}；文件、命令、上网这些通用工具都能用。</p>
+          </details>
+        )}
 
         <div className="composer-box agent-composer">
           <textarea aria-label={`给${agent.name}布置一件事`} value={text} onChange={e => setText(e.target.value)} onKeyDown={onKeyDown} rows={2}
@@ -115,7 +128,7 @@ export function AgentPage({ client, agentId, onOpen, onStart, onMain }: {
         </div>
 
         <div className="task-list" aria-label={`${agent.name}做过的事`}>
-          {tasks.length === 0 && <div className="sidebar-empty"><Icon name={agent.icon} /><span>还没有{agent.name}的任务</span><span>软件需要它时会自动交给它，也可以在上面直接布置。</span></div>}
+          {tasks.length === 0 && <div className="sidebar-empty"><Icon name={agent.icon} /><span>还没有{agent.name}的任务</span><span>{role?.custom === true ? '在上面给它布置第一件事。' : '软件需要它时会自动交给它，也可以在上面直接布置。'}</span></div>}
           {shown.map(task => <TaskCard key={task.id} task={task} roleName={agent.name} reply={replies.get(task.id)} now={now} onOpen={() => onOpen(task.id)} />)}
           {!all && tasks.length > SHOWN && <button className="link-button more-tasks" onClick={() => setAll(true)}>更多（{tasks.length - SHOWN}）</button>}
         </div>

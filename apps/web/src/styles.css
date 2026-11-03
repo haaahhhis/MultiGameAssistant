@@ -1389,6 +1389,25 @@ button.more-sessions { color: var(--muted); font-size: 12px; }
 .agent-intro-text h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
 .agent-intro-text p { margin: 0; }
 .agent-composer { max-width: none; margin: 0; }
+.agent-intro-text { flex: 1; }
+button.agent-edit { display: inline-flex; flex-shrink: 0; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12.5px; }
+button.agent-edit .ui-icon { width: 14px; height: 14px; }
+.agent-duty { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 10px 14px; background: var(--raised); }
+.agent-duty summary { cursor: pointer; color: var(--text-2); font-size: 13px; }
+.agent-duty-text { margin: 10px 0 6px; white-space: pre-wrap; font-size: 13px; }
+.agent-duty p.small { margin: 0; }
+/* 新建 agent: after the agents in the roster */
+button.new-agent { margin-top: 6px; min-height: 32px; color: var(--text-2); font-size: 13px; }
+button.new-agent .ui-icon { width: 14px; height: 14px; }
+.agent-editor { gap: 18px; }
+.agent-editor .agent-duty-input { font-family: var(--font); font-size: 13.5px; line-height: 1.6; resize: vertical; }
+.agent-tools { border: none; margin: 0; padding: 0; gap: 8px; }
+.agent-tools .check-label { align-items: flex-start; color: var(--text); }
+.agent-tools .check-label input { margin-top: 4px; }
+.agent-editor-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.agent-editor-actions button { display: inline-flex; align-items: center; gap: 5px; }
+.agent-editor-actions .ui-icon { width: 14px; height: 14px; }
+.agent-delete-confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .task-list { display: flex; flex-direction: column; gap: 10px; }
 button.task-card { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); color: var(--text); text-align: left; font-weight: 400; box-shadow: var(--shadow-1); }
 button.task-card:hover:not(:disabled) { border-color: var(--border-strong); background: var(--raised); }

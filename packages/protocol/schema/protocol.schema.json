@@ -18,6 +18,15 @@
     "roles/list": {
       "capability": "sessions"
     },
+    "agents/list": {
+      "capability": "agents"
+    },
+    "agents/save": {
+      "capability": "agents"
+    },
+    "agents/delete": {
+      "capability": "agents"
+    },
     "sessions/rename": {
       "capability": "sessions"
     },
@@ -2049,6 +2058,9 @@
               },
               "order": {
                 "type": "number"
+              },
+              "custom": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -2064,6 +2076,252 @@
       "required": [
         "items"
       ],
+      "additionalProperties": false
+    },
+    "agents/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "agents/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 12
+              },
+              "duty": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "reasoningEffort": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "model"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "duty",
+              "tools",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "agents/save.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "duty": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "reasoningEffort": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "duty",
+        "tools",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "agents/save.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 12
+            },
+            "duty": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "reasoningEffort": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "duty",
+            "tools",
+            "model"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "additionalProperties": false
+    },
+    "agents/delete.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "agents/delete.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
       "additionalProperties": false
     },
     "sessions/rename.params": {
@@ -21309,6 +21567,9 @@
               },
               "order": {
                 "type": "number"
+              },
+              "custom": {
+                "type": "boolean"
               }
             },
             "required": [

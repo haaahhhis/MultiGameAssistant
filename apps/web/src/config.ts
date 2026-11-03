@@ -62,6 +62,8 @@ export type Route =
   | { readonly kind: 'session'; readonly id: string }
   /** A role agent's page: who it is and its tasks (AgentPage.tsx). */
   | { readonly kind: 'agent'; readonly id: string }
+  /** Making an agent (id null) or changing one the person made (AgentEditor.tsx). */
+  | { readonly kind: 'agentEdit'; readonly id: string | null }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
   /** One session view alone, in a popped-out window. */
@@ -76,6 +78,9 @@ export function readRoute(): Route {
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
+  if (location.hash === '#/a/new') return { kind: 'agentEdit', id: null }
+  const editing = /^#\/a\/(.+)\/edit$/.exec(location.hash)
+  if (editing !== null) return { kind: 'agentEdit', id: decodeURIComponent(editing[1]!) }
   const agent = /^#\/a\/(.+)$/.exec(location.hash)
   if (agent !== null) return { kind: 'agent', id: decodeURIComponent(agent[1]!) }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
@@ -91,6 +96,7 @@ export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): voi
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
     : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}`
+    : route.kind === 'agentEdit' ? (route.id === null ? '#/a/new' : `#/a/${encodeURIComponent(route.id)}/edit`)
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)
         : route.kind === 'home' ? '#/chat' : ''
