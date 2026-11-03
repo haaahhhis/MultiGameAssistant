@@ -138,7 +138,7 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     })
   })
 
-  ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-skill-hub tools', ['tools'], agent => {
+  ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-skill-hub tools', agent => {
     const registered: Array<() => void> = []
     for (const tool of hubTools(hub, approve, changed)) {
       registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await started; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))

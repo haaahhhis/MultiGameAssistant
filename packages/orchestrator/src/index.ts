@@ -115,7 +115,7 @@ export class AdgOrchestrator extends Service {
       scoped.effect(() => () => dispose?.(), 'adg-orchestrator skill')
     })
 
-    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-orchestrator tools', ['tools'], agent => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-orchestrator tools', agent => {
       const registered: Array<() => void> = []
       for (const tool of pipelineTools(pipelines, engine, library)) {
         registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))

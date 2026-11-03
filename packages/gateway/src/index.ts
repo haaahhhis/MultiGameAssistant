@@ -226,6 +226,8 @@ export class AdgGateway extends Service {
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
     this.parts = new AgentParts(log)
+    // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
+    if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
     if (this.shared) this.skillScope.limitTo(sessionId => this.isOwn(sessionId))
     this.sockets = createSockets(socket => this.accept(socket, config.validateResults ?? false, log))
@@ -542,10 +544,10 @@ export class AdgGateway extends Service {
     ctx.inject(['skills'], scoped => {
       scoped.skills.registerProvider(control => this.skillScope.provider(control.invalidate) as never)
     })
-    this.agentPart('adg-gateway skill_focus', ['tools'], agent => agent.tools.register(skillFocusTool(this.skillScope)))
+    this.agentPart('adg-gateway skill_focus', agent => agent.tools.register(skillFocusTool(this.skillScope)))
     // A skill the user invokes by name (`/maa-daily`) brings what it belongs to into the session's focus,
     // before dsh's skill tool looks it up for that session. Prepended: this runs before the listeners after it.
-    this.agentPart('adg-gateway skill focus hook', [], agent => agent.on('agent/pre-step' as never, (async (payload: PreStep & { messages?: readonly unknown[] }, next: () => Promise<PreStepDecision>) => {
+    this.agentPart('adg-gateway skill focus hook', agent => agent.on('agent/pre-step' as never, (async (payload: PreStep & { messages?: readonly unknown[] }, next: () => Promise<PreStepDecision>) => {
       try {
         const owners = invokedSkills(payload.messages ?? []).map(name => this.skillScope.ownerOf(name)).filter(o => o !== undefined)
         if (owners.length > 0) {
@@ -558,12 +560,12 @@ export class AdgGateway extends Service {
     }) as never, true))
 
     // What the app is called, so the agent names it right (just before the reply style, which may give it a name of its own).
-    this.agentPart('adg-gateway identity section', ['systemPrompt'], agent => agent.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }))
+    this.agentPart('adg-gateway identity section', agent => agent.systemPrompt.section({ name: 'adg:identity', order: 10_090, interpolate: false, text: () => IDENTITY_PROMPT }))
 
     // Reminders that earlier parts may be out of date (time-context.ts): appended to the history, so the prompt cache keeps working.
     // Prepended, so the note goes in whatever other listeners do with the step's messages.
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    this.agentPart('adg-gateway stale-context hook', [], agent => agent.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
+    this.agentPart('adg-gateway stale-context hook', agent => agent.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
       const decision = await next()
       if (decision.kind !== 'enter' || payload.signal.aborted) return decision
       try {
@@ -589,7 +591,7 @@ export class AdgGateway extends Service {
           'persona/set': async params => { await loaded; await persona.set((params as RequestParams<'persona/set'>).persona); return answer() },
         },
       }), 'adg-gateway capability persona')
-      this.agentPart('adg-gateway persona section', ['systemPrompt'], agent => agent.systemPrompt.section({
+      this.agentPart('adg-gateway persona section', agent => agent.systemPrompt.section({
         name: 'adg:persona',
         // After the harness's own guidance, before the deployment suffix (10200).
         order: 10_100,
@@ -638,7 +640,7 @@ export class AdgGateway extends Service {
         taken: async () => (await ctx.get('skills')?.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) }) ?? []).filter(s => savedSkills?.registered.has(s.name) !== true).map(s => s.name),
         saved: async name => { await savedSkills?.register(name) },
       })
-      this.agentPart('adg-gateway skill_save', ['tools'], agent => agent.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } }))
+      this.agentPart('adg-gateway skill_save', agent => agent.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } }))
     }
 
     // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
@@ -771,18 +773,18 @@ Content-Length: 0
 
   /**
    * Give the app's agents something: a tool, a prompt section, a step hook.
-   * `needs` are the services the part uses. With a dsh of its own, every
-   * agent gets it, as soon as those are there; shared, the app's agent preset
-   * does (agent.ts), so the person's other chats never see it. Belongs to the
+   * With a dsh of its own, every agent gets it (the gateway's own scope takes
+   * the parts, see the constructor); shared, the app's agent preset does
+   * (agent.ts), so the person's other chats never see it. Belongs to the
    * calling plugin's fiber.
+   *
+   * Either way the part is registered from a scope that injects `tools` and
+   * `systemPrompt` itself: called from another plugin, `this.ctx` is that
+   * plugin's context, and an `inject` made on it cannot reach `tools`
+   * (cordis: "cannot get property "tools" without inject").
    */
-  agentPart(label: string, needs: readonly string[], part: AgentPart): void {
-    if (this.shared) {
-      this.ctx.effect(() => this.parts.add(label, part), label)
-      return
-    }
-    if (needs.length === 0) this.ctx.effect(() => part(this.ctx), label)
-    else this.ctx.inject([...needs], scoped => { scoped.effect(() => part(scoped), label) })
+  agentPart(label: string, part: AgentPart): void {
+    this.ctx.effect(() => this.parts.add(label, part), label)
   }
 
   /**

@@ -93,7 +93,7 @@ export class AdgAnalyzer extends Service {
       const outcome = await approval.request({ agent: exec.agent, toolName: exec.name, callId: exec.callId, reason, signal: exec.signal })
       if (outcome !== 'allowed-once') throw new Error(outcome === 'rejected' ? '用户拒绝了这个操作' : `没有得到用户批准（${outcome}）`)
     }
-    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-analyzer tools', ['tools'], agent => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-analyzer tools', agent => {
       const registered: Array<() => void> = []
       // 设置 → 权限 decides per area (the gateway's guardTool).
       for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))

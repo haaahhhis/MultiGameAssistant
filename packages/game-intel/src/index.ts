@@ -139,7 +139,7 @@ export class AdgGameIntel extends Service {
     })
 
     // ── tools ──
-    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-game-intel tools', ['tools'], agent => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-game-intel tools', agent => {
       const registered: Array<() => void> = []
       for (const tool of gameTools({
         games: () => this.infos(),

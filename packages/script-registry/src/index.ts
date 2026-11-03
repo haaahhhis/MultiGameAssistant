@@ -97,7 +97,7 @@ export class AdgScripts extends Service {
       if (outcome !== 'allowed-once') throw new Error(outcome === 'rejected' ? '用户拒绝了这个操作' : `没有得到用户批准（${outcome}）`)
     }
 
-    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-script-registry tools', ['tools'], agent => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-script-registry tools', agent => {
       const registered: Array<() => void> = []
       for (const tool of scriptTools(library, approve)) {
         registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))

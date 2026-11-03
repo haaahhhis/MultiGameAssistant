@@ -116,7 +116,7 @@ export class AdgIntervene extends Service {
     this.interventions = interventions
     this.ready = interventions.load()
 
-    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-intervene tools', ['tools'], agent => {
+    ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-intervene tools', agent => {
       const registered: Array<() => void> = []
       const tools = screenTools({
         screens,
