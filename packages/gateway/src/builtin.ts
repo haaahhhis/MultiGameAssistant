@@ -13,6 +13,7 @@ import {
   type QueuedPrompt, type RequestResult, type Role, type SessionContext, type SessionItem,
 } from '@adg/protocol'
 import { convertLiveBaseline, convertLiveFrame, convertRecord, convertRecords } from './convert.ts'
+import type { LastReplies } from './last-reply.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
 
 export type HostSessions = Pick<SessionController,
@@ -136,6 +137,10 @@ export interface BuiltinDeps {
   readonly roles?: () => Role[]
   /** The role agent a session belongs to (roles.ts). */
   readonly roleOf?: (sessionId: string, title: string | null) => string | undefined
+  /** Put a new session under a role agent; returns the model role agents' sessions are created with, if one is chosen. */
+  readonly tagRole?: (sessionId: string, role: string) => Promise<ModelSelection | undefined>
+  /** Sessions' last replies (last-reply.ts). */
+  readonly lastReplies?: LastReplies
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -169,8 +174,20 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         const cwd = params.cwd ?? deps.workspaceDir
         const created = await sessions.create({ ...(cwd === undefined ? {} : { cwd }), ...(deps.agentPreset === undefined ? {} : { agentPreset: deps.agentPreset }) })
         await deps.adopt?.(created.sessionId)
+        if (params.role !== undefined) {
+          const model = await deps.tagRole?.(created.sessionId, params.role)
+          if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
+        }
         if (params.focus !== undefined) await deps.focus?.(created.sessionId, params.focus)
         return { sessionId: created.sessionId }
+      },
+      'sessions/lastReplies': async (params: RequestParams<'sessions/lastReplies'>, call: MethodContext) => {
+        const replies = deps.lastReplies
+        if (replies === undefined || params.sessionIds.length === 0) return { items: [] }
+        const { items } = await sessions.list({}, call.signal)
+        const updated = new Map(items.map(s => [String(s.sessionId), s.updatedAt]))
+        const wanted = params.sessionIds.filter(id => updated.has(id) && (deps.isOwn?.(id) ?? true))
+        return { items: await Promise.all(wanted.map(async sessionId => ({ sessionId, text: await replies.of(sessionId, updated.get(sessionId)!, call.signal) }))) }
       },
       'sessions/rename': async (params: RequestParams<'sessions/rename'>) => {
         const renamed = await sessions.rename({ sessionId: sid(params.sessionId), title: params.title })

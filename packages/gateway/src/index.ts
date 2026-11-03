@@ -45,6 +45,7 @@ import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { LastReplies } from './last-reply.ts'
 import { RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
@@ -274,6 +275,11 @@ export class AdgGateway extends Service {
       adopt: sessionId => this.adopt(sessionId),
       roles: () => this.roles.list(),
       roleOf: (sessionId, title) => this.roles.of(sessionId, title),
+      tagRole: async (sessionId, role) => {
+        await this.tagSession(sessionId, role)
+        return this.roleModel(role)
+      },
+      lastReplies: new LastReplies(ctx.sessionController),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),

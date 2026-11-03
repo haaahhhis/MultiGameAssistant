@@ -244,9 +244,18 @@ export const Requests = {
   },
   'sessions/create': {
     capability: 'sessions',
-    /** `focus`: the scripts and games the conversation is about; it sees their skills (技能隔离). */
-    params: z.object({ cwd: z.string().optional(), focus: z.object({ scripts: z.array(z.string()).optional(), games: z.array(z.string()).optional() }).optional() }),
+    /**
+     * `focus`: the scripts and games the conversation is about; it sees their skills (技能隔离).
+     * `role`: a role agent's session (`roles/list`), listed under it and created with the role agents' model.
+     */
+    params: z.object({ cwd: z.string().optional(), focus: z.object({ scripts: z.array(z.string()).optional(), games: z.array(z.string()).optional() }).optional(), role: z.string().optional() }),
     result: z.object({ sessionId: z.string() }),
+  },
+  /** What each session last said: the agent's last reply as one shortened line (null: none yet), for the agent roster and task cards. */
+  'sessions/lastReplies': {
+    capability: 'sessions',
+    params: z.object({ sessionIds: z.array(z.string()).max(60) }),
+    result: z.object({ items: z.array(z.object({ sessionId: z.string(), text: z.string().nullable() })) }),
   },
   /** The role agents (their sessions carry `role`). */
   'roles/list': {

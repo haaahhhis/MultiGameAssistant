@@ -60,6 +60,8 @@ export type Route =
   | { readonly kind: 'start' }
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
+  /** A role agent's page: who it is and its tasks (AgentPage.tsx). */
+  | { readonly kind: 'agent'; readonly id: string }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
   /** One session view alone, in a popped-out window. */
@@ -74,6 +76,8 @@ export function readRoute(): Route {
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
+  const agent = /^#\/a\/(.+)$/.exec(location.hash)
+  if (agent !== null) return { kind: 'agent', id: decodeURIComponent(agent[1]!) }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
   return match === null ? { kind: 'start' } : { kind: 'session', id: decodeURIComponent(match[1]!) }
 }
@@ -86,6 +90,7 @@ export function readRoute(): Route {
 export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): void {
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
+    : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}`
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)
         : route.kind === 'home' ? '#/chat' : ''

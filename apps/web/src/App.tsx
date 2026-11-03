@@ -8,7 +8,9 @@ import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { ModelPicker } from './components/ModelPicker.tsx'
 import { useSlash } from './components/SlashMenu.tsx'
-import { SessionList, relativeTime, sessionTitle } from './components/SessionList.tsx'
+import { AgentRoster, relativeTime, sessionTitle } from './components/SessionList.tsx'
+import { AgentPage } from './components/AgentPage.tsx'
+import { MAIN_AGENT, agentIdOf, useRoles } from './agents.ts'
 import { UiSwitch } from './components/UiSwitch.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
@@ -31,6 +33,7 @@ export function App({ client }: { client: AdgClient }) {
   const sessions = useStore(client.sessions)
   const pages = usePages(client)
   const status = useStore(client.connection.status)
+  const roles = useRoles(client)
   // Each page is a history entry (mouse back / forward); a correction replaces the entry instead.
   const replacing = useRef(false)
   useEffect(() => {
@@ -68,25 +71,39 @@ export function App({ client }: { client: AdgClient }) {
   const openPage = (id: string) => setRoute({ kind: 'page', id })
   const goHome = () => setRoute({ kind: 'home' })
   const selected = route.kind === 'session' ? route.id : null
+  const selectedItem = selected === null ? undefined : sessions.items.find(i => i.id === selected)
+  // The agent in front: the role agent's page, the agent of the open session, else 助手.
+  const agent = route.kind === 'agent' ? route.id : selectedItem !== undefined ? agentIdOf(selectedItem, roles) : MAIN_AGENT
+  // 助手: its latest conversation (the start page when it has none); a role agent: its page.
+  const openAgent = (id: string) => {
+    if (id !== MAIN_AGENT) { setRoute({ kind: 'agent', id }); return }
+    const latest = sessions.items.filter(i => i.origin !== 'subagent' && !i.blank && agentIdOf(i, roles) === MAIN_AGENT).sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    if (agent === MAIN_AGENT) return
+    if (latest === undefined) goHome()
+    else openSession(latest.id)
+  }
+  const startSession = (sessionId: string, text: string) => { setHandoff({ sessionId, text }); openSession(sessionId) }
   const shown: Route = route.kind === 'start' ? { kind: 'page', id: START_PAGE } : route
   const page = shown.kind === 'page' ? pages.find(p => p.id === shown.id) : undefined
 
   if (route.kind === 'window') return <PoppedView client={client} viewId={route.view} sessionId={route.sessionId} />
 
   const rail: RailTarget = shown.kind === 'page' ? { kind: 'page', id: shown.id } : route.kind === 'settings' ? { kind: 'settings' } : { kind: 'chat' }
-  const chatArea = route.kind === 'home' || route.kind === 'session'
+  const chatArea = route.kind === 'home' || route.kind === 'session' || route.kind === 'agent'
 
   return (
     <div className={`app ${chatArea || route.kind === 'settings' ? 'with-sidebar' : ''}`}>
       <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={() => openSettings()} />
       {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={route.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
-      {chatArea && <SessionList client={client} selected={selected} onSelect={openSession} onNew={goHome} />}
+      {chatArea && <AgentRoster client={client} agent={agent} selected={selected} onAgent={openAgent} onSelect={openSession} onNew={goHome} />}
       {shown.kind === 'page' && (page === undefined
         ? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>
         : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />)}
       {route.kind === 'home' && (
-        <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession}
-          onStart={(sessionId, text) => { setHandoff({ sessionId, text }); openSession(sessionId) }} />
+        <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession} onStart={startSession} />
+      )}
+      {route.kind === 'agent' && (
+        <AgentPage key={route.id} client={client} agentId={route.id} onOpen={openSession} onStart={startSession} onMain={() => openAgent(MAIN_AGENT)} />
       )}
       {route.kind === 'session' && (
         <SessionView

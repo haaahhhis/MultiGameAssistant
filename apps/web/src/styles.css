@@ -1343,19 +1343,58 @@ button.fold-head h3 { margin: 0; }
 .fold { display: flex; flex-direction: column; gap: 4px; }
 .card-fold > button.fold-head { padding: 0; }
 .session-group > button.fold-head.sidebar-label { margin: 0; text-transform: none; }
-/* Session list: role agents (a second level each), archive action */
-.role-nav { display: flex; flex-direction: column; gap: 1px; padding: 3px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); }
+/* Agent roster: one row per agent (avatar, name, latest reply), 助手's conversations under it, the archive */
+.agent-roster { gap: 2px; }
+.agent-entry { display: flex; flex-direction: column; }
+.agent-entry.open { background: var(--bg); border-radius: var(--r-md); padding-bottom: 4px; }
+button.agent-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 8px; border: none; border-radius: var(--r-md); background: none; color: var(--text); text-align: left; font-weight: 400; }
+button.agent-row:hover:not(:disabled) { background: var(--hover); }
+button.agent-row:active:not(:disabled) { transform: none; }
+button.agent-row.active { background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
+.agent-avatar { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+.agent-avatar .ui-icon { width: 17px; height: 17px; }
+.agent-avatar.agent-intervene { background: color-mix(in srgb, #e5484d 16%, transparent); color: #d93d42; }
+.agent-avatar.agent-games { background: color-mix(in srgb, #8e4ec6 16%, transparent); color: #8e4ec6; }
+.agent-avatar.agent-scripts { background: color-mix(in srgb, #12a594 16%, transparent); color: #0f9384; }
+.agent-avatar.agent-pipelines { background: color-mix(in srgb, #f76b15 16%, transparent); color: #e2600f; }
+.agent-avatar.large { width: 56px; height: 56px; }
+.agent-avatar.large .ui-icon { width: 28px; height: 28px; }
+.agent-busy { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-fill); box-shadow: 0 0 0 2px var(--panel); animation: blink 1.6s var(--ease) infinite; }
+.agent-text { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 1px; }
+.agent-head { display: flex; align-items: center; gap: 6px; }
+.agent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; }
+.agent-name.unread { font-weight: 650; }
+.agent-working { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--accent); font-size: 11px; }
+.agent-working .run-dot { margin: 0; }
+.unread-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fill); }
+.roster-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 16px; }
+.agent-sessions { display: flex; flex-direction: column; gap: 1px; padding: 2px 4px 0 18px; }
+.agent-sessions .nav-item { min-height: 30px; padding: 4px 8px; font-size: 13px; }
+.new-topic .ui-icon { width: 14px; height: 14px; }
+button.more-sessions { color: var(--muted); font-size: 12px; }
+.archive-entry { margin-top: 6px; }
 .role-row { min-height: 30px; padding: 4px 8px; font-size: 13px; }
 .role-row .role-chevron { width: 14px; height: 14px; }
-.role-running { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }
 .tab-count { margin-left: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.session-level-head { display: flex; align-items: center; gap: 6px; padding: 6px 0 0; }
-button.session-back { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; background: none; color: var(--muted); }
-button.session-back:hover { background: var(--hover); color: var(--text); }
-button.session-back .ui-icon { width: 16px; height: 16px; }
-.session-level-title { display: flex; flex-direction: column; min-width: 0; }
-.session-level-title > span:first-child { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
-.session-level-title > .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A role agent's page: intro, a box for a new task, its tasks as cards */
+.main.agent-page { overflow-y: auto; }
+.agent-page-content { width: min(100%, 768px); margin: 0 auto; padding: 16px 24px 56px; display: flex; flex-direction: column; gap: 22px; }
+.agent-intro { display: flex; align-items: center; gap: 16px; }
+.agent-intro-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.agent-intro-text h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+.agent-intro-text p { margin: 0; }
+.agent-composer { max-width: none; margin: 0; }
+.task-list { display: flex; flex-direction: column; gap: 10px; }
+button.task-card { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); color: var(--text); text-align: left; font-weight: 400; box-shadow: var(--shadow-1); }
+button.task-card:hover:not(:disabled) { border-color: var(--border-strong); background: var(--raised); }
+button.task-card:active:not(:disabled) { transform: none; }
+button.task-card.running { border-color: color-mix(in srgb, var(--accent-fill) 45%, var(--border)); }
+.task-head { display: flex; align-items: center; gap: 8px; }
+.task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 550; }
+.task-reply { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.task-open { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; color: var(--accent); font-size: 12px; }
+.task-open .ui-icon { width: 13px; height: 13px; }
+button.more-tasks { align-self: center; }
 .role-badge { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 500; }
 .session-row { position: relative; display: flex; align-items: center; }
 .session-row > .session-item { flex: 1; min-width: 0; }

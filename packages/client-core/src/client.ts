@@ -151,8 +151,9 @@ export class AdgClient {
     }
   }
 
-  async createSession(cwd?: string): Promise<string> {
-    const { sessionId } = await this.connection.call('sessions/create', cwd === undefined ? {} : { cwd })
+  /** @param options - `role`: a role agent's session (listed under it, with the role agents' model). */
+  async createSession(cwd?: string, options: { role?: string } = {}): Promise<string> {
+    const { sessionId } = await this.connection.call('sessions/create', { ...(cwd === undefined ? {} : { cwd }), ...(options.role === undefined ? {} : { role: options.role }) })
     await this.refreshSessions()
     return sessionId
   }

@@ -12,6 +12,9 @@
     "sessions/create": {
       "capability": "sessions"
     },
+    "sessions/lastReplies": {
+      "capability": "sessions"
+    },
     "roles/list": {
       "capability": "sessions"
     },
@@ -1944,6 +1947,9 @@
             }
           },
           "additionalProperties": false
+        },
+        "role": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -1958,6 +1964,59 @@
       },
       "required": [
         "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "sessions/lastReplies.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionIds": {
+          "maxItems": 60,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "sessionIds"
+      ],
+      "additionalProperties": false
+    },
+    "sessions/lastReplies.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sessionId",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
       ],
       "additionalProperties": false
     },
