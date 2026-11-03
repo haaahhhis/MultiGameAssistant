@@ -276,8 +276,10 @@ export class Notify {
       }
     }
     const signal = message_.signal ?? AbortSignal.timeout(20 * 60_000)
+    // Only the round's last message goes back (reply.ts): ask for it to be the summary.
+    prompt = `${channelNote(message_.actor.channel)}\n${prompt}`
     const reply = conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
-    return note === undefined ? reply : { blocks: [{ kind: 'text', text: note }, ...reply.blocks] }
+    return note === undefined ? reply : { ...reply, note }
   }
 
   /** The notice a short reply like "停止" means, if it means one. */
@@ -422,6 +424,11 @@ export class Notify {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** Put before each chat message to the agent: only its last message of the round reaches the person. */
+export function channelNote(channel: string): string {
+  return `（这条消息来自${channel === 'feishu' ? '飞书' : channel}。只有你这一轮的最后一条消息会发给对方，中间的话和步骤对方看不到：最后用几句话总结这一轮——结论、做了什么、需要对方做什么。）`
 }
 
 /** A question as chat text: the question, then its choices numbered (reply with the number or the words). */

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
-import { Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
+import { channelNote, Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
 import { replyMarkdown, replyPlain, type Reply } from '../src/reply.ts'
 
 function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: string; others?: boolean } = {}) {
@@ -78,7 +78,7 @@ test('with two open notices, a bare "停止" is a question for the agent, in the
   assert.equal(replyMarkdown(await notify.inbound({ actor, text: '停止' })), '好的，已经停了 MAA')
   assert.equal(replyMarkdown(await notify.inbound({ actor, text: '现在什么状态' })), '好的，已经停了 MAA')
   assert.equal(created, 1, 'one session per person')
-  assert.deepEqual(asked, ['s-fake：张三:停止', 's-fake：张三:现在什么状态'])
+  assert.deepEqual(asked, [`s-fake：张三:${channelNote('fake')}\n停止`, `s-fake：张三:${channelNote('fake')}\n现在什么状态`])
   assert.equal(sessions.get('fake:ou_1'), 's-fake：张三')
   await notify.update('a', { done: '已忽略' })
   await notify.update('b', { done: '已忽略' })
@@ -165,7 +165,8 @@ test('the agent’s questions: routed like approvals, answered by buttons or by 
   assert.deepEqual(answered, [], 'not sent until every question has an answer')
   assert.match(replyMarkdown(await notify.inbound({ actor: feishuActor, text: '早上九点' })), /已经告诉 agent：早上九点/)
   assert.deepEqual(answered, [`q-1:${JSON.stringify([{ id: 'close', selected: ['关掉游戏 (Recommended)'] }, { id: 'when', selected: [], custom: '早上九点' }])}`])
-  assert.deepEqual(prompts, ['在吗'], 'answers never become new prompts')
+  assert.deepEqual(prompts, [`${channelNote('feishu')}\n在吗`], 'answers never become new prompts')
+  assert.match(prompts[0]!, /^（这条消息来自飞书。只有你这一轮的最后一条消息会发给对方.*总结这一轮/, 'the agent is asked to close with a summary')
   notify.questionResolved('q-1', 'answered')
 
   // a label without "(Recommended)" picks it too; a button answers through answerQuestion
@@ -203,10 +204,9 @@ test('a conversation that cannot go on (its folder was renamed) is replaced, wit
   const reply = await notify.inbound({ actor, text: '那第一个呢' })
   assert.equal(sessions.get('fake:ou_1'), 'new-session')
   assert.match(prompts[0]!, /之前最后几条消息[\s\S]*agent：还有两个活动没做[\s\S]*那第一个呢$/)
-  assert.match(replyMarkdown(reply), /^（之前的对话没法继续了/)
-  assert.match(replyMarkdown(reply), /\*\*执行了 1 个步骤\*\*\n- ✓ game_events：明日方舟\n\n\*\*两个\*\*活动还没做$/)
+  assert.match(replyMarkdown(reply), /^（之前的对话没法继续了[^\n]*\n\n\*\*两个\*\*活动还没做\n\n（执行了 1 个步骤；/)
   await notify.inbound({ actor, text: '好' })
-  assert.equal(prompts[1], '好', 'the new one is used as it is')
+  assert.equal(prompts[1], `${channelNote('fake')}\n好`, 'the new one is used as it is')
 })
 
 test('a conversation idle for half a day starts over quietly, its last messages carried over with their date', async () => {
@@ -227,20 +227,27 @@ test('a conversation idle for half a day starts over quietly, its last messages 
   const reply = await notify.inbound({ actor, text: '今天的日常跑了吗' })
   assert.equal(sessions.get('fake:ou_1'), 'new-1')
   // The date in this machine's time zone: the 27th or 28th.
-  assert.match(prompts[0]!, /^（上次聊天是 2026\/10\/2[78] .*可能早就过时了[\s\S]*agent：要我等你确认吗？[\s\S]*今天的日常跑了吗$/)
+  assert.match(prompts[0]!, /^（这条消息来自fake。[^\n]*\n（上次聊天是 2026\/10\/2[78] .*可能早就过时了[\s\S]*agent：要我等你确认吗？[\s\S]*今天的日常跑了吗$/)
   assert.doesNotMatch(replyMarkdown(reply), /新对话/, 'no note for the person')
 
   await sessions.set('fake:ou_1', 'fresh-session')
   await notify.inbound({ actor, text: '好' })
   assert.equal(sessions.get('fake:ou_1'), 'fresh-session', 'an hour is not idle')
-  assert.equal(prompts[1], '好')
+  assert.equal(prompts[1], `${channelNote('fake')}\n好`)
 })
 
-test('replies render the same content as markdown or plain text; long step lists keep their ends', () => {
-  const steps = Array.from({ length: 9 }, (_, i) => ({ name: `tool_${i}`, summary: i === 4 ? 'x'.repeat(100) : '', status: i === 8 ? 'error' as const : 'ok' as const }))
-  const reply: Reply = { blocks: [{ kind: 'text', text: '好的' }, { kind: 'steps', steps }, { kind: 'text', text: '做完了' }] }
-  const md = replyMarkdown(reply)
-  assert.match(md, /^好的\n\n\*\*执行了 9 个步骤（1 个失败）\*\*\n- ✓ tool_0\n- ✓ tool_1\n- ✓ tool_2\n- …另外 4 个\n- ✓ tool_7\n- ✗ tool_8\n\n做完了$/)
-  assert.match(replyPlain(reply), /【执行了 9 个步骤（1 个失败）】\n· ✓ tool_0/)
+test("a chat reply is the round's summary: the agent's last words and how many steps it took", () => {
+  const steps = Array.from({ length: 9 }, (_, i) => ({ name: `tool_${i}`, summary: '', status: i === 8 ? 'error' as const : 'ok' as const }))
+  const reply: Reply = {
+    blocks: [
+      { kind: 'text', text: '我先看看日志' }, { kind: 'steps', steps: steps.slice(0, 5) },
+      { kind: 'text', text: '再截个图' }, { kind: 'steps', steps: steps.slice(5) },
+      { kind: 'text', text: '**结论**：MAA 版本太旧，已更新并重跑' },
+    ],
+  }
+  assert.equal(replyMarkdown(reply), '**结论**：MAA 版本太旧，已更新并重跑\n\n（执行了 9 个步骤，1 个失败；完整过程在软件的对话记录里）', 'what it said along the way stays in the app')
+  assert.equal(replyPlain(reply), replyMarkdown(reply))
+  assert.equal(replyMarkdown({ blocks: [{ kind: 'text', text: '好的' }] }), '好的', 'no steps, no tally')
   assert.equal(replyMarkdown({ blocks: [] }), '（agent 没有回复文字）')
+  assert.equal(replyMarkdown({ blocks: [{ kind: 'text', text: '我先看看' }], ended: '（这一轮没有完成：超时了）' }), '我先看看\n\n（这一轮没有完成：超时了）', 'cut short: its last words are not a summary')
 })

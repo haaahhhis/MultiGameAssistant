@@ -91,7 +91,8 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       if (opened === undefined) return undefined
       const lines = convertRecords(opened.records).flatMap(event => {
         if (event.type !== 'user/message' && event.type !== 'assistant/message') return []
-        const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').trim()
+        // Without the note put before each chat message (notify.ts channelNote).
+        const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').replace(/^（这条消息来自[^）]*）\n/, '').trim()
         if (said === '') return []
         return [`${event.type === 'user/message' ? '用户' : 'agent'}：${said.length > 400 ? `${said.slice(0, 400)}…` : said}`]
       })
@@ -164,6 +165,7 @@ function pick(value: unknown): Selection | undefined {
  */
 async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string): Promise<Reply> {
   let mine = false
+  let ended: string | undefined
   const blocks: ReplyBlock[] = []
   /** Where each call's step is: its group in `blocks` and its place there. */
   const where = new Map<string, { block: number; index: number }>()
@@ -189,11 +191,14 @@ async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId:
       const at = where.get(event.callId)
       if (at !== undefined) steps(at.block)[at.index] = { ...steps(at.block)[at.index]!, status: event.isError ? 'error' : 'ok' }
     } else if (mine && event.type === 'turn/end') {
-      if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop' && finalText({ blocks }) === '') {
-        blocks.push({ kind: 'text', text: `（这一轮没有完成：${endReason(event.reason)}）` })
+      if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop') {
+        // Its last words are then not a summary: say so after them (or instead of them, for whoever only takes the words).
+        const why = `（这一轮没有完成：${endReason(event.reason)}）`
+        if (finalText({ blocks }) === '') blocks.push({ kind: 'text', text: why })
+        else ended = why
       }
       break
     }
   }
-  return { blocks }
+  return ended === undefined ? { blocks } : { blocks, ended }
 }

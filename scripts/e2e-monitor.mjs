@@ -186,7 +186,9 @@ try {
   const asked = llm.requests.find(r => JSON.stringify(r.messages ?? []).includes('刚才怎么了'))
   if (asked === undefined) fail('the agent never saw the Feishu message')
   if (answer.msgType !== 'post' || answer.content?.zh_cn?.content?.[0]?.[0]?.tag !== 'md') fail(`the answer went out as ${answer.msgType}, not rich text with markdown`)
-  step('a Feishu message became a conversation with the agent (it used monitor_incidents); the answer is rich text', answer.text.slice(0, 40))
+  if (!JSON.stringify(asked.messages).includes('最后用几句话总结这一轮')) fail('the agent was not asked to close the round with a summary')
+  if (answer.text.includes('monitor_incidents') || !answer.text.includes('执行了 1 个步骤')) fail(`the answer is not the round's summary: ${answer.text}`)
+  step('a Feishu message became a conversation with the agent (it used monitor_incidents); the answer is its summary, as rich text', answer.text.replace(/\n/g, ' '))
 
   // 5. approval answered in Feishu
   await feishu.sendMessage({ openId: USER, text: '运行 echo hi' })
