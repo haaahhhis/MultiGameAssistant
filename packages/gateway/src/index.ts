@@ -46,7 +46,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { LastReplies } from './last-reply.ts'
-import { RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
+import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -179,6 +179,15 @@ interface PresetService {
   set(session: PresetSession, name: string): void
 }
 
+/** The slice of a dsh agent (dsh-agent runtime-types) a role narrows: its session, and its own scope. */
+interface LiveAgent {
+  readonly session: { readonly id: string }
+  readonly ctx: Context
+}
+
+/** Said to every role agent: its last words are what its task card shows (last-reply.ts). */
+const ROLE_CLOSING = '你最后一段回复就是这件事的结论，会显示在任务卡片上给用户看：写清楚结果，以及需要用户做的事（没有就不写）。'
+
 /** The slice of dsh's `agent/pre-step` waterfall (dsh-agent runtime-types) the stale-context reminder uses. */
 interface PreStep {
   readonly agent: { readonly session: { readonly id: string; readonly seq: number; eventAt(seq: number): TimedEvent | undefined } }
@@ -225,10 +234,15 @@ export class AdgGateway extends Service {
   private readonly sockets: Sockets
   /** Bring one session's permission preset in line with the mode. */
   private presetOf: (sessionId: string) => void = () => {}
+  /** Live agents by session, and what narrows each to its role (`narrow`). */
+  private readonly agents = new Map<string, LiveAgent>()
+  private readonly narrowed = new Map<LiveAgent, { readonly role: string; readonly dispose: () => void }>()
+  private readonly log: ReturnType<Context['logger']>
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'adgGateway')
     const log = ctx.logger('adg-gateway')
+    this.log = log
     this.workspace = config.workspaceDir
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
@@ -383,6 +397,16 @@ export class AdgGateway extends Service {
     }
     this.permissionsReady = Promise.all([this.permissions.load(), this.own.loaded]).then(everySession)
     ctx.on('session/created' as never, ((session: PresetSession) => { void this.permissionsReady.then(() => presetFor(session)) }) as never)
+
+    // A role session's agent sees only its role's tools and is told its duty (roles.ts); again when it resumes.
+    ctx.on('agent/created' as never, ((payload: { agent: LiveAgent }) => {
+      this.agents.set(payload.agent.session.id, payload.agent)
+      this.narrow(payload.agent)
+    }) as never)
+    ctx.on('agent/disposed' as never, ((payload: { agent: LiveAgent }) => {
+      if (this.agents.get(payload.agent.session.id) === payload.agent) this.agents.delete(payload.agent.session.id)
+      this.narrowed.delete(payload.agent)
+    }) as never)
     ctx.effect(() => this.registry.register({
       id: PERMISSIONS_CAPABILITY,
       version: 1,
@@ -807,7 +831,43 @@ Content-Length: 0
    * are listed under it. Call in an effect; returns how to take it back.
    */
   role(spec: RoleSpec): () => void {
-    return this.roles.register(spec)
+    const dispose = this.roles.register(spec)
+    // Its sessions' agents already running (resumed before the plugin loaded) get narrowed now.
+    for (const agent of this.agents.values()) if (this.roles.tagged(agent.session.id) === spec.id) this.narrow(agent)
+    return dispose
+  }
+
+  /**
+   * Narrow a role session's agent to its role: hide the app's tools the role
+   * does not keep, and add its duty to its system prompt. Both are registered
+   * on the agent's own scope, so other agents are untouched and they go with
+   * the agent. A session not (yet) tagged is left as it is.
+   */
+  private narrow(agent: LiveAgent): void {
+    const role = this.roles.tagged(agent.session.id)
+    const held = this.narrowed.get(agent)
+    if (held?.role === role) return
+    held?.dispose()
+    this.narrowed.delete(agent)
+    const spec = role === undefined ? undefined : this.roles.spec(role)
+    if (spec === undefined) return
+    const disposers: (() => void)[] = []
+    try {
+      const tools = agent.ctx.tools
+      const visible = new Set(tools.schemas(agent).map(schema => schema.name))
+      const deny = [...this.parts.tools].filter(name => visible.has(name) && !keeps(spec.tools, name))
+      if (deny.length > 0) disposers.push(tools.restrict({ deny }))
+    } catch (error) {
+      this.log.warn(`tools of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      const duty = [spec.duty, ROLE_CLOSING].filter(text => text !== undefined && text !== '').join('\n\n')
+      // After the app's identity, before the reply style.
+      disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text: () => duty }))
+    } catch (error) {
+      this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
+    }
+    this.narrowed.set(agent, { role: spec.id, dispose: () => { for (const dispose of disposers) dispose() } })
   }
 
   /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */
@@ -818,6 +878,9 @@ Content-Length: 0
   /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */
   async tagSession(sessionId: string, role: string, by?: string): Promise<void> {
     await this.roles.tag(sessionId, role, by)
+    // Its agent came with the session, before the tag.
+    const agent = this.agents.get(sessionId)
+    if (agent !== undefined) this.narrow(agent)
     if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }) } })
   }
 

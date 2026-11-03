@@ -73,7 +73,25 @@ export interface Outcome {
 }
 
 /** The role agent that handles incidents: intervention sessions are listed under it. */
-export const INTERVENE_ROLE: RoleSpec = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
+export const INTERVENE_ROLE: RoleSpec = {
+  id: 'intervene',
+  name: '干预',
+  description: '脚本出错、卡住时处理',
+  order: 10,
+  titles: ['干预'],
+  // The screen, the script's run and its settings; no installing, games or pipelines.
+  tools: [
+    'screen_*', 'window_*', 'emulator_*', 'game_launch', 'game_close', 'game_locate',
+    'script_runs', 'script_run_log', 'script_run', 'script_stop', 'script_tasks', 'script_help', 'script_changelog', 'script_update',
+    'script_config_*', 'script_settings', 'script_profiles', 'script_env_check', 'script_env_fix',
+    'monitor_incidents', 'intervention_done', 'system_info', 'skill_focus', 'skill_save',
+  ],
+  duty: [
+    '# 你的角色：干预',
+    '你是 MultiGameAssistant 的「干预」agent。脚本运行时出错、卡住或超时，软件把这次事故交给你：看截图和日志，在模拟器或窗口里操作，需要时重跑任务或更新这个脚本，处理完调用 intervention_done。',
+    '只处理这一次事故。不安装新脚本、不加游戏、不改流水线和定时；这些写进 intervention_done 的 summary 留给用户。',
+  ].join('\n'),
+}
 
 const KEEP = 100
 /** Sessions whose latest screenshot is kept. */

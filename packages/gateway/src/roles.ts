@@ -9,6 +9,10 @@
  * in `<dataDir>/session-roles.json`, not in dsh's session. Sessions from
  * before roles have none: the title prefix their plugin opened them with
  * (`干预：…`) stands in for the role.
+ *
+ * A role's agent is narrowed to its work (`tools`, `duty`): the gateway hides
+ * the app's other tools from it and gives it its duty, on that agent alone
+ * (index.ts `narrow`); dsh's own tools stay. The main agent keeps everything.
  */
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
@@ -19,6 +23,18 @@ import { writeFileAtomic } from '@adg/protocol/node'
 export interface RoleSpec extends Role {
   /** Title prefixes (before `：`) of the sessions it opened before sessions carried their role. */
   readonly titles?: readonly string[]
+  /**
+   * The app's tools its agent keeps (`script_run`, or `screen_*` for a family);
+   * the app's others are hidden from it. Absent: all of them.
+   */
+  readonly tools?: readonly string[]
+  /** What its agent is for and where its work stops, as a section of its system prompt. */
+  readonly duty?: string
+}
+
+/** Does a role's `tools` keep this tool? */
+export function keeps(tools: readonly string[] | undefined, name: string): boolean {
+  return tools === undefined || tools.some(pattern => pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern)
 }
 
 const MAX_KEPT = 5000
@@ -46,6 +62,17 @@ export class SessionRoles {
       this.#roles.delete(spec.id)
       this.#changed()
     }
+  }
+
+  /** A registered role's whole spec. */
+  spec(id: string): RoleSpec | undefined {
+    return this.#roles.get(id)
+  }
+
+  /** The role a session was opened with (its tag), when that role is registered; no title fallback. */
+  tagged(sessionId: string): string | undefined {
+    const role = this.#tags.get(sessionId)?.role
+    return role !== undefined && this.#roles.has(role) ? role : undefined
   }
 
   list(): Role[] {

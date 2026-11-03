@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { RoleModel, SessionRoles } from '../src/roles.ts'
+import { keeps, RoleModel, SessionRoles } from '../src/roles.ts'
 
 const INTERVENE = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
 const GAMES = { id: 'games', name: '游戏', description: '读游戏活动和资讯', order: 20, titles: ['游戏信息', '日报'] }
@@ -56,6 +56,26 @@ test('who asked for a session is kept with its role, and older files still read'
   await again.loaded
   assert.equal(again.of('s1', null), 'intervene')
   assert.equal(again.requestedBy('s1'), '监控', 'read back after a restart')
+})
+
+test("a role keeps the tools it names, a family by its prefix, and all of them when it names none", () => {
+  const tools = ['screen_*', 'script_run', 'intervention_done']
+  assert.equal(keeps(tools, 'screen_tap'), true)
+  assert.equal(keeps(tools, 'script_run'), true)
+  assert.equal(keeps(tools, 'script_run_log'), false, 'a name without * is exact')
+  assert.equal(keeps(tools, 'pipeline_run'), false)
+  assert.equal(keeps(undefined, 'pipeline_run'), true)
+})
+
+test("only a session's tag names its agent's role (narrowing), not its title", async () => {
+  const roles = new SessionRoles(undefined)
+  roles.register({ ...INTERVENE, tools: ['screen_*'], duty: '处理事故' })
+  await roles.tag('s1', 'intervene')
+  assert.equal(roles.tagged('s1'), 'intervene')
+  assert.equal(roles.tagged('s2'), undefined)
+  assert.equal(roles.of('s2', '干预：x'), 'intervene', 'listed under it by its title')
+  assert.equal(roles.spec('intervene')?.duty, '处理事故')
+  assert.deepEqual(Object.keys(roles.list()[0]!).sort(), ['description', 'id', 'name', 'order'], 'the protocol gets no tools or duty')
 })
 
 test('sessions from before roles fall under the role whose title prefix they have', () => {

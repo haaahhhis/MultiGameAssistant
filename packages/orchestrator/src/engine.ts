@@ -65,7 +65,23 @@ interface Active {
 type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stopPipeline?: boolean }
 
 /** The role agent that runs pipelines' agent steps: their sessions are listed under it. */
-export const PIPELINE_ROLE: RoleSpec = { id: 'pipelines', name: '编排', description: '流水线里交给 agent 的步骤', order: 40, titles: ['编排'] }
+export const PIPELINE_ROLE: RoleSpec = {
+  id: 'pipelines',
+  name: '编排',
+  description: '流水线里交给 agent 的步骤',
+  order: 40,
+  titles: ['编排'],
+  // What a step may need, but not starting or changing pipelines (a step inside one).
+  tools: [
+    'script_*', 'game_*', 'screen_*', 'window_*', 'emulator_*', 'monitor_incidents',
+    'pipeline_status', 'pipeline_get', 'pipeline_list', 'system_info', 'skill_focus', 'skill_save',
+  ],
+  duty: [
+    '# 你的角色：编排',
+    '你是 MultiGameAssistant 流水线里交给 agent 的一个步骤：只做这一步说的事，做完就停。',
+    '不启动、不修改流水线和定时。',
+  ].join('\n'),
+}
 
 const UNATTENDED = new Set<PipelineTrigger['kind']>(['schedule', 'autostart', 'after'])
 

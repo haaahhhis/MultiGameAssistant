@@ -48,6 +48,16 @@ test('agent parts reach every scope that attaches, now and later, and leave with
   assert.match(warnings.join('\n'), /broken not registered for the app's agents: no tools service/)
 })
 
+test("the tools the parts register are known as the app's own, apart from dsh's", () => {
+  const parts = new AgentParts({ warn: () => {} })
+  const names = new Set(['pwsh', 'read_file'])
+  const scope = { tools: { schemas: () => [...names].map(name => ({ name })), register: (tool: { name: string }) => { names.add(tool.name); return () => names.delete(tool.name) } } } as unknown as Context
+  parts.attach(scope)
+  parts.add('runner', s => s.tools.register({ name: 'script_run' } as never))
+  parts.add('prompt', () => () => {})
+  assert.deepEqual([...parts.tools], ['script_run'], "dsh's own tools are not the app's")
+})
+
 test("a shared dsh's other chats see none of the app's skills", async () => {
   const scope = new SkillScope(undefined, { warn: () => {} })
   const provider = scope.provider(() => {})

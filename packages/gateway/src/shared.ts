@@ -17,6 +17,7 @@ import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-tools'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 /** The agent preset the app's sessions run when the dsh is shared (the plugin's patch declares it). */
@@ -67,6 +68,8 @@ export type AgentPart = (scope: Context) => () => void
 
 /** The parts waiting for the agent preset's scopes, and the scopes that hold them. */
 export class AgentParts {
+  /** Tools the parts registered: the app's own, as opposed to dsh's (role agents are narrowed among these). */
+  readonly tools = new Set<string>()
   readonly #parts = new Map<number, { readonly label: string; readonly part: AgentPart }>()
   readonly #scopes = new Map<Context, Map<number, () => void>>()
   #next = 0
@@ -104,9 +107,24 @@ export class AgentParts {
 
   #apply(scope: Context, held: Map<number, () => void>, id: number, label: string, part: AgentPart): void {
     try {
+      const before = toolNames(scope)
       held.set(id, part(scope))
+      for (const name of toolNames(scope)) if (!before.has(name)) this.tools.add(name)
     } catch (error) {
       this.#log.warn(`${label} not registered for the app's agents: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+}
+
+/** The tools a scope sees: the global view and, where the registry knows the scope, its own. */
+function toolNames(scope: Context): Set<string> {
+  const names = new Set<string>()
+  for (const key of [undefined, scope]) {
+    try {
+      for (const schema of scope.tools.schemas(key)) names.add(schema.name)
+    } catch {
+      // no tools service here, or a scope the registry does not key
+    }
+  }
+  return names
 }
