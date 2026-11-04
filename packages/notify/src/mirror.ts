@@ -5,7 +5,7 @@
  *
  * - what was typed in the app (你（软件）：…), or written from a chat app by
  *   someone else (张三（飞书）：…);
- * - work handed to 助手 (定时任务 → 助手：…);
+ * - work handed to 助手 (定时任务 → 助手：…), and a reminder it set coming due (定时提醒：…);
  * - each message between 助手 and another agent, as one line
  *   (助手 → 游戏：…, 游戏 → 助手：…（交回了）) — the words stay in the app;
  * - each of 助手's replies, as the round's summary (reply.ts) — what the
@@ -16,7 +16,7 @@
  */
 import type { SessionController, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
 import { convertRecord } from '@adg/gateway'
-import { BY_YOU, isQuiet, parseRelay, parseTask, type HandOff } from '@adg/protocol'
+import { BY_YOU, isQuiet, parseRelay, parseTask, reminderLine, reminderPrompts, type HandOff } from '@adg/protocol'
 import { TurnReply, type ConversationEvent } from './conversations.ts'
 import { personWords, type Actor, type MirrorPost } from './notify.ts'
 import { finalText, replyMarkdown, type Reply } from './reply.ts'
@@ -93,14 +93,21 @@ export class HomeMirror {
   /** One event of 助手's conversation, as it happens. */
   event(event: ConversationEvent): void {
     if (event.type === 'user/message') {
-      // What dsh and the app put in for the model (the time, how long it has been, a summary) is not a message: the app does not show it either.
-      if (!event.origin.human) return
-      const origin = this.#message(event.content.map(p => (p.type === 'text' ? p.text : '')).join(''))
-      // A message while the turn runs (steering) joins it; the turn's reply goes to whoever started it.
-      this.#turn ??= { origin, reply: new TurnReply() }
+      // What dsh and the app put in for the model (the time, a reminder 助手 set, a summary) is not shown as a
+      // message, here or in the app — but the turn it starts is 助手's like any other, and its reply goes out.
+      const text = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
+      const origin = event.origin.human ? this.#message(text) : undefined
+      // A reminder coming due shows as a line in the app; the same line here.
+      const reminder = event.origin.human ? undefined : reminderPrompts(text)
+      if (reminder !== undefined) this.#deps.post({ text: reminderLine(reminder) })
+      // A message while the turn runs (steering) joins it; the turn's reply goes to whoever wrote first in it.
+      this.#turn ??= { origin: undefined, reply: new TurnReply() }
+      this.#turn.origin ??= origin
       return
     }
-    if (this.#turn === undefined || !this.#turn.reply.add(event)) return
+    // A turn already going when the mirror started following: its reply goes out all the same.
+    this.#turn ??= { origin: undefined, reply: new TurnReply() }
+    if (!this.#turn.reply.add(event)) return
     const { origin, reply } = this.#turn
     this.#turn = undefined
     this.#reply(reply.reply, origin)

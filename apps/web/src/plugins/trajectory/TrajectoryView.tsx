@@ -4,6 +4,7 @@
  * framework-free projection in @adg/trajectory.
  */
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useFollowTail } from '../../components/useFollowTail.ts'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   activeIn, buildTrajectory, formatDuration, formatTokens, searchRecords,
@@ -41,7 +42,8 @@ export function TrajectoryView({ session, state }: SessionViewProps) {
   const visibleRecords = useMemo(() => rows.flatMap(r => (r.type === 'record' ? [r.record] : [])), [rows])
 
   const scroller = useRef<HTMLDivElement>(null)
-  const stick = useRef(true)
+  const tail = useFollowTail(STICK_THRESHOLD)
+  const stick = tail.following
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
@@ -55,11 +57,6 @@ export function TrajectoryView({ session, state }: SessionViewProps) {
     if (stick.current && rows.length > 0) virtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
   }, [rows.length, state.version, virtualizer])
 
-  const onScroll = () => {
-    const el = scroller.current
-    if (el === null) return
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
-  }
 
   // Bring a record selected from the overview into view.
   useEffect(() => {
@@ -114,7 +111,7 @@ export function TrajectoryView({ session, state }: SessionViewProps) {
       )}
 
       <div className="traj-main">
-        <div className="ledger" ref={scroller} onScroll={onScroll} tabIndex={0} onKeyDown={onKeyDown} role="grid" aria-label="轨迹事件表">
+        <div className="ledger" ref={scroller} onScroll={tail.onScroll} onWheel={tail.onWheel} tabIndex={0} onKeyDown={onKeyDown} role="grid" aria-label="轨迹事件表">
           <div className="ledger-head" role="row">
             <span /><span>类型</span><span>内容</span>
             <span className="num">输入</span><span className="num">输出</span><span className="num">思考</span>

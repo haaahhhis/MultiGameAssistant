@@ -86,3 +86,35 @@ export function parseRelay(text: string): RelayNote | undefined {
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').replace(/[（）]/g, m => (m === '（' ? '(' : ')')).trim()
 }
+
+/**
+ * A reminder 助手 set for itself (dsh's schedule_create), as dsh delivers it
+ * when due: `[SCHEDULE REMINDER]` with one prompt, or a batch of recurring
+ * ones. @returns what each was for, in order; undefined for any other message.
+ */
+export function reminderPrompts(text: string): string[] | undefined {
+  const single = /^\[SCHEDULE REMINDER\]\n[\s\S]*?^reminder_prompt_json: (.*)$/m.exec(text)
+  if (single !== null) return [jsonString(single[1]!)]
+  const batch = /^\[SCHEDULE REMINDER BATCH\]\n[\s\S]*?^reminders_json: (.*)$/m.exec(text)
+  if (batch === null) return undefined
+  try {
+    const items = JSON.parse(batch[1]!) as { reminder_prompt?: unknown }[]
+    return items.map(item => String(item.reminder_prompt ?? '')).filter(p => p !== '')
+  } catch {
+    return []
+  }
+}
+
+/** A reminder's line, the same in the app and the chat apps. */
+export function reminderLine(prompts: readonly string[]): string {
+  return prompts.length === 0 ? '定时提醒' : `定时提醒：${prompts.map(p => oneLine(p)).join('；')}`
+}
+
+function jsonString(json: string): string {
+  try {
+    const value = JSON.parse(json) as unknown
+    return typeof value === 'string' ? value : json
+  } catch {
+    return json
+  }
+}

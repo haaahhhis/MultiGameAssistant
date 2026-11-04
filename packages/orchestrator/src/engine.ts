@@ -55,6 +55,8 @@ interface Active {
   cancelReason?: string
   /** `user`: cancelled; `failure`: stopped because a node failed (the run counts as failed). */
   cancelKind?: 'user' | 'failure'
+  /** Ending: closing the game or emulator before it says how it ended. */
+  finishing?: boolean
   pumping: boolean
   again: boolean
   retryWaiting: boolean
@@ -371,12 +373,37 @@ export class Engine {
       if (state.state !== 'running') continue
       for (const runId of state.runIds) void this.#deps.runner.stop(runId, `流水线「${active.pipeline.name}」${reason}`).catch(() => {})
     }
+    // Called off by the person: say at once that it is stopping, and what it is closing.
+    if (kind === 'user') this.#emit(active)
     this.#pump(active)
+  }
+
+  /** While a called-off run closes the steps still going: which. */
+  #stoppingText(active: Active): string {
+    const going = active.pipeline.nodes.filter(n => active.run.nodes[n.id]?.state === 'running').map(n => `「${nodeLabel(n, this.#deps.library)}」`)
+    return going.length === 0 ? '正在收尾…' : `正在结束${going.join('、')}的进程…`
   }
 
   async #finish(active: Active): Promise<void> {
     const { run, pipeline } = active
-    if (run.state !== 'running') return
+    if (run.state !== 'running' || active.finishing === true) return
+    active.finishing = true
+    // Called off: still stopping while it closes what the run opened, and saying so.
+    const closeGames = pipeline.closeGameAfter
+    const closeEmulator = pipeline.stopEmulatorAfter && active.usedEmulator
+    if (active.cancelKind === 'user') {
+      if (closeGames) {
+        run.stopping = '正在关闭游戏…'
+        this.#emit(active)
+        await this.#closeGames(active)
+      }
+      if (closeEmulator) {
+        run.stopping = '正在关闭模拟器…'
+        this.#emit(active)
+        await this.#deps.emulators()?.stop().catch(error => this.#deps.log.warn(`stopping the emulator failed: ${message(error)}`))
+      }
+    }
+    delete run.stopping
     const states = pipeline.nodes.filter(n => !isMarker(n) && !active.passed.has(n.id)).map(n => run.nodes[n.id]!.state)
     const count = (s: NodeRun['state']) => states.filter(x => x === s).length
     run.state = active.cancelKind === 'user' ? 'cancelled' : count('failed') > 0 ? 'failed' : 'succeeded'
@@ -390,9 +417,9 @@ export class Engine {
     run.endedAt = this.#now()
     this.#active.delete(run.id)
     this.#deps.log.info(`pipeline run ${run.id} ${run.state}: ${run.outcome}`)
-    if (pipeline.closeGameAfter) await this.#closeGames(active)
-    if (pipeline.stopEmulatorAfter && active.usedEmulator) {
-      await this.#deps.emulators()?.stop().catch(error => this.#deps.log.warn(`stopping the emulator failed: ${message(error)}`))
+    if (active.cancelKind !== 'user') {
+      if (closeGames) await this.#closeGames(active)
+      if (closeEmulator) await this.#deps.emulators()?.stop().catch(error => this.#deps.log.warn(`stopping the emulator failed: ${message(error)}`))
     }
     this.#emit(active)
     if (UNATTENDED.has(run.trigger.kind)) {
@@ -445,6 +472,7 @@ export class Engine {
   }
 
   #emit(active: Active): void {
+    if (active.cancelKind === 'user' && active.finishing !== true && active.run.state === 'running') active.run.stopping = this.#stoppingText(active)
     this.#deps.onRun(structuredClone(active.run))
   }
 }

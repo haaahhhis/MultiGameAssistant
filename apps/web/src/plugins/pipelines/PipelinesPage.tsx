@@ -95,6 +95,8 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
   const isNew = pipeline !== null && list !== null && list.every(p => p.id !== pipeline.id)
   const run = runs.find(r => r.id === (shownRun ?? runs[0]?.id))
   const activeRun = runs.find(r => r.state === 'running')
+  // Called off: from the click until it has closed what it started, the button says so.
+  const stopping = activeRun !== undefined && (activeRun.stopping !== undefined || busy === 'cancel')
 
   // A changed pipeline is checked again shortly after the change.
   useEffect(() => {
@@ -165,12 +167,20 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
                 {pipeline.draft === true && <span className="badge warn" title="agent 生成的草稿：保存后才会按定时运行">agent 草稿</span>}
                 {dirty && <span className="muted small">未保存</span>}
                 <span className="spacer" />
-                {activeRun !== undefined
+                {stopping
+                  ? <button className="danger-outline small-button stopping" disabled aria-busy="true"><span className="tool-spinner" aria-hidden />正在停止…</button>
+                  : activeRun !== undefined
                   ? <button className="danger-outline small-button" disabled={busy !== null} onClick={() => void act('cancel', () => client.connection.call('pipelines/cancel', { runId: activeRun.id }))}>取消运行</button>
-                  : <button className="small-button" disabled={busy !== null || !pipeline.nodes.some(n => !isMarker(n)) || check?.ok === false} onClick={() => void runNow()}><Icon name="arrow" />运行</button>}
+                  :<button className="small-button" disabled={busy !== null || !pipeline.nodes.some(n => !isMarker(n)) || check?.ok === false} onClick={() => void runNow()}><Icon name="arrow" />运行</button>}
                 <button className="primary small-button" disabled={busy !== null || (!dirty && !isNew && pipeline.draft !== true)} onClick={() => void save()}>{busy === 'save' ? '保存中…' : pipeline.draft === true && !dirty ? '确认并保存' : '保存'}</button>
                 <button className="small-button" disabled={busy !== null || activeRun !== undefined} onClick={() => { if (confirm(`删除流水线「${pipeline.name}」？`)) void remove() }}>删除</button>
               </div>
+              {stopping && (
+                <div className="notice info left small pipeline-stopping" role="status">
+                  <span className="tool-spinner" aria-hidden />
+                  <span>已收到停止指令。{activeRun.stopping ?? '正在通知正在运行的步骤…'}</span>
+                </div>
+              )}
               {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
               <PipelineEditor key={pipeline.id} client={client} pipeline={pipeline} onChange={update} run={run} check={check}
                 runFrom={activeRun !== undefined || busy !== null || check?.ok === false ? undefined : nodeId => void runNow(nodeId)}

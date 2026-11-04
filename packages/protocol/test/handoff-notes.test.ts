@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, relayMessage, taskMessage } from '../src/handoff-notes.ts'
+import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, relayMessage, reminderLine, reminderPrompts, taskMessage } from '../src/handoff-notes.ts'
 
 test('work handed to an agent says who asked and what, and reads back the same', () => {
   const text = taskMessage('监控', 'MAA · 日常：出错', '先截图看看\n再决定', true)
@@ -28,4 +28,13 @@ test('助手 may leave the person out of a reply that came back by answering onl
   assert.match(relayMessage({ agent: '游戏', asker: '你', title: 'x', ok: true, reply: 'y' }), new RegExp(QUIET))
   assert.equal(isQuiet(`${QUIET}。`), true)
   assert.equal(isQuiet(`${QUIET}，不过活动快结束了`), false)
+})
+
+test('a reminder 助手 set, as dsh delivers it, reads as what it was for; a batch of recurring ones too', () => {
+  const one = ['[SCHEDULE REMINDER]', 'This is a scheduled message from the user', 'schedule_id_json: "schedule-1"', 'occurrence_at: 2026-11-05T00:36:37Z', `reminder_prompt_json: ${JSON.stringify('提醒主人\n看活动')}`].join('\n')
+  assert.deepEqual(reminderPrompts(one), ['提醒主人\n看活动'])
+  assert.equal(reminderLine(reminderPrompts(one)!), '定时提醒：提醒主人 看活动')
+  const batch = ['[SCHEDULE REMINDER BATCH]', 'This is a scheduled message from the user', `reminders_json: ${JSON.stringify([{ schedule_id: 'a', occurrence_at: 'x', reminder_prompt: '喝水' }, { schedule_id: 'b', occurrence_at: 'x', reminder_prompt: '看日报' }])}`].join('\n')
+  assert.equal(reminderLine(reminderPrompts(batch)!), '定时提醒：喝水；看日报')
+  assert.equal(reminderPrompts('你好'), undefined)
 })

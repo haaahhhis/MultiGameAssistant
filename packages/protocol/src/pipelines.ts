@@ -189,6 +189,8 @@ export const PipelineRun = z.object({
   /** Started from this node: it and what follows ran, the rest was passed over. */
   from: z.string().optional(),
   state: z.enum(['running', 'succeeded', 'failed', 'cancelled']),
+  /** Being called off, while it closes what it started: what is being closed now, for people (正在结束「MAA · 日常」…). */
+  stopping: z.string().optional(),
   nodes: z.record(z.string(), NodeRun),
   startedAt: z.number(),
   endedAt: z.number().optional(),

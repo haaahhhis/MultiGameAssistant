@@ -206,6 +206,27 @@ export const HandOff = z.object({
 })
 export type HandOff = z.infer<typeof HandOff>
 
+/**
+ * A reminder an agent set for itself in its conversation (dsh's
+ * schedule_create): when due, it arrives there as a message and the agent
+ * acts on it. Shown with the agent's timed tasks (定时).
+ */
+export const AgentReminder = z.object({
+  id: z.string(),
+  /** The agent whose conversation it is in (role id; `main`: 助手). */
+  agent: z.string(),
+  sessionId: z.string(),
+  title: z.string(),
+  /** What the agent is to do when it comes. */
+  prompt: z.string(),
+  /** When, in words: 一次 / 每天 09:00 / 每周一、三 09:00 / 每 2 小时 / cron …. */
+  rule: z.string(),
+  repeats: z.boolean(),
+  /** Next time it comes (epoch ms). */
+  next: z.number(),
+})
+export type AgentReminder = z.infer<typeof AgentReminder>
+
 export const ModelCatalog = z.object({
   default: ModelSelection,
   groups: z.array(z.object({
@@ -363,6 +384,17 @@ export const Requests = {
     capability: AGENTS_CAPABILITY,
     params: z.object({ id: z.string() }),
     result: HandOff,
+  },
+  /** Reminders the agents set for themselves, soonest first; `agent`: one agent's. */
+  'reminders/list': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ agent: z.string().optional() }),
+    result: z.object({ items: z.array(AgentReminder) }),
+  },
+  'reminders/remove': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ id: z.string() }),
+    result: z.object({}),
   },
   'sessions/rename': {
     capability: 'sessions',
@@ -631,6 +663,8 @@ export const Notifications = {
   'roles/changed': z.object({ items: z.array(Role) }),
   /** A hand-off started or ended. */
   'handoffs/changed': z.object({ item: HandOff }),
+  /** A reminder was set, came, or was removed. */
+  'reminders/changed': z.object({}),
   /** Provider routes or their models changed; re-read `providers/list` and `models/catalog`. */
   'providers/changed': z.object({}),
   /** A session's model selection changed. */

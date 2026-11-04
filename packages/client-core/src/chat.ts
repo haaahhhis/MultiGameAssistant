@@ -2,7 +2,7 @@
  * Chat view model: the transcript a conversation UI renders, derived purely
  * from protocol events, the streaming attempt, and local prompt echoes.
  */
-import type { ContentPart, SessionEvent } from '@adg/protocol'
+import { reminderLine, reminderPrompts, type ContentPart, type SessionEvent } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
 import type { PendingPrompt } from './session.ts'
 
@@ -37,6 +37,8 @@ export type ChatItem =
     readonly title: string
     readonly summary: string
     readonly text: string
+    /** A reminder 助手 set for itself coming due: what follows is a turn of its own, as after a person's message. */
+    readonly startsTurn?: boolean
   }
   | {
     readonly kind: 'assistant'
@@ -107,6 +109,8 @@ export function buildChat(
             imageRefs: imagesOf(event.content),
             files: event.content.filter(p => p.type === 'file').length,
           })
+        } else if (reminderPrompts(text) !== undefined) {
+          items.push({ kind: 'context', id: `c:${event.seq}`, title: '定时提醒', summary: reminderLine(reminderPrompts(text)!), text, startsTurn: true })
         } else if (event.replacesHistory === true) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: '较早的对话已压缩成摘要（agent 只记得摘要里的内容）', summary: '', text })
         } else if (event.origin.summary !== undefined) {

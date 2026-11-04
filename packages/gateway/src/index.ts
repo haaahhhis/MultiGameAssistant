@@ -33,7 +33,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { skillSaveTool, userSkills } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -46,6 +46,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
 import { AgentHomes, HandOffs } from './homes.ts'
+import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
 import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { roleOf, TOOL_GROUPS, UserAgents } from './user-agents.ts'
@@ -614,8 +615,23 @@ export class AdgGateway extends Service {
           if (item === undefined) throw new RpcError(ErrorCode.InvalidParams, '没有这次交接（可能太久以前，已经清掉了）')
           return item
         },
+        'reminders/list': async params => {
+          const { agent } = params as RequestParams<'reminders/list'>
+          const items = await this.reminders()
+          return { items: agent === undefined ? items : items.filter(r => r.agent === agent) }
+        },
+        'reminders/remove': async params => {
+          const { id } = params as RequestParams<'reminders/remove'>
+          const schedule = this.schedule()
+          const entry = (await schedule?.catalog())?.find(e => e.id === id)
+          if (schedule === undefined || entry === undefined) throw new RpcError(ErrorCode.InvalidParams, '没有这个提醒（可能已经到点或删掉了）')
+          await schedule.delete({ sessionId: entry.sessionId, id })
+          return {}
+        },
       },
     }), 'adg-gateway capability agents')
+    // A reminder set, come or removed (dsh's schedule service): the 定时 tab reads them again.
+    ctx.on('schedule/changed' as never, (() => this.broadcast('reminders/changed', {})) as never)
 
     // Archived sessions (dsh's workspace registry keeps the set; its own page shares it).
     ctx.inject(['workspaceController'], scoped => {
@@ -982,6 +998,17 @@ Content-Length: 0
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
     this.narrowed.set(agent, { spec, dispose: () => { for (const dispose of disposers) dispose() } })
+  }
+
+  /** dsh's schedule service (schedule_create's reminders), when loaded. */
+  schedule(): ScheduleService | undefined {
+    return (this.ctx.get as (name: string) => unknown)('schedule') as ScheduleService | undefined
+  }
+
+  /** The reminders the agents set for themselves, soonest first (reminders.ts). */
+  async reminders(): Promise<AgentReminder[]> {
+    const entries = await this.schedule()?.catalog().catch(() => []) ?? []
+    return remindersOf(entries, sessionId => this.homes.agentOf(sessionId) ?? this.roles.of(sessionId, undefined) ?? MAIN_AGENT.id)
   }
 
   /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */

@@ -31,6 +31,8 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** The script's own settings window, open to change a profile by hand. */
+  const [editing, setEditing] = useState<{ runId: string; profile: string; finishing: 'done' | 'discard' | null } | null>(null)
 
   // The profile shown: the one picked, else the current one (and back to it when the picked one is gone).
   const shown = profiles?.items.find(p => p.id === selected) ?? profiles?.items.find(p => p.id === profiles.current)
@@ -38,8 +40,26 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
 
   // A finished settings session or run may have changed the local copy.
   useEffect(() => client.connection.on('runs/state', run => {
-    if (run.scriptId === script.id && run.endedAt !== undefined) setRevision(r => r + 1)
+    if (run.scriptId !== script.id || run.endedAt === undefined) return
+    setRevision(r => r + 1)
+    setEditing(open => {
+      if (open === null || open.runId !== run.id) return open
+      setNote(run.state === 'succeeded' ? `修改已同步到「${open.profile}」` : run.state === 'cancelled' ? '已放弃这次修改，本地配置没变' : `没能保存修改：${run.outcome ?? '脚本窗口异常退出'}`)
+      return null
+    })
   }), [client, script.id])
+
+  const finishEditing = async (how: 'done' | 'discard') => {
+    if (editing === null) return
+    setEditing({ ...editing, finishing: how })
+    try {
+      if (how === 'done') await client.connection.call('configs/done', { runId: editing.runId })
+      else await client.connection.call('runs/stop', { runId: editing.runId })
+    } catch (e) {
+      setError(errorText(e))
+      setEditing(null)
+    }
+  }
   useEffect(() => {
     if (status.state !== 'open' || shown === undefined) return
     let live = true
@@ -75,9 +95,10 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
           <h3>配置</h3>
           <p className="muted small">通过本应用运行时，用的是本地保存的配置；原项目里的配置不会被改动，你自己打开脚本时仍是它原来的设置。可以存几份（比如两个账号），运行和编排时选用哪一份。</p>
         </div>
-        <button className="small-button" disabled={busy || status.state !== 'open' || shown === undefined} onClick={() => void act(async () => {
-          await client.connection.call('configs/open', { scriptId: script.id, profile: shown!.id })
-          return `已打开脚本的设置界面：改好后关掉窗口，设置会存到「${shown!.name}」`
+        <button className="small-button" disabled={busy || editing !== null || status.state !== 'open' || shown === undefined} onClick={() => void act(async () => {
+          const run = await client.connection.call('configs/open', { scriptId: script.id, profile: shown!.id })
+          if (run.endedAt === undefined) setEditing({ runId: run.id, profile: shown!.name, finishing: null })
+          else if (run.state !== 'succeeded') throw new Error(run.outcome ?? '没能打开脚本的设置界面')
         })}><Icon name="settings" />打开脚本修改设置</button>
       </div>
 
@@ -200,6 +221,23 @@ export function ConfigCard({ client, script }: { client: AdgClient; script: Scri
         </>
       )}
       {note !== null && <div className="notice info left small">{note}</div>}
+      {editing !== null && (
+        <div className="dialog-backdrop">
+          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="config-edit-title">
+            <h3 id="config-edit-title"><Icon name="settings" />正在用脚本自己的界面修改设置</h3>
+            <p>{script.name} 的设置窗口已经打开，用的是本地配置「{editing.profile}」。在那个窗口里改好、保存后，回到这里点「我已手动改好」：脚本窗口会关闭，修改同步到「{editing.profile}」，之后的运行和编排都用它。</p>
+            <p className="muted small">直接关掉脚本窗口也会保存。原项目里的配置不会被改动。</p>
+            {editing.finishing !== null && (
+              <p className="dialog-progress"><span className="tool-spinner" aria-hidden />{editing.finishing === 'done' ? '正在关闭脚本窗口并保存修改…' : '正在关闭脚本窗口，不保存…'}</p>
+            )}
+            <div className="key-actions">
+              <button className="small-button" disabled={editing.finishing !== null} onClick={() => void finishEditing('discard')}>放弃修改</button>
+              <span className="spacer" />
+              <button className="primary small-button" disabled={editing.finishing !== null} onClick={() => void finishEditing('done')}>{editing.finishing === 'done' ? '保存中…' : '我已手动改好'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </section>
   )

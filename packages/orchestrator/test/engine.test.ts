@@ -199,9 +199,9 @@ test('a run the monitor restarts is followed to its replacement', async () => {
   engine.dispose()
 })
 
-test('cancel stops what is running; agent and wait nodes work', async () => {
+test('cancel stops what is running, saying at once what it is closing; agent and wait nodes work', async () => {
   const slow = script('slow', 'none', { t: ok(30_000) })
-  const { runner, engine } = setup([slow])
+  const { runner, engine, runs } = setup([slow])
   const p = pipeline({
     nodes: [{ id: 'ask', kind: 'agent', prompt: '活动还剩几天' }, { id: 'w', kind: 'wait', minutes: 1 }, { id: 's', kind: 'script-task', scriptId: 'slow', taskId: 't' }],
     edges: [{ from: 'ask', to: 's' }],
@@ -210,8 +210,12 @@ test('cancel stops what is running; agent and wait nodes work', async () => {
   for (let i = 0; i < 50 && engine.active()[0]?.nodes['s']?.state !== 'running'; i++) await delay(50)
   assert.throws(() => engine.start(p, { kind: 'manual' }), /正在运行/)
   engine.cancel(started.id, '用户取消')
+  const stopping = runs.at(-1)!
+  assert.equal(stopping.state, 'running', 'still closing what it started')
+  assert.match(stopping.stopping ?? '', /^正在结束「.*」的进程…$/)
   const run = await engine.finished(started.id)
   assert.equal(run.state, 'cancelled')
+  assert.equal(run.stopping, undefined, 'done stopping')
   assert.match(run.nodes['ask']!.detail ?? '', /^agent 看了：活动还剩几天\n\n（这是编排里的自动步骤.*不要用 ask_user_question 提问/, 'the agent is told nobody may be there to answer')
   assert.equal(run.nodes['w']!.state, 'cancelled')
   assert.equal(runner.get(run.nodes['s']!.runIds[0]!).state, 'cancelled')

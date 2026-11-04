@@ -224,6 +224,16 @@ export const RunRequests = {
     params: z.object({ scriptId: ScriptId, profile: ProfileRef.optional() }),
     result: RunInfo,
   },
+  /**
+   * Done changing settings in the script's window opened by `configs/open`
+   * (「我已手动改好」): the window closes and what the script wrote is saved
+   * to the local copy. Stopping the run instead (`runs/stop`) discards it.
+   */
+  'configs/done': {
+    capability: RUNS_CAPABILITY,
+    params: z.object({ runId: z.string() }),
+    result: z.object({}),
+  },
   /** Make a new choice for a parameter (e.g. an MXU instance copied from an existing one) in the local config. */
   'runs/choices/create': {
     capability: RUNS_CAPABILITY,

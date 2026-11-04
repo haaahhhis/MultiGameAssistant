@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { PipelineSchedule, PipelineSummary, RequestResult } from '@adg/protocol'
+import type { AgentReminder, PipelineSchedule, PipelineSummary, RequestResult } from '@adg/protocol'
 import { MAIN, MAIN_AGENT, agentOf, useRoles, type Agent } from '../agents.ts'
 import { useNow, useStore } from '../hooks.ts'
 import { errorText } from '../plugins/scripts/data.ts'
@@ -12,6 +12,8 @@ import { relativeTime } from './SessionList.tsx'
  * handed one piece of work in plain words. Each agent keeps its own on its
  * 定时 tab (`AgentSchedule`); 「定时任务」 in the roster shows every agent's
  * together, with the pipelines that run on a timetable (`ScheduleOverview`).
+ * The reminders an agent set for itself in its conversation (schedule_create,
+ * `reminders/list`) are listed with them.
  */
 
 type Task = RequestResult<'tasks/list'>['items'][number]
@@ -58,6 +60,22 @@ function useTasks(client: AdgClient, agent?: string): { items: readonly Task[] |
     return () => { live = false }
   }, [client, agent, status.state, revision])
   return state
+}
+
+/** Reminders the agents set for themselves (`reminders/list`), all or one agent's, kept current. */
+function useReminders(client: AdgClient, agent?: string): readonly AgentReminder[] {
+  const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  const [revision, setRevision] = useState(0)
+  const [items, setItems] = useState<readonly AgentReminder[]>([])
+  useEffect(() => client.connection.on('reminders/changed', () => setRevision(r => r + 1)), [client])
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('agents')) return
+    let live = true
+    client.connection.call('reminders/list', agent === undefined ? {} : { agent }).then(r => { if (live) setItems(r.items) }).catch(() => {})
+    return () => { live = false }
+  }, [client, agent, status.state, capabilities, revision])
+  return items
 }
 
 /** Pipelines (`pipelines/list`), for the ones on a timetable. */
@@ -114,6 +132,7 @@ export function AgentSchedule({ client, agentId }: { client: AdgClient; agentId:
   const agents = useAgents(client)
   const agent = agents.find(a => a.id === agentId) ?? MAIN
   const { items, error } = useTasks(client, agentId)
+  const reminders = useReminders(client, agentId)
   const pipelines = usePipelines(client)
   const report = useDailyReport(client)
   const now = useNow(30_000)
@@ -132,10 +151,17 @@ export function AgentSchedule({ client, agentId }: { client: AdgClient; agentId:
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
         {editing === 'new' && <TaskForm client={client} agents={agents} task={{ agent: agentId }} onDone={() => setEditing(null)} />}
         {agentId === 'games' && report !== null && <DailyReportLine report={report} now={now} />}
-        {items !== null && items.length === 0 && editing === null && <div className="empty-card muted">{agent.name}还没有定时任务。</div>}
+        {items !== null && items.length === 0 && reminders.length === 0 && editing === null && <div className="empty-card muted">{agent.name}还没有定时任务。</div>}
         {items?.map(task => editing !== 'new' && editing?.id === task.id
           ? <TaskForm key={task.id} client={client} agents={agents} task={task} onDone={() => setEditing(null)} />
           : <TaskCard key={task.id} client={client} task={task} now={now} onEdit={() => setEditing(task)} />)}
+        {reminders.length > 0 && (
+          <section className="schedule-group">
+            <h3>{agent.name}在对话里设的提醒</h3>
+            <p className="muted small">你在对话里让它「几点提醒我…」时它自己设的。到点后它在对话里接着做，回复也会同步到飞书和 QQ。</p>
+            {reminders.map(r => <ReminderCard key={r.id} client={client} reminder={r} now={now} />)}
+          </section>
+        )}
         {agentId === 'pipelines' && (
           <section className="schedule-group">
             <h3>按时运行的流水线</h3>
@@ -152,6 +178,7 @@ export function AgentSchedule({ client, agentId }: { client: AdgClient; agentId:
 export function ScheduleOverview({ client, onAgent }: { client: AdgClient; onAgent: (agentId: string) => void }) {
   const agents = useAgents(client)
   const { items, error } = useTasks(client)
+  const reminders = useReminders(client)
   const pipelines = usePipelines(client)
   const report = useDailyReport(client)
   const now = useNow(30_000)
@@ -162,7 +189,8 @@ export function ScheduleOverview({ client, onAgent }: { client: AdgClient; onAge
     ...(report === null ? [] : [{ key: 'daily-report', agent: gamesAgent, title: '每日日报', at: nextAt(report.schedule, now) }]),
     ...(items ?? []).map(t => ({ key: t.id, agent: agents.find(a => a.id === t.agent), title: t.title, at: nextAt(t.schedule, now) })),
     ...pipelines.filter(p => p.draft !== true).map(p => ({ key: p.id, agent: pipelinesAgent, title: `流水线「${p.name}」`, at: nextAt(p.schedule, now) })),
-  ].filter((c): c is typeof c & { at: number } => c.at !== undefined).sort((a, b) => a.at - b.at).slice(0, 8), [items, pipelines, agents, pipelinesAgent, gamesAgent, report, now])
+    ...reminders.map(r => ({ key: r.id, agent: agents.find(a => a.id === r.agent), title: `提醒：${r.title}`, at: r.next as number | undefined })),
+  ].filter((c): c is typeof c & { at: number } => c.at !== undefined).sort((a, b) => a.at - b.at).slice(0, 8), [items, reminders, pipelines, agents, pipelinesAgent, gamesAgent, report, now])
   return (
     <section className="main scripts-page agent-schedule">
       <header className="page-header">
@@ -191,20 +219,22 @@ export function ScheduleOverview({ client, onAgent }: { client: AdgClient; onAge
         </section>
         {agents.map(agent => {
           const mine = (items ?? []).filter(t => t.agent === agent.id)
+          const own = reminders.filter(r => r.agent === agent.id)
           const timed = agent.id === 'pipelines' ? pipelines.filter(p => p.schedule.enabled && p.draft !== true) : []
           const daily = agent.id === 'games' && report?.schedule.enabled === true ? report : null
-          if (mine.length === 0 && timed.length === 0 && daily === null) return null
+          if (mine.length === 0 && own.length === 0 && timed.length === 0 && daily === null) return null
           return (
             <section key={agent.id} className="schedule-group">
               <h3 className="schedule-agent">
                 <span className={`agent-avatar small agent-${agent.id}`}><Icon name={agent.icon} /></span>
                 {agent.name}
-                <span className="tab-count">{mine.length + timed.length + (daily === null ? 0 : 1)}</span>
+                <span className="tab-count">{mine.length + own.length + timed.length + (daily === null ? 0 : 1)}</span>
                 <span className="spacer" />
                 <button className="link-button" onClick={() => onAgent(agent.id)}>管理</button>
               </h3>
               {daily !== null && <DailyReportLine report={daily} now={now} />}
               {mine.map(task => <TaskCard key={task.id} client={client} task={task} now={now} />)}
+              {own.map(r => <ReminderCard key={r.id} client={client} reminder={r} now={now} />)}
               {timed.map(p => <PipelineLine key={p.id} pipeline={p} now={now} />)}
             </section>
           )
@@ -224,6 +254,37 @@ function PipelineLine({ pipeline, now }: { pipeline: PipelineSummary; now: numbe
       <Icon name="chevron" />
     </a>
   )
+}
+
+/** A reminder the agent set for itself: when, what for; it can be removed (not edited: ask the agent). */
+function ReminderCard({ client, reminder, now }: { client: AdgClient; reminder: AgentReminder; now: number }) {
+  const [error, setError] = useState<string | null>(null)
+  const remove = () => {
+    if (!confirm(`删除提醒「${reminder.title}」？`)) return
+    setError(null)
+    client.connection.call('reminders/remove', { id: reminder.id }).catch(e => setError(errorText(e)))
+  }
+  return (
+    <div className="task-card reminder-card">
+      <div className="task-card-head">
+        <Icon name="calendar" />
+        <span className="task-title">{reminder.title}</span>
+        <span className="muted small">{reminder.rule === '一次' ? '' : `${reminder.rule} · `}{reminder.repeats ? '下次 ' : ''}{clock(reminder.next)}{reminder.next > now ? `（${until(reminder.next - now)}后）` : ''}</span>
+        <span className="spacer" />
+        <button className="icon-button" onClick={remove} title="删除这个提醒" aria-label="删除"><Icon name="close" /></button>
+      </div>
+      <div className="task-prompt">{reminder.prompt}</div>
+      {error !== null && <div className="error small">{error}</div>}
+    </div>
+  )
+}
+
+/** How long until, roughly: 3 分钟 / 5 小时 / 7 天. */
+function until(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000))
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.round(minutes / 60)
+  return hours < 48 ? `${hours} 小时` : `${Math.round(hours / 24)} 天`
 }
 
 function TaskCard({ client, task, now, onEdit }: { client: AdgClient; task: Task; now: number; onEdit?: () => void }) {

@@ -1,4 +1,5 @@
-import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
+import { useFollowTail } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { isQuiet, parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
@@ -43,13 +44,12 @@ export function ChatView({ client, session, state }: SessionViewProps) {
   const handOffs = useHandOffs(client, session.id)
   const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && h.state === 'running')
   const scroller = useRef<HTMLDivElement>(null)
-  const stick = useRef(true)
+  const tail = useFollowTail(STICK_THRESHOLD)
+  const stick = tail.following
 
-  const onScroll = () => {
-    const el = scroller.current
-    if (el === null) return
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
-    if (el.scrollTop < 40 && state.hasMore && !state.loadingOlder) void session.loadOlder()
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    tail.onScroll(event)
+    if (event.currentTarget.scrollTop < 40 && state.hasMore && !state.loadingOlder) void session.loadOlder()
   }
 
   useLayoutEffect(() => {
@@ -70,7 +70,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
   return (
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
-    <div className="chat" ref={scroller} onScroll={onScroll}>
+    <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
       <div className="chat-inner">
         {state.hasMore && (
           <button className="link-button load-older" disabled={state.loadingOlder} onClick={() => void session.loadOlder()}>
@@ -103,7 +103,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
 }
 
 /**
- * Lay out the chat by turns (each starts at a user message): the steps an
+ * Lay out the chat by turns (each starts at a user message, or a reminder 助手 set coming due): the steps an
  * agent took before its reply — tool calls and what it said between them —
  * fold into one `process` row, so the reply leads. Still on view: a step
  * waiting for your approval, work handed to another agent, notices, and a
@@ -114,12 +114,16 @@ function groupRows(items: readonly ChatItem[]): Row[] {
   const rows: Row[] = []
   let start = 0
   for (let i = 0; i <= items.length; i++) {
-    if (i < items.length && items[i]!.kind !== 'user') continue
+    if (i < items.length && !startsTurn(items[i]!)) continue
     turnRows(items.slice(start, i), rows)
     if (i < items.length) rows.push({ kind: 'item', item: items[i]!, header: null })
     start = i + 1
   }
   return rows
+}
+
+function startsTurn(item: ChatItem): boolean {
+  return item.kind === 'user' || (item.kind === 'context' && item.startsTurn === true)
 }
 
 function turnRows(turn: readonly ChatItem[], rows: Row[]): void {

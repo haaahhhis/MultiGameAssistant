@@ -63,6 +63,24 @@ test('messages between 助手 and the other agents are lines; a reply with nothi
   ])
 })
 
+test('every reply 助手 gives goes out, whatever started the turn: a reminder it set itself, or a turn already going', () => {
+  const fromFeishu = `${channelNote('feishu')}\n提醒我一下`
+  const { mirror, posts } = setup({ [fromFeishu]: zhang })
+  // Mid-turn when the mirror starts following: no start seen.
+  for (const event of [answer('刚才那件事做完了'), end]) mirror.event(event)
+  // A reminder 助手 set (dsh's schedule): its text is for the model; its reply is for everyone.
+  for (const event of [said('[SCHEDULE REMINDER]\nreminder_prompt_json: "提醒主人看活动"', false), answer('主人，到点啦：记得看活动喵～'), end]) mirror.event(event)
+  // The time note comes first; the turn is still the Feishu person's.
+  for (const event of [said('Time sampled while preparing turn 3', false), said(fromFeishu), answer('好的'), end]) mirror.event(event)
+  assert.deepEqual(posts, [
+    { text: '刚才那件事做完了', markdown: true, except: undefined },
+    { text: '定时提醒：提醒主人看活动', markdown: false, except: undefined },
+    { text: '主人，到点啦：记得看活动喵～', markdown: true, except: undefined },
+    { text: '张三（飞书）：提醒我一下', markdown: false, except: 'ou_1' },
+    { text: '好的', markdown: true, except: 'ou_1' },
+  ])
+})
+
 /** A mirror that has started following 助手's conversation (`s-main`): its follow ends at once. */
 function setupWithHome() {
   const posts: { text: string }[] = []

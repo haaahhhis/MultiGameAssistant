@@ -94,6 +94,8 @@ interface ActiveRun {
   stopReason?: string
   /** Stopped on purpose, not to be restarted (`RunInfo.halted`). */
   halted?: boolean
+  /** A settings session the person finished (「我已手动改好」): what the script wrote is kept. */
+  keepEdits?: boolean
   doneSeen: boolean
   errorLine?: string
   controller: AbortController
@@ -530,7 +532,7 @@ export class Runner {
       if (mode === 'settings') {
         // Runs before the restore above (releases run in reverse).
         run.release.push(async () => {
-          if (run.stopRequested) {
+          if (run.stopRequested && run.keepEdits !== true) {
             this.#line(run, 'adg', '设置会话被停止：这次的修改没有保存到本地配置')
             return
           }
@@ -625,6 +627,34 @@ export class Runner {
       logs: { sources: [{ stdout: true, encoding: 'auto' }], rules: [] },
     }
     return this.start(scriptId, '__settings', {}, { manifest, mode: 'settings', profile })
+  }
+
+  /**
+   * The person is done changing settings in the script's own window
+   * (「我已手动改好」): the window is asked to close, so a script that saves on
+   * exit gets to; what is still open after a moment is ended; what the script
+   * wrote is kept in the local copy (unlike a plain stop).
+   * @throws Error when the run is not a settings session still open.
+   */
+  async finishSettings(runId: string, graceMs = 8_000): Promise<void> {
+    const run = this.#run(runId)
+    if (run.mode !== 'settings') throw new Error('这不是修改设置的会话')
+    if (run.info.endedAt !== undefined) return
+    run.keepEdits = true
+    run.stopReason ??= '已手动改好，修改已保存'
+    this.#line(run, 'adg', '已手动改好：关闭脚本窗口并保存修改…')
+    const child = run.child
+    if (child !== undefined && child.exitCode === null && child.pid !== undefined) {
+      // Closing the window (not ending the process) lets a GUI that saves on exit do so.
+      if (process.platform === 'win32') execFile('taskkill', ['/PID', String(child.pid), '/T'], { windowsHide: true }, () => {})
+      else child.kill('SIGTERM')
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, graceMs)
+        timer.unref?.()
+        child.once('exit', () => { clearTimeout(timer); resolve() })
+      })
+    }
+    if (run.info.endedAt === undefined) await this.stop(runId, run.stopReason)
   }
 
   /**
@@ -788,7 +818,8 @@ export class Runner {
         for (const tail of tails) await tail.stop().catch(() => {})
         if (code !== null) run.info.exitCode = code
         const outcome = run.mode === 'settings'
-          ? (run.stopRequested ? { state: 'cancelled' as const, reason: '设置会话已停止' } : { state: 'succeeded' as const, reason: '设置窗口已关闭' })
+          ? (run.keepEdits === true ? { state: 'succeeded' as const, reason: '已手动改好，修改已保存' }
+            : run.stopRequested ? { state: 'cancelled' as const, reason: '设置会话已停止' } : { state: 'succeeded' as const, reason: '设置窗口已关闭' })
           : judge(run, manifest.tasks.find(t => t.id === run.info.taskId)?.success ?? 'exit-code', code)
         await this.#finish(run, outcome.state, outcome.reason)
       })()

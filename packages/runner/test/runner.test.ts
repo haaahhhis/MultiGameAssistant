@@ -226,6 +226,29 @@ test('a settings session keeps what the script saved in the local copy; the next
   assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /RunDirectly/, 'task patches never leak into the local copy')
 })
 
+test('「我已手动改好」 closes a settings window that stays open and keeps what it wrote; a plain stop discards it', async () => {
+  const dir = scriptDir()
+  // A GUI that saves its settings, then stays open until it is closed.
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ steps: [{ writeFile: 'config/gui.json', content: '{"Configurations": {"Default": {"Stage": "1-7"}}}' }, { sleepMs: 60_000 }] }))
+  const { runner } = setup({ tool: dir }, bridge)
+  const written = async () => { for (let i = 0; i < 100 && !readFileSync(join(dir, 'config', 'gui.json'), 'utf8').includes('1-7'); i++) await delay(50) }
+
+  const kept = await runner.settings('tool')
+  await written()
+  await runner.finishSettings(kept.id, 300)
+  const done = await runner.finished(kept.id)
+  assert.equal(done.state, 'succeeded', done.outcome)
+  assert.match(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /1-7/)
+
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ steps: [{ writeFile: 'config/gui.json', content: '{"Configurations": {"Default": {"Stage": "9-9"}}}' }, { sleepMs: 60_000 }] }))
+  const dropped = await runner.settings('tool')
+  for (let i = 0; i < 100 && !readFileSync(join(dir, 'config', 'gui.json'), 'utf8').includes('9-9'); i++) await delay(50)
+  await runner.stop(dropped.id)
+  assert.equal((await runner.finished(dropped.id)).state, 'cancelled')
+  assert.doesNotMatch(readFileSync(join(runner.profiles.filesDir('tool'), 'config', 'gui.json'), 'utf8'), /9-9/)
+  await assert.rejects(runner.finishSettings((await runner.finished((await runner.start('tool', 'cli')).id)).id), /不是修改设置的会话/)
+})
+
 test('profiles: a run, a settings session and a retry use the profile named; without one, the current profile', async () => {
   const dir = scriptDir()
   const original = readFileSync(join(dir, 'config', 'gui.json'), 'utf8')

@@ -36,6 +36,12 @@
     "handoffs/get": {
       "capability": "agents"
     },
+    "reminders/list": {
+      "capability": "agents"
+    },
+    "reminders/remove": {
+      "capability": "agents"
+    },
     "sessions/rename": {
       "capability": "sessions"
     },
@@ -232,6 +238,9 @@
       "capability": "runs"
     },
     "configs/open": {
+      "capability": "runs"
+    },
+    "configs/done": {
       "capability": "runs"
     },
     "runs/choices/create": {
@@ -508,6 +517,7 @@
     "sessions/archived",
     "roles/changed",
     "handoffs/changed",
+    "reminders/changed",
     "providers/changed",
     "session/model",
     "scripts/changed",
@@ -2554,6 +2564,88 @@
         "state",
         "startedAt"
       ],
+      "additionalProperties": false
+    },
+    "reminders/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reminders/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string"
+              },
+              "repeats": {
+                "type": "boolean"
+              },
+              "next": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "agent",
+              "sessionId",
+              "title",
+              "prompt",
+              "rule",
+              "repeats",
+              "next"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "reminders/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "reminders/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
       "additionalProperties": false
     },
     "sessions/rename.params": {
@@ -11402,6 +11494,25 @@
       ],
       "additionalProperties": false
     },
+    "configs/done.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    },
+    "configs/done.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
     "runs/choices/create.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -17087,6 +17198,9 @@
             "cancelled"
           ]
         },
+        "stopping": {
+          "type": "string"
+        },
         "nodes": {
           "type": "object",
           "propertyNames": {
@@ -17244,6 +17358,9 @@
                   "failed",
                   "cancelled"
                 ]
+              },
+              "stopping": {
+                "type": "string"
               },
               "nodes": {
                 "type": "object",
@@ -22841,6 +22958,12 @@
       ],
       "additionalProperties": false
     },
+    "reminders/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
     "providers/changed.notification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -23482,6 +23605,9 @@
             "failed",
             "cancelled"
           ]
+        },
+        "stopping": {
+          "type": "string"
         },
         "nodes": {
           "type": "object",

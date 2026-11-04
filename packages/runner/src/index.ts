@@ -135,6 +135,10 @@ export class AdgRunner extends Service {
             const p = params as RequestParams<'configs/import'>
             return { imported: await importConfig(library, runner.profiles, p.scriptId, p.profile) }
           },
+          'configs/done': async params => {
+            await runner.finishSettings((params as RequestParams<'configs/done'>).runId)
+            return {}
+          },
           'configs/open': async params => {
             await scripts.ready
             const p = params as RequestParams<'configs/open'>
