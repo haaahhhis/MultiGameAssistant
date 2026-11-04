@@ -150,18 +150,56 @@ function pick(value: unknown): Selection | undefined {
   return undefined
 }
 
+/** One event of a conversation, as the gateway reads dsh's records. */
+export type ConversationEvent = NonNullable<ReturnType<typeof convertRecord>>
+
 /**
- * Read events until the turn our message started ends: what the agent said
- * and the steps it took, in order — consecutive tool calls form one group,
- * like the app's 「执行了 N 个步骤」.
+ * A turn's reply, built as its events come: what the agent said and the steps
+ * it took, in order — consecutive tool calls form one group, like the app's
+ * 「执行了 N 个步骤」.
  */
+export class TurnReply {
+  readonly #blocks: ReplyBlock[] = []
+  /** Where each call's step is: its group in `blocks` and its place there. */
+  readonly #where = new Map<string, { block: number; index: number }>()
+  #ended: string | undefined
+
+  /** @returns true once the turn has ended. */
+  add(event: ConversationEvent): boolean {
+    const blocks = this.#blocks
+    const steps = (i: number) => (blocks[i] as { kind: 'steps'; steps: ReplyStep[] }).steps
+    if (event.type === 'assistant/message') {
+      const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').trim()
+      if (said !== '') blocks.push({ kind: 'text', text: said })
+    } else if (event.type === 'tool/call') {
+      if (blocks.at(-1)?.kind !== 'steps') blocks.push({ kind: 'steps', steps: [] })
+      const block = blocks.length - 1
+      this.#where.set(event.callId, { block, index: steps(block).length })
+      steps(block).push({ name: event.name, summary: summarizeToolArgs(event.arguments), status: 'running' })
+    } else if (event.type === 'tool/result') {
+      const at = this.#where.get(event.callId)
+      if (at !== undefined) steps(at.block)[at.index] = { ...steps(at.block)[at.index]!, status: event.isError ? 'error' : 'ok' }
+    } else if (event.type === 'turn/end') {
+      if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop') {
+        // Its last words are then not a summary: say so after them (or instead of them, for whoever only takes the words).
+        const why = `（这一轮没有完成：${endReason(event.reason)}）`
+        if (finalText({ blocks }) === '') blocks.push({ kind: 'text', text: why })
+        else this.#ended = why
+      }
+      return true
+    }
+    return false
+  }
+
+  get reply(): Reply {
+    return this.#ended === undefined ? { blocks: [...this.#blocks] } : { blocks: [...this.#blocks], ended: this.#ended }
+  }
+}
+
+/** Read events until the turn our message started ends (see {@link TurnReply}). */
 async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }): Promise<Reply> {
   let mine = false
-  let ended: string | undefined
-  const blocks: ReplyBlock[] = []
-  /** Where each call's step is: its group in `blocks` and its place there. */
-  const where = new Map<string, { block: number; index: number }>()
-  const steps = (i: number) => (blocks[i] as { kind: 'steps'; steps: ReplyStep[] }).steps
+  const reply = new TurnReply()
   for (;;) {
     const next = await iterator.next()
     if (next.done === true) break
@@ -171,26 +209,7 @@ async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId:
     if (event.type === 'user/message') {
       const body = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
       if (event.requestId === requestId || (event.requestId === undefined && body.trim() === text.trim())) mine = turn.started = true
-    } else if (mine && event.type === 'assistant/message') {
-      const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').trim()
-      if (said !== '') blocks.push({ kind: 'text', text: said })
-    } else if (mine && event.type === 'tool/call') {
-      if (blocks.at(-1)?.kind !== 'steps') blocks.push({ kind: 'steps', steps: [] })
-      const block = blocks.length - 1
-      where.set(event.callId, { block, index: steps(block).length })
-      steps(block).push({ name: event.name, summary: summarizeToolArgs(event.arguments), status: 'running' })
-    } else if (mine && event.type === 'tool/result') {
-      const at = where.get(event.callId)
-      if (at !== undefined) steps(at.block)[at.index] = { ...steps(at.block)[at.index]!, status: event.isError ? 'error' : 'ok' }
-    } else if (mine && event.type === 'turn/end') {
-      if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop') {
-        // Its last words are then not a summary: say so after them (or instead of them, for whoever only takes the words).
-        const why = `（这一轮没有完成：${endReason(event.reason)}）`
-        if (finalText({ blocks }) === '') blocks.push({ kind: 'text', text: why })
-        else ended = why
-      }
-      break
-    }
+    } else if (mine && reply.add(event)) break
   }
-  return ended === undefined ? { blocks } : { blocks, ended }
+  return reply.reply
 }

@@ -328,6 +328,9 @@ importers:
       '@adg/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
+      '@adg/qqbot':
+        specifier: workspace:*
+        version: link:../qqbot
       '@adg/runner':
         specifier: workspace:*
         version: link:../runner
@@ -741,6 +744,31 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.19.2
+
+  packages/qqbot:
+    dependencies:
+      '@adg/notify':
+        specifier: workspace:*
+        version: link:../notify
+      '@adg/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@adg/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-credentials':
+        specifier: 0.2.1-rc.5
+        version: 0.2.1-rc.5(@deepseek-ai/cordis@4.0.5)
       '@types/node':
         specifier: ^24.13.3
         version: 24.19.2

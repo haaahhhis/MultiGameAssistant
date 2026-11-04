@@ -5,7 +5,7 @@
  * like "停止" acts on a notice, anything else goes to the agent).
  */
 import type { ApprovalRequested, ChannelCheck, ChannelStatus, FeishuPending, FeishuSettings, QuestionAnswerItem, QuestionRequested } from '@adg/protocol'
-import { replyMarkdown, replyPlain, type Actor, type Channel, type Notice, type NoticePatch, type QuestionProgress, type Reply } from '@adg/notify'
+import { replyMarkdown, replyPlain, type Actor, type Channel, type MirrorPost, type Notice, type NoticePatch, type QuestionProgress, type Reply } from '@adg/notify'
 import type { CardAction, CardActionResponse, ConnectionState, FeishuApi, InboundMessage, Target } from './api.ts'
 import { approvalCard, noticeCard, OUTCOME, QUESTION_OUTCOME, questionCard } from './cards.ts'
 
@@ -299,6 +299,17 @@ export class FeishuBot implements Channel {
     const imageKey = notice.image === undefined ? undefined : await api.uploadImage(notice.image)
     const messageId = await api.sendCard({ openId }, noticeCard(notice, { imageKey }))
     this.#byMessage.set(messageId, notice.id)
+  }
+
+  /** 助手's conversation, to each allowed person but `except` (not the group: it is a person's conversation). */
+  async mirror(post: MirrorPost, except: string | undefined): Promise<void> {
+    const api = this.#ready()
+    for (const { openId } of this.#state.settings.allowedUsers) {
+      if (openId === except) continue
+      const to = { openId }
+      if (post.markdown === true) await api.sendMarkdown(to, post.text).catch(() => api.sendText(to, post.text))
+      else await api.sendText(to, post.text)
+    }
   }
 
   async update(id: string, patch: NoticePatch): Promise<void> {

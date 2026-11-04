@@ -11,7 +11,6 @@ import { readFile } from 'node:fs/promises'
 import { AgentTask, AgentTaskRun, type PipelineTrigger } from '@adg/protocol'
 import { writeFileAtomic } from '@adg/protocol/node'
 import { z } from 'zod'
-import { localDay } from './pipelines.ts'
 
 const KEEP_RUNS = 200
 /** How long an agent gets for one task. */
@@ -94,9 +93,8 @@ export class AgentTasks {
     return this.#lastRun(id)?.state === 'running'
   }
 
-  lastSuccessDay(id: string): string | undefined {
-    const last = this.#runs.findLast(r => r.taskId === id && r.state === 'done')
-    return last === undefined ? undefined : localDay(last.startedAt)
+  lastSuccessAt(id: string): number | undefined {
+    return this.#runs.findLast(r => r.taskId === id && r.state === 'done')?.startedAt
   }
 
   /**

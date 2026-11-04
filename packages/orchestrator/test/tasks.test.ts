@@ -35,7 +35,7 @@ test('a timed task is handed to its agent; the run ends with what it said, and i
   assert.equal(tasks.list('games')[0]?.lastRun?.state, 'done')
   assert.equal(tasks.list('games')[0]?.lastRun?.outcome, '没有今天结束的活动')
   assert.equal(tasks.list('main').length, 0, 'listed by agent')
-  assert.ok(tasks.lastSuccessDay(task.id) !== undefined)
+  assert.ok(tasks.lastSuccessAt(task.id) !== undefined)
   assert.equal(handed[0]?.prompt, '看看今天结束的活动')
 })
 

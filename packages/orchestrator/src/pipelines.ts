@@ -107,10 +107,9 @@ export class Pipelines {
       .slice(0, limit)
   }
 
-  /** Local date (YYYY-MM-DD) of the pipeline's last successful run. */
-  lastSuccessDay(pipelineId: string): string | undefined {
-    const last = this.#runs.filter(r => r.pipelineId === pipelineId && r.state === 'succeeded').sort((a, b) => b.startedAt - a.startedAt)[0]
-    return last === undefined ? undefined : localDay(last.startedAt)
+  /** When the pipeline's last successful run started. */
+  lastSuccessAt(pipelineId: string): number | undefined {
+    return this.#runs.filter(r => r.pipelineId === pipelineId && r.state === 'succeeded').sort((a, b) => b.startedAt - a.startedAt)[0]?.startedAt
   }
 }
 

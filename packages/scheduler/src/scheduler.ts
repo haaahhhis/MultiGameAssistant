@@ -59,7 +59,8 @@ export interface SchedulerDeps {
   /** @throws Error when it cannot start (already running, check failed). */
   readonly start: (pipelineId: string, trigger: PipelineTrigger) => void
   readonly isRunning: (pipelineId: string) => boolean
-  readonly lastSuccessDay: (pipelineId: string) => string | undefined
+  /** When the pipeline's (or timed task's) last successful run started. */
+  readonly lastSuccessAt: (pipelineId: string) => number | undefined
   readonly store: ScheduleStore
   readonly autostart: AutostartPort
   /** Waking from sleep for scheduled times; absent: not offered. */
@@ -138,7 +139,7 @@ export class Scheduler {
       this.#timer.unref?.()
     }
     if (this.#deps.autostarted || this.#deps.appStart === true) {
-      const today = localDay(this.#now())
+      const today = gameDay(this.#now())
       const firstToday = this.#state.lastStartDay !== today
       this.#state.lastStartDay = today
       void this.#save(true)
@@ -242,13 +243,14 @@ export class Scheduler {
 
   /** The pipelines chosen to run when the app starts. */
   runAutostart(): void {
-    const today = localDay(this.#now())
+    const today = gameDay(this.#now())
     const slot = `${this.#deps.autostarted ? '开机' : '启动'} ${today}`
     const pipelines = new Map(this.#deps.pipelines().map(p => [p.id, p]))
     for (const id of this.#state.settings.autostartPipelines) {
       const pipeline = pipelines.get(id)
       if (pipeline === undefined) continue
-      if (this.#state.settings.skipIfRanToday && this.#deps.lastSuccessDay(id) === today) {
+      const last = this.#deps.lastSuccessAt(id)
+      if (this.#state.settings.skipIfRanToday && last !== undefined && gameDay(last) === today) {
         this.#record(pipeline, slot, 'skipped', '今天已经成功运行过')
         continue
       }
@@ -369,6 +371,14 @@ export function slotsBetween(pipeline: Pick<Timed, 'schedule'>, from: number, to
     }
   }
   return out.sort((a, b) => a.at - b.at)
+}
+
+/** The hour a day starts at for the on-start pipelines, as in the games: a start at 2:00 is still the day before. */
+export const DAY_STARTS_AT_HOUR = 4
+
+/** The day `at` belongs to when days start at 4:00 (YYYY-MM-DD). */
+export function gameDay(at: number): string {
+  return localDay(at - DAY_STARTS_AT_HOUR * 3_600_000)
 }
 
 export function localDay(at: number): string {

@@ -1,0 +1,39 @@
+{
+  "name": "@adg/qqbot",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Cordis host plugin: the QQ official bot channel — direct messages over the WebSocket gateway, notices and 助手's conversation as text, an allow-list with pairing, and a self-check",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@adg/notify": "workspace:*",
+    "@adg/protocol": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-credentials": "*"
+  },
+  "devDependencies": {
+    "@adg/gateway": "workspace:*",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-credentials": "0.2.1-rc.5",
+    "@types/node": "^24.13.3"
+  }
+}

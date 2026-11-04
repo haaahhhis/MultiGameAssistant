@@ -246,9 +246,9 @@ export const ScheduleSettings = z.object({
   autostartPipelines: z.array(PipelineId),
   /** Seconds to wait after a start at logon (network, desktop, drivers); a start by hand waits 10 s. */
   autostartDelaySeconds: z.number().int().min(0).max(1800),
-  /** Skip an on-start pipeline that already ran today. */
+  /** Skip an on-start pipeline that already ran today (a day starts at 4:00). */
   skipIfRanToday: z.boolean(),
-  /** Run the on-start pipelines only on the app's first start of the day. */
+  /** Run the on-start pipelines only on the app's first start of the day (a day starts at 4:00, as in the games). */
   firstStartOnly: z.boolean().default(false),
   /** Wake the computer from sleep (or hibernation) just before scheduled times (a Task Scheduler task). */
   wakeToRun: z.boolean().default(false),

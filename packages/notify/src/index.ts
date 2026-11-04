@@ -3,7 +3,8 @@
  * other plugins send notices with buttons and handle the clicks; people's
  * messages become conversations with the agent; approvals and the agent's
  * questions go out as cards.
- * Contributes the `notify@1` capability. Channels: `@adg/feishu`.
+ * 助手's conversation is mirrored to every channel's people (mirror.ts).
+ * Contributes the `notify@1` capability. Channels: `@adg/feishu`, `@adg/qqbot`.
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -14,11 +15,14 @@ import { NOTIFY_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { sessionConversations } from './conversations.ts'
 import { delegateTool } from './delegate.ts'
+import { MAIN } from './handoff.ts'
+import { HomeMirror } from './mirror.ts'
 import type { Reply } from './reply.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
 
-export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type HandOffInput, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
+export { describeQuestion, Notify, personWords, type ActionHandler, type Actor, type Channel, type Conversations, type HandOffInput, type MirrorPost, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
+export { HomeMirror, type MirrorDeps } from './mirror.ts'
 export { sessionConversations } from './conversations.ts'
 export { MAIN } from './handoff.ts'
 export { finalText, replyMarkdown, replyPlain, textReply, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
@@ -71,13 +75,27 @@ export class AdgNotify extends Service {
     this.notify = notify
 
     ctx.inject(['adgGateway'], scoped => {
+      // 助手's conversation, the same in the app and in every chat app (mirror.ts).
+      const gateway = scoped.adgGateway
+      const mirror = new HomeMirror({
+        sessions: () => ctx.get('sessionController'),
+        home: () => gateway.home(MAIN),
+        originOf: text => notify.originOf(text),
+        channelName: id => notify.channelName(id),
+        agentName: id => gateway.roles.list().find(r => r.id === id)?.name ?? id,
+        post: (post, except) => notify.mirror(post, except),
+        log: { warn: m => log.warn(m) },
+      })
+      mirror.start()
+      const unlisten = gateway.handOffs.onChange(item => mirror.handOff(item))
+      scoped.effect(() => () => { unlisten(); mirror.stop() }, 'adg-notify mirror')
       scoped.adgGateway.addApprovalAnswerer({
         active: sessionId => notify.approvalsActive(sessionId),
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
       })
-      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them. A chat person's turn hears back too.
-      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations, relayed: sessionId => notify.replyLater(sessionId) })))
+      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them. What comes back reaches the chat apps through the mirror.
+      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations })))
       scoped.adgGateway.addQuestionAnswerer({
         active: sessionId => notify.questionsActive(sessionId),
         asked: request => notify.askQuestion(request),

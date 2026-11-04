@@ -22,7 +22,7 @@ import { Power } from './power.ts'
 import { Scheduler, type SavedState } from './scheduler.ts'
 import { retireLegacyTasks, windowsPower, windowsWake } from './windows.ts'
 
-export { Scheduler, DEFAULT_SETTINGS, localDay, slotsBetween, type AutostartPort, type SavedState, type ScheduleStore, type SchedulerDeps, type Timed } from './scheduler.ts'
+export { Scheduler, DAY_STARTS_AT_HOUR, DEFAULT_SETTINGS, gameDay, localDay, slotsBetween, type AutostartPort, type SavedState, type ScheduleStore, type SchedulerDeps, type Timed } from './scheduler.ts'
 export { joinArgs, taskXml, windowsAutostart, type ExecBuffer, type WindowsAutostartOptions } from './autostart.ts'
 export { Power, POWER_WORD, type AwakeLevel, type PowerDeps, type PowerNotice, type PowerPort, type SleepAction } from './power.ts'
 export { LEGACY_TASKS, localIso, retireLegacyTasks, wakeTaskXml, windowsPower, windowsWake, type WakePort, type WindowsWakeOptions } from './windows.ts'
@@ -89,7 +89,7 @@ export class AdgScheduler extends Service {
         else orchestrator.tasks.run(task, trigger)
       },
       isRunning: id => { const task = taskId(id); return task === undefined ? orchestrator.engine.isRunning(id) : orchestrator.tasks.isRunning(task) },
-      lastSuccessDay: id => { const task = taskId(id); return task === undefined ? orchestrator.pipelines.lastSuccessDay(id) : orchestrator.tasks.lastSuccessDay(task) },
+      lastSuccessAt: id => { const task = taskId(id); return task === undefined ? orchestrator.pipelines.lastSuccessAt(id) : orchestrator.tasks.lastSuccessAt(task) },
       store: {
         load: async () => {
           try { return JSON.parse(await readFile(file, 'utf8')) as Partial<SavedState> } catch { return {} }

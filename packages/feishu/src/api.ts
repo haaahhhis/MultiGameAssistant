@@ -47,6 +47,8 @@ export interface FeishuApi {
   sendCard(to: Target, card: object): Promise<string>
   patchCard(messageId: string, card: object): Promise<void>
   sendText(to: Target, text: string): Promise<string>
+  /** Send markdown rendered (rich text with an `md` block). */
+  sendMarkdown(to: Target, markdown: string): Promise<string>
   replyText(messageId: string, text: string): Promise<string>
   /** Reply with markdown rendered (rich text with an `md` block). */
   replyMarkdown(messageId: string, markdown: string): Promise<string>
@@ -159,6 +161,13 @@ export function sdkApi(options: SdkOptions): FeishuApi {
       return call('发送消息', async () => {
         const { receive_id_type, receive_id } = receive(to)
         const result = check(await client.im.message.create({ params: { receive_id_type }, data: { receive_id, msg_type: 'text', content: JSON.stringify({ text }) } }), '发送文字')
+        return result.data?.message_id ?? ''
+      })
+    },
+    async sendMarkdown(to, markdown) {
+      return call('发送消息', async () => {
+        const { receive_id_type, receive_id } = receive(to)
+        const result = check(await client.im.message.create({ params: { receive_id_type }, data: { receive_id, msg_type: 'post', content: JSON.stringify(markdownPost(markdown)) } }), '发送文字')
         return result.data?.message_id ?? ''
       })
     },

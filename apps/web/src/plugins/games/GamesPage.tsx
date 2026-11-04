@@ -211,7 +211,7 @@ function ReportCard({ client, data, games, now, openSettings, onChanged }: {
           {data.report.lastSentAt === undefined ? '还没发过。' : `上次：${relativeTime(data.report.lastSentAt, now)}。`}
           {data.report.lastResult === undefined ? '' : ` ${data.report.lastResult}。`}
           {settings.enabled && data.report.next !== undefined && ` 下一次：${new Date(data.report.next).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}。`}
-          {' '}<button className="link-button" onClick={() => openSettings('feishu')}>飞书设置</button>
+          {' '}<button className="link-button" onClick={() => openSettings('feishu')}>远程连接</button>
         </p>
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
       </section>

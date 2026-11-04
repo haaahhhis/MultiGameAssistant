@@ -93,6 +93,15 @@
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
         baseUrl: !!js "process.env.ADG_FEISHU_BASE_URL || undefined"
 
+    # The QQ official bot channel (WebSocket gateway; AppSecret in dsh
+    # credentials as ADG_QQBOT_APP_SECRET); the `qqbot` capability.
+    #   ADG_QQBOT_BASE_URL    API base instead of api.bot.qq.com (tests)
+    - id: adg-qqbot
+      name: '@adg/qqbot'
+      config:
+        dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
+        baseUrl: !!js "process.env.ADG_QQBOT_BASE_URL || undefined"
+
     # M4: pipelines — DAGs of script tasks and other steps, resource-aware
     # queueing, failure policies, the feasibility check; the `pipelines` capability.
     - id: adg-orchestrator

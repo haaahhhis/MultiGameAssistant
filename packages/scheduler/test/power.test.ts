@@ -148,7 +148,7 @@ test('the scheduler keeps the wake-ups current: off removes them, on registers t
   const autostart: AutostartPort = { available: () => true, status: async () => ({ registered: false }), register: async () => {}, unregister: async () => {} }
   const daily = Pipeline.parse({ id: 'daily', name: 'daily', nodes: [{ id: 'n', kind: 'notify', text: 'x' }], schedule: { enabled: true, times: ['04:30', '16:30'] } })
   const scheduler = new Scheduler({
-    pipelines: () => [daily], start: () => {}, isRunning: () => false, lastSuccessDay: () => undefined,
+    pipelines: () => [daily], start: () => {}, isRunning: () => false, lastSuccessAt: () => undefined,
     store: { load: async () => ({}), save: async () => {} }, autostart, wake, autostarted: false, now: () => now, changed: () => {}, log: { info() {}, warn() {} },
   })
   await scheduler.start(0)

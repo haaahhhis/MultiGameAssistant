@@ -10,7 +10,7 @@ import { Scheduler, slotsBetween, type AutostartPort, type SavedState } from '..
 
 const at = (y: number, mo: number, d: number, h: number, mi: number, s = 0) => new Date(y, mo - 1, d, h, mi, s).getTime()
 
-function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; appStart?: boolean; lastSuccess?: string; running?: string[]; autostart?: AutostartPort } = {}) {
+function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; autostarted?: boolean; appStart?: boolean; lastSuccess?: number; running?: string[]; autostart?: AutostartPort } = {}) {
   let now = at(2026, 10, 19, 4, 0)
   const started: { id: string; trigger: PipelineTrigger; at: number }[] = []
   let saved: SavedState | undefined = options.saved as SavedState | undefined
@@ -25,7 +25,7 @@ function setup(pipelines: Pipeline[], options: { saved?: Partial<SavedState>; au
     pipelines: () => pipelines,
     start: (id, trigger) => { started.push({ id, trigger, at: now }) },
     isRunning: id => options.running?.includes(id) === true,
-    lastSuccessDay: () => options.lastSuccess,
+    lastSuccessAt: () => options.lastSuccess,
     store: { load: async () => structuredClone(saved ?? {}), save: async state => { saved = structuredClone(state) } },
     autostart,
     autostarted: options.autostarted ?? false,
@@ -137,7 +137,7 @@ test('a pipeline still running is skipped, chains start after a success, autosta
   s2.pipelineEnded(run('succeeded'))
   assert.deepEqual(chain.started.map(s => [s.id, s.trigger.kind]), [['second', 'after']])
 
-  const boot = setup([daily({}, 'a'), daily({}, 'b')], { autostarted: true, lastSuccess: '2026-10-19', saved: { settings: { autostart: true, autostartPipelines: ['a', 'b'], autostartDelaySeconds: 0, skipIfRanToday: true } } })
+  const boot = setup([daily({}, 'a'), daily({}, 'b')], { autostarted: true, lastSuccess: at(2026, 10, 19, 4, 0), saved: { settings: { autostart: true, autostartPipelines: ['a', 'b'], autostartDelaySeconds: 0, skipIfRanToday: true } } })
   const s3 = boot.make()
   await s3.start(0)
   s3.runAutostart()
@@ -255,6 +255,37 @@ test('on-start pipelines run when the app is started by hand too, not after a cr
   await once.make().start(0)
   await new Promise(r => setTimeout(r, 20))
   assert.equal(once.started.length, 2, 'first start of the next day')
+
+  // A day starts at 4:00, as in the games: 2:00 is still the day before, 4:30 is a new day.
+  const night = setup([daily({}, 'a')], { appStart: true, saved: { settings: { ...settings, firstStartOnly: true } } })
+  night.set(at(2026, 10, 19, 23, 0))
+  await night.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  night.set(at(2026, 10, 20, 2, 0))
+  await night.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  const onStart = () => night.started.filter(x => x.trigger.kind === 'autostart').length
+  assert.equal(onStart(), 1, '2:00 is still the 19th')
+  night.set(at(2026, 10, 20, 4, 30))
+  await night.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(onStart(), 2, '4:30 is the 20th')
+})
+
+test('「今天已经成功运行过」 counts from 4:00 too', async () => {
+  const settings = { autostart: false, autostartPipelines: ['a'], autostartDelaySeconds: 0, skipIfRanToday: true, firstStartOnly: false }
+  // Ran at 1:00 on the 19th (the 18th's day); started again at 9:00 on the 19th: a new day, it runs.
+  const env = setup([daily({}, 'a')], { appStart: true, lastSuccess: at(2026, 10, 19, 1, 0), saved: { settings } })
+  env.set(at(2026, 10, 19, 9, 0))
+  await env.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(env.started.length, 1)
+  // Ran at 5:00 the same day: skipped.
+  const again = setup([daily({}, 'a')], { appStart: true, lastSuccess: at(2026, 10, 19, 5, 0), saved: { settings } })
+  again.set(at(2026, 10, 19, 9, 0))
+  await again.make().start(0)
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(again.started.length, 0)
 })
 
 test('tasks from before the rename: the logon task moves to the new name, the old wake task goes', async () => {

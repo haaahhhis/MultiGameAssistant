@@ -70,6 +70,7 @@ export class HandOffs {
   readonly #file: string | undefined
   readonly #items = new Map<string, HandOff>()
   readonly #changed: (item: HandOff) => void
+  readonly #listeners = new Set<(item: HandOff) => void>()
   readonly loaded: Promise<void>
 
   constructor(file: string | undefined, changed: (item: HandOff) => void = () => {}) {
@@ -87,12 +88,21 @@ export class HandOffs {
     return this.#items.get(id)
   }
 
+  /** Each hand-off as it starts and ends (a chat channel shows 助手's in its conversation). @returns a disposer. */
+  onChange(listener: (item: HandOff) => void): () => void {
+    this.#listeners.add(listener)
+    return () => { this.#listeners.delete(listener) }
+  }
+
   async put(item: HandOff): Promise<void> {
     await this.loaded
     this.#items.delete(item.id)
     this.#items.set(item.id, item)
     while (this.#items.size > MAX_KEPT) this.#items.delete(this.#items.keys().next().value!)
     this.#changed(item)
+    for (const listener of this.#listeners) {
+      try { listener(item) } catch { /* a listener's own problem */ }
+    }
     await this.#save()
   }
 

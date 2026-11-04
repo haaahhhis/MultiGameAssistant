@@ -9,20 +9,23 @@
  * - Conversation: anything else goes to 助手, in its one conversation — the
  *   same one the app shows (docs/design/agent-roles.md §10); the reply is the
  *   whole turn, channel-neutral (reply.ts): what the agent said and the steps
- *   between, as the app shows it. Work 助手 hands on during that turn comes
- *   back later: 助手's words on it are sent to the person too.
+ *   between, as the app shows it.
+ * - Mirror: everything else in that conversation — what was typed in the app
+ *   or written from another chat app, work handed to 助手, 助手's messages
+ *   with the other agents, its replies — goes to every chat person as text
+ *   (mirror.ts), so the app and the chat apps show the same conversation.
  * - Approvals and the agent's questions (ask_user_question): a chat
  *   conversation's go to its person only, on its channel; other sessions' go
  *   to channels that take them (Feishu's 「软件里的会话」 setting). A reply
  *   while the agent waits for that person answers the question. The first
  *   answer anywhere (UI or chat) wins.
  *
- * Channels (Feishu now; QQ / WeCom / Telegram later) only translate.
+ * Channels (Feishu, QQ; WeCom / Telegram later) only translate.
  */
 import { randomUUID } from 'node:crypto'
-import { isQuiet, type ApprovalRequested, type ChannelStatus, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
+import { type ApprovalRequested, type ChannelStatus, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
 import { MAIN } from './handoff.ts'
-import { finalText, textReply, type Reply } from './reply.ts'
+import { textReply, type Reply } from './reply.ts'
 
 export interface NoticeAction {
   readonly id: string
@@ -57,6 +60,12 @@ export interface Actor {
   readonly name?: string
 }
 
+/** A message of 助手's conversation for a chat app: plain text, or markdown where the channel renders it. */
+export interface MirrorPost {
+  readonly text: string
+  readonly markdown?: boolean
+}
+
 /** @returns a short result for people, e.g. "已停止". */
 export type ActionHandler = (noticeId: string, actionId: string, actor: Actor) => Promise<string>
 
@@ -69,6 +78,8 @@ export interface Channel {
   update?(id: string, patch: NoticePatch): Promise<void>
   /** Deliver to one person only (a reply to something they asked for). */
   sendTo?(userId: string, notice: Notice): Promise<void>
+  /** 助手's conversation as it goes, to every person this channel talks to but `except` (whose own message or answer it is). */
+  mirror?(post: MirrorPost, except: string | undefined): Promise<void>
   /**
    * Approval cards, when the channel and its settings allow them. `owner`: the
    * person on this channel whose conversation asks (send to them only);
@@ -169,6 +180,7 @@ interface Sent {
 }
 
 const KEEP_NOTICES = 200
+const KEEP_ORIGINS = 50
 const REPLY_WINDOW_MS = 24 * 3_600_000
 /**
  * A message after this long a silence says so: a long conversation is
@@ -184,8 +196,8 @@ export class Notify {
   readonly #sent = new Map<string, Sent>()
   /** Open questions: whose conversation asked (`channel:user`, if one did) and the answers so far. */
   readonly #questions = new Map<string, { request: QuestionRequested; key: string | undefined; answers: Map<string, QuestionAnswerItem> }>()
-  /** Conversations answering a chat person right now: work handed on in that turn reports back to them. */
-  readonly #answering = new Map<string, Actor>()
+  /** Messages people sent from a chat app, as the agent got them, until the mirror has seen them: who wrote them. */
+  readonly #origins = new Map<string, Actor>()
   readonly #now: () => number
 
   constructor(options: NotifyOptions) {
@@ -308,29 +320,29 @@ export class Notify {
     const signal = message_.signal ?? AbortSignal.timeout(20 * 60_000)
     // Only the round's last message goes back (reply.ts): ask for it to be the summary.
     prompt = `${channelNote(message_.actor.channel)}\n${prompt}`
-    this.#answering.set(sessionId, message_.actor)
-    try {
-      return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
-    } finally {
-      if (this.#answering.get(sessionId) === message_.actor) this.#answering.delete(sessionId)
-    }
+    this.#origins.set(prompt.trim(), message_.actor)
+    while (this.#origins.size > KEEP_ORIGINS) this.#origins.delete(this.#origins.keys().next().value!)
+    return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
   }
 
-  /**
-   * The chat person `sessionId` is answering right now, as somewhere to send
-   * the agent's later words to: work it hands on in this turn comes back after
-   * the turn, and the person who asked should hear how it went.
-   */
-  replyLater(sessionId: string): ((reply: Reply) => void) | undefined {
-    const actor = this.#answering.get(sessionId)
-    const channel = actor === undefined ? undefined : this.#channels.get(actor.channel)
-    if (actor === undefined || channel?.sendTo === undefined) return undefined
-    return reply => {
-      const text = finalText(reply).trim()
-      // 助手 found nothing the person needs to hear (QUIET): nothing goes out.
-      if (text === '' || isQuiet(text) || channel.status().state !== 'ready') return
-      void channel.sendTo!(actor.userId, { id: `relay:${randomUUID()}`, scope: 'relay', title: '助手', text, severity: 'info' })
-        .catch(error => this.#options.log.warn(`a later reply via ${channel.id} failed: ${message(error)}`))
+  /** Who sent this message of 助手's conversation from a chat app (undefined: someone in the app); asked once. */
+  originOf(text: string): Actor | undefined {
+    const actor = this.#origins.get(text.trim())
+    this.#origins.delete(text.trim())
+    return actor
+  }
+
+  /** A channel's name for people (飞书, QQ). */
+  channelName(channelId: string): string {
+    return this.#channels.get(channelId)?.name ?? channelId
+  }
+
+  /** A message of 助手's conversation to every ready channel's people, but `except` (the person whose own message or answer it is). */
+  mirror(post: MirrorPost, except?: Actor): void {
+    for (const channel of this.#channels.values()) {
+      if (channel.mirror === undefined || channel.status().state !== 'ready') continue
+      void channel.mirror(post, except?.channel === channel.id ? except.userId : undefined)
+        .catch(error => this.#options.log.warn(`mirroring via ${channel.id} failed: ${message(error)}`))
     }
   }
 
@@ -480,7 +492,14 @@ function message(error: unknown): string {
 
 /** Put before each chat message to the agent: only its last message of the round reaches the person. */
 export function channelNote(channel: string): string {
-  return `（这条消息来自${channel === 'feishu' ? '飞书' : channel}。只有你这一轮的最后一条消息会发给对方，中间的话和步骤对方看不到：最后用几句话总结这一轮——结论、做了什么、需要对方做什么。）`
+  return `（这条消息来自${CHANNEL_NAMES[channel] ?? channel}。只有你这一轮的最后一条消息会发给对方，中间的话和步骤对方看不到：最后用几句话总结这一轮——结论、做了什么、需要对方做什么。）`
+}
+
+const CHANNEL_NAMES: Readonly<Record<string, string>> = { feishu: '飞书', qq: 'QQ' }
+
+/** What a person wrote, without the notes the app put before it for the agent (where it came from, how long it has been). */
+export function personWords(text: string): string {
+  return text.replace(/^（这条消息来自[^\n]*）\n/, '').replace(/^（距离这个对话的上一条消息已经过了[^\n]*）\n/, '').trim()
 }
 
 /** A question as chat text: the question, then its choices numbered (reply with the number or the words). */

@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { QUIET, type ApprovalRequested, type ChannelStatus } from '@adg/protocol'
+import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
 import { channelNote, Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
 import { replyMarkdown, replyPlain, type Reply } from '../src/reply.ts'
 
@@ -214,23 +214,26 @@ test('after half a day of silence, the message says how long it has been: what w
   assert.equal(prompts[1], `${channelNote('fake')}\n好`, 'an hour is not long')
 })
 
-test("work 助手 hands on while answering a chat message reports back to that person when it comes back", async () => {
-  let later: ((reply: Reply) => void) | undefined
-  const { notify } = setup(conversationsWith({
-    // 助手's turn hands work on (agent_delegate asks where its reply should also go).
-    ask: async sessionId => { later = notify.replyLater(sessionId); return '交给游戏了' },
-  }))
-  const fake = fakeChannel()
-  const toPerson: { userId: string; text: string }[] = []
-  notify.registerChannel({ ...fake.channel, sendTo: async (userId, n) => { toPerson.push({ userId, text: n.text }) } })
-  await notify.inbound({ actor, text: '看看今天的活动' })
-  assert.equal(notify.replyLater('s-main'), undefined, 'once the turn is over, later work is nobody\'s chat')
-  later!({ blocks: [{ kind: 'text', text: '游戏读完了：没有快结束的活动' }] })
+test("助手's conversation goes to every channel's people but the one whose message it is; who wrote a message is known once", async () => {
+  const { notify } = setup(conversationsWith({ ask: async () => '好的' }))
+  const a = fakeChannel('ready', { id: 'feishu' })
+  const b = fakeChannel('ready', { id: 'qq' })
+  const off = fakeChannel('off', { id: 'off' })
+  const got: string[] = []
+  notify.registerChannel({ ...a.channel, mirror: async (post, except) => { got.push(`feishu:${post.text}:${except ?? '-'}`) } })
+  notify.registerChannel({ ...b.channel, mirror: async (post, except) => { got.push(`qq:${post.text}:${except ?? '-'}`) } })
+  notify.registerChannel({ ...off.channel, mirror: async () => { got.push('off') } })
+  notify.mirror({ text: '你（软件）：在吗' })
+  notify.mirror({ text: '张三（飞书）：在吗' }, { channel: 'feishu', userId: 'ou_1' })
   await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(toPerson, [{ userId: 'ou_1', text: '游戏读完了：没有快结束的活动' }])
-  later!({ blocks: [{ kind: 'text', text: QUIET }] })
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(toPerson.length, 1, 'nothing for the person: nothing sent')
+  assert.deepEqual(got, ['feishu:你（软件）：在吗:-', 'qq:你（软件）：在吗:-', 'feishu:张三（飞书）：在吗:ou_1', 'qq:张三（飞书）：在吗:-'])
+
+  await notify.inbound({ actor: { channel: 'feishu', userId: 'ou_1', name: '张三' }, text: '看看日常' })
+  const prompt = `${channelNote('feishu')}
+看看日常`
+  assert.deepEqual(notify.originOf(prompt), { channel: 'feishu', userId: 'ou_1', name: '张三' })
+  assert.equal(notify.originOf(prompt), undefined, 'asked once')
+  assert.equal(notify.channelName('feishu'), '假渠道')
 })
 
 test("a chat reply is the round's summary: the agent's last words and how many steps it took", () => {

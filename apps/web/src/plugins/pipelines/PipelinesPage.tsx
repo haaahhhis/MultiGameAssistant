@@ -326,9 +326,9 @@ function ScheduleCard({ pipeline, others, onChange, startup, onStartup }: {
           </label>
           {onStart && (
             <>
-              <label className="check-label sub"><input type="checkbox" checked={startup.firstStartOnly} onChange={e => onStartup({ firstStartOnly: e.target.checked })} />只在每天第一次启动时运行</label>
-              <label className="check-label sub"><input type="checkbox" checked={startup.skipIfRanToday} onChange={e => onStartup({ skipIfRanToday: e.target.checked })} />今天已经成功运行过就跳过</label>
-              <p className="muted small">打开桌面版（自己打开或开机自启）后{startup.autostart ? `开机自启时等 ${startup.autostartDelaySeconds} 秒、自己打开时等 10 秒` : '等 10 秒'}再运行；dsh 崩溃后自动重启不算。这两项对所有「软件启动时运行」的流水线生效。</p>
+              <label className="check-label sub"><input type="checkbox" checked={startup.firstStartOnly} onChange={e => onStartup({ firstStartOnly: e.target.checked })} />只在每天第一次启动时运行（每天从 4:00 算起）</label>
+              <label className="check-label sub"><input type="checkbox" checked={startup.skipIfRanToday} onChange={e => onStartup({ skipIfRanToday: e.target.checked })} />今天（4:00 起）已经成功运行过就跳过</label>
+              <p className="muted small">打开桌面版（自己打开或开机自启）后{startup.autostart ? `开机自启时等 ${startup.autostartDelaySeconds} 秒、自己打开时等 10 秒` : '等 10 秒'}再运行；dsh 崩溃后自动重启不算。和游戏一样，每天从 4:00 算起：凌晨 2 点启动还算前一天。这两项对所有「软件启动时运行」的流水线生效。</p>
             </>
           )}
         </div>

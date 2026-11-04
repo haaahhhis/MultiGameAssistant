@@ -22,6 +22,7 @@ function fakeApi(options: { tokenError?: string; refuseMarkdown?: boolean } = {}
     sendCard: async (to, card) => { const id = `om_${++seq}`; sent.push({ to, card, id }); return id },
     patchCard: async (id, card) => { patched.push({ id, card }) },
     sendText: async (to, text) => { const id = `om_${++seq}`; sent.push({ to, text, id }); return id },
+    sendMarkdown: async (to, text) => { const id = `om_${++seq}`; sent.push({ to, text, markdown: true, id }); return id },
     replyText: async (replyTo, text) => { const id = `om_${++seq}`; sent.push({ replyTo, text, id }); return id },
     replyMarkdown: async (replyTo, text) => {
       if (options.refuseMarkdown === true) throw new Error('回复失败：消息内容格式不对（230001）')
@@ -83,6 +84,18 @@ test('connects, passes the self-check, and sends notices as cards to every allow
   assert.equal(fake.patched.length, 2)
   assert.match(JSON.stringify(fake.patched[0]!.card), /已处理：已停止（我）/)
   assert.doesNotMatch(JSON.stringify(fake.patched[0]!.card), /"tag":"action"/, 'the buttons go away')
+})
+
+test("助手's conversation goes to each allowed person but the one it came from, not to the group; replies as rich text", async () => {
+  const { bot, fake } = setup({ chatId: 'oc_group', allowedUsers: [{ openId: 'ou_me', name: '我', addedAt: 0 }, { openId: 'ou_two', name: '二号', addedAt: 0 }] })
+  await bot.start()
+  await bot.mirror({ text: '你（软件）：在吗' }, undefined)
+  await bot.mirror({ text: '**在**', markdown: true }, 'ou_me')
+  assert.deepEqual(fake.sent.map(s => [s.to, s.text, s.markdown === true]), [
+    [{ openId: 'ou_me' }, '你（软件）：在吗', false],
+    [{ openId: 'ou_two' }, '你（软件）：在吗', false],
+    [{ openId: 'ou_two' }, '**在**', true],
+  ])
 })
 
 test('strangers are told their open_id and wait for the user to allow them', async () => {

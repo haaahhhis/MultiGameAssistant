@@ -13,8 +13,8 @@ const STATE: Readonly<Record<ChannelStatus['state'], [string, string]>> = {
   off: ['', '未启用'], connecting: ['', '连接中'], ready: ['ok', '已连接'], error: ['warn', '有问题'],
 }
 
-/** The Feishu channel: app credentials, connection self-check, who may use the bot. */
-export function FeishuSettingsPage({ client }: { client: AdgClient }) {
+/** The Feishu channel (远程连接 → 飞书): app credentials, connection self-check, who may use the bot. */
+export function FeishuSection({ client }: { client: AdgClient }) {
   const status = useStore(client.connection.status)
   const now = useNow(30_000)
   const [view, setView] = useState<View | null>(null)
@@ -74,9 +74,8 @@ export function FeishuSettingsPage({ client }: { client: AdgClient }) {
   const [tone, label] = STATE[channel?.state ?? 'off']
 
   return (
-    <div className="settings-page">
-      <h2>飞书</h2>
-      <p>脚本出问题时把通知（带截图和「停止 / 重试 / 忽略」按钮）发到飞书；在飞书里直接回复就能让 agent 干活，例如「现在什么状态」「跑一下方舟日常」。agent 需要你确认的操作也会发成卡片，在飞书或这里先回答的生效。</p>
+    <div className="remote-section">
+      <p className="muted">脚本出问题的通知带截图和「停止 / 重试 / 忽略」按钮；agent 需要你确认的操作也会发成卡片，在飞书或这里先回答的生效。</p>
 
       <details className="card guide">
         <summary><strong>第一次使用：在飞书开放平台创建应用（约 5 分钟）</strong></summary>

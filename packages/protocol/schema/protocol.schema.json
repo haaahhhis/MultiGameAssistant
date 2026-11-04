@@ -315,6 +315,21 @@
     "feishu/check": {
       "capability": "feishu"
     },
+    "qqbot/settings": {
+      "capability": "qqbot"
+    },
+    "qqbot/settings/set": {
+      "capability": "qqbot"
+    },
+    "qqbot/users/allow": {
+      "capability": "qqbot"
+    },
+    "qqbot/users/remove": {
+      "capability": "qqbot"
+    },
+    "qqbot/check": {
+      "capability": "qqbot"
+    },
     "pipelines/list": {
       "capability": "pipelines"
     },
@@ -13429,6 +13444,421 @@
       "additionalProperties": false
     },
     "feishu/check.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "ok": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "ok"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "checks"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/settings.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "qqbot/settings.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "allowedUsers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "openId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "addedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "openId",
+                  "addedAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "enabled",
+            "allowedUsers"
+          ],
+          "additionalProperties": false
+        },
+        "secretConfigured": {
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "openId": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "openId",
+              "at",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings",
+        "secretConfigured",
+        "pending"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/settings/set.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "appId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{6,20}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "qqbot/settings/set.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "allowedUsers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "openId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "addedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "openId",
+                  "addedAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "enabled",
+            "allowedUsers"
+          ],
+          "additionalProperties": false
+        },
+        "secretConfigured": {
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "openId": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "openId",
+              "at",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings",
+        "secretConfigured",
+        "pending"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/users/allow.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "openId": {
+          "type": "string",
+          "pattern": "^[0-9A-Za-z_-]{8,64}$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "openId"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/users/allow.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "allowedUsers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "openId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "addedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "openId",
+                  "addedAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "enabled",
+            "allowedUsers"
+          ],
+          "additionalProperties": false
+        },
+        "secretConfigured": {
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "openId": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "openId",
+              "at",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings",
+        "secretConfigured",
+        "pending"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/users/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "openId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "openId"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/users/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "allowedUsers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "openId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "addedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "openId",
+                  "addedAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "enabled",
+            "allowedUsers"
+          ],
+          "additionalProperties": false
+        },
+        "secretConfigured": {
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "openId": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "openId",
+              "at",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings",
+        "secretConfigured",
+        "pending"
+      ],
+      "additionalProperties": false
+    },
+    "qqbot/check.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "qqbot/check.result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {

@@ -1,15 +1,18 @@
 /**
- * `notify@1`: chat channels that carry incidents, approvals and conversations
- * with the agent (served by `@adg/notify`), and `feishu@1`, the Feishu
- * channel's own settings (served by `@adg/feishu`).
+ * `notify@1`: chat channels (远程连接) that carry incidents, approvals and
+ * 助手's conversation (served by `@adg/notify`); `feishu@1` and `qqbot@1`,
+ * each channel's own settings (served by `@adg/feishu`, `@adg/qqbot`).
  */
 import { z } from 'zod'
 
 export const NOTIFY_CAPABILITY = 'notify'
 export const FEISHU_CAPABILITY = 'feishu'
+export const QQBOT_CAPABILITY = 'qqbot'
 
 /** Credential holding the Feishu app secret (dsh credentials; never sent back to a UI). */
 export const FEISHU_SECRET_REF = 'ADG_FEISHU_APP_SECRET'
+/** Credential holding the QQ bot's AppSecret. */
+export const QQBOT_SECRET_REF = 'ADG_QQBOT_APP_SECRET'
 
 export const ChannelCheck = z.object({
   id: z.string(),
@@ -62,6 +65,29 @@ export type FeishuPending = z.infer<typeof FeishuPending>
 
 const FeishuView = z.object({ settings: FeishuSettings, secretConfigured: z.boolean(), pending: z.array(FeishuPending) })
 
+/** Someone allowed to talk to the QQ bot: their user_openid (one per bot). */
+export const QQUser = z.object({
+  openId: z.string().min(1),
+  name: z.string().optional(),
+  addedAt: z.number(),
+})
+export type QQUser = z.infer<typeof QQUser>
+
+/** The QQ official bot (bot.q.qq.com): direct messages over its WebSocket gateway. */
+export const QQSettings = z.object({
+  enabled: z.boolean(),
+  /** 机器人 AppID, from the QQ open platform. */
+  appId: z.string().optional(),
+  /** Only these people may talk to the agent; notices and 助手's conversation go to them. */
+  allowedUsers: z.array(QQUser),
+})
+export type QQSettings = z.infer<typeof QQSettings>
+
+export const QQPending = z.object({ openId: z.string(), at: z.number(), text: z.string() })
+export type QQPending = z.infer<typeof QQPending>
+
+const QQView = z.object({ settings: QQSettings, secretConfigured: z.boolean(), pending: z.array(QQPending) })
+
 export const NotifyRequests = {
   'notify/status': {
     capability: NOTIFY_CAPABILITY,
@@ -113,9 +139,39 @@ export const NotifyRequests = {
     params: z.object({}),
     result: z.object({ checks: z.array(ChannelCheck) }),
   },
+  'qqbot/settings': {
+    capability: QQBOT_CAPABILITY,
+    params: z.object({}),
+    result: QQView,
+  },
+  'qqbot/settings/set': {
+    capability: QQBOT_CAPABILITY,
+    params: z.object({
+      enabled: z.boolean().optional(),
+      appId: z.string().trim().regex(/^\d{6,20}$/, 'AppID 是一串数字，在 QQ 开放平台「开发设置」里复制').nullable().optional(),
+    }),
+    result: QQView,
+  },
+  'qqbot/users/allow': {
+    capability: QQBOT_CAPABILITY,
+    params: z.object({ openId: z.string().trim().regex(/^[0-9A-Za-z_-]{8,64}$/, 'user_openid 是一串字母数字（机器人回复你的那条消息里有）'), name: z.string().max(40).optional() }),
+    result: QQView,
+  },
+  /** Take someone off the allowed list, or dismiss a pending one. */
+  'qqbot/users/remove': {
+    capability: QQBOT_CAPABILITY,
+    params: z.object({ openId: z.string() }),
+    result: QQView,
+  },
+  /** Run the self-check again (AppID / AppSecret, the WebSocket gateway). */
+  'qqbot/check': {
+    capability: QQBOT_CAPABILITY,
+    params: z.object({}),
+    result: z.object({ checks: z.array(ChannelCheck) }),
+  },
 } as const
 
 export const NotifyNotifications = {
-  /** A channel's state or the Feishu settings changed. */
+  /** A channel's state or its settings changed. */
   'notify/changed': z.object({}),
 } as const

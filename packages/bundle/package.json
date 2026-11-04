@@ -24,6 +24,7 @@
     "@adg/monitor": "workspace:*",
     "@adg/notify": "workspace:*",
     "@adg/orchestrator": "workspace:*",
+    "@adg/qqbot": "workspace:*",
     "@adg/runner": "workspace:*",
     "@adg/scheduler": "workspace:*",
     "@adg/script-registry": "workspace:*"
