@@ -1,9 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { splitSlash, summarizeToolArgs } from '@adg/protocol'
-import { MAIN, agentIdOf, useRoles } from '../../agents.ts'
-import { DelegationCard, DELEGATE_TOOL, fromMain } from './Delegation.tsx'
+import { parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { MAIN, agentIdOf, useHandOffs, useRoles } from '../../agents.ts'
+import { DelegationCard, DELEGATE_TOOL, HandOffStrip, RelayMessage, TaskMessage } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -39,6 +39,9 @@ export function ChatView({ client, session, state }: SessionViewProps) {
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
   const agentName = roles.find(r => r.id === (item === undefined ? undefined : agentIdOf(item, roles)))?.name ?? MAIN.name
+  // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
+  const handOffs = useHandOffs(client, session.id)
+  const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && h.state === 'running')
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
 
@@ -84,10 +87,11 @@ export function ChatView({ client, session, state }: SessionViewProps) {
         {rows.map((row, index) => row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
           : row.kind === 'delegation'
-            ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} sessionId={session.id} item={row.item} /></Turn>
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
+        {appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
         {!state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
@@ -181,16 +185,31 @@ function UserText({ text }: { text: string }) {
   )
 }
 
+/** Notes the app puts before a person's message for the agent (packages/notify notify.ts): where it came from, how long since the last. */
+const CHANNEL_NOTE = /^（这条消息来自([^。）]+)。[^\n]*）\n/
+const IDLE_NOTE = /^（距离这个对话的上一条消息已经过了[^\n]*）\n/
+
+function personText(text: string): { text: string; channel?: string } {
+  const channel = CHANNEL_NOTE.exec(text)
+  const rest = (channel === null ? text : text.slice(channel[0].length)).replace(IDLE_NOTE, '')
+  return channel === null ? { text: rest } : { text: rest, channel: channel[1]! }
+}
+
 const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
+  const client = useContext(ImageClient)
   switch (item.kind) {
     case 'user': {
-      // Work 助手 handed over (agent_delegate): its words, not the person's.
-      const delegated = fromMain(item.text)
+      // Not the person's words: a reply another agent sent back, or work handed here (Delegation.tsx).
+      const relay = item.pending === undefined ? parseRelay(item.text) : undefined
+      if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} />
+      const task = item.pending === undefined ? parseTask(item.text) : undefined
+      if (task !== undefined) return <TaskMessage note={task} />
+      const said = personText(item.text)
       return (
-        <div className={`msg user ${item.pending === undefined ? '' : 'pending'} ${delegated === undefined ? '' : 'delegated'}`}>
-          {delegated !== undefined && <div className="msg-from">{MAIN.name} 交给的事</div>}
+        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
+          {said.channel !== undefined && <div className="msg-from">来自{said.channel}</div>}
           <div className="bubble">
-            {delegated === undefined ? <UserText text={item.text} /> : delegated}
+            <UserText text={said.text} />
             {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
             {(item.images > item.imageRefs.length || item.files > 0) && (
               <div className="attachments">

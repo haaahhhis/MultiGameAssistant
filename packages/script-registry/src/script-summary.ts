@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { sessionConversations } from '@adg/notify'
 import type { ScriptLibrary } from './library.ts'
 import { SCRIPT_ROLE } from './role.ts'
+import { taskMessage } from '@adg/protocol'
 
 const SUMMARY_TIMEOUT_MS = 10 * 60_000
 const MAX_SUMMARY = 800
@@ -25,7 +26,7 @@ export function scriptSummaries(ctx: Context, library: ScriptLibrary, log: { war
       const material = await library.summaryMaterial(id)
       const name = library.get(id).name
       const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (sessionId, focus) => ctx.get('adgGateway')?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => ctx.get('adgGateway'))
-      const sessionId = await conversations.create(`脚本介绍：${name}`, { focus: { scripts: [id] }, role: SCRIPT_ROLE.id, by: '你' })
+      const sessionId = await conversations.home(SCRIPT_ROLE.id, { focus: { scripts: [id] } })
       running.add(id)
       await library.setSummary(id, { state: 'running', at: Date.now(), sessionId, ...(previous?.text === undefined || previous.state !== 'done' ? {} : { text: previous.text }) })
       const prompt = [
@@ -39,7 +40,7 @@ export function scriptSummaries(ctx: Context, library: ScriptLibrary, log: { war
         '材料：',
         material,
       ].join('\n')
-      void conversations.ask(sessionId, prompt, AbortSignal.timeout(SUMMARY_TIMEOUT_MS)).then(
+      void conversations.ask(sessionId, taskMessage('你', `脚本介绍：${name}`, prompt), AbortSignal.timeout(SUMMARY_TIMEOUT_MS)).then(
         // A turn that did not finish (no model set up, cut off) comes back as a note, not a summary.
         answer => library.setSummary(id, answer.startsWith('（这一轮没有完成') || answer.startsWith('（agent 没有回复文字')
           ? { state: 'failed', at: Date.now(), sessionId, text: answer.replace(/^（这一轮没有完成：?|）$/g, '') }

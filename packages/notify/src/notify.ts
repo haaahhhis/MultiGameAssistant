@@ -6,10 +6,11 @@
  *   routes to the handler the sender registered for its scope.
  * - Replies: a person's message that is just a button label ("停止") acts on
  *   the notice it replies to, or on the only open notice offering it.
- * - Conversation: anything else goes to the agent in a dsh session kept per
- *   person; the reply is the whole turn, channel-neutral (reply.ts): what the
- *   agent said and the steps between, as the app shows it. A session whose
- *   folder is gone (renamed, moved) is replaced, its last messages carried over.
+ * - Conversation: anything else goes to 助手, in its one conversation — the
+ *   same one the app shows (docs/design/agent-roles.md §10); the reply is the
+ *   whole turn, channel-neutral (reply.ts): what the agent said and the steps
+ *   between, as the app shows it. Work 助手 hands on during that turn comes
+ *   back later: 助手's words on it are sent to the person too.
  * - Approvals and the agent's questions (ask_user_question): a chat
  *   conversation's go to its person only, on its channel; other sessions' go
  *   to channels that take them (Feishu's 「软件里的会话」 setting). A reply
@@ -20,7 +21,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { ApprovalRequested, ChannelStatus, QuestionAnswerItem, QuestionItem, QuestionRequested } from '@adg/protocol'
-import { textReply, type Reply } from './reply.ts'
+import { MAIN } from './handoff.ts'
+import { finalText, textReply, type Reply } from './reply.ts'
 
 export interface NoticeAction {
   readonly id: string
@@ -103,19 +105,49 @@ export interface Conversations {
   /** The same, resolving with the whole turn (what the agent said and did). Absent: the final answer only. */
   converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<Reply>
   /**
-   * A new session; `defaultModel`: use the default model (else the one last used in the UI);
-   * `focus`: the scripts and games it is about, whose skills it sees (the gateway's skill scope);
-   * `role`: the role agent it belongs to (the gateway's `role`), listed under it and created with the role agents' model
-   * when one is chosen (over `defaultModel`); absent: the main agent's. `by`: who asked for a role agent's work
-   * (监控, 定时, 你, 流水线「…」), shown on its task card; `from`: the main agent's agent_delegate call that asked.
+   * The agent's one conversation (the gateway's `home`; `main`: 助手's), made when it has none;
+   * `focus`: what its next work is about, whose skills it sees (the gateway's skill scope).
    */
-  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string; by?: string; from?: { sessionId: string; callId: string } }): Promise<string>
-  /** False also when the session cannot work any more (its folder is gone). */
-  exists(sessionId: string): Promise<boolean>
-  /** The session's last few messages as text, to carry into a new one. */
-  recent?(sessionId: string): Promise<string | undefined>
-  /** When the session last changed (epoch ms). Absent: conversations never start over for being idle. */
+  home(agent: string, options?: { focus?: { scripts?: string[]; games?: string[] } }): Promise<string>
+  /**
+   * Hand work to an agent (docs/design/agent-roles.md §10): a message in its conversation saying who
+   * asked, then the work; resolves with that turn (a turn that ended early resolves too). Kept as a
+   * hand-off (the gateway's `handOffs`). With `relay`, its reply — or why it did not finish — then goes
+   * back to the conversation that asked (`from`, by default 助手's) as a message, without waiting.
+   * @throws what the turn threw (called off, timed out), after recording it.
+   */
+  handOff(input: HandOffInput): Promise<Reply>
+  /**
+   * A one-off session; `defaultModel`: use the default model (else the one last used in the UI);
+   * `focus`: the scripts and games it is about; `role`: the role agent it belongs to, created with the
+   * role agents' model when one is chosen (over `defaultModel`); absent: the main agent's. `by`: who asked.
+   */
+  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string; by?: string }): Promise<string>
+  /** When the session last changed (epoch ms). */
   lastActive?(sessionId: string): Promise<number | undefined>
+}
+
+export interface HandOffInput {
+  /** The agent it goes to. */
+  readonly to: { readonly id: string; readonly name: string }
+  /** Who asks, in words: 助手, 监控. */
+  readonly by: string
+  /** A line saying what it is. */
+  readonly title: string
+  readonly task: string
+  /** What a good answer looks like coming back. */
+  readonly expecting?: string
+  readonly focus?: { scripts?: string[]; games?: string[] }
+  readonly images?: readonly Buffer[]
+  readonly signal: AbortSignal
+  /**
+   * The conversation that asked, where the reply goes back; `callId`: its agent_delegate call;
+   * `asker`: `by` as that conversation's agent knows itself (the reply then says 你).
+   */
+  readonly from?: { readonly sessionId: string; readonly callId?: string; readonly asker?: string }
+  readonly relay?: boolean
+  /** The asking agent's turn on the reply, once over (a chat channel forwards it). */
+  readonly relayed?: (reply: Reply) => void
 }
 
 export interface NotifyOptions {
@@ -123,7 +155,7 @@ export interface NotifyOptions {
   readonly respondApproval: (approvalId: string, decision: 'allow-once' | 'reject') => boolean
   /** Answer the agent's question at the gateway. @returns false when it is gone or answered. */
   readonly respondQuestion?: (questionId: string, answers: readonly QuestionAnswerItem[]) => boolean
-  /** Person → dsh session, persisted by the caller. */
+  /** Person → the conversation their messages go to (助手's), persisted by the caller: approvals and questions from it go to them. */
   readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void>; keyOf?(sessionId: string): string | undefined }
   readonly changed: () => void
   readonly log: { info(message: string): void; warn(message: string): void }
@@ -139,12 +171,11 @@ interface Sent {
 const KEEP_NOTICES = 200
 const REPLY_WINDOW_MS = 24 * 3_600_000
 /**
- * A chat conversation untouched this long starts over: a new session, with the
- * last messages carried over as dated background. A long conversation is
+ * A message after this long a silence says so: a long conversation is
  * compacted into a summary without dates, and the model then takes old open
  * questions for current ones.
  */
-const IDLE_RESTART_MS = 12 * 3_600_000
+const IDLE_NOTE_MS = 12 * 3_600_000
 
 export class Notify {
   readonly #options: NotifyOptions
@@ -153,6 +184,8 @@ export class Notify {
   readonly #sent = new Map<string, Sent>()
   /** Open questions: whose conversation asked (`channel:user`, if one did) and the answers so far. */
   readonly #questions = new Map<string, { request: QuestionRequested; key: string | undefined; answers: Map<string, QuestionAnswerItem> }>()
+  /** Conversations answering a chat person right now: work handed on in that turn reports back to them. */
+  readonly #answering = new Map<string, Actor>()
   readonly #now: () => number
 
   constructor(options: NotifyOptions) {
@@ -260,29 +293,44 @@ export class Notify {
     }
     const conversations = this.#options.conversations()
     if (conversations === undefined) return textReply('agent 现在不可用（会话服务没有加载）。')
-    let sessionId = this.#options.sessions.get(key)
+    let sessionId: string
+    try {
+      sessionId = await conversations.home(MAIN)
+    } catch (error) {
+      return textReply(`agent 现在不可用：${message(error)}`)
+    }
+    if (this.#options.sessions.get(key) !== sessionId) await this.#options.sessions.set(key, sessionId)
     let prompt = text
-    let note: string | undefined
-    const lastActive = sessionId === undefined ? undefined : await conversations.lastActive?.(sessionId).catch(() => undefined)
-    const idle = lastActive !== undefined && this.#now() - lastActive >= IDLE_RESTART_MS
-    if (sessionId === undefined || idle || !(await conversations.exists(sessionId))) {
-      // Idle for long, or it can no longer work (deleted, or its folder renamed): start again with its last messages.
-      const earlier = sessionId === undefined ? undefined : await conversations.recent?.(sessionId).catch(() => undefined)
-      sessionId = await conversations.create(`${message_.actor.channel === 'feishu' ? '飞书' : message_.actor.channel}：${message_.actor.name ?? message_.actor.userId}`)
-      await this.#options.sessions.set(key, sessionId)
-      if (earlier !== undefined && idle) {
-        // Quietly: for the person it is the same conversation.
-        prompt = `（上次聊天是 ${new Date(lastActive).toLocaleString('zh-CN', { hour12: false })}，已经开了新对话。下面是那时最后几条消息，仅供参考，里面的事可能早就过时了，需要时先查现在的情况：）\n${earlier}\n\n（现在的消息：）\n${text}`
-      } else if (earlier !== undefined) {
-        prompt = `（之前的对话没法继续了，换成了这个新对话。下面是之前最后几条消息，供参考：）\n${earlier}\n\n（现在的消息：）\n${text}`
-        note = '（之前的对话没法继续了：被删掉了，或者它所在的文件夹改了名、挪了地方。已经换成新对话，带上了最近几条消息。）'
-      }
+    const lastActive = await conversations.lastActive?.(sessionId).catch(() => undefined)
+    if (lastActive !== undefined && this.#now() - lastActive >= IDLE_NOTE_MS) {
+      prompt = `（距离这个对话的上一条消息已经过了 ${Math.floor((this.#now() - lastActive) / 3_600_000)} 小时，之前说到的事可能早就变了：需要时先查现在的情况。）\n${text}`
     }
     const signal = message_.signal ?? AbortSignal.timeout(20 * 60_000)
     // Only the round's last message goes back (reply.ts): ask for it to be the summary.
     prompt = `${channelNote(message_.actor.channel)}\n${prompt}`
-    const reply = conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
-    return note === undefined ? reply : { ...reply, note }
+    this.#answering.set(sessionId, message_.actor)
+    try {
+      return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
+    } finally {
+      if (this.#answering.get(sessionId) === message_.actor) this.#answering.delete(sessionId)
+    }
+  }
+
+  /**
+   * The chat person `sessionId` is answering right now, as somewhere to send
+   * the agent's later words to: work it hands on in this turn comes back after
+   * the turn, and the person who asked should hear how it went.
+   */
+  replyLater(sessionId: string): ((reply: Reply) => void) | undefined {
+    const actor = this.#answering.get(sessionId)
+    const channel = actor === undefined ? undefined : this.#channels.get(actor.channel)
+    if (actor === undefined || channel?.sendTo === undefined) return undefined
+    return reply => {
+      const text = finalText(reply).trim()
+      if (text === '' || channel.status().state !== 'ready') return
+      void channel.sendTo!(actor.userId, { id: `relay:${randomUUID()}`, scope: 'relay', title: '助手', text, severity: 'info' })
+        .catch(error => this.#options.log.warn(`a later reply via ${channel.id} failed: ${message(error)}`))
+    }
   }
 
   /** The notice a short reply like "停止" means, if it means one. */

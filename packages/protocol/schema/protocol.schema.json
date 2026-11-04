@@ -27,6 +27,12 @@
     "agents/delete": {
       "capability": "agents"
     },
+    "agents/home": {
+      "capability": "agents"
+    },
+    "handoffs/list": {
+      "capability": "agents"
+    },
     "sessions/rename": {
       "capability": "sessions"
     },
@@ -468,6 +474,7 @@
     "credentials/changed",
     "sessions/archived",
     "roles/changed",
+    "handoffs/changed",
     "providers/changed",
     "session/model",
     "scripts/changed",
@@ -1917,21 +1924,8 @@
               "requestedBy": {
                 "type": "string"
               },
-              "delegatedFrom": {
-                "type": "object",
-                "properties": {
-                  "sessionId": {
-                    "type": "string"
-                  },
-                  "callId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "sessionId",
-                  "callId"
-                ],
-                "additionalProperties": false
+              "home": {
+                "type": "string"
               }
             },
             "required": [
@@ -2338,6 +2332,119 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "agents/home.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agentId"
+      ],
+      "additionalProperties": false
+    },
+    "agents/home.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "handoffs/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "handoffs/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "fromSession": {
+                "type": "string"
+              },
+              "callId": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "toSession": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "expecting": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "done",
+                  "failed"
+                ]
+              },
+              "reply": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "endedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "fromSession",
+              "by",
+              "to",
+              "toSession",
+              "title",
+              "task",
+              "state",
+              "startedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
       "additionalProperties": false
     },
     "sessions/rename.params": {
@@ -19973,21 +20080,8 @@
                 "requestedBy": {
                   "type": "string"
                 },
-                "delegatedFrom": {
-                  "type": "object",
-                  "properties": {
-                    "sessionId": {
-                      "type": "string"
-                    },
-                    "callId": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "sessionId",
-                    "callId"
-                  ],
-                  "additionalProperties": false
+                "home": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -21616,6 +21710,77 @@
       },
       "required": [
         "items"
+      ],
+      "additionalProperties": false
+    },
+    "handoffs/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "fromSession": {
+              "type": "string"
+            },
+            "callId": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "toSession": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "task": {
+              "type": "string"
+            },
+            "expecting": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "running",
+                "done",
+                "failed"
+              ]
+            },
+            "reply": {
+              "type": "string"
+            },
+            "startedAt": {
+              "type": "number"
+            },
+            "endedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "fromSession",
+            "by",
+            "to",
+            "toSession",
+            "title",
+            "task",
+            "state",
+            "startedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "item"
       ],
       "additionalProperties": false
     },

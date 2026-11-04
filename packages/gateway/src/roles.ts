@@ -19,7 +19,6 @@ import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ModelSelection, Role } from '@adg/protocol'
-import type { Delegation } from './builtin.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 export interface RoleSpec extends Role {
@@ -44,7 +43,6 @@ const MAX_KEPT = 5000
 interface Tag {
   readonly role: string
   readonly by?: string
-  readonly from?: Delegation
 }
 
 export class SessionRoles {
@@ -107,26 +105,18 @@ export class SessionRoles {
     return this.#tags.get(sessionId)?.by
   }
 
-  /** The main agent's call that handed the session its work (agent_delegate). */
-  delegatedFrom(sessionId: string): Delegation | undefined {
-    return this.#tags.get(sessionId)?.from
-  }
-
-  /**
-   * @param by - who asked for the work (`requestedBy`).
-   * @param from - the main agent's call that asked (`delegatedFrom`).
-   */
-  async tag(sessionId: string, role: string, by?: string, from?: Delegation): Promise<void> {
+  /** @param by - who asked for the work (`requestedBy`). */
+  async tag(sessionId: string, role: string, by?: string): Promise<void> {
     await this.loaded
     const kept = this.#tags.get(sessionId)
-    if (kept?.role === role && kept.by === by && kept.from?.callId === from?.callId) return
+    if (kept?.role === role && kept.by === by) return
     this.#tags.delete(sessionId)
-    this.#tags.set(sessionId, { role, ...(by === undefined ? {} : { by }), ...(from === undefined ? {} : { from: { sessionId: from.sessionId, callId: from.callId } }) })
+    this.#tags.set(sessionId, { role, ...(by === undefined ? {} : { by }) })
     while (this.#tags.size > MAX_KEPT) this.#tags.delete(this.#tags.keys().next().value!)
     if (this.#file === undefined) return
     mkdirSync(dirname(this.#file), { recursive: true })
     // A role alone is kept as its id, as before.
-    const saved = Object.fromEntries([...this.#tags].map(([id, tag]) => [id, tag.by === undefined && tag.from === undefined ? tag.role : tag]))
+    const saved = Object.fromEntries([...this.#tags].map(([id, tag]) => [id, tag.by === undefined ? tag.role : tag]))
     await writeFileAtomic(this.#file, `${JSON.stringify(saved)}\n`)
   }
 
@@ -138,9 +128,8 @@ export class SessionRoles {
         for (const [id, tag] of Object.entries(saved)) {
           if (typeof tag === 'string') this.#tags.set(id, { role: tag })
           else if (typeof (tag as { role?: unknown } | null)?.role === 'string') {
-            const { role, by, from } = tag as { role: string; by?: unknown; from?: { sessionId?: unknown; callId?: unknown } }
-            const delegation = typeof from?.sessionId === 'string' && typeof from.callId === 'string' ? { sessionId: from.sessionId, callId: from.callId } : undefined
-            this.#tags.set(id, { role, ...(typeof by === 'string' ? { by } : {}), ...(delegation === undefined ? {} : { from: delegation }) })
+            const { role, by } = tag as { role: string; by?: unknown }
+            this.#tags.set(id, { role, ...(typeof by === 'string' ? { by } : {}) })
           }
         }
       }

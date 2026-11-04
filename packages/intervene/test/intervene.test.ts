@@ -87,6 +87,7 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
   const suspended: string[] = []
   const restarted: string[] = []
   let made = 0
+  const handedOff: { by: string; title: string; relay: boolean }[] = []
   const run = { id: 'run-1', state: 'running', resources: ['adb:127.0.0.1:16384'], ...over.run } as RunInfo
   let iv!: Interventions
   iv = new Interventions({
@@ -95,10 +96,15 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
       restart: async id => { restarted.push(id); return run }, stop: async () => {}, note: () => {},
     },
     suspend: async (pid, resume) => { suspended.push(`${resume ? 'resume' : 'suspend'} ${pid}`); return 2 },
+    // 干预's one conversation: every incident goes into it.
     conversations: () => ({
       create: async () => `s-${++made}`,
-      exists: async () => true,
+      home: async () => 's-iv',
       ask: async (sessionId, text, _signal, images = []) => (over.ask ?? (async () => '好的'))(sessionId, text, images),
+      handOff: async input => {
+        handedOff.push({ by: input.by, title: input.title, relay: input.relay === true })
+        return { blocks: [{ kind: 'text', text: await (over.ask ?? (async () => '好的'))('s-iv', input.task, input.images ?? []) }] }
+      },
     }),
     visionProblem: async () => over.vision,
     describeTargets: r => r.resources.join('、'),
@@ -108,7 +114,7 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
     timeoutMs: 500,
     log: { info() {}, warn() {} },
   })
-  return { iv: () => iv, suspended, restarted }
+  return { iv: () => iv, suspended, restarted, handedOff }
 }
 
 const incident: Incident = {
@@ -129,6 +135,7 @@ test('an intervention pauses the script, hands the agent the incident and screen
     },
   })
   const out = await env.iv().handle(incident, 'act', Buffer.from('png'))
+  assert.deepEqual(env.handedOff, [{ by: '监控', title: 'MAA · 日常：出错', relay: true }], "handed to 干预 as the monitor's, its reply going on to 助手")
   assert.equal(out.state, 'resolved')
   assert.equal(out.summary, '游戏更新弹窗，已点「确认」并等更新完成')
   assert.deepEqual(env.suspended, ['suspend 4242', 'resume 4242'])

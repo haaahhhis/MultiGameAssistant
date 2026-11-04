@@ -23,6 +23,8 @@ const gateway = (roleModel: { provider: string; model: string } | undefined, tag
   adopt: async () => {},
   tagSession: async (sessionId: string, role: string, by?: string) => { tagged.push(by === undefined ? `${sessionId}:${role}` : `${sessionId}:${role}:${by}`) },
   roleModel: (role: string) => role === 'intervene' ? roleModel : undefined,
+  home: async () => 'unused',
+  handOffs: { put: async () => {} },
 })
 
 test("a role agent's session is put under its role and gets the role agents' model", async () => {

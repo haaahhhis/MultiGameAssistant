@@ -13,6 +13,7 @@ import { sessionConversations } from '@adg/notify'
 import type { ScriptInfo } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 import { SCRIPT_ROLE } from './role.ts'
+import { taskMessage } from '@adg/protocol'
 
 export const PACK_REVIEW_SCOPE = 'pack-review'
 const REVIEW_TIMEOUT_MS = 30 * 60_000
@@ -36,7 +37,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const gateway = ctx.get('adgGateway')
     const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (sessionId, focus) => gateway?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => gateway)
-    const sessionId = await conversations.create(`检查脚本包：${script.name}`, { focus: { scripts: [id] }, role: SCRIPT_ROLE.id, by: '你' })
+    const sessionId = await conversations.home(SCRIPT_ROLE.id, { focus: { scripts: [id] } })
     const from = script.packReview?.from ?? '旧版本'
     const to = script.packReview?.to ?? script.localVersion?.version ?? script.current ?? '新版本'
     const prompt = [
@@ -47,7 +48,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
       '3. 要改就用原来的脚本包 id 提交 pack_propose（summary 写明依据更新日志改了什么）；不用改就调用 pack_reviewed 说明理由；',
       '4. 最后用两三句话告诉用户结论。',
     ].join('\n')
-    void conversations.ask(sessionId, prompt, AbortSignal.timeout(REVIEW_TIMEOUT_MS)).catch(error => log.warn(`pack review for ${id}: ${error instanceof Error ? error.message : String(error)}`))
+    void conversations.ask(sessionId, taskMessage('你', `检查脚本包：${script.name}`, prompt), AbortSignal.timeout(REVIEW_TIMEOUT_MS)).catch(error => log.warn(`pack review for ${id}: ${error instanceof Error ? error.message : String(error)}`))
     return { sessionId }
   }
 

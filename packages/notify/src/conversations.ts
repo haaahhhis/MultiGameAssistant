@@ -1,35 +1,30 @@
 /**
- * Conversations with the agent for chat channels, over dsh's session
- * controller: one session per person; a message is a prompt, the reply is that
- * turn as the app shows it (what the agent said and the steps between, see
- * reply.ts). A new session takes the model of the session the user used last
- * in the UI (dsh's default model may be one they never set up).
- *
- * A session keeps the folder it was created in as an absolute path: when that
- * folder is gone (renamed, moved), the session cannot work any more, so it
- * counts as not existing and the person gets a new one, with its last few
- * messages carried over (`recent`).
+ * Conversations with the agents, over dsh's session controller: a message is
+ * a prompt, the reply is that turn as the app shows it (what the agent said
+ * and the steps between, see reply.ts). Each agent has one conversation (the
+ * gateway's `home`): work handed to it is a message there, and a message sent
+ * while it is busy waits its turn (docs/design/agent-roles.md §10). A new
+ * one-off session takes the model of the session the user used last in the UI
+ * (dsh's default model may be one they never set up).
  */
-import { existsSync } from 'node:fs'
 import type { SessionController, SessionFollowFrame, SessionRequestId, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
-import { convertRecord, convertRecords } from '@adg/gateway'
-import { summarizeToolArgs } from '@adg/protocol'
+import { convertRecord } from '@adg/gateway'
+import { summarizeToolArgs, type HandOff } from '@adg/protocol'
+import { handOff } from './handoff.ts'
 import type { Conversations } from './notify.ts'
 import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
-type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel'>>
+type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel' | 'updateQueue'>>
 type SessionId = SessionSummary['sessionId']
-/** The gateway's part in creating a conversation (its sessionPreset, adopt and tagSession). */
+/** The gateway's part: a new conversation's preset, role and model; each agent's own one; the hand-offs it keeps. */
 interface AppSessions {
   sessionPreset(): { agentPreset?: string }
   adopt(sessionId: string): Promise<void>
-  tagSession(sessionId: string, role: string, by?: string, from?: { sessionId: string; callId: string }): Promise<void>
+  tagSession(sessionId: string, role: string, by?: string): Promise<void>
   roleModel(role: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
+  home(agentId: string): Promise<string>
+  readonly handOffs: { put(item: HandOff): Promise<void> }
 }
-type Snapshot = Extract<SessionFollowFrame, { type: 'snapshot' }>
-
-/** Messages carried over when a conversation has to start again. */
-const RECENT_MESSAGES = 10
 
 /**
  * @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir).
@@ -39,18 +34,21 @@ const RECENT_MESSAGES = 10
 export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations {
   const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<Reply> => {
     const controller = new AbortController()
+    const requestId = `notify-${crypto.randomUUID()}`
+    const turn = { started: false }
     // Called off (a stopped run, a timeout): the agent's turn stops too, not only our following it —
-    // an agent left running would go on acting (e.g. launch the game again).
+    // an agent left running would go on acting (e.g. launch the game again). Still waiting behind
+    // other work in the agent's one conversation, the message is taken back instead: the turn
+    // running then is someone else's.
     const abort = () => {
       controller.abort(signal.reason)
-      if (sessions.cancel !== undefined) void Promise.resolve().then(() => sessions.cancel!({ sessionId: sessionId as SessionId })).catch(() => {})
+      void Promise.resolve().then(async () => { if (turn.started) sessions.cancel?.({ sessionId: sessionId as SessionId }); else await unqueue(sessions, sessionId, requestId) }).catch(() => {})
     }
     signal.addEventListener('abort', abort, { once: true })
     try {
       const iterator = sessions.follow({ address: { kind: 'session', sessionId: sessionId as SessionId }, assistantStream: true, maxMessages: 1 }, controller.signal)[Symbol.asyncIterator]()
       const first = await iterator.next()
       if (first.done === true) throw new Error('会话没有打开')
-      const requestId = `notify-${crypto.randomUUID()}`
       await sessions.prompt({
         requestId: requestId as SessionRequestId,
         sessionId: sessionId as SessionId,
@@ -58,13 +56,25 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
         content: [{ type: 'text', text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }, controller.signal)
-      return await turnReply(iterator, requestId, text)
+      return await turnReply(iterator, requestId, text, turn)
     } finally {
       signal.removeEventListener('abort', abort)
       controller.abort()
     }
   }
+  const gateway = (): AppSessions => {
+    const found = app?.()
+    if (found === undefined) throw new Error('agent 现在不可用（网关没有加载）')
+    return found
+  }
+  const home = async (agent: string, options: { focus?: { scripts?: string[]; games?: string[] } } = {}): Promise<string> => {
+    const sessionId = await gateway().home(agent)
+    if (options.focus !== undefined) await focus?.(sessionId, options.focus)
+    return sessionId
+  }
   return {
+    home,
+    handOff: input => handOff({ home, converse, record: item => gateway().handOffs.put(item) }, input),
     async create(title, options = {}) {
       // A role agent's session: the model chosen for role agents, when there is one (设置 → 模型).
       const chosen = options.role === undefined ? undefined : app?.()?.roleModel(options.role)
@@ -73,36 +83,15 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       const dir = cwd()
       const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...app?.()?.sessionPreset() })
       await app?.()?.adopt(created.sessionId)
-      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by, options.from)
+      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by)
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
       if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)
       return created.sessionId
     },
-    async exists(sessionId) {
-      try {
-        if ((await sessions.projections({ sessionId: sessionId as SessionId }, AbortSignal.timeout(10_000))) === null) return false
-        const folder = (await snapshot(sessions, sessionId, 1))?.header.cwd
-        return folder === undefined || existsSync(folder)
-      } catch {
-        return false
-      }
-    },
     async lastActive(sessionId) {
       const { items } = await sessions.list({}, AbortSignal.timeout(10_000))
       return items.find(s => s.sessionId === sessionId)?.updatedAt
-    },
-    async recent(sessionId) {
-      const opened = await snapshot(sessions, sessionId, RECENT_MESSAGES).catch(() => undefined)
-      if (opened === undefined) return undefined
-      const lines = convertRecords(opened.records).flatMap(event => {
-        if (event.type !== 'user/message' && event.type !== 'assistant/message') return []
-        // Without the note put before each chat message (notify.ts channelNote).
-        const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').replace(/^（这条消息来自[^）]*）\n/, '').trim()
-        if (said === '') return []
-        return [`${event.type === 'user/message' ? '用户' : 'agent'}：${said.length > 400 ? `${said.slice(0, 400)}…` : said}`]
-      })
-      return lines.length === 0 ? undefined : lines.join('\n')
     },
     async ask(sessionId, text, signal, images) {
       return finalText(await converse(sessionId, text, signal, images)) || '（agent 没有回复文字）'
@@ -111,17 +100,14 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
   }
 }
 
-/** The session's opening frame: its header (with its folder) and its last `maxMessages` records. */
-async function snapshot(sessions: Sessions, sessionId: string, maxMessages: number): Promise<Snapshot | undefined> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
-  try {
-    const iterator = sessions.follow({ address: { kind: 'session', sessionId: sessionId as SessionId }, maxMessages }, controller.signal)[Symbol.asyncIterator]()
-    const first = await iterator.next()
-    return first.done !== true && first.value.type === 'snapshot' ? first.value : undefined
-  } finally {
-    clearTimeout(timer)
-    controller.abort()
+/** Take a message that has not been started yet back out of the conversation's queue. */
+async function unqueue(sessions: Sessions, sessionId: string, requestId: string): Promise<void> {
+  if (sessions.updateQueue === undefined) return
+  const values = (await sessions.projections({ sessionId: sessionId as SessionId }, AbortSignal.timeout(10_000)))?.values as { inbox?: Record<string, unknown> } | undefined
+  for (const list of Object.values(values?.inbox ?? {})) {
+    if (!Array.isArray(list)) continue
+    const queued = (list as { id?: unknown; source?: { rpcId?: unknown } }[]).find(m => m.source?.rpcId === requestId)
+    if (typeof queued?.id === 'string') await sessions.updateQueue({ sessionId: sessionId as SessionId, itemId: queued.id as never, action: { kind: 'remove' } })
   }
 }
 
@@ -169,7 +155,7 @@ function pick(value: unknown): Selection | undefined {
  * and the steps it took, in order — consecutive tool calls form one group,
  * like the app's 「执行了 N 个步骤」.
  */
-async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string): Promise<Reply> {
+async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }): Promise<Reply> {
   let mine = false
   let ended: string | undefined
   const blocks: ReplyBlock[] = []
@@ -184,7 +170,7 @@ async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId:
     if (event === null) continue
     if (event.type === 'user/message') {
       const body = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
-      if (event.requestId === requestId || (event.requestId === undefined && body.trim() === text.trim())) mine = true
+      if (event.requestId === requestId || (event.requestId === undefined && body.trim() === text.trim())) mine = turn.started = true
     } else if (mine && event.type === 'assistant/message') {
       const said = event.content.map(p => (p.type === 'text' ? p.text : '')).join('').trim()
       if (said !== '') blocks.push({ kind: 'text', text: said })

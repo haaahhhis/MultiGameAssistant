@@ -1,36 +1,28 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import type { ModelSelection } from '@adg/protocol'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
 import { NavRail, type RailTarget } from './components/NavRail.tsx'
 import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
-import { ModelPicker } from './components/ModelPicker.tsx'
-import { useSlash } from './components/SlashMenu.tsx'
-import { AgentRoster, relativeTime, sessionTitle } from './components/SessionList.tsx'
-import { AgentPage } from './components/AgentPage.tsx'
+import { AgentRoster } from './components/SessionList.tsx'
 import { AgentEditor } from './components/AgentEditor.tsx'
-import { MAIN_AGENT, agentIdOf, useRoles } from './agents.ts'
+import { MAIN_AGENT, agentIdOf, useHome, useRoles } from './agents.ts'
 import { UiSwitch } from './components/UiSwitch.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
 import { readRoute, writeRoute, type Route } from './config.ts'
-import { readDraft, saveDraft } from './drafts.ts'
-import { useCredentials, useModelCatalog, useNow, usePages, useStore } from './hooks.ts'
+import { useCredentials, useModelCatalog, usePages, useStore } from './hooks.ts'
 
 /** The page the app opens on. */
 const START_PAGE = 'games'
 
-/** A first message typed on the home page, sent once its new session opens. */
-type Handoff = { readonly sessionId: string; readonly text: string }
-
 /**
- * Three-column shell: the navigation rail, then either the chat area (session
- * list + session or home), a plugin page, or settings.
+ * Three-column shell: the navigation rail, then either the chat area (the
+ * agents + one agent's conversation, docs/design/agent-roles.md §10), a
+ * plugin page, or settings.
  */
 export function App({ client }: { client: AdgClient }) {
   const [route, setRoute] = useState<Route>(() => readRoute())
-  const [handoff, setHandoff] = useState<Handoff | null>(null)
   const sessions = useStore(client.sessions)
   const pages = usePages(client)
   const status = useStore(client.connection.status)
@@ -70,20 +62,14 @@ export function App({ client }: { client: AdgClient }) {
   const openSession = (id: string) => setRoute({ kind: 'session', id })
   const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
-  const goHome = () => setRoute({ kind: 'home' })
   const selected = route.kind === 'session' ? route.id : null
   const selectedItem = selected === null ? undefined : sessions.items.find(i => i.id === selected)
-  // The agent in front: the role agent's page, the agent of the open session, else 助手.
+  // The agent in front: its conversation, the agent of the open session, else 助手.
   const agent = route.kind === 'agent' ? route.id : route.kind === 'agentEdit' ? route.id ?? '' : selectedItem !== undefined ? agentIdOf(selectedItem, roles) : MAIN_AGENT
-  // 助手: its latest conversation (the start page when it has none); a role agent: its page.
-  const openAgent = (id: string) => {
-    if (id !== MAIN_AGENT) { setRoute({ kind: 'agent', id }); return }
-    const latest = sessions.items.filter(i => i.origin !== 'subagent' && !i.blank && agentIdOf(i, roles) === MAIN_AGENT).sort((a, b) => b.updatedAt - a.updatedAt)[0]
-    if (agent === MAIN_AGENT) return
-    if (latest === undefined) goHome()
-    else openSession(latest.id)
-  }
-  const startSession = (sessionId: string, text: string) => { setHandoff({ sessionId, text }); openSession(sessionId) }
+  const openAgent = (id: string) => setRoute({ kind: 'agent', id })
+  const goHome = () => openAgent(MAIN_AGENT)
+  const editAgent = (id: string) => setRoute({ kind: 'agentEdit', id })
+  const reminder = <ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} />
   const shown: Route = route.kind === 'start' ? { kind: 'page', id: START_PAGE } : route
   const page = shown.kind === 'page' ? pages.find(p => p.id === shown.id) : undefined
 
@@ -96,32 +82,23 @@ export function App({ client }: { client: AdgClient }) {
     <div className={`app ${chatArea || route.kind === 'settings' ? 'with-sidebar' : ''}`}>
       <NavRail client={client} pages={pages} current={rail} onChat={goHome} onPage={openPage} onSettings={() => openSettings()} />
       {route.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={route.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
-      {chatArea && <AgentRoster client={client} agent={agent} selected={selected} onAgent={openAgent} onSelect={openSession} onNew={goHome}
+      {chatArea && <AgentRoster client={client} agent={agent} selected={selected} onAgent={openAgent} onSelect={openSession}
         onNewAgent={() => setRoute({ kind: 'agentEdit', id: null })} />}
       {shown.kind === 'page' && (page === undefined
         ? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>
         : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />)}
-      {route.kind === 'home' && (
-        <Home client={client} onSettings={() => openSettings('api-keys')} onOpen={openSession} onStart={startSession} />
-      )}
-      {route.kind === 'agent' && (
-        <AgentPage key={route.id} client={client} agentId={route.id} onOpen={openSession} onStart={startSession} onMain={() => openAgent(MAIN_AGENT)}
-          onEdit={() => setRoute({ kind: 'agentEdit', id: route.id })} />
+      {(route.kind === 'home' || route.kind === 'agent') && (
+        <AgentConversation key={route.kind === 'agent' ? route.id : MAIN_AGENT} client={client} agentId={route.kind === 'agent' ? route.id : MAIN_AGENT}
+          onMain={goHome} onAgent={openAgent} onEdit={editAgent} reminder={reminder} />
       )}
       {route.kind === 'agentEdit' && (
         <AgentEditor key={route.id ?? 'new'} client={client} agentId={route.id}
           onSaved={id => { replacing.current = true; setRoute({ kind: 'agent', id }) }}
-          onCancel={() => (route.id === null ? openAgent(MAIN_AGENT) : setRoute({ kind: 'agent', id: route.id }))}
-          onDeleted={() => { replacing.current = true; openAgent(MAIN_AGENT) }} />
+          onCancel={() => (route.id === null ? goHome() : setRoute({ kind: 'agent', id: route.id }))}
+          onDeleted={() => { replacing.current = true; goHome() }} />
       )}
       {route.kind === 'session' && (
-        <SessionView
-          key={route.id} client={client} sessionId={route.id}
-          initialPrompt={handoff?.sessionId === route.id ? handoff.text : undefined}
-          onInitialSent={() => setHandoff(null)}
-          onAgent={openAgent}
-          reminder={<ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} />}
-        />
+        <SessionView key={route.id} client={client} sessionId={route.id} onAgent={openAgent} onEdit={editAgent} reminder={reminder} />
       )}
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
       <UiSwitch />
@@ -129,124 +106,21 @@ export function App({ client }: { client: AdgClient }) {
   )
 }
 
-const STARTERS = [
-  '从 GitHub 安装 MAA，并检查运行环境',
-  '分析一下这个脚本目录怎么启动：D:\\Scripts\\',
-  '每天凌晨 4:30 跑一遍明日方舟日常',
-]
-
-function Home({ client, onSettings, onOpen, onStart }: {
+/** An agent's one conversation (`agents/home`): made the first time it is opened. */
+function AgentConversation({ client, agentId, onMain, onAgent, onEdit, reminder }: {
   client: AdgClient
-  onSettings: () => void
-  onOpen: (sessionId: string) => void
-  onStart: (sessionId: string, text: string) => void
+  agentId: string
+  onMain: () => void
+  onAgent: (agentId: string) => void
+  onEdit: (agentId: string) => void
+  reminder: ReactNode
 }) {
-  const sessions = useStore(client.sessions)
-  const status = useStore(client.connection.status)
-  const now = useNow(30_000)
-  // Kept while you look at other pages (drafts.ts).
-  const [text, setText] = useState(() => readDraft('home'))
-  useEffect(() => saveDraft('home', text), [text])
-  const [model, setModel] = useState<ModelSelection | undefined>(undefined)
-  const capabilities = useStore(client.capabilities)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const area = useRef<HTMLTextAreaElement>(null)
-  // Your own conversations: a role agent's sessions (干预, 日报, …) are under that role in the session list.
-  const recent = sessions.items.filter(item => item.origin !== 'subagent' && !item.blank && item.role === undefined).slice(0, 4)
-  const disabled = status.state !== 'open'
-
-  // Slash commands and skills, as in the chat box (SlashMenu.tsx); the list opens below, the page continues under it.
-  const slash = useSlash({ client, text, setText, area, placement: 'below', submit: typed => void start(typed) })
-
-  const start = async (typed = text) => {
-    const value = slash.expand(typed)
-    if (value === '' || disabled || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      // The conversation is created now, when there is something to say; the chosen model goes with it.
-      const sessionId = await client.createSession()
-      if (model !== undefined) await client.selectModel(sessionId, model).catch(() => {})
-      saveDraft('home', '')
-      onStart(sessionId, value)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setBusy(false)
-    }
+  const { sessionId, error } = useHome(client, agentId)
+  if (error !== null) {
+    return <section className="main empty"><span>{error}<button className="link-button" onClick={onMain}>回到助手</button></span></section>
   }
-
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (slash.onKeyDown(e)) return
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      void start()
-    }
-  }
-
-  return (
-    <section className="main welcome">
-      <header className="welcome-header">
-        <span>对话<span className="breadcrumb-divider">/</span><strong>开始</strong></span>
-      </header>
-      <div className="welcome-content">
-        <div className="welcome-hero">
-          <p className="eyebrow">MULTI GAME ASSISTANT</p>
-          <h1>今天要跑点什么？</h1>
-          <p className="welcome-description">安装脚本、读懂它怎么用、编排多个脚本一起跑，出了问题帮你看。用一句话告诉 agent 就行。</p>
-        </div>
-
-        <div className="slash-anchor">
-        {slash.menu}
-        <div className="composer-box hero-composer">
-          <textarea
-            ref={area}
-            aria-label="描述你想完成的事"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={3}
-            placeholder={disabled ? '未连接到 agent' : '例如：帮我清一下明日方舟日常，刷 1-7，不吃药'}
-            disabled={disabled}
-          />
-          <div className="composer-actions">
-            {capabilities.has('models') && <ModelPicker client={client} disabled={disabled || busy} value={model} onChange={setModel} />}
-            {error !== null && <span className="error small">{error}</span>}
-            <span className="spacer" />
-            <span className="composer-kbd"><kbd>/</kbd> 命令和技能 · <kbd>Enter</kbd> 开始</span>
-            <button className="send-button" aria-label="开始会话" onClick={() => void start()} disabled={disabled || busy || text.trim() === ''}>
-              <Icon name="arrow" />
-            </button>
-          </div>
-        </div>
-        </div>
-
-        <div className="starters">
-          {STARTERS.map(starter => (
-            <button key={starter} className="starter" onClick={() => { setText(starter); area.current?.focus() }}>
-              <Icon name="chevron" />{starter}
-            </button>
-          ))}
-        </div>
-
-        <ApiKeyReminder client={client} onSettings={onSettings} />
-
-        {recent.length > 0 && (
-          <div className="resume">
-            <div className="resume-head"><span className="sidebar-label">继续上次</span></div>
-            {recent.map(item => (
-              <button key={item.id} className="resume-item" onClick={() => onOpen(item.id)}>
-                <span className="resume-text">
-                  <span className="resume-title">{sessionTitle(item)}</span>
-                </span>
-                <span className="session-time">{item.running ? '运行中' : relativeTime(item.updatedAt, now)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
-  )
+  if (sessionId === null) return <section className="main empty">正在打开…</section>
+  return <SessionView key={sessionId} client={client} sessionId={sessionId} onAgent={onAgent} onEdit={onEdit} reminder={reminder} />
 }
 
 /**

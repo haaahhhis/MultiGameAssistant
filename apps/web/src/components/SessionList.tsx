@@ -8,25 +8,23 @@ import { Icon } from './Icons.tsx'
 export const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl '
 
 const CHANNEL: Readonly<Record<string, string>> = { feishu: '飞书' }
-/** The main agent's conversations listed under it before 「更多」. */
-const MAIN_SHOWN = 12
+/** Earlier conversations listed under an agent before 「更多」. */
+const EARLIER_SHOWN = 12
 
 /**
  * The chat area's second column: the agents rather than their sessions
- * (docs/design/agent-roles.md §9). One row per agent — 助手 first, then the
- * role agents (干预, 游戏, …) — with its latest reply, whether it is working,
- * and whether something came in since you last looked. 助手's own
- * conversations open under its row; a role agent's tasks are its page.
+ * (docs/design/agent-roles.md §9, §10). One row per agent — 助手 first, then
+ * the role agents (干预, 游戏, …) — with its latest reply, whether it is
+ * working, and whether something came in since you last looked. A row opens
+ * the agent's one conversation; its earlier ones fold away under it.
  */
-export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew, onNewAgent }: {
+export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewAgent }: {
   client: AdgClient
   /** The agent whose page or session is open. */
   agent: string
   selected: string | null
   onAgent: (agentId: string) => void
   onSelect: (sessionId: string) => void
-  /** A new conversation with 助手: the start page; the session is created when the first message is sent. */
-  onNew: () => void
   /** 新建 agent (AgentEditor.tsx). */
   onNewAgent: () => void
 }) {
@@ -40,7 +38,8 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew,
   const [query, setQuery] = useState('')
   const [archived, setArchived] = useState<ReadonlySet<string>>(new Set())
   const [showArchived, setShowArchived] = useState(false)
-  const [allMain, setAllMain] = useState(false)
+  const [earlierOpen, setEarlierOpen] = useState(false)
+  const [allEarlier, setAllEarlier] = useState(false)
   const [remote, setRemote] = useState<ReadonlyMap<string, { channel: string; user: string }>>(new Map())
   const [notifyRevision, setNotifyRevision] = useState(0)
   const search = useRef<HTMLInputElement>(null)
@@ -97,7 +96,8 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew,
     return { byAgent, archivedItems }
   }, [sessions.items, archived, agents, roles, selected])
 
-  const latest = agents.map(a => byAgent.get(a.id)?.[0]).filter((i): i is SessionItem => i !== undefined)
+  // What a row shows: the agent's own conversation, else (none yet) its latest earlier one.
+  const latest = agents.map(a => { const items = byAgent.get(a.id) ?? []; return items.find(i => i.home === a.id) ?? items[0] }).filter((i): i is SessionItem => i !== undefined)
   const replies = useLastReplies(client, latest.map(i => ({ id: i.id, updatedAt: i.updatedAt, running: i.running })))
 
   // What you are looking at counts as seen; an agent never looked at starts as seen, so nothing is unread on a first start.
@@ -181,7 +181,6 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew,
     )
   }
 
-  const mainItems = byAgent.get(MAIN_AGENT) ?? []
   return (
     <aside className="sidebar session-sidebar">
       <div className="sidebar-actions">
@@ -207,13 +206,16 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew,
         ) : agents.map(a => {
           const items = byAgent.get(a.id) ?? []
           const last = items[0]
+          const own = items.find(i => i.home === a.id)
+          const earlier = items.filter(i => i.home !== a.id)
           const running = items.filter(i => i.running).length
           const unread = a.id !== agent && last !== undefined && last.updatedAt > (seen[a.id] ?? Infinity)
-          const line = last === undefined ? a.description : replies.get(last.id) ?? sessionTitle(last)
+          const shownItem = own ?? last
+          const line = shownItem === undefined ? a.description : replies.get(shownItem.id) ?? (own === undefined ? sessionTitle(shownItem) : a.description)
           const open = a.id === agent
           return (
             <div key={a.id} className={`agent-entry ${open ? 'open' : ''}`}>
-              <button className={`agent-row ${open ? 'active' : ''}`} aria-current={open && selected === null ? 'page' : undefined}
+              <button className={`agent-row ${open && (selected === null || selected === own?.id) ? 'active' : ''}`} aria-current={open && selected === null ? 'page' : undefined}
                 onClick={() => onAgent(a.id)} title={a.description}>
                 <span className={`agent-avatar agent-${a.id}`}>
                   <Icon name={a.icon} />
@@ -229,14 +231,16 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNew,
                   <span className="roster-line">{line}</span>
                 </span>
               </button>
-              {open && a.id === MAIN_AGENT && (
+              {open && earlier.length > 0 && (
                 <div className="agent-sessions">
-                  <button className="nav-item new-topic" onClick={onNew} disabled={status.state !== 'open'}>
-                    <Icon name="plus" /><span className="nav-item-label">新话题</span>
+                  <button className="nav-item role-row earlier-toggle" onClick={() => setEarlierOpen(v => !v)} aria-expanded={earlierOpen || earlier.some(i => i.id === selected)}>
+                    <span className="nav-item-label">以前的对话</span>
+                    <span className="tab-count">{earlier.length}</span>
+                    <Icon name={earlierOpen || earlier.some(i => i.id === selected) ? 'chevron-down' : 'chevron'} className="role-chevron" />
                   </button>
-                  {(allMain ? mainItems : mainItems.slice(0, MAIN_SHOWN)).map(item => sessionRow(item))}
-                  {!allMain && mainItems.length > MAIN_SHOWN && (
-                    <button className="nav-item more-sessions" onClick={() => setAllMain(true)}>更多（{mainItems.length - MAIN_SHOWN}）</button>
+                  {(earlierOpen || earlier.some(i => i.id === selected)) && (allEarlier ? earlier : earlier.slice(0, EARLIER_SHOWN)).map(item => sessionRow(item))}
+                  {(earlierOpen || earlier.some(i => i.id === selected)) && !allEarlier && earlier.length > EARLIER_SHOWN && (
+                    <button className="nav-item more-sessions" onClick={() => setAllEarlier(true)}>更多（{earlier.length - EARLIER_SHOWN}）</button>
                   )}
                 </div>
               )}

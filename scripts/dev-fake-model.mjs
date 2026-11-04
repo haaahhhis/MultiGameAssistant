@@ -9,7 +9,8 @@
  * Behaviour: a prompt mentioning “审批” or “命令” makes the model ask to run a
  * shell command that needs approval; after the tool result it reports the
  * output. One mentioning “交给” makes 助手 hand a task to the 游戏 agent
- * (agent_delegate), which answers it; anything else is echoed back.
+ * (agent_delegate); 游戏 answers it a few seconds later, and 助手 passes the
+ * reply on when it comes back. Anything else is echoed back.
  */
 import { startFakeLlm } from '../packages/test-kit/lib/index.js'
 import { connectGateway, FAKE_MODEL, removeFakeProvider, saveFakeProvider } from './lib/gateway.mjs'
@@ -24,14 +25,17 @@ const llm = await startFakeLlm({
     if (!Array.isArray(body.tools) || body.tools.length === 0) return { text: '模拟会话' } // title request
     if (last?.role === 'tool') {
       const called = messages.findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
-      if (called === 'agent_delegate') return { text: `游戏 交回来了，我转述一下：${textOf(last.content).trim()}` }
+      if (called === 'agent_delegate') return { text: '（模拟模型）已经交给「游戏」去读明日方舟今天的活动，它读完会发回来。' }
       return { text: `命令已执行，输出：${textOf(last.content).trim() || '（无输出）'}` }
     }
     // The user's words come first among the user-role messages of this turn;
     // dsh appends runtime-context and reminder messages after them.
     const lastAssistant = messages.findLastIndex(m => m.role === 'assistant')
     const said = messages.slice(lastAssistant + 1).filter(m => m.role === 'user').map(m => textOf(m.content))[0] ?? ''
-    if (said.startsWith('（助手交给你的事')) return { text: '（模拟模型）明日方舟今天没有结束的活动；「孤星」复刻还有 3 天。不需要你做什么。' }
+    // 游戏, handed the task: slow enough to see it working in 助手's conversation.
+    if (said.startsWith('（助手交给你的事')) return { delayMs: 6000, text: '（模拟模型）明日方舟今天没有结束的活动；「孤星」复刻还有 3 天。不需要你做什么。' }
+    // 助手, the reply back: the gist.
+    if (/^（「[^」]+」交回了/.test(said)) return { text: `（模拟模型）游戏读完了：${said.split('\n\n')[1] ?? ''}` }
     if (/交给/.test(said) && body.tools.some(t => (t.function?.name ?? t.name) === 'agent_delegate')) {
       return { toolCalls: [{ name: 'agent_delegate', arguments: { agent: '游戏', task: '读一下明日方舟国服今天的活动，哪些今天结束。', expecting: '今天结束的活动，没有就说没有' } }] }
     }

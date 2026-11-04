@@ -18,7 +18,7 @@ import type { Reply } from './reply.ts'
 import { Notify, type ActionHandler, type Actor, type Channel, type Notice, type NoticePatch } from './notify.ts'
 import { writeFileAtomic } from '@adg/protocol/node'
 
-export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
+export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type HandOffInput, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
 export { sessionConversations } from './conversations.ts'
 export { finalText, replyMarkdown, replyPlain, textReply, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
@@ -29,7 +29,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 const ConfigSchema = z.object({
-  /** Person → agent session map: `<dataDir>/notify/sessions.json`. */
+  /** Person → the conversation their messages go to: `<dataDir>/notify/sessions.json`. */
   dataDir: z.string().min(1),
 })
 export type Config = z.input<typeof ConfigSchema>
@@ -49,9 +49,7 @@ export class AdgNotify extends Service {
     const conversations = () => {
       const sessions = ctx.get('sessionController')
       if (sessions === undefined) return undefined
-      const base = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
-      // Archived by the user: the person's next message starts a new conversation.
-      return { ...base, exists: async (id: string) => ctx.get('adgGateway')?.isArchived(id) !== true && base.exists(id) }
+      return sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => ctx.get('adgGateway'))
     }
     const notify = new Notify({
       conversations,
@@ -77,8 +75,8 @@ export class AdgNotify extends Service {
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
       })
-      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them.
-      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations })))
+      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them. A chat person's turn hears back too.
+      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations, relayed: sessionId => notify.replyLater(sessionId) })))
       scoped.adgGateway.addQuestionAnswerer({
         active: sessionId => notify.questionsActive(sessionId),
         asked: request => notify.askQuestion(request),

@@ -44,7 +44,8 @@ import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
-import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel, type Delegation } from './builtin.ts'
+import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { AgentHomes, HandOffs } from './homes.ts'
 import { LastReplies } from './last-reply.ts'
 import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
 import { roleOf, TOOL_GROUPS, UserAgents } from './user-agents.ts'
@@ -186,11 +187,14 @@ interface LiveAgent {
   readonly ctx: Context
 }
 
-/** Said to every role agent: its last words are what its task card shows (last-reply.ts). */
-const ROLE_CLOSING = '你最后一段回复就是这件事的结论，会显示在任务卡片上给用户看：写清楚结果，以及需要用户做的事（没有就不写）。'
+/** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
+const ROLE_CLOSING = [
+  '这是你唯一的对话：用户直接找你说的话、别的 agent 和软件交给你的事（消息开头写着「（…交给你的事：…）」）都在这里，一件接一件。',
+  '你每一轮最后一段回复就是这件事的结论：写清楚结果，以及需要用户做的事（没有就不写）。别人交给你的事，这段回复会原样交回给它。',
+].join('\n')
 
 /**
- * The main agent (助手, docs/design/agent-roles.md §9): it talks with the
+ * The main agent (助手, docs/design/agent-roles.md §9, §10): it talks with the
  * person and hands the work to the role agents (agent_delegate), so of the
  * app's tools it keeps what it needs to know where things stand and to plan;
  * doing — screens, emulators, running and installing scripts, games — is the
@@ -215,7 +219,9 @@ function mainDuty(roles: readonly { readonly name: string; readonly description:
     '# 你的角色：助手',
     '你是用户的助手：和用户对话，弄清要做什么，安排谁来做。截图点击、运行和安装脚本、读游戏这些具体的事交给对应的 agent（agent_delegate），你自己不做。',
     roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
-    '交给之前把任务写完整：它看不到你和用户的对话。它的回复会交回给你，用户也能在界面上看到你们说了什么；你再用自己的话告诉用户结果和要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
+    '交出去的事在那个 agent 自己的对话里做，它看不到你和用户的对话，所以任务要写完整。交出去以后用一句话告诉用户交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。',
+    '它做完后，回复会作为一条新消息发到这里，开头是「（「某 agent」交回了…）」或「（「某 agent」没有做完…）」。收到后用一两句话把要点告诉用户：结论、要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
+    '软件自己也会把事交给 agent（比如监控发现脚本出了问题，交给干预处理），结果同样发到这里，你照样把要点告诉用户。用户也可以直接去某个 agent 的对话里找它，那些你看不到。',
   ].join('\n\n')
 }
 
@@ -261,6 +267,10 @@ export class AdgGateway extends Service {
   readonly roles: SessionRoles
   /** The model their sessions use (roles.ts). */
   private readonly roleModelStore: RoleModel
+  /** Each agent's one conversation, and the work they hand each other (homes.ts). */
+  readonly homes: AgentHomes
+  readonly handOffs: HandOffs
+  private readonly homeMaking = new Map<string, Promise<string>>()
   private readonly parts: AgentParts
   private readonly sockets: Sockets
   /** Bring one session's permission preset in line with the mode. */
@@ -284,6 +294,8 @@ export class AdgGateway extends Service {
     this.roleModelStore = new RoleModel(config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     this.userAgents = new UserAgents(config.dataDir === undefined ? undefined : join(config.dataDir, 'agents.json'))
+    this.homes = new AgentHomes(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-homes.json'))
+    this.handOffs = new HandOffs(config.dataDir === undefined ? undefined : join(config.dataDir, 'handoffs.json'), item => this.broadcast('handoffs/changed', { item }))
     void this.userAgents.loaded.then(() => { this.userAgents.list().forEach((agent, i) => this.userRoles.set(agent.id, this.role(roleOf(agent, i)))) })
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
@@ -326,7 +338,7 @@ export class AdgGateway extends Service {
       roles: () => this.roles.list(),
       roleOf: (sessionId, title) => this.roles.of(sessionId, title),
       requestedByOf: sessionId => this.roles.requestedBy(sessionId),
-      delegatedFromOf: sessionId => this.roles.delegatedFrom(sessionId),
+      homeOf: sessionId => this.homes.agentOf(sessionId),
       // A task given on a role agent's page: you asked for it.
       tagRole: async (sessionId, role) => {
         await this.tagSession(sessionId, role, '你')
@@ -566,6 +578,10 @@ export class AdgGateway extends Service {
           }
           const order = this.userAgents.list().findIndex(a => a.id === agent.id)
           this.userRoles.set(agent.id, this.role(roleOf(agent, order)))
+          // Its conversation goes on with the model chosen now.
+          const home = this.homes.get(agent.id)
+          const model = this.roleModel(agent.id)
+          if (home !== undefined && model !== undefined) await ctx.sessionController.selectModel({ sessionId: home as never, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
           log.info(`agent ${input.id === undefined ? 'made' : 'changed'}: ${agent.name} (${agent.id})`)
           return { agent }
         },
@@ -574,8 +590,22 @@ export class AdgGateway extends Service {
           if (!(await this.userAgents.delete(id))) return {}
           this.userRoles.get(id)?.()
           this.userRoles.delete(id)
+          // Its conversation stays, as an earlier one under 助手.
+          await this.homes.drop(id)
           log.info(`agent deleted: ${id}`)
           return {}
+        },
+        'agents/home': async params => {
+          const { agentId } = params as RequestParams<'agents/home'>
+          try {
+            return { sessionId: await this.home(agentId) }
+          } catch (error) {
+            throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
+          }
+        },
+        'handoffs/list': async params => {
+          await this.handOffs.loaded
+          return { items: this.handOffs.of((params as RequestParams<'handoffs/list'>).sessionId) }
         },
       },
     }), 'adg-gateway capability agents')
@@ -778,7 +808,7 @@ export class AdgGateway extends Service {
 
     // Session list deltas come from the controller's own lifecycle events (a shared dsh's other chats are not this app's).
     ctx.on('api-session/added', summary => {
-      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title), id => this.roles.requestedBy(id), id => this.roles.delegatedFrom(id)) })
+      if (this.isOwn(summary.sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: toSessionItem(summary, (id, title) => this.roles.of(id, title), id => this.roles.requestedBy(id), id => this.homes.agentOf(id)) })
     })
     ctx.on('api-session/removed', sessionId => {
       if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'removed', sessionId })
@@ -953,16 +983,53 @@ Content-Length: 0
     return this.userAgents.get(role)?.model ?? this.roleModelStore.get()
   }
 
-  /**
-   * Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …);
-   * `from`: the main agent's agent_delegate call that asked.
-   */
-  async tagSession(sessionId: string, role: string, by?: string, from?: Delegation): Promise<void> {
-    await this.roles.tag(sessionId, role, by, from)
+  /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */
+  async tagSession(sessionId: string, role: string, by?: string): Promise<void> {
+    await this.roles.tag(sessionId, role, by)
     // Its agent came with the session, before the tag.
     const agent = this.agents.get(sessionId)
     if (agent !== undefined) this.narrow(agent)
-    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }), ...(from === undefined ? {} : { delegatedFrom: from }) } })
+    if (this.isOwn(sessionId)) this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, role, ...(by === undefined ? {} : { requestedBy: by }) } })
+  }
+
+  /**
+   * The agent's one conversation (homes.ts; `main`: 助手's): made the first
+   * time it is asked for, and again when it was deleted or archived.
+   * @throws Error for an agent that does not exist.
+   */
+  home(agentId: string): Promise<string> {
+    const making = this.homeMaking.get(agentId)
+    if (making !== undefined) return making
+    const promise = this.makeHome(agentId).finally(() => this.homeMaking.delete(agentId))
+    this.homeMaking.set(agentId, promise)
+    return promise
+  }
+
+  private async makeHome(agentId: string): Promise<string> {
+    await this.homes.loaded
+    const role = agentId === MAIN_AGENT.id ? undefined : this.roles.spec(agentId)
+    if (agentId !== MAIN_AGENT.id && role === undefined) throw new Error(`没有这个 agent：${agentId}`)
+    const sessions = this.ctx.sessionController
+    const kept = this.homes.get(agentId)
+    if (kept !== undefined && !this.archived.has(kept)) {
+      const there = await sessions.projections({ sessionId: kept as never }, AbortSignal.timeout(10_000)).catch(() => undefined)
+      // Unreadable just now is not gone: keep it rather than start over.
+      if (there !== null) return kept
+    }
+    const dir = this.workspaceDir()
+    const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...this.sessionPreset() })
+    const sessionId = String(created.sessionId)
+    await this.adopt(sessionId)
+    await this.homes.set(agentId, sessionId)
+    if (role !== undefined) {
+      await this.tagSession(sessionId, role.id)
+      const model = this.roleModel(role.id)
+      if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
+    }
+    await sessions.rename({ sessionId: created.sessionId, title: role?.name ?? MAIN_AGENT.name }).catch(() => {})
+    this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, home: agentId } })
+    this.log.info(`${role?.name ?? MAIN_AGENT.name}'s conversation: ${sessionId}${kept === undefined ? '' : ` (the one before, ${kept}, is gone)`}`)
+    return sessionId
   }
 
   /** Count a session the app just created as its own (session/created came before it was). */
@@ -1110,7 +1177,8 @@ Content-Length: 0
             const title = typeof frame.value === 'string' ? frame.value : null
             this.broadcast('session/title', { sessionId: frame.sessionId, title })
             const role = this.roles.of(frame.sessionId, title)
-            this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title, ...(role === undefined ? {} : { role }) } })
+            const home = this.homes.agentOf(frame.sessionId)
+            this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title, ...(role === undefined ? {} : { role }), ...(home === undefined ? {} : { home }) } })
           } else if (frame.key === 'modelSelection') {
             this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(frame.value) })
           } else if (frame.key === 'inbox') {

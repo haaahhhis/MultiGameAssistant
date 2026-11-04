@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { AgentToolGroup, Role, UserAgent } from '@adg/protocol'
+import type { AgentToolGroup, HandOff, Role, UserAgent } from '@adg/protocol'
 import type { IconName } from './components/Icons.tsx'
 import { useStore } from './hooks.ts'
 
@@ -122,4 +122,38 @@ export function useSeen(): { seen: Readonly<Record<string, number>>; markSeen: (
     })
   }
   return { seen, markSeen }
+}
+
+/** The agent's one conversation (`agents/home`), made on first ask; null until known. */
+export function useHome(client: AdgClient, agentId: string): { sessionId: string | null; error: string | null } {
+  const status = useStore(client.connection.status)
+  const [state, setState] = useState<{ agentId: string; sessionId: string | null; error: string | null }>({ agentId, sessionId: null, error: null })
+  useEffect(() => {
+    if (status.state !== 'open') return
+    let live = true
+    client.connection.call('agents/home', { agentId }).then(
+      r => { if (live) setState({ agentId, sessionId: r.sessionId, error: null }) },
+      e => { if (live) setState({ agentId, sessionId: null, error: e instanceof Error ? e.message : String(e) }) },
+    )
+    return () => { live = false }
+  }, [client, agentId, status.state])
+  return state.agentId === agentId ? state : { sessionId: null, error: null }
+}
+
+/** Work handed from or to this conversation (`handoffs/list`), kept current. */
+export function useHandOffs(client: AdgClient, sessionId: string): readonly HandOff[] {
+  const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  const [items, setItems] = useState<readonly HandOff[]>([])
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('agents')) return
+    let live = true
+    client.connection.call('handoffs/list', { sessionId }).then(r => { if (live) setItems(r.items) }).catch(() => {})
+    return () => { live = false }
+  }, [client, sessionId, status.state, capabilities])
+  useEffect(() => client.connection.on('handoffs/changed', ({ item }) => {
+    if (item.fromSession !== sessionId && item.toSession !== sessionId) return
+    setItems(prev => [...prev.filter(h => h.id !== item.id), item])
+  }), [client, sessionId])
+  return items
 }

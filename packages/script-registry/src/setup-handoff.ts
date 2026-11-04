@@ -16,6 +16,7 @@ import type { PendingSetup } from './state.ts'
 import type { ScriptLibrary } from './library.ts'
 import { TOOL_NAMES } from './tools.ts'
 import { SCRIPT_ROLE } from './role.ts'
+import { taskMessage } from '@adg/protocol'
 
 const SETUP_TIMEOUT_MS = 60 * 60_000
 
@@ -25,7 +26,7 @@ export function setupHandOff(ctx: Context, library: () => ScriptLibrary, log: { 
     const sessions = ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (sessionId, focus) => ctx.get('adgGateway')?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`安装脚本：${setup.name}`, { focus: { scripts: [setup.scriptId] }, role: SCRIPT_ROLE.id, by: '你' })
+    const sessionId = await conversations.home(SCRIPT_ROLE.id, { focus: { scripts: [setup.scriptId] } })
     log.info(`${setup.scriptId}: setup program handed to session ${sessionId}`)
     await library().setSetupAgent(setup.scriptId, { sessionId, state: 'running' })
     // Still waiting once the turn is over, and still this session's: the agent did not finish it.
@@ -43,7 +44,7 @@ export function setupHandOff(ctx: Context, library: () => ScriptLibrary, log: { 
         '4. 最后用一两句话告诉用户结果（装在哪、是否成功）。',
         '不要运行装好的程序，不要改它的文件，不要向用户提问；做不到时说明卡在哪一步。',
       ].join('\n')
-      const answer = await conversations.ask(sessionId, prompt, AbortSignal.timeout(SETUP_TIMEOUT_MS))
+      const answer = await conversations.ask(sessionId, taskMessage('你', `安装脚本：${setup.name}`, prompt), AbortSignal.timeout(SETUP_TIMEOUT_MS))
       const cut = /^（这一轮没有完成：(.*)）$/s.exec(answer.trim())
       await failed(cut !== null ? cut[1]! : 'agent 停下了，但没有导入装好的目录')
     })().catch(error => failed(error instanceof Error ? error.message : String(error)))

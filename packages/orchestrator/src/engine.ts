@@ -11,7 +11,7 @@
  * Pure apart from the injected runner, chat and agent ports; tests drive it
  * with fake scripts.
  */
-import { expandSlash, isMarker, type SlashSkill, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
+import { expandSlash, isMarker, taskMessage, type SlashSkill, type Pipeline, type PipelineNode, type PipelineRun, type PipelineTrigger, type NodeRun, type RunInfo } from '@adg/protocol'
 import type { RoleSpec } from '@adg/gateway'
 import type { Conversations } from '@adg/notify'
 import { BusyError, type Runner } from '@adg/runner'
@@ -311,10 +311,11 @@ export class Engine {
       case 'agent': {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
-        active.agentSession ??= await conversations.create(`编排：${active.pipeline.name}`, { role: PIPELINE_ROLE.id, by: `流水线「${active.pipeline.name}」` })
+        // 编排's one conversation; each step is a message from the pipeline.
+        active.agentSession ??= await conversations.home(PIPELINE_ROLE.id)
         // `/command` or `/skill` heads the step's instruction as in the chat box (protocol commands.ts).
         const prompt = node.prompt.trimStart().startsWith('/') ? expandSlash(node.prompt, await this.#deps.skills?.().catch(() => []) ?? []) : node.prompt
-        const answer = await conversations.ask(active.agentSession, `${prompt}\n\n${NO_QUESTIONS}`, signal)
+        const answer = await conversations.ask(active.agentSession, taskMessage(`流水线「${active.pipeline.name}」`, node.title ?? active.pipeline.name, `${prompt}\n\n${NO_QUESTIONS}`), signal)
         const clipped = answer.length > 300 ? `${answer.slice(0, 300)}…` : answer
         return answer.startsWith('（这一轮没有完成') ? { ok: false, detail: clipped } : { ok: true, detail: clipped }
       }

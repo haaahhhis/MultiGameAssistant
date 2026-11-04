@@ -296,6 +296,9 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .breadcrumb-divider { margin: 0 8px; color: var(--faint); }
 .breadcrumb .breadcrumb-link { flex-shrink: 0; padding: 0; font-size: 13px; color: var(--muted); }
 .breadcrumb .breadcrumb-link:hover { color: var(--accent); }
+/* An agent's own conversation: the agent is the heading */
+.breadcrumb.agent-heading { align-items: center; gap: 8px; }
+.breadcrumb.agent-heading h1 { font-size: 15px; }
 .session-meta { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; color: var(--muted); }
 .session-meta > * { flex-shrink: 0; }
 .session-meta > .cwd { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -379,6 +382,21 @@ a.delegation-open .ui-icon { width: 13px; height: 13px; }
 .delegation-now span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .delegation-failed { display: flex; align-items: flex-start; gap: 6px; padding: 9px 14px; border-top: 1px solid var(--border); color: var(--error); font-size: 13px; white-space: pre-wrap; }
 .delegation-failed .ui-icon { flex-shrink: 0; width: 14px; height: 14px; margin-top: 3px; }
+.delegation-note { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+.app-handoff { margin-top: 4px; }
+/* A reply another agent sent back: its words, marked as its */
+.relay { display: flex; flex-direction: column; align-self: stretch; border: 1px solid var(--border); border-left: 3px solid var(--accent-line); border-radius: 12px; background: var(--raised); overflow: hidden; }
+.relay.failed { border-left-color: color-mix(in srgb, var(--error) 55%, var(--border)); }
+.relay-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px 0; font-size: 13px; }
+.relay-title { padding: 2px 14px 0; color: var(--muted); font-size: 12px; }
+.relay-body { padding: 6px 14px 10px; font-size: 13.5px; }
+.relay-body.folded { max-height: 8.5em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent); mask-image: linear-gradient(to bottom, #000 55%, transparent); }
+button.relay-more { align-self: flex-start; margin: -4px 14px 10px; font-size: 12.5px; }
+/* Work handed to this agent: who asked; the app's own long instructions fold away */
+.task-note summary { cursor: pointer; font-weight: 500; }
+.task-note[open] summary { margin-bottom: 8px; }
+.task-note-body { white-space: pre-wrap; word-break: break-word; }
+.task-note .task-note-body { color: var(--text-2); font-size: 13px; }
 .attachments { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
 .attachments > span { display: inline-flex; align-items: center; gap: 5px; }
 .attachments .ui-icon { width: 14px; height: 14px; }
@@ -595,24 +613,8 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 /* welcome */
 .welcome-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 24px; color: var(--muted); font-size: 13px; }
 .welcome-header strong { font-weight: 500; color: var(--text); }
-.welcome-content { width: min(100%, 768px); margin: auto; padding: 32px 24px 56px; display: flex; flex-direction: column; gap: 28px; }
-.welcome-hero { display: flex; flex-direction: column; gap: 14px; }
 .eyebrow { margin: 0; color: var(--accent); font-family: var(--mono); font-size: 11.5px; letter-spacing: .18em; font-weight: 500; }
 .welcome h1 { margin: 0; font-family: var(--serif); font-size: clamp(32px, 4vw, 46px); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
-.welcome-description { margin: 0; font-size: 15px; line-height: 1.8; color: var(--muted); max-width: 600px; }
-.hero-composer { max-width: none; margin: 0; padding: 14px 14px 12px; border-radius: 18px; gap: 10px; }
-.hero-composer textarea { font-size: 15px; }
-.hero-composer .send-button { width: 36px; height: 36px; }
-.starters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: -8px; }
-.starter { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-color: var(--border); border-radius: 999px; color: var(--text-2); font-size: 13px; font-weight: 400; }
-.starter .ui-icon { width: 14px; height: 14px; color: var(--muted); }
-.resume { display: flex; flex-direction: column; gap: 2px; padding-top: 22px; border-top: 1px solid var(--border); }
-.resume-head .sidebar-label { padding-inline: 12px; }
-.resume-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 9px 12px; border: none; border-radius: var(--r-md); text-align: left; font-weight: 400; }
-.resume-item:active:not(:disabled) { transform: none; }
-.resume-text { display: flex; flex-direction: column; min-width: 0; }
-.resume-title { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resume-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reminder { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 18px; background: color-mix(in srgb, var(--warn) 8%, var(--panel)); border-top: 1px solid color-mix(in srgb, var(--warn) 20%, var(--border)); font-size: 12.5px; line-height: 1.7; }
 .reminder > .ui-icon { width: 16px; height: 16px; color: var(--warn); flex-shrink: 0; }
 .reminder button { flex-shrink: 0; }
@@ -1400,27 +1402,12 @@ button.agent-row.active { background: var(--raised); box-shadow: inset 0 0 0 1px
 .roster-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 16px; }
 .agent-sessions { display: flex; flex-direction: column; gap: 1px; padding: 2px 4px 0 18px; }
 .agent-sessions .nav-item { min-height: 30px; padding: 4px 8px; font-size: 13px; }
-.new-topic .ui-icon { width: 14px; height: 14px; }
 button.more-sessions { color: var(--muted); font-size: 12px; }
 .archive-entry { margin-top: 6px; }
 .role-row { min-height: 30px; padding: 4px 8px; font-size: 13px; }
 .role-row .role-chevron { width: 14px; height: 14px; }
+.earlier-toggle { color: var(--muted); }
 .tab-count { margin-left: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-/* A role agent's page: intro, a box for a new task, its tasks as cards */
-.main.agent-page { overflow-y: auto; }
-.agent-page-content { width: min(100%, 768px); margin: 0 auto; padding: 16px 24px 56px; display: flex; flex-direction: column; gap: 22px; }
-.agent-intro { display: flex; align-items: center; gap: 16px; }
-.agent-intro-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.agent-intro-text h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
-.agent-intro-text p { margin: 0; }
-.agent-composer { max-width: none; margin: 0; }
-.agent-intro-text { flex: 1; }
-button.agent-edit { display: inline-flex; flex-shrink: 0; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12.5px; }
-button.agent-edit .ui-icon { width: 14px; height: 14px; }
-.agent-duty { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 10px 14px; background: var(--raised); }
-.agent-duty summary { cursor: pointer; color: var(--text-2); font-size: 13px; }
-.agent-duty-text { margin: 10px 0 6px; white-space: pre-wrap; font-size: 13px; }
-.agent-duty p.small { margin: 0; }
 /* 新建 agent: after the agents in the roster */
 button.new-agent { margin-top: 6px; min-height: 32px; color: var(--text-2); font-size: 13px; }
 button.new-agent .ui-icon { width: 14px; height: 14px; }
@@ -1433,19 +1420,6 @@ button.new-agent .ui-icon { width: 14px; height: 14px; }
 .agent-editor-actions button { display: inline-flex; align-items: center; gap: 5px; }
 .agent-editor-actions .ui-icon { width: 14px; height: 14px; }
 .agent-delete-confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.task-list { display: flex; flex-direction: column; gap: 10px; }
-button.task-card { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); color: var(--text); text-align: left; font-weight: 400; box-shadow: var(--shadow-1); }
-button.task-card:hover:not(:disabled) { border-color: var(--border-strong); background: var(--raised); }
-button.task-card:active:not(:disabled) { transform: none; }
-button.task-card.running { border-color: color-mix(in srgb, var(--accent-fill) 45%, var(--border)); }
-.task-head { display: flex; align-items: center; gap: 8px; }
-.task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 550; }
-.task-reply { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.55; }
-.task-foot { display: flex; align-items: center; gap: 10px; }
-.task-by { color: var(--faint); font-size: 12px; }
-.task-open { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; color: var(--accent); font-size: 12px; }
-.task-open .ui-icon { width: 13px; height: 13px; }
-button.more-tasks { align-self: center; }
 .role-badge { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 500; }
 .session-row { position: relative; display: flex; align-items: center; }
 .session-row > .session-item { flex: 1; min-width: 0; }

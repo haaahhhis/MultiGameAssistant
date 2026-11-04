@@ -23,6 +23,17 @@ function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: st
   return { channel, sent, asked, owners, resolved }
 }
 
+/** Conversations where 助手's one conversation is `s-main`. */
+function conversationsWith(over: Partial<Conversations>): Conversations {
+  return {
+    home: async () => 's-main',
+    create: async () => 'unused',
+    handOff: async () => { throw new Error('not used') },
+    ask: async () => 'unused',
+    ...over,
+  }
+}
+
 function setup(conversations?: Conversations, now?: () => number) {
   const answered: string[] = []
   const sessions = new Map<string, string>()
@@ -62,14 +73,13 @@ test('notices go to ready channels; a reply naming a button acts on the notice',
   assert.deepEqual(acted.at(-1), 'inc-1:retry:张三')
 })
 
-test('with two open notices, a bare "停止" is a question for the agent, in the person\'s own session', async () => {
+test("with two open notices, a bare \"停止\" is a question for 助手, in its one conversation — the one the app shows", async () => {
   const asked: string[] = []
-  let created = 0
-  const conversations: Conversations = {
-    create: async title => { created++; return `s-${title}` },
-    exists: async () => true,
+  const homes: string[] = []
+  const conversations = conversationsWith({
+    home: async agent => { homes.push(agent); return 's-main' },
     ask: async (sessionId, text) => { asked.push(`${sessionId}:${text}`); return '好的，已经停了 MAA' },
-  }
+  })
   const { notify, sessions } = setup(conversations)
   notify.registerChannel(fakeChannel().channel)
   notify.onAction('monitor', async () => 'x')
@@ -77,9 +87,9 @@ test('with two open notices, a bare "停止" is a question for the agent, in the
   await notify.send(notice('b'))
   assert.equal(replyMarkdown(await notify.inbound({ actor, text: '停止' })), '好的，已经停了 MAA')
   assert.equal(replyMarkdown(await notify.inbound({ actor, text: '现在什么状态' })), '好的，已经停了 MAA')
-  assert.equal(created, 1, 'one session per person')
-  assert.deepEqual(asked, [`s-fake：张三:${channelNote('fake')}\n停止`, `s-fake：张三:${channelNote('fake')}\n现在什么状态`])
-  assert.equal(sessions.get('fake:ou_1'), 's-fake：张三')
+  assert.deepEqual(homes, ['main', 'main'])
+  assert.deepEqual(asked, [`s-main:${channelNote('fake')}\n停止`, `s-main:${channelNote('fake')}\n现在什么状态`])
+  assert.equal(sessions.get('fake:ou_1'), 's-main', "the person's approvals and questions from it go to them")
   await notify.update('a', { done: '已忽略' })
   await notify.update('b', { done: '已忽略' })
   assert.equal(replyMarkdown(await notify.inbound({ actor, text: '停止' })), '好的，已经停了 MAA', 'handled notices take no replies')
@@ -130,7 +140,7 @@ test('the agent’s questions: routed like approvals, answered by buttons or by 
   const sessions = new Map<string, string>([['feishu:ou_1', 'chat-1']])
   const prompts: string[] = []
   const notify = new Notify({
-    conversations: () => ({ ask: async (_s, text) => { prompts.push(text); return '好的' }, create: async () => 'new', exists: async () => true }),
+    conversations: () => conversationsWith({ home: async () => 'chat-1', ask: async (_s, text) => { prompts.push(text); return '好的' } }),
     respondApproval: () => true,
     respondQuestion: (id, answers) => { answered.push(`${id}:${JSON.stringify(answers)}`); return true },
     sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.set(key, id) }, keyOf: id => [...sessions].find(([, s]) => s === id)?.[0] },
@@ -187,53 +197,37 @@ test('test notices report channels that are not ready', async () => {
   assert.deepEqual(result, { sent: ['假渠道'], failed: [{ channel: '坏渠道', error: '凭证不对' }] })
 })
 
-test('a conversation that cannot go on (its folder was renamed) is replaced, with its last messages carried over', async () => {
-  const prompts: string[] = []
-  const conversations: Conversations = {
-    create: async () => 'new-session',
-    exists: async id => id !== 'old-session',
-    recent: async id => (id === 'old-session' ? '用户：帮我看看活动\nagent：还有两个活动没做' : undefined),
-    ask: async () => 'unused',
-    converse: async (_id, text) => {
-      prompts.push(text)
-      return { blocks: [{ kind: 'steps', steps: [{ name: 'game_events', summary: '明日方舟', status: 'ok' }] }, { kind: 'text', text: '**两个**活动还没做' }] }
-    },
-  }
-  const { notify, sessions } = setup(conversations)
-  await sessions.set('fake:ou_1', 'old-session')
-  const reply = await notify.inbound({ actor, text: '那第一个呢' })
-  assert.equal(sessions.get('fake:ou_1'), 'new-session')
-  assert.match(prompts[0]!, /之前最后几条消息[\s\S]*agent：还有两个活动没做[\s\S]*那第一个呢$/)
-  assert.match(replyMarkdown(reply), /^（之前的对话没法继续了[^\n]*\n\n\*\*两个\*\*活动还没做\n\n（执行了 1 个步骤；/)
-  await notify.inbound({ actor, text: '好' })
-  assert.equal(prompts[1], `${channelNote('fake')}\n好`, 'the new one is used as it is')
-})
-
-test('a conversation idle for half a day starts over quietly, its last messages carried over with their date', async () => {
+test('after half a day of silence, the message says how long it has been: what was said before may be stale', async () => {
   const prompts: string[] = []
   const HOUR = 3_600_000
   const now = Date.parse('2026-10-29T08:00:00+08:00')
-  const lastActive = new Map([['old-session', now - 30 * HOUR], ['fresh-session', now - HOUR]])
-  let created = 0
-  const conversations: Conversations = {
-    create: async () => `new-${++created}`,
-    exists: async () => true,
-    recent: async id => (id === 'old-session' ? '用户：等会儿再说\nagent：要我等你确认吗？' : undefined),
-    lastActive: async id => lastActive.get(id),
+  let last = now - 30 * HOUR
+  const conversations = conversationsWith({
+    lastActive: async () => last,
     ask: async (_id, text) => { prompts.push(text); return '好的' },
-  }
-  const { notify, sessions } = setup(conversations, () => now)
-  await sessions.set('fake:ou_1', 'old-session')
-  const reply = await notify.inbound({ actor, text: '今天的日常跑了吗' })
-  assert.equal(sessions.get('fake:ou_1'), 'new-1')
-  // The date in this machine's time zone: the 27th or 28th.
-  assert.match(prompts[0]!, /^（这条消息来自fake。[^\n]*\n（上次聊天是 2026\/10\/2[78] .*可能早就过时了[\s\S]*agent：要我等你确认吗？[\s\S]*今天的日常跑了吗$/)
-  assert.doesNotMatch(replyMarkdown(reply), /新对话/, 'no note for the person')
-
-  await sessions.set('fake:ou_1', 'fresh-session')
+  })
+  const { notify } = setup(conversations, () => now)
+  await notify.inbound({ actor, text: '今天的日常跑了吗' })
+  assert.match(prompts[0]!, /^（这条消息来自fake。[^\n]*\n（距离这个对话的上一条消息已经过了 30 小时[^\n]*）\n今天的日常跑了吗$/)
+  last = now - HOUR
   await notify.inbound({ actor, text: '好' })
-  assert.equal(sessions.get('fake:ou_1'), 'fresh-session', 'an hour is not idle')
-  assert.equal(prompts[1], `${channelNote('fake')}\n好`)
+  assert.equal(prompts[1], `${channelNote('fake')}\n好`, 'an hour is not long')
+})
+
+test("work 助手 hands on while answering a chat message reports back to that person when it comes back", async () => {
+  let later: ((reply: Reply) => void) | undefined
+  const { notify } = setup(conversationsWith({
+    // 助手's turn hands work on (agent_delegate asks where its reply should also go).
+    ask: async sessionId => { later = notify.replyLater(sessionId); return '交给游戏了' },
+  }))
+  const fake = fakeChannel()
+  const toPerson: { userId: string; text: string }[] = []
+  notify.registerChannel({ ...fake.channel, sendTo: async (userId, n) => { toPerson.push({ userId, text: n.text }) } })
+  await notify.inbound({ actor, text: '看看今天的活动' })
+  assert.equal(notify.replyLater('s-main'), undefined, 'once the turn is over, later work is nobody\'s chat')
+  later!({ blocks: [{ kind: 'text', text: '游戏读完了：没有快结束的活动' }] })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(toPerson, [{ userId: 'ou_1', text: '游戏读完了：没有快结束的活动' }])
 })
 
 test("a chat reply is the round's summary: the agent's last words and how many steps it took", () => {

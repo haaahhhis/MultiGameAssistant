@@ -18,7 +18,7 @@ import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
 import { GAMES_DIR } from '@adg/packs'
-import { GAMES_CAPABILITY, type Activity, type GameInfo, type RequestParams } from '@adg/protocol'
+import { GAMES_CAPABILITY, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
@@ -557,7 +557,7 @@ export class AdgGameIntel extends Service {
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`添加游戏：${name}`, { role: GAME_ROLE.id, by: '你' })
+    const sessionId = await conversations.home(GAME_ROLE.id)
     const known = SRA_GAMES.map(g => `${g.sra}（${g.name}）`).join('、')
     const prompt = [
       `用户想在游戏页看到「${name}」的活动和资讯。先 game_list 看是不是已经有了（名字或别名对得上就告诉用户在哪，不用再加）。没有的话，按技能 web-reading 找它的来源：`,
@@ -568,7 +568,7 @@ export class AdgGameIntel extends Service {
       '5. 创建后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。',
       '不要向用户提问；最后告诉用户加了什么来源、哪些能自动读、现在有几个活动。',
     ].join('\n')
-    void conversations.ask(sessionId, prompt, AbortSignal.timeout(READ_TIMEOUT_MS)).catch(() => {}).finally(() => this.changed())
+    void conversations.ask(sessionId, taskMessage('你', `添加游戏：${name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).catch(() => {}).finally(() => this.changed())
     return sessionId
   }
 
@@ -579,7 +579,7 @@ export class AdgGameIntel extends Service {
     const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`游戏资讯：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id, by: '你' })
+    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const where = chosen.length === 0
@@ -592,7 +592,7 @@ export class AdgGameIntel extends Service {
       '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：现在有哪些活动、哪些快结束、有什么新消息（新版本、维护、福利）。',
     ].join('\n')
-    void conversations.ask(sessionId, prompt, AbortSignal.timeout(READ_TIMEOUT_MS)).then(
+    void conversations.ask(sessionId, taskMessage('你', `游戏资讯：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
       answer => this.calendar.setReading(`${manifest.id}#web`, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
       error => this.calendar.setReading(`${manifest.id}#web`, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
     ).finally(() => this.changed(manifest.id))
@@ -604,7 +604,7 @@ export class AdgGameIntel extends Service {
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.create(`游戏信息：${manifest.name}`, { focus: { games: [manifest.id] }, role: GAME_ROLE.id, by: '你' })
+    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
     await this.calendar.setReading(manifest.id, { state: 'running', at: this.clock.now(), sessionId })
     this.changed(manifest.id)
     const screen = manifest.screen === undefined ? '游戏画面' : manifest.screen.target === 'emulator' ? '模拟器画面（screen_capture target=emulator）' : `游戏窗口（screen_capture target=window${manifest.screen.window === undefined ? '，先 window_list 找窗口' : `，window=${manifest.screen.window}`}）`
@@ -616,7 +616,7 @@ export class AdgGameIntel extends Service {
       '4. 读完回到主界面，用一两句话总结哪些活动快结束、还有什么没做。',
       `5. 有始有终：最后用 ask_user_question 问用户要不要把游戏关掉（选项「关掉游戏」「先开着」；游戏是你这次用 game_launch 打开的，就把「关掉游戏」放第一个并标上 (Recommended)）。用户选关掉就用 game_close（game=${manifest.id}），然后告诉用户已经关了。第 2 步因为有脚本在用而结束的，不要问、也不要关。`,
     ].join('\n')
-    void conversations.ask(sessionId, prompt, AbortSignal.timeout(READ_TIMEOUT_MS)).then(
+    void conversations.ask(sessionId, taskMessage('你', `游戏信息：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
       answer => this.calendar.setReading(manifest.id, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
       error => this.calendar.setReading(manifest.id, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
     ).finally(() => this.changed(manifest.id))
@@ -680,14 +680,14 @@ export class AdgGameIntel extends Service {
     const local = wallClock(now, Intl.DateTimeFormat().resolvedOptions().timeZone)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
     try {
-      const sessionId = await conversations.create(`日报：${local.month}月${local.day}日`, { role: GAME_ROLE.id, by: '定时' })
+      const sessionId = await conversations.home(GAME_ROLE.id)
       const prompt = [
         '把下面这些近期的游戏活动写成今天发到飞书的日报正文。只根据给出的内容写，不调用工具，不提问。',
         '要求：中文，按游戏分段（段首用【游戏名】），每个游戏一两句；先说快结束且没做完的（写清剩几天、还差什么），再说刚开始和即将开始的；用户已做完的不用提醒；不用 Markdown 标题、加粗或表格；整篇不超过 12 行。语气、称呼和自称按你的「回复风格」来（没有设定就平实地写）：可以用一句符合风格的话开头，内容照上面的要求，不要客套的结束语。',
         '',
         digest,
       ].join('\n')
-      const answer = (await conversations.ask(sessionId, prompt, AbortSignal.timeout(SUMMARY_TIMEOUT_MS))).trim()
+      const answer = (await conversations.ask(sessionId, taskMessage('定时', `日报：${local.month}月${local.day}日`, prompt), AbortSignal.timeout(SUMMARY_TIMEOUT_MS))).trim()
       return answer.length === 0 ? undefined : answer
     } catch (error) {
       this.log.warn(`daily report: the agent summary failed, sending the plain list: ${error instanceof Error ? error.message : String(error)}`)

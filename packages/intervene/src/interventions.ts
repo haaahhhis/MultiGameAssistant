@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Incident, Intervention, QuestionAnswerItem } from '@adg/protocol'
 import type { RoleSpec } from '@adg/gateway'
-import type { Conversations } from '@adg/notify'
+import { finalText, type Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
 import { writeFileAtomic } from '@adg/protocol/node'
 import type { RunWindow } from './hidden.ts'
@@ -103,7 +103,8 @@ export class Interventions {
   readonly #now: () => number
   readonly #items: Intervention[] = []
   readonly #active = new Map<string, Active>()
-  readonly #bySession = new Map<string, string>()
+  /** 干预's conversation → the interventions in it, in the order its turns run (one at a time). */
+  readonly #bySession = new Map<string, string[]>()
   /** The latest screenshot of each recent session, for whoever wants to keep it as evidence. */
   readonly #shots = new Map<string, Buffer>()
   #seq = 0
@@ -132,10 +133,14 @@ export class Interventions {
     return item
   }
 
-  /** The intervention a session is doing, for the screen tools' permissions. */
+  /** The intervention a session is doing, for the screen tools' permissions: the first still going (its turn is the one running). */
   forSession(sessionId: string | undefined): Active | undefined {
-    const id = sessionId === undefined ? undefined : this.#bySession.get(sessionId)
-    return id === undefined ? undefined : this.#active.get(id)
+    const ids = sessionId === undefined ? undefined : this.#bySession.get(sessionId)
+    for (const id of ids ?? []) {
+      const active = this.#active.get(id)
+      if (active !== undefined) return active
+    }
+    return undefined
   }
 
   /**
@@ -256,18 +261,30 @@ export class Interventions {
     const limitMs = this.#deps.timeoutMs ?? 15 * 60_000
     const timeout = AbortSignal.timeout(limitMs)
     try {
-      // It sees that script's skills (and its game's), not other scripts'.
-      const sessionId = await conversations.create(`干预：${incident.title}`, { defaultModel: true, focus: { scripts: [incident.scriptId] }, role: INTERVENE_ROLE.id, by: '监控' })
+      // Into 干预's conversation, as the monitor's; its reply goes on to 助手. It sees that script's skills (and its game's), not other scripts'.
+      const focus = { scripts: [incident.scriptId] }
+      const sessionId = await conversations.home(INTERVENE_ROLE.id, { focus })
       item.sessionId = sessionId
-      this.#bySession.set(sessionId, item.id)
+      this.#bySession.set(sessionId, [...(this.#bySession.get(sessionId) ?? []), item.id])
       this.#changed(item)
-      answer = await conversations.ask(sessionId, this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows), AbortSignal.any([active.controller.signal, timeout]), screenshot === undefined ? [] : [screenshot])
+      const reply = await conversations.handOff({
+        to: { id: INTERVENE_ROLE.id, name: INTERVENE_ROLE.name }, by: '监控', title: incident.title, focus, relay: true,
+        task: this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows),
+        signal: AbortSignal.any([active.controller.signal, timeout]),
+        ...(screenshot === undefined ? {} : { images: [screenshot] }),
+      })
+      answer = finalText(reply)
     } catch (error) {
       if (item.state === 'taken-over') return { state: 'taken-over', summary: item.summary ?? '你接管了', paused: item.paused }
       if (timeout.aborted && active.done === undefined) return finish('timeout', `agent 在 ${Math.round(limitMs / 60_000)} 分钟内没有处理完`, imageOf(active, screenshot))
       if (active.done === undefined) return finish('gave-up', `agent 处理时出错：${error instanceof Error ? error.message : String(error)}`, imageOf(active, screenshot))
     } finally {
       this.#active.delete(item.id)
+      if (item.sessionId !== undefined) {
+        const left = (this.#bySession.get(item.sessionId) ?? []).filter(id => id !== item.id)
+        if (left.length > 0) this.#bySession.set(item.sessionId, left)
+        else this.#bySession.delete(item.sessionId)
+      }
     }
     if (item.state === 'taken-over') return { state: 'taken-over', summary: item.summary ?? '你接管了', paused: item.paused }
     // Stopping the agent at the limit ends its turn without an error: the reply is just cut short.

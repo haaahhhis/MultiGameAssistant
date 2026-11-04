@@ -75,8 +75,8 @@ export const SessionItem = z.object({
   role: z.string().optional(),
   /** Who asked for a role agent's work, in words: 监控, 定时, 你, 流水线「…」. */
   requestedBy: z.string().optional(),
-  /** The main agent's `agent_delegate` call that handed this session its work: in that session, the call with this id. */
-  delegatedFrom: z.object({ sessionId: z.string(), callId: z.string() }).optional(),
+  /** The agent whose one conversation this is (`main` for 助手, else its role id); absent: an earlier conversation. */
+  home: z.string().optional(),
 })
 export type SessionItem = z.infer<typeof SessionItem>
 
@@ -177,6 +177,34 @@ export const UserAgent = z.object({
   model: ModelSelection.nullable(),
 })
 export type UserAgent = z.infer<typeof UserAgent>
+
+/**
+ * Work one agent handed another (docs/design/agent-roles.md §10): 助手's
+ * `agent_delegate`, or the app's own (监控 → 干预). It goes into the other
+ * agent's conversation as a message, and that agent's reply comes back into
+ * `fromSession` as a message. Only the messages cross; each keeps its own steps.
+ */
+export const HandOff = z.object({
+  id: z.string(),
+  /** The conversation that asked, where the reply goes back. */
+  fromSession: z.string(),
+  /** 助手's `agent_delegate` call that asked; absent: the app asked (`by`). */
+  callId: z.string().optional(),
+  /** Who asked, in words: 助手, 监控. */
+  by: z.string(),
+  /** The agent it went to (role id) and its conversation. */
+  to: z.string(),
+  toSession: z.string(),
+  title: z.string(),
+  task: z.string(),
+  expecting: z.string().optional(),
+  state: z.enum(['running', 'done', 'failed']),
+  /** Its reply; for a failure, why. */
+  reply: z.string().optional(),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+})
+export type HandOff = z.infer<typeof HandOff>
 
 export const ModelCatalog = z.object({
   default: ModelSelection,
@@ -317,6 +345,18 @@ export const Requests = {
     capability: AGENTS_CAPABILITY,
     params: z.object({ id: z.string() }),
     result: Empty,
+  },
+  /** The agent's one conversation (`main`: 助手's), made the first time it is asked for, or again when it was deleted. */
+  'agents/home': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ agentId: z.string() }),
+    result: z.object({ sessionId: z.string() }),
+  },
+  /** Work handed from or to this conversation, newest last. */
+  'handoffs/list': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ sessionId: z.string() }),
+    result: z.object({ items: z.array(HandOff) }),
   },
   'sessions/rename': {
     capability: 'sessions',
@@ -583,6 +623,8 @@ export const Notifications = {
   'sessions/archived': z.object({ sessionIds: z.array(z.string()) }),
   /** The role agents changed (a plugin loaded or unloaded); the whole list. */
   'roles/changed': z.object({ items: z.array(Role) }),
+  /** A hand-off started or ended. */
+  'handoffs/changed': z.object({ item: HandOff }),
   /** Provider routes or their models changed; re-read `providers/list` and `models/catalog`. */
   'providers/changed': z.object({}),
   /** A session's model selection changed. */

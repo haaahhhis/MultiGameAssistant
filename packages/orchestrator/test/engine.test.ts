@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { parseManifest, type ScriptManifest } from '@adg/pack-schema'
-import { Pipeline, type PipelineInput, type PipelineRun, type ScriptInfo } from '@adg/protocol'
+import { parseTask, Pipeline, type PipelineInput, type PipelineRun, type ScriptInfo } from '@adg/protocol'
 import { Runner } from '@adg/runner'
 import { checkPipeline } from '../src/check.ts'
 import { Engine, waitsFor, type EngineNotice } from '../src/engine.ts'
@@ -55,7 +55,8 @@ function setup(scripts: ReturnType<typeof script>[]) {
     runner,
     library,
     notices: () => ({ send: async n => { notices.push(n); return ['飞书'] }, update: async (id, p) => { updates.push(`${id}:${p.done}`) } }),
-    conversations: () => ({ create: async () => 's-1', exists: async () => true, ask: async (_s, text) => `agent 看了：${text}` }),
+    // 编排's one conversation; the agent reads the step under the note saying the pipeline asked.
+    conversations: () => ({ home: async () => 's-pipelines', create: async () => 'unused', handOff: async () => { throw new Error('not used') }, ask: async (_s, text) => `agent 看了：${parseTask(text)?.by === '流水线「测试流水线」' ? parseTask(text)!.body : `（没说是流水线交的）${text}`}` }),
     skills: async () => [{ name: 'game-arknights', description: '明日方舟的活动和进度' }],
     emulators: () => ({ stop: async () => { emulatorStops++ } }),
     onRun: run => runs.push(run),

@@ -1,17 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { MAIN, MAIN_AGENT, agentIdOf, requestedLabel, useRoles } from '../agents.ts'
+import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
 import { popoutUrl } from '../config.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
 
-export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent }: {
+export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent, onEdit }: {
   client: AdgClient
   sessionId: string
-  /** Open a role agent's page (its name in the header). */
+  /** Open an agent's conversation (its name in an earlier conversation's header). */
   onAgent?: (agentId: string) => void
+  /** Change an agent the person made. */
+  onEdit?: (agentId: string) => void
   reminder?: ReactNode
   /** Typed on the home page; sent once, as soon as the session is open. */
   initialPrompt?: string | undefined
@@ -19,16 +21,17 @@ export function SessionView({ client, sessionId, reminder, initialPrompt, onInit
 }) {
   const session = useSessionHandle(client, sessionId)
   if (session === null) return <div className="main empty">正在打开会话…</div>
-  return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} />
+  return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} onEdit={onEdit} />
 }
 
-function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, onAgent }: {
+function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, onAgent, onEdit }: {
   client: AdgClient
   session: NonNullable<ReturnType<typeof useSessionHandle>>
   reminder?: ReactNode
   initialPrompt?: string | undefined
   onInitialSent?: (() => void) | undefined
   onAgent?: ((agentId: string) => void) | undefined
+  onEdit?: ((agentId: string) => void) | undefined
 }) {
   const state = useStore(session.state)
   const connection = useStore(client.connection.status)
@@ -36,7 +39,10 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
   const agentId = item === undefined ? MAIN_AGENT : agentIdOf(item, roles)
-  const agentName = roles.find(r => r.id === agentId)?.name ?? MAIN.name
+  const role = roles.find(r => r.id === agentId)
+  const agent = role === undefined ? MAIN : agentOf(role)
+  // An agent's one conversation is the agent; any other is an earlier conversation of its.
+  const home = item?.home !== undefined
   const views = viewsFor(useSessionViews(client), state)
   const [tab, setTab] = useState(() => readTab())
   const active = views.find(v => v.id === tab) ?? views[0]
@@ -46,18 +52,27 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
     <section className="main">
       <header className="session-header">
         <div className="session-heading">
-          <div className="breadcrumb">
-            {agentId !== MAIN_AGENT && onAgent !== undefined
-              ? <button type="button" className="link-button breadcrumb-link" title={`回到「${agentName}」`} onClick={() => onAgent(agentId)}>{agentName}</button>
-              : <span>{agentName}</span>}
-            <span className="breadcrumb-divider">/</span>
-            <SessionTitle title={state.title} onRename={title => client.renameSession(session.id, title)} />
-          </div>
+          {home ? (
+            <div className="breadcrumb agent-heading">
+              <span className={`agent-avatar small agent-${agent.id}`}><Icon name={agent.icon} /></span>
+              <h1>{agent.name}</h1>
+              {role?.custom === true && onEdit !== undefined && (
+                <button type="button" className="icon-button rename-button" title="编辑这个 agent" aria-label="编辑这个 agent" onClick={() => onEdit(agentId)}><Icon name="pencil" /></button>
+              )}
+            </div>
+          ) : (
+            <div className="breadcrumb">
+              {onAgent !== undefined
+                ? <button type="button" className="link-button breadcrumb-link" title={`回到「${agent.name}」的对话`} onClick={() => onAgent(agentId)}>{agent.name}</button>
+                : <span>{agent.name}</span>}
+              <span className="breadcrumb-divider">/</span>
+              <SessionTitle title={state.title} onRename={title => client.renameSession(session.id, title)} />
+            </div>
+          )}
           <div className="session-meta">
             <RunState running={state.running} />
-            {agentId !== MAIN_AGENT && item?.requestedBy !== undefined && (item.delegatedFrom === undefined
-              ? <span>{requestedLabel(item.requestedBy)}</span>
-              : <a href={`#/s/${encodeURIComponent(item.delegatedFrom.sessionId)}`} title={`回到${MAIN.name}的对话`}>{requestedLabel(item.requestedBy)}</a>)}
+            {home ? <span>{agent.description}</span> : <span>以前的对话</span>}
+            {!home && agentId !== MAIN_AGENT && item?.requestedBy !== undefined && <span>{requestedLabel(item.requestedBy)}</span>}
           </div>
         </div>
         <div className="session-actions">
