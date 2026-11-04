@@ -20,7 +20,7 @@
  * Channels (Feishu now; QQ / WeCom / Telegram later) only translate.
  */
 import { randomUUID } from 'node:crypto'
-import type { ApprovalRequested, ChannelStatus, QuestionAnswerItem, QuestionItem, QuestionRequested } from '@adg/protocol'
+import { isQuiet, type ApprovalRequested, type ChannelStatus, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
 import { MAIN } from './handoff.ts'
 import { finalText, textReply, type Reply } from './reply.ts'
 
@@ -327,7 +327,8 @@ export class Notify {
     if (actor === undefined || channel?.sendTo === undefined) return undefined
     return reply => {
       const text = finalText(reply).trim()
-      if (text === '' || channel.status().state !== 'ready') return
+      // 助手 found nothing the person needs to hear (QUIET): nothing goes out.
+      if (text === '' || isQuiet(text) || channel.status().state !== 'ready') return
       void channel.sendTo!(actor.userId, { id: `relay:${randomUUID()}`, scope: 'relay', title: '助手', text, severity: 'info' })
         .catch(error => this.#options.log.warn(`a later reply via ${channel.id} failed: ${message(error)}`))
     }

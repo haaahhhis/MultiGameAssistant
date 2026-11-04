@@ -358,6 +358,12 @@ export const Requests = {
     params: z.object({ sessionId: z.string() }),
     result: z.object({ items: z.array(HandOff) }),
   },
+  /** One hand-off, for the page that shows what the two agents said. */
+  'handoffs/get': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ id: z.string() }),
+    result: HandOff,
+  },
   'sessions/rename': {
     capability: 'sessions',
     params: z.object({ sessionId: z.string(), title: z.string().min(1) }),

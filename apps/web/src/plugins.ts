@@ -48,12 +48,17 @@ export interface PageProps {
   readonly arg?: string | undefined
 }
 
-/** A top-level page with its own entry in the navigation rail. */
+/**
+ * A top-level page: its own entry in the navigation rail, or, with `agent`,
+ * a tab on that agent (its scripts, its runs; docs/design/agent-roles.md §11).
+ */
 export interface PageContribution {
   readonly id: string
   readonly title: string
   readonly icon: IconName
   readonly order: number
+  /** The agent it belongs to (a role id); absent: on the rail. Shown under 助手 when that agent is gone. */
+  readonly agent?: string
   readonly component: ComponentType<PageProps>
 }
 

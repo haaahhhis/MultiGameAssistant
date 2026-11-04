@@ -60,8 +60,12 @@ export type Route =
   | { readonly kind: 'start' }
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
-  /** A role agent's page: who it is and its tasks (AgentPage.tsx). */
-  | { readonly kind: 'agent'; readonly id: string }
+  /** An agent: its one conversation, or (`schedule`) its timed tasks. Its other tabs are pages it owns (`page`). */
+  | { readonly kind: 'agent'; readonly id: string; readonly tab?: 'schedule' | undefined }
+  /** What two agents said to each other (Delegation.tsx HandOffPage). */
+  | { readonly kind: 'handoff'; readonly id: string }
+  /** Every agent's timed tasks and the pipelines on a timetable, together. */
+  | { readonly kind: 'schedule' }
   /** Making an agent (id null) or changing one the person made (AgentEditor.tsx). */
   | { readonly kind: 'agentEdit'; readonly id: string | null }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
@@ -78,6 +82,11 @@ export function readRoute(): Route {
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
+  if (location.hash === '#/schedule') return { kind: 'schedule' }
+  const handOff = /^#\/h\/(.+)$/.exec(location.hash)
+  if (handOff !== null) return { kind: 'handoff', id: decodeURIComponent(handOff[1]!) }
+  const timed = /^#\/a\/(.+)\/schedule$/.exec(location.hash)
+  if (timed !== null) return { kind: 'agent', id: decodeURIComponent(timed[1]!), tab: 'schedule' }
   if (location.hash === '#/a/new') return { kind: 'agentEdit', id: null }
   const editing = /^#\/a\/(.+)\/edit$/.exec(location.hash)
   if (editing !== null) return { kind: 'agentEdit', id: decodeURIComponent(editing[1]!) }
@@ -95,7 +104,9 @@ export function readRoute(): Route {
 export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): void {
   const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
     : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
-    : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}`
+    : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.tab === undefined ? '' : `/${route.tab}`}`
+    : route.kind === 'handoff' ? `#/h/${encodeURIComponent(route.id)}`
+    : route.kind === 'schedule' ? '#/schedule'
     : route.kind === 'agentEdit' ? (route.id === null ? '#/a/new' : `#/a/${encodeURIComponent(route.id)}/edit`)
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)

@@ -22,7 +22,7 @@ import { Power } from './power.ts'
 import { Scheduler, type SavedState } from './scheduler.ts'
 import { retireLegacyTasks, windowsPower, windowsWake } from './windows.ts'
 
-export { Scheduler, DEFAULT_SETTINGS, localDay, slotsBetween, type AutostartPort, type SavedState, type ScheduleStore, type SchedulerDeps } from './scheduler.ts'
+export { Scheduler, DEFAULT_SETTINGS, localDay, slotsBetween, type AutostartPort, type SavedState, type ScheduleStore, type SchedulerDeps, type Timed } from './scheduler.ts'
 export { joinArgs, taskXml, windowsAutostart, type ExecBuffer, type WindowsAutostartOptions } from './autostart.ts'
 export { Power, POWER_WORD, type AwakeLevel, type PowerDeps, type PowerNotice, type PowerPort, type SleepAction } from './power.ts'
 export { LEGACY_TASKS, localIso, retireLegacyTasks, wakeTaskXml, windowsPower, windowsWake, type WakePort, type WindowsWakeOptions } from './windows.ts'
@@ -32,6 +32,9 @@ declare module '@deepseek-ai/cordis' {
     adgScheduler: AdgScheduler
   }
 }
+
+/** A timed task's id on the timetable. */
+const TASK = 'task:'
 
 const ConfigSchema = z.object({
   /** `<dataDir>/schedule.json`. */
@@ -73,11 +76,20 @@ export class AdgScheduler extends Service {
     const wake = windowsWake({ command: command?.map(a => (a === '--auto-start' ? '--wake' : a)), ...(spec.wakeTaskName === undefined ? {} : { taskName: spec.wakeTaskName }) })
     const changed = () => ctx.get('adgGateway')?.broadcast('schedule/changed', {})
 
+    // Pipelines and timed tasks (`task:<id>`) share the timetable.
+    const taskId = (id: string) => (id.startsWith(TASK) ? id.slice(TASK.length) : undefined)
     const scheduler = new Scheduler({
-      pipelines: () => orchestrator.pipelines.all(),
-      start: (id, trigger) => { orchestrator.pipelines.run(id, trigger) },
-      isRunning: id => orchestrator.engine.isRunning(id),
-      lastSuccessDay: id => orchestrator.pipelines.lastSuccessDay(id),
+      pipelines: () => [
+        ...orchestrator.pipelines.all(),
+        ...orchestrator.tasks.all().map(t => ({ id: `${TASK}${t.id}`, name: t.title, schedule: t.schedule, agent: t.agent })),
+      ],
+      start: (id, trigger) => {
+        const task = taskId(id)
+        if (task === undefined) orchestrator.pipelines.run(id, trigger)
+        else orchestrator.tasks.run(task, trigger)
+      },
+      isRunning: id => { const task = taskId(id); return task === undefined ? orchestrator.engine.isRunning(id) : orchestrator.tasks.isRunning(task) },
+      lastSuccessDay: id => { const task = taskId(id); return task === undefined ? orchestrator.pipelines.lastSuccessDay(id) : orchestrator.tasks.lastSuccessDay(task) },
       store: {
         load: async () => {
           try { return JSON.parse(await readFile(file, 'utf8')) as Partial<SavedState> } catch { return {} }

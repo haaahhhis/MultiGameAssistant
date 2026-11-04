@@ -20,6 +20,7 @@ import { writeFileAtomic } from '@adg/protocol/node'
 
 export { describeQuestion, Notify, type ActionHandler, type Actor, type Channel, type Conversations, type HandOffInput, type Notice, type NoticeAction, type NoticePatch, type NotifyOptions, type QuestionProgress } from './notify.ts'
 export { sessionConversations } from './conversations.ts'
+export { MAIN } from './handoff.ts'
 export { finalText, replyMarkdown, replyPlain, textReply, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {

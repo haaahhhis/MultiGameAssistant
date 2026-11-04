@@ -12,6 +12,18 @@
 /** Who stands for the person when they clicked something in the app (读取游戏, 安装脚本). */
 export const BY_YOU = '你'
 
+/**
+ * 助手's whole answer to a reply that came back when there is nothing the
+ * person needs to hear: the UI shows it as a quiet line, chat channels
+ * (Feishu) get nothing.
+ */
+export const QUIET = '（不用告诉用户）'
+
+/** A reply that is only `QUIET` (give or take a full stop and spaces). */
+export function isQuiet(text: string): boolean {
+  return text.replace(/[。.\s]/g, '') === QUIET
+}
+
 const RETURNS = '（做完后你这一轮的最后一段回复会原样交回去：把结论写在那里。）'
 
 /** What an agent is handed: its note, then the work. `returns`: its reply goes back to whoever asked. */
@@ -49,7 +61,7 @@ export function parseTask(text: string): TaskNote | undefined {
 export function relayMessage(input: { agent: string; asker: string; title: string; ok: boolean; reply: string }): string {
   const head = `（「${input.agent}」${input.ok ? '交回了' : '没有做完'}${input.asker}交给它的事：${oneLine(input.title)}）`
   const tail = input.ok
-    ? `（用一两句话把要点告诉用户；完整过程在「${input.agent}」的对话里。还要别的 agent 接着做的，可以再交。）`
+    ? `（看情况告诉用户：有用户该知道或要做的，用一两句话说要点，完整过程在「${input.agent}」的对话里；没有的话整段回复只写「${QUIET}」。还要别的 agent 接着做的，可以再交。）`
     : `（告诉用户哪里没做成、为什么；需要的话换个说法再交一次，或者问用户。）`
   return `${head}\n\n${input.reply.trim()}\n\n${tail}`
 }

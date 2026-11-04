@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { createContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { AdgClient, ChatItem } from '@adg/client-core'
 import { BY_YOU, type HandOff, type RelayNote, type TaskNote } from '@adg/protocol'
 import { MAIN, agentOf, useLastReplies, useRoles, type Agent } from '../../agents.ts'
@@ -7,19 +7,28 @@ import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
 
 /**
- * What agents say to each other, as each conversation shows it
- * (docs/design/agent-roles.md §10): in the one that asked, the work it handed
- * on and the reply that came back; in the one that did it, the work it was
- * handed. Only messages cross; the steps stay where they were taken.
+ * What agents say to each other (docs/design/agent-roles.md §10, §11). In
+ * the conversation that asked, each message between two agents is one line
+ * — who to whom, about what, how it stands — and opens the exchange
+ * (`#/h/<id>`), where the person can watch but not join in. In the
+ * conversation that did the work, the work it was handed. Only messages
+ * cross; the steps stay where they were taken.
  */
 
 /** The main agent's tool for handing work to another agent (packages/notify/src/delegate.ts). */
 export const DELEGATE_TOOL = 'agent_delegate'
 
-function argsOf(json: string): { agent: string; task: string; expecting?: string } {
+/** The hand-offs from and to the conversation on screen, for its rows. */
+export const HandOffsOf = createContext<readonly HandOff[]>([])
+
+export function exchangeHref(handOff: HandOff): string {
+  return `#/h/${encodeURIComponent(handOff.id)}`
+}
+
+function argsOf(json: string): { agent: string; task: string } {
   try {
-    const a = JSON.parse(json) as { agent?: unknown; task?: unknown; expecting?: unknown }
-    return { agent: String(a.agent ?? ''), task: String(a.task ?? ''), ...(typeof a.expecting === 'string' && a.expecting !== '' ? { expecting: a.expecting } : {}) }
+    const a = JSON.parse(json) as { agent?: unknown; task?: unknown }
+    return { agent: String(a.agent ?? ''), task: String(a.task ?? '') }
   } catch {
     return { agent: '', task: json }
   }
@@ -28,62 +37,82 @@ function argsOf(json: string): { agent: string; task: string; expecting?: string
 function useAgent(client: AdgClient, nameOrId: string): Agent | undefined {
   const roles = useRoles(client)
   const role = roles.find(r => r.name === nameOrId || r.id === nameOrId)
-  return role === undefined ? (nameOrId === MAIN.name ? MAIN : undefined) : agentOf(role)
+  return role === undefined ? (nameOrId === MAIN.name || nameOrId === MAIN.id ? MAIN : undefined) : agentOf(role)
 }
 
-const STATE: Readonly<Record<HandOff['state'], { label: string; tone: string }>> = {
+type State = { label: string; tone: string }
+const STATE: Readonly<Record<HandOff['state'], State>> = {
   running: { label: '进行中', tone: 'running' },
   done: { label: '交回了', tone: 'ok' },
   failed: { label: '没做成', tone: 'failed' },
 }
 
-/**
- * Work 助手 handed on (agent_delegate), in 助手's conversation: who to, the
- * task as 助手 wrote it, and where it stands — while the agent works, what it
- * last said. Its reply comes back below as its own message.
- */
+/** One message between two agents, as a line that opens their exchange. */
+function ExchangeLine({ from, to, avatar, title, state, href }: { from: string; to: string; avatar: Agent | undefined; title: string; state: State | undefined; href: string | undefined }) {
+  const body = (
+    <>
+      <span className={`agent-avatar small agent-${avatar?.id ?? 'unknown'}`}><Icon name={avatar?.icon ?? 'sparkles'} /></span>
+      <span className="exchange-who">{from}<Icon name="arrow" className="delegation-arrow" /><strong>{to}</strong></span>
+      <span className="exchange-title" title={title}>{title}</span>
+      {state !== undefined && <span className={`delegation-state tone-${state.tone}`}>{state.tone === 'running' && <span className="tool-spinner" aria-hidden />}{state.label}</span>}
+      {href !== undefined && <Icon name="chevron" className="exchange-open" />}
+    </>
+  )
+  return href === undefined
+    ? <div className={`exchange-line tone-${state?.tone ?? ''}`}>{body}</div>
+    : <a className={`exchange-line tone-${state?.tone ?? ''}`} href={href} title="看它们说了什么">{body}</a>
+}
+
+/** Work 助手 handed on (agent_delegate), in 助手's conversation: one line; what was said is a click away. */
 export function DelegationCard({ client, item, handOffs }: { client: AdgClient; item: Extract<ChatItem, { kind: 'tool' }>; handOffs: readonly HandOff[] }) {
-  const { agent: name, task, expecting } = useMemo(() => argsOf(item.arguments), [item.arguments])
+  const { agent: name, task } = useMemo(() => argsOf(item.arguments), [item.arguments])
   const agent = useAgent(client, name)
   const handOff = handOffs.find(h => h.callId === item.callId)
   const refused = item.status === 'error' || item.status === 'interrupted'
   const state = refused ? STATE.failed : handOff === undefined ? (item.status === 'running' ? STATE.running : undefined) : STATE[handOff.state]
-  const shown = agent?.name ?? name
   return (
-    <div className={`delegation ${state?.tone ?? ''}`}>
-      <HandOffHead agent={agent} name={shown} from={MAIN.name} state={state} />
-      <div className="delegation-said">
-        <div className="delegation-task">{task}</div>
-        {expecting !== undefined && <div className="delegation-expecting">要交回：{expecting}</div>}
-      </div>
-      {handOff?.state === 'running' && <Working client={client} handOff={handOff} name={shown} />}
-      {handOff?.state === 'done' && <div className="delegation-note">回复见下方「消息来自 {shown}」</div>}
+    <div className="delegation">
+      <ExchangeLine from={MAIN.name} to={agent?.name ?? name} avatar={agent} title={handOff?.title ?? task.split('\n')[0] ?? ''} state={state}
+        href={handOff === undefined ? undefined : exchangeHref(handOff)} />
       {refused && <div className="delegation-failed"><Icon name="alert" />{item.result ?? item.error ?? '没有交出去'}</div>}
     </div>
   )
 }
 
-/** Work the app handed on itself (监控 → 干预) still going: shown at the end of 助手's conversation until the reply comes. */
+/** Work the app handed on itself (监控 → 干预, 定时任务) still going: at the end of 助手's conversation until the reply comes. */
 export function HandOffStrip({ client, handOff }: { client: AdgClient; handOff: HandOff }) {
   const agent = useAgent(client, handOff.to)
-  const name = agent?.name ?? handOff.to
   return (
-    <div className="delegation running app-handoff">
-      <HandOffHead agent={agent} name={name} from={handOff.by} state={STATE.running} />
-      <div className="delegation-said"><div className="delegation-task">{handOff.title}</div></div>
-      <Working client={client} handOff={handOff} name={name} />
+    <div className="delegation app-handoff">
+      <ExchangeLine from={handOff.by} to={agent?.name ?? handOff.to} avatar={agent} title={handOff.title} state={STATE.running} href={exchangeHref(handOff)} />
     </div>
   )
 }
 
-function HandOffHead({ agent, name, from, state }: { agent: Agent | undefined; name: string; from: string; state: { label: string; tone: string } | undefined }) {
+/** A reply that came back (`（「游戏」交回了…）`): one line from the agent; its words are in the exchange. */
+export function RelayMessage({ client, note, handOffs }: { client: AdgClient; note: RelayNote; handOffs: readonly HandOff[] }) {
+  const agent = useAgent(client, note.agent)
+  const handOff = handOffs.filter(h => h.state !== 'running' && h.title === note.title && (h.to === agent?.id || h.to === note.agent)).at(-1)
+  const href = handOff !== undefined ? exchangeHref(handOff) : agent !== undefined ? `#/a/${encodeURIComponent(agent.id)}` : undefined
   return (
-    <div className="delegation-head">
-      <span className={`agent-avatar small agent-${agent?.id ?? 'unknown'}`}><Icon name={agent?.icon ?? 'sparkles'} /></span>
-      <span className="delegation-who">{from}<Icon name="arrow" className="delegation-arrow" /><strong>{name}</strong></span>
-      {state !== undefined && <span className={`delegation-state tone-${state.tone}`}>{state.label}</span>}
-      <span className="spacer" />
-      {agent !== undefined && <a className="delegation-open" href={`#/a/${encodeURIComponent(agent.id)}`}>查看过程<Icon name="chevron" /></a>}
+    <div className="delegation relay-line">
+      <ExchangeLine from={note.agent} to={MAIN.name} avatar={agent} title={note.title} state={note.ok ? STATE.done : { label: '没有做完', tone: 'failed' }} href={href} />
+    </div>
+  )
+}
+
+/** Work handed to this agent (`（监控交给你的事：…）`): who asked and what; the app's own long instructions fold away. */
+export function TaskMessage({ note }: { note: TaskNote }) {
+  const from = note.by === BY_YOU ? '你在软件里点的' : `${note.by}交给的事`
+  const short = note.by === MAIN.name
+  return (
+    <div className="msg user delegated">
+      <div className="msg-from">{from}</div>
+      <div className="bubble">
+        {short
+          ? <div className="task-note-body">{note.body}</div>
+          : <details className="task-note"><summary>{note.title}</summary><div className="task-note-body">{note.body}</div></details>}
+      </div>
     </div>
   )
 }
@@ -104,42 +133,81 @@ function Working({ client, handOff, name }: { client: AdgClient; handOff: HandOf
   )
 }
 
-/** Replies longer than this fold to their first lines: what 助手 makes of them comes right after. */
-const RELAY_FOLD = 280
+/** One hand-off (`handoffs/get`), kept current. */
+function useHandOff(client: AdgClient, id: string): { item: HandOff | null; error: string | null } {
+  const status = useStore(client.connection.status)
+  const [state, setState] = useState<{ item: HandOff | null; error: string | null }>({ item: null, error: null })
+  useEffect(() => {
+    if (status.state !== 'open') return
+    let live = true
+    client.connection.call('handoffs/get', { id }).then(
+      item => { if (live) setState({ item, error: null }) },
+      e => { if (live) setState({ item: null, error: e instanceof Error ? e.message : String(e) }) },
+    )
+    return () => { live = false }
+  }, [client, id, status.state])
+  useEffect(() => client.connection.on('handoffs/changed', ({ item }) => { if (item.id === id) setState({ item, error: null }) }), [client, id])
+  return state
+}
 
-/** A reply that came back (`（「游戏」交回了…）`), in the conversation that asked: the agent's words, as they came. */
-export function RelayMessage({ client, note }: { client: AdgClient; note: RelayNote }) {
-  const agent = useAgent(client, note.agent)
-  const long = note.reply.length > RELAY_FOLD || note.reply.split('\n').length > 6
-  const [open, setOpen] = useState(false)
+/**
+ * Two agents' exchange (`#/h/<id>`): what one handed the other and what came
+ * back, as messages. The person watches; the work itself, step by step, is
+ * in the other agent's conversation.
+ */
+export function HandOffPage({ client, id, onAgent }: { client: AdgClient; id: string; onAgent: (agentId: string) => void }) {
+  const { item, error } = useHandOff(client, id)
+  const from = useAgent(client, item?.by ?? '')
+  const to = useAgent(client, item?.to ?? '')
+  if (item === null) return <section className="main empty">{error ?? '正在打开…'}</section>
+  const toName = to?.name ?? item.to
+  const state = STATE[item.state]
   return (
-    <div className={`relay ${note.ok ? 'ok' : 'failed'}`}>
-      <div className="relay-head">
-        <span className={`agent-avatar small agent-${agent?.id ?? 'unknown'}`}><Icon name={agent?.icon ?? 'sparkles'} /></span>
-        <span>消息来自 <strong>{note.agent}</strong></span>
-        <span className={`delegation-state tone-${note.ok ? 'ok' : 'failed'}`}>{note.ok ? '交回了' : '没有做完'}</span>
-        <span className="spacer" />
-        {agent !== undefined && <a className="delegation-open" href={`#/a/${encodeURIComponent(agent.id)}`}>查看过程<Icon name="chevron" /></a>}
+    <section className="main exchange-page">
+      <header className="session-header">
+        <div className="session-heading">
+          <div className="breadcrumb agent-heading">
+            <span className={`agent-avatar small agent-${from?.id ?? 'unknown'}`}><Icon name={from?.icon ?? 'calendar'} /></span>
+            <span>{item.by}</span>
+            <Icon name="arrow" className="delegation-arrow" />
+            <span className={`agent-avatar small agent-${to?.id ?? 'unknown'}`}><Icon name={to?.icon ?? 'sparkles'} /></span>
+            <h1>{toName}</h1>
+          </div>
+          <div className="session-meta">
+            <span className={`delegation-state tone-${state.tone}`}>{state.label}</span>
+            <span>{item.title}</span>
+            <span>{new Date(item.startedAt).toLocaleString()}</span>
+          </div>
+        </div>
+      </header>
+      <div className="view">
+        <div className="chat"><div className="chat-inner">
+          <ExchangeMessage who={item.by} agent={from}>
+            <Markdown text={item.task} />
+            {item.expecting !== undefined && <div className="delegation-expecting">要交回：{item.expecting}</div>}
+          </ExchangeMessage>
+          {item.state === 'running'
+            ? <ExchangeMessage who={toName} agent={to}><Working client={client} handOff={item} name={toName} /></ExchangeMessage>
+            : <ExchangeMessage who={toName} agent={to} failed={item.state === 'failed'}><Markdown text={item.reply ?? (item.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>}
+        </div></div>
       </div>
-      <div className="relay-title">{note.asker === '你' ? MAIN.name : note.asker}交给它的：{note.title}</div>
-      <div className={`relay-body ${long && !open ? 'folded' : ''}`}><Markdown text={note.reply} /></div>
-      {long && <button className="link-button relay-more" onClick={() => setOpen(!open)}>{open ? '收起' : '展开全部'}</button>}
-    </div>
+      <footer className="watch-only">
+        <Icon name="info" />
+        <span>这是 {item.by} 和 {toName} 之间的交流，你只能旁观。{toName} 做事的每一步在它自己的对话里。</span>
+        {to !== undefined && <button className="small-button" onClick={() => onAgent(to.id)}>打开 {toName} 的对话</button>}
+      </footer>
+    </section>
   )
 }
 
-/** Work handed to this agent (`（监控交给你的事：…）`): who asked and what; the app's own long instructions fold away. */
-export function TaskMessage({ note }: { note: TaskNote }) {
-  const from = note.by === BY_YOU ? '你在软件里点的' : `${note.by}交给的事`
-  const short = note.by === MAIN.name
+function ExchangeMessage({ who, agent, failed = false, children }: { who: string; agent: Agent | undefined; failed?: boolean; children: React.ReactNode }) {
   return (
-    <div className="msg user delegated">
-      <div className="msg-from">{from}</div>
-      <div className="bubble">
-        {short
-          ? <div className="task-note-body">{note.body}</div>
-          : <details className="task-note"><summary>{note.title}</summary><div className="task-note-body">{note.body}</div></details>}
+    <div className={`exchange-msg ${failed ? 'failed' : ''}`}>
+      <div className="exchange-msg-head">
+        <span className={`agent-avatar small agent-${agent?.id ?? 'unknown'}`}><Icon name={agent?.icon ?? 'calendar'} /></span>
+        <strong>{who}</strong>
       </div>
+      <div className="exchange-msg-body">{children}</div>
     </div>
   )
 }

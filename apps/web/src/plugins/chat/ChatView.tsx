@@ -1,9 +1,9 @@
 import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { isQuiet, parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { MAIN, agentIdOf, useHandOffs, useRoles } from '../../agents.ts'
-import { DelegationCard, DELEGATE_TOOL, HandOffStrip, RelayMessage, TaskMessage } from './Delegation.tsx'
+import { DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -69,6 +69,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
 
   return (
     <ImageClient.Provider value={client}>
+    <HandOffsOf.Provider value={handOffs}>
     <div className="chat" ref={scroller} onScroll={onScroll}>
       <div className="chat-inner">
         {state.hasMore && (
@@ -96,6 +97,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
         {!state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
+    </HandOffsOf.Provider>
     </ImageClient.Provider>
   )
 }
@@ -197,11 +199,12 @@ function personText(text: string): { text: string; channel?: string } {
 
 const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
   const client = useContext(ImageClient)
+  const handOffs = useContext(HandOffsOf)
   switch (item.kind) {
     case 'user': {
       // Not the person's words: a reply another agent sent back, or work handed here (Delegation.tsx).
       const relay = item.pending === undefined ? parseRelay(item.text) : undefined
-      if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} />
+      if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} handOffs={handOffs} />
       const task = item.pending === undefined ? parseTask(item.text) : undefined
       if (task !== undefined) return <TaskMessage note={task} />
       const said = personText(item.text)
@@ -228,6 +231,8 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       )
     }
     case 'assistant':
+      // 助手 read a reply that came back and found nothing the person needs to hear.
+      if (!item.live && isQuiet(item.text)) return <div className="quiet-reply"><Icon name="check" />看过了，没有要告诉你的</div>
       return (
         <div className={`msg assistant ${item.live ? 'live' : ''}`}>
           {item.reasoning.trim() !== '' && (

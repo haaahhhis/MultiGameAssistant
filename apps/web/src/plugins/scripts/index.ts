@@ -8,7 +8,7 @@ export const scriptsPlugin: UiPlugin = {
   title: '脚本库',
   milestone: 'M1',
   requires: ['scripts'],
-  pages: [{ id: 'scripts', title: '脚本', icon: 'package', order: 10, component: ScriptsPage }],
+  pages: [{ id: 'scripts', title: '脚本', icon: 'package', order: 10, agent: 'scripts', component: ScriptsPage }],
   settingsPages: [{ id: 'script-install', title: '脚本安装', order: 10, component: InstallSettingsPage }],
 }
 

@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { BY_YOU, parseRelay, parseTask, relayMessage, taskMessage } from '../src/handoff-notes.ts'
+import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, relayMessage, taskMessage } from '../src/handoff-notes.ts'
 
 test('work handed to an agent says who asked and what, and reads back the same', () => {
   const text = taskMessage('监控', 'MAA · 日常：出错', '先截图看看\n再决定', true)
@@ -22,4 +22,10 @@ test('a reply sent back says who did it, for whom, how it went, and reads back w
   const failed = relayMessage({ agent: '干预', asker: '监控', title: 'MAA 出错', ok: false, reply: '用户接管' })
   assert.deepEqual(parseRelay(failed), { agent: '干预', asker: '监控', title: 'MAA 出错', ok: false, reply: '用户接管' })
   assert.equal(parseRelay('（「游戏」说了点别的）'), undefined)
+})
+
+test('助手 may leave the person out of a reply that came back by answering only QUIET', () => {
+  assert.match(relayMessage({ agent: '游戏', asker: '你', title: 'x', ok: true, reply: 'y' }), new RegExp(QUIET))
+  assert.equal(isQuiet(`${QUIET}。`), true)
+  assert.equal(isQuiet(`${QUIET}，不过活动快结束了`), false)
 })

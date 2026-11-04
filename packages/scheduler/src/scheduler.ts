@@ -21,6 +21,12 @@
  *   kept current once a minute, so edited pipelines are picked up.
  */
 import type { Pipeline, PipelineRun, PipelineTrigger, ScheduleEntry, ScheduleSettings } from '@adg/protocol'
+
+/**
+ * What runs on a timetable: a pipeline, or a timed task (`task:<id>`, named
+ * by its title, `agent`: the agent it goes to).
+ */
+export type Timed = Pick<Pipeline, 'id' | 'name' | 'schedule'> & { readonly draft?: boolean | undefined; readonly agent?: string | undefined }
 import type { WakePort } from './windows.ts'
 
 export interface SavedState {
@@ -49,7 +55,7 @@ export interface AutostartPort {
 }
 
 export interface SchedulerDeps {
-  readonly pipelines: () => Pipeline[]
+  readonly pipelines: () => readonly Timed[]
   /** @throws Error when it cannot start (already running, check failed). */
   readonly start: (pipelineId: string, trigger: PipelineTrigger) => void
   readonly isRunning: (pipelineId: string) => boolean
@@ -252,12 +258,12 @@ export class Scheduler {
   }
 
   /** The next planned times, soonest first. */
-  upcoming(limit = 10): { pipelineId: string; pipelineName: string; at: number }[] {
+  upcoming(limit = 10): { pipelineId: string; pipelineName: string; at: number; agent?: string }[] {
     const now = this.#now()
-    const out: { pipelineId: string; pipelineName: string; at: number }[] = []
+    const out: { pipelineId: string; pipelineName: string; at: number; agent?: string }[] = []
     for (const pipeline of this.#deps.pipelines()) {
       if (!pipeline.schedule.enabled || pipeline.draft === true) continue
-      for (const slot of slotsBetween(pipeline, now, now + 8 * 24 * 3_600_000)) out.push({ pipelineId: pipeline.id, pipelineName: pipeline.name, at: slot.at })
+      for (const slot of slotsBetween(pipeline, now, now + 8 * 24 * 3_600_000)) out.push({ pipelineId: pipeline.id, pipelineName: pipeline.name, at: slot.at, ...(pipeline.agent === undefined ? {} : { agent: pipeline.agent }) })
     }
     return out.sort((a, b) => a.at - b.at).slice(0, limit)
   }
@@ -315,7 +321,7 @@ export class Scheduler {
     return next
   }
 
-  #fire(pipeline: Pipeline, slot: string, trigger: PipelineTrigger): void {
+  #fire(pipeline: Timed, slot: string, trigger: PipelineTrigger): void {
     if (this.#deps.isRunning(pipeline.id)) {
       this.#record(pipeline, slot, 'skipped', '上一次还没有结束')
       return
@@ -329,8 +335,8 @@ export class Scheduler {
     }
   }
 
-  #record(pipeline: Pipeline, slot: string, outcome: ScheduleEntry['outcome'], detail?: string): void {
-    this.#state.history.push({ pipelineId: pipeline.id, pipelineName: pipeline.name, slot, at: this.#now(), outcome, ...(detail === undefined ? {} : { detail }) })
+  #record(pipeline: Timed, slot: string, outcome: ScheduleEntry['outcome'], detail?: string): void {
+    this.#state.history.push({ pipelineId: pipeline.id, pipelineName: pipeline.name, ...(pipeline.agent === undefined ? {} : { agent: pipeline.agent }), slot, at: this.#now(), outcome, ...(detail === undefined ? {} : { detail }) })
     if (this.#state.history.length > KEEP_HISTORY) this.#state.history.splice(0, this.#state.history.length - KEEP_HISTORY)
   }
 
@@ -344,7 +350,7 @@ export class Scheduler {
 }
 
 /** Planned times of a pipeline in (from, to], with their local slot keys. */
-export function slotsBetween(pipeline: Pipeline, from: number, to: number): { key: string; at: number }[] {
+export function slotsBetween(pipeline: Pick<Timed, 'schedule'>, from: number, to: number): { key: string; at: number }[] {
   const out: { key: string; at: number }[] = []
   const day = new Date(from)
   day.setHours(0, 0, 0, 0)

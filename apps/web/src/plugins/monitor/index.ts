@@ -7,7 +7,7 @@ export const monitorPlugin: UiPlugin = {
   title: '运行监控',
   milestone: 'M3',
   requires: ['runs', 'monitor'],
-  pages: [{ id: 'runs', title: '运行', icon: 'monitor', order: 30, component: RunsPage }],
+  pages: [{ id: 'runs', title: '运行', icon: 'monitor', order: 30, agent: 'intervene', component: RunsPage }],
 }
 
 export const feishuPlugin: UiPlugin = {

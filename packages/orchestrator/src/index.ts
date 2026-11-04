@@ -6,6 +6,7 @@
  * starts pipelines through this service.
  */
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -13,19 +14,21 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@adg/gateway'
 import type {} from '@adg/runner'
 import type {} from '@adg/script-registry'
-import { sessionConversations } from '@adg/notify'
-import { PIPELINES_CAPABILITY, type RequestParams } from '@adg/protocol'
+import { finalText, MAIN, sessionConversations } from '@adg/notify'
+import { PIPELINES_CAPABILITY, taskMessage, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { Engine, PIPELINE_ROLE } from './engine.ts'
 import { Pipelines } from './pipelines.ts'
 import { PipelineStore } from './store.ts'
-import { pipelineTools } from './tools.ts'
+import { AgentTasks, TASK_BY } from './tasks.ts'
+import { pipelineTools, taskTools } from './tools.ts'
 
 export { checkPipeline, graph, nodeLabel, topoOrder, type CheckLibrary } from './check.ts'
 export { Engine, untilMs, waitsFor, type EngineDeps, type EngineNotice } from './engine.ts'
 export { Pipelines, localDay } from './pipelines.ts'
 export { PipelineStore } from './store.ts'
-export { draftToPipeline, pipelineTools } from './tools.ts'
+export { AgentTasks, TASK_BY, TASK_TIMEOUT_MS, type AgentTasksDeps, type TaskInput } from './tasks.ts'
+export { draftToPipeline, pipelineTools, taskTools } from './tools.ts'
 
 const GUIDE = new URL('../skills/pipeline-planning.md', import.meta.url)
 
@@ -54,6 +57,7 @@ export class AdgOrchestrator extends Service {
   static inject = ['adgRunner', 'adgScripts']
   readonly engine: Engine
   readonly pipelines: Pipelines
+  readonly tasks: AgentTasks
   readonly ready: Promise<void>
 
   constructor(ctx: Context, config: Config) {
@@ -63,14 +67,15 @@ export class AdgOrchestrator extends Service {
     const scripts = ctx.adgScripts
     const library = { get: (id: string) => scripts.library.get(id), packOf: (id: string) => scripts.library.packOf(id) }
     let pipelines!: Pipelines
+    const conversations = () => {
+      const sessions = ctx.get('sessionController')
+      return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
+    }
     const engine = new Engine({
       runner: ctx.adgRunner.runner,
       library,
       notices: () => ctx.get('adgNotify'),
-      conversations: () => {
-        const sessions = ctx.get('sessionController')
-        return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
-      },
+      conversations,
       skills: async () => {
         const registry = ctx.get('skills')
         if (registry === undefined) return []
@@ -89,9 +94,24 @@ export class AdgOrchestrator extends Service {
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })
     pipelines = new Pipelines({ store: new PipelineStore(spec.dataDir), library, engine, changed: () => ctx.get('adgGateway')?.broadcast('pipelines/changed', {}) })
+    // A timed task goes to its agent's conversation; a role agent's reply then goes back to 助手, who says what matters.
+    const tasks = new AgentTasks({
+      file: join(spec.dataDir, 'pipelines', '_tasks.json'),
+      hand: async (task, signal) => {
+        const talk = conversations()
+        if (talk === undefined) throw new Error('对话功能还没准备好')
+        if (task.agent === MAIN) return talk.ask(await talk.home(MAIN), taskMessage(TASK_BY, task.title, task.prompt), signal)
+        const agent = ctx.get('adgGateway')?.roles.list().find(r => r.id === task.agent)
+        if (agent === undefined) throw new Error(`没有「${task.agent}」这个 agent 了`)
+        return finalText(await talk.handOff({ to: { id: agent.id, name: agent.name }, by: TASK_BY, title: task.title, task: task.prompt, relay: true, signal }))
+      },
+      changed: () => ctx.get('adgGateway')?.broadcast('tasks/changed', {}),
+      log: { warn: m => log.warn(m) },
+    })
     this.engine = engine
     this.pipelines = pipelines
-    this.ready = scripts.ready.then(() => pipelines.load({ warn: m => log.warn(m) }))
+    this.tasks = tasks
+    this.ready = scripts.ready.then(() => Promise.all([pipelines.load({ warn: m => log.warn(m) }), tasks.load()])).then(() => {})
     ctx.effect(() => () => engine.dispose(), 'adg-orchestrator engine')
 
     // Gate cards answered in a chat channel.
@@ -117,7 +137,7 @@ export class AdgOrchestrator extends Service {
 
     ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-orchestrator tools', agent => {
       const registered: Array<() => void> = []
-      for (const tool of pipelineTools(pipelines, engine, library)) {
+      for (const tool of [...pipelineTools(pipelines, engine, library), ...taskTools(tasks, () => ctx.get('adgGateway')?.roles.list() ?? [])]) {
         registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
       }
       return () => { for (const dispose of registered) dispose() }
@@ -146,6 +166,11 @@ export class AdgOrchestrator extends Service {
             engine.gate(p.runId, p.nodeId, p.decision)
             return {}
           },
+          'tasks/list': async params => { await this.ready; return { items: tasks.list((params as RequestParams<'tasks/list'>).agent) } },
+          'tasks/save': async params => { await this.ready; return tasks.save((params as RequestParams<'tasks/save'>).task) },
+          'tasks/remove': async params => { await this.ready; await tasks.remove((params as RequestParams<'tasks/remove'>).id); return {} },
+          'tasks/run': async params => { await this.ready; return tasks.run((params as RequestParams<'tasks/run'>).id, { kind: 'manual' }) },
+          'tasks/runs': async params => { await this.ready; return { items: tasks.runs((params as RequestParams<'tasks/runs'>).id) } },
         },
       })
     })

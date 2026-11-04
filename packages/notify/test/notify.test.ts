@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
+import { QUIET, type ApprovalRequested, type ChannelStatus } from '@adg/protocol'
 import { channelNote, Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
 import { replyMarkdown, replyPlain, type Reply } from '../src/reply.ts'
 
@@ -228,6 +228,9 @@ test("work 助手 hands on while answering a chat message reports back to that p
   later!({ blocks: [{ kind: 'text', text: '游戏读完了：没有快结束的活动' }] })
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(toPerson, [{ userId: 'ou_1', text: '游戏读完了：没有快结束的活动' }])
+  later!({ blocks: [{ kind: 'text', text: QUIET }] })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(toPerson.length, 1, 'nothing for the person: nothing sent')
 })
 
 test("a chat reply is the round's summary: the agent's last words and how many steps it took", () => {

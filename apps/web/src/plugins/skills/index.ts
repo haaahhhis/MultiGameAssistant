@@ -5,5 +5,5 @@ export const skillsPlugin: UiPlugin = {
   id: 'skills',
   title: '技能',
   requires: ['skills'],
-  pages: [{ id: 'skills', title: '技能', icon: 'sparkles', order: 50, component: SkillsPage }],
+  pages: [{ id: 'skills', title: '技能', icon: 'sparkles', order: 50, agent: 'scripts', component: SkillsPage }],
 }

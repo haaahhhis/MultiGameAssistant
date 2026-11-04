@@ -607,6 +607,12 @@ export class AdgGateway extends Service {
           await this.handOffs.loaded
           return { items: this.handOffs.of((params as RequestParams<'handoffs/list'>).sessionId) }
         },
+        'handoffs/get': async params => {
+          await this.handOffs.loaded
+          const item = this.handOffs.get((params as RequestParams<'handoffs/get'>).id)
+          if (item === undefined) throw new RpcError(ErrorCode.InvalidParams, '没有这次交接（可能太久以前，已经清掉了）')
+          return item
+        },
       },
     }), 'adg-gateway capability agents')
 

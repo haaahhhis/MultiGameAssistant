@@ -208,6 +208,37 @@ export const PipelineSummary = z.object({
 })
 export type PipelineSummary = z.infer<typeof PipelineSummary>
 
+/**
+ * A timed task: at its times, one agent is handed one piece of work in plain
+ * words (`「每天 9 点读一下活动」`) — no pipeline needed. The work lands in that
+ * agent's one conversation; a role agent's reply goes back to 助手, who tells
+ * the person if it matters (docs/design/agent-roles.md §11).
+ */
+export const AgentTaskId = z.string().regex(/^task-[a-z0-9]{4,24}$/)
+export const AgentTask = z.object({
+  id: AgentTaskId,
+  /** The agent that does it: `main` (助手), a role agent, or one the person made. */
+  agent: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(60),
+  prompt: z.string().trim().min(1).max(4000),
+  schedule: PipelineSchedule,
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+})
+export type AgentTask = z.infer<typeof AgentTask>
+
+export const AgentTaskRun = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  trigger: PipelineTrigger,
+  state: z.enum(['running', 'done', 'failed']),
+  /** The start of the agent's reply, or why it did not finish. */
+  outcome: z.string().optional(),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+})
+export type AgentTaskRun = z.infer<typeof AgentTaskRun>
+
 export const ScheduleSettings = z.object({
   /** Start MultiGameAssistant when the user logs on to Windows (a Task Scheduler task). */
   autostart: z.boolean(),
@@ -226,9 +257,14 @@ export const ScheduleSettings = z.object({
 })
 export type ScheduleSettings = z.infer<typeof ScheduleSettings>
 
+/** Whose timetable an entry is on: the agent whose timed task it is; absent: a pipeline (编排's). */
+const OnAgent = { agent: z.string().optional() }
+
 export const ScheduleEntry = z.object({
+  /** A pipeline's id, or `task:<id>` for a timed task. */
   pipelineId: z.string(),
   pipelineName: z.string(),
+  ...OnAgent,
   /** The planned local slot, `YYYY-MM-DD HH:MM`. */
   slot: z.string(),
   at: z.number(),
@@ -264,7 +300,7 @@ const ScheduleStatus = z.object({
     detail: z.string().optional(),
   }),
   power: PowerStatus,
-  upcoming: z.array(z.object({ pipelineId: z.string(), pipelineName: z.string(), at: z.number() })),
+  upcoming: z.array(z.object({ pipelineId: z.string(), pipelineName: z.string(), at: z.number(), ...OnAgent })),
   history: z.array(ScheduleEntry),
 })
 
@@ -339,6 +375,34 @@ export const PipelineRequests = {
     params: z.object({}),
     result: PowerStatus,
   },
+  /** Timed tasks, each with its last run; `agent`: only that agent's. */
+  'tasks/list': {
+    capability: PIPELINES_CAPABILITY,
+    params: z.object({ agent: z.string().optional() }),
+    result: z.object({ items: z.array(AgentTask.extend({ lastRun: AgentTaskRun.optional() })) }),
+  },
+  /** Create (no `id`) or replace. */
+  'tasks/save': {
+    capability: PIPELINES_CAPABILITY,
+    params: z.object({ task: AgentTask.extend({ id: AgentTaskId.optional() }) }),
+    result: AgentTask,
+  },
+  'tasks/remove': {
+    capability: PIPELINES_CAPABILITY,
+    params: z.object({ id: AgentTaskId }),
+    result: z.object({}),
+  },
+  /** Hand it to its agent now (not waiting for the reply). */
+  'tasks/run': {
+    capability: PIPELINES_CAPABILITY,
+    params: z.object({ id: AgentTaskId }),
+    result: AgentTaskRun,
+  },
+  'tasks/runs': {
+    capability: PIPELINES_CAPABILITY,
+    params: z.object({ id: AgentTaskId }),
+    result: z.object({ items: z.array(AgentTaskRun) }),
+  },
 } as const
 
 export const PipelineNotifications = {
@@ -347,6 +411,8 @@ export const PipelineNotifications = {
   /** A pipeline run started or changed. */
   'pipelines/run': PipelineRun,
   'schedule/changed': z.object({}),
+  /** A timed task was saved, removed, or one of its runs started or ended. */
+  'tasks/changed': z.object({}),
   /** Keeping awake started or stopped; a sleep / shutdown was asked for, began counting down, was cancelled or done. */
   'schedule/power': PowerStatus,
 } as const

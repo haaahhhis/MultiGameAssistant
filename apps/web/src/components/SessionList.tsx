@@ -18,7 +18,7 @@ const EARLIER_SHOWN = 12
  * working, and whether something came in since you last looked. A row opens
  * the agent's one conversation; its earlier ones fold away under it.
  */
-export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewAgent }: {
+export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewAgent, onSchedule, scheduleOpen = false }: {
   client: AdgClient
   /** The agent whose page or session is open. */
   agent: string
@@ -27,6 +27,9 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
   onSelect: (sessionId: string) => void
   /** 新建 agent (AgentEditor.tsx). */
   onNewAgent: () => void
+  /** Every agent's timed tasks together (AgentSchedule.tsx). */
+  onSchedule: () => void
+  scheduleOpen?: boolean
 }) {
   const sessions = useStore(client.sessions)
   const status = useStore(client.connection.status)
@@ -250,6 +253,12 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
         {!searching && capabilities.has('agents') && (
           <button className="nav-item new-agent" onClick={onNewAgent} disabled={status.state !== 'open'} title="自己建一个 agent：名字、职责、能用的工具">
             <Icon name="plus" /><span className="nav-item-label">新建 agent</span>
+          </button>
+        )}
+        {!searching && capabilities.has('pipelines') && (
+          <button className={`nav-item role-row schedule-entry ${scheduleOpen ? 'active' : ''}`} aria-current={scheduleOpen ? 'page' : undefined} onClick={onSchedule}
+            title="每个 agent 的定时任务，和按时运行的流水线">
+            <Icon name="calendar" /><span className="nav-item-label">定时任务</span>
           </button>
         )}
         {!searching && canArchive && archivedItems.length > 0 && (

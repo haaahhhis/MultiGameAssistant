@@ -5,13 +5,14 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { ClockTime, Pipeline, PipelineId, PowerAction, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { AgentTaskId, ClockTime, Pipeline, PipelineId, PowerAction, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
 import { systemInfo } from './system.ts'
 import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
 import type { CheckLibrary } from './check.ts'
 import type { Engine } from './engine.ts'
 import type { Pipelines } from './pipelines.ts'
+import type { AgentTasks } from './tasks.ts'
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   const parsed = schema.safeParse(args)
@@ -196,7 +197,7 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
     }),
     tool({
       name: 'pipeline_draft',
-      description: `按用户的描述生成一条流水线草稿并保存，用户会在「编排」页看到、可以拖拽修改；草稿可以立即用 pipeline_run 运行，但用户在界面里保存之前不会按定时运行。不能覆盖用户保存过的流水线（换个 id）。返回运行前检查的结果，有 error 要修正后重新提交。\n${DRAFT_HELP}`,
+      description: `按用户的描述生成一条流水线草稿并保存（只是到点让某个 agent 做一件事、没有脚本步骤的，用 schedule_task_save 做成定时任务，不要做成流水线），用户会在「编排」页看到、可以拖拽修改；草稿可以立即用 pipeline_run 运行，但用户在界面里保存之前不会按定时运行。不能覆盖用户保存过的流水线（换个 id）。返回运行前检查的结果，有 error 要修正后重新提交。\n${DRAFT_HELP}`,
       properties: DRAFT_SCHEMA,
       required: ['id', 'name', 'nodes'],
       kind: 'other',
@@ -288,6 +289,74 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
       kind: 'read',
       title: () => '查看电脑配置',
       execute: () => system(),
+    }),
+  ]
+}
+
+/**
+ * Timed tasks (tasks.ts): at set times, one agent is handed one piece of
+ * work in plain words. For "每天九点读一下活动" — no pipeline needed.
+ */
+export function taskTools(tasks: AgentTasks, agents: () => readonly { readonly id: string; readonly name: string }[]): ToolDefinition[] {
+  const agentOf = (wanted: string) => {
+    if (wanted === 'main' || wanted === '助手') return 'main'
+    const found = agents().find(a => a.id === wanted || a.name === wanted)
+    if (found === undefined) throw new Error(`没有叫「${wanted}」的 agent；可以交给：助手、${agents().map(a => a.name).join('、')}`)
+    return found.id
+  }
+  return [
+    tool({
+      name: 'schedule_task_list',
+      description: '列出定时任务（到点交给某个 agent 做的一件事）：哪个 agent、做什么、几点、上一次的结果。',
+      properties: { agent: { type: 'string', description: '只看这个 agent 的（名字或 id）。' } },
+      readOnly: true,
+      kind: 'read',
+      title: () => '查看定时任务',
+      execute: async args => {
+        const a = parse(z.object({ agent: z.string().nullish() }), args)
+        return { tasks: tasks.list(a.agent == null ? undefined : agentOf(a.agent)) }
+      },
+    }),
+    tool({
+      name: 'schedule_task_save',
+      description: '新建或修改一个定时任务：每天（或指定星期几）的几个时间点，把一段话交给一个 agent 去做，结果回到它的对话里，要紧的再由助手告诉用户。用户说「每天早上九点看看活动」「每周一提醒我…」这类只需要 agent 动手、不用跑脚本的事时用它，不要做成流水线。改已有的要带 id。',
+      properties: {
+        id: { type: 'string', description: '要修改的任务 id（schedule_task_list 可查）；新建不填。' },
+        agent: { type: 'string', description: '谁来做：助手，或某个 agent 的名字。' },
+        title: { type: 'string', description: '一句话的名字，例如「看今天结束的活动」。' },
+        prompt: { type: 'string', description: '交给它的话，写完整：要做什么、要交回什么。' },
+        times: { type: 'array', items: { type: 'string' }, description: '时间点，HH:MM，例如 ["09:00"]。' },
+        days: { type: 'array', items: { type: 'integer' }, description: '星期几：0 周日 … 6 周六；空数组表示每天。' },
+        enabled: { type: 'boolean', description: '开启或暂停（默认开启）。' },
+      },
+      required: ['agent', 'title', 'prompt', 'times'],
+      kind: 'other',
+      title: a => `设置定时任务：${String(a['title'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: AgentTaskId.nullish(), agent: z.string(), title: z.string(), prompt: z.string(), times: z.array(ClockTime).min(1).max(12), days: z.array(z.number().int().min(0).max(6)).nullish(), enabled: z.boolean().nullish() }), args)
+        const before = a.id == null ? undefined : tasks.get(a.id)
+        if (a.id != null && before === undefined) throw new Error(`没有这个定时任务：${a.id}`)
+        const agent = agentOf(a.agent)
+        const task = await tasks.save({
+          ...(a.id == null ? {} : { id: a.id }),
+          agent, title: a.title, prompt: a.prompt,
+          schedule: { ...(before?.schedule ?? { catchUpMinutes: 10 }), enabled: a.enabled ?? true, times: a.times, days: a.days ?? [] },
+        })
+        const link = `#/a/${encodeURIComponent(agent)}/schedule`
+        return { ok: true, task, link, next: `告诉用户设好了；回复里附上链接 [查看定时任务](${link})` }
+      },
+    }),
+    tool({
+      name: 'schedule_task_remove',
+      description: '删除一个定时任务。',
+      properties: { id: { type: 'string', description: '任务 id（schedule_task_list 可查）。' } },
+      required: ['id'],
+      kind: 'other',
+      title: a => `删除定时任务：${String(a['id'] ?? '')}`,
+      execute: async args => {
+        await tasks.remove(parse(z.object({ id: AgentTaskId }), args).id)
+        return { ok: true }
+      },
     }),
   ]
 }

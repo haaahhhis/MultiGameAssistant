@@ -7,7 +7,7 @@ export const pipelinesPlugin: UiPlugin = {
   title: '编排',
   milestone: 'M4',
   requires: ['pipelines', 'scripts', 'runs'],
-  pages: [{ id: 'pipelines', title: '编排', icon: 'flow', order: 20, component: PipelinesPage }],
+  pages: [{ id: 'pipelines', title: '编排', icon: 'flow', order: 20, agent: 'pipelines', component: PipelinesPage }],
 }
 
 export const schedulePlugin: UiPlugin = {
