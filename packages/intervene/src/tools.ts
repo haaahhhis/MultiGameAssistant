@@ -95,7 +95,7 @@ export function screenTools(deps: ScreenToolDeps): ToolDefinition[] {
   return [
     tool({
       name: 'screen_capture',
-      description: '截图看看屏幕：模拟器画面（ADB）、整个桌面、或某个窗口（就算被挡住也能截）。返回图片和它的像素大小；之后的点击、滑动都用这张图的坐标。用户说「截个图看看」时，send_to_user 设为 true，图片会直接发给他（例如在飞书里）。',
+      description: '截图看看屏幕：模拟器画面（ADB）、整个桌面、或某个窗口（就算被挡住也能截）。日志、配置、进程或命令能确认的事不用截图；只有画面上才看得到时再用。返回图片和它的像素大小；之后的点击、滑动都用这张图的坐标。用户说「截个图看看」时，send_to_user 设为 true，图片会直接发给他（例如在飞书里）。',
       properties: {
         target: TARGET,
         window: { type: 'string', description: 'target=window 时：窗口标题里的一段文字（window_list 可查）。' },

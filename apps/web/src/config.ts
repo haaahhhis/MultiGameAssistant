@@ -60,8 +60,8 @@ export type Route =
   | { readonly kind: 'start' }
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
-  /** An agent: its one conversation, or (`schedule`) its timed tasks. Its other tabs are pages it owns (`page`). */
-  | { readonly kind: 'agent'; readonly id: string; readonly tab?: 'schedule' | undefined }
+  /** An agent: its one conversation, its timed tasks, or its earlier conversations. Its other tabs are pages it owns (`page`). */
+  | { readonly kind: 'agent'; readonly id: string; readonly tab?: AgentTab | undefined }
   /** What two agents said to each other (Delegation.tsx HandOffPage). */
   | { readonly kind: 'handoff'; readonly id: string }
   /** Every agent's timed tasks and the pipelines on a timetable, together. */
@@ -72,6 +72,9 @@ export type Route =
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
   /** One session view alone, in a popped-out window. */
   | { readonly kind: 'window'; readonly view: string; readonly sessionId: string }
+
+/** An agent's own tabs besides its conversation (App.tsx AgentTabs). */
+export type AgentTab = 'schedule' | 'history'
 
 export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
@@ -85,8 +88,8 @@ export function readRoute(): Route {
   if (location.hash === '#/schedule') return { kind: 'schedule' }
   const handOff = /^#\/h\/(.+)$/.exec(location.hash)
   if (handOff !== null) return { kind: 'handoff', id: decodeURIComponent(handOff[1]!) }
-  const timed = /^#\/a\/(.+)\/schedule$/.exec(location.hash)
-  if (timed !== null) return { kind: 'agent', id: decodeURIComponent(timed[1]!), tab: 'schedule' }
+  const tab = /^#\/a\/(.+)\/(schedule|history)$/.exec(location.hash)
+  if (tab !== null) return { kind: 'agent', id: decodeURIComponent(tab[1]!), tab: tab[2] as AgentTab }
   if (location.hash === '#/a/new') return { kind: 'agentEdit', id: null }
   const editing = /^#\/a\/(.+)\/edit$/.exec(location.hash)
   if (editing !== null) return { kind: 'agentEdit', id: decodeURIComponent(editing[1]!) }

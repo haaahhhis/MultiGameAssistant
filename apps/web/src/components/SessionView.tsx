@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useHandOffs, useRoles } from '../agents.ts'
-import { exchangeHref } from '../plugins/chat/Delegation.tsx'
+import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
 import { popoutUrl } from '../config.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
@@ -45,9 +44,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   // An agent's one conversation is the agent; any other is an earlier conversation of its.
   const home = item?.home !== undefined
   const views = viewsFor(useSessionViews(client), state)
-  // Work another agent handed here, still going: the two agents are talking, the person watches (§11).
-  const handOffs = useHandOffs(client, session.id)
-  const watching = handOffs.find(h => h.toSession === session.id && h.state === 'running')
   const [tab, setTab] = useState(() => readTab())
   const active = views.find(v => v.id === tab) ?? views[0]
   useEffect(() => writeTab(tab), [tab])
@@ -103,17 +99,8 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
           : <active.component client={client} session={session} state={state} />}
       </div>
       {reminder}
-      {watching !== undefined ? (
-        <footer className="watch-only">
-          <Icon name="info" />
-          <span>{watching.by}交给{agent.name}的事还在做：{watching.title}。做完之前你只能旁观。</span>
-          <a className="small-button" href={exchangeHref(watching)}>看它们的交流</a>
-          {state.running && <button className="small-button" onClick={() => void session.cancel()}>停止</button>}
-        </footer>
-      ) : (
-        <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
-          initialPrompt={initialPrompt} onInitialSent={onInitialSent} />
-      )}
+      <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
+        initialPrompt={initialPrompt} onInitialSent={onInitialSent} />
     </section>
   )
 }

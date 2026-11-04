@@ -190,6 +190,7 @@ interface LiveAgent {
 /** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
 const ROLE_CLOSING = [
   '这是你唯一的对话：用户直接找你说的话、别的 agent 和软件交给你的事（消息开头写着「（…交给你的事：…）」）都在这里，一件接一件。',
+  '能用工具、命令行、读文件（配置、日志、版本号）或脚本自己的命令和设置做到、确认到的，就这样做；截图、看画面、点屏幕是最后的办法——只有画面上才看得到、别的办法都确认不了时才用，用之前先说为什么。',
   '你每一轮最后一段回复就是这件事的结论：写清楚结果，以及需要用户做的事（没有就不写）。别人交给你的事，这段回复会原样交回给它。',
 ].join('\n')
 

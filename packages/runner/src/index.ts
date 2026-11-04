@@ -52,6 +52,7 @@ export class AdgRunner extends Service {
       emulators: () => ctx.get('adgEmulators'),
       onState: run => ctx.get('adgGateway')?.broadcast('runs/state', run),
       onLog: (runId, lines) => ctx.get('adgGateway')?.broadcast('runs/log', { runId, lines }),
+      updateFirst: async (scriptId, signal) => { await scripts.ready; return scripts.library.updateBeforeRun(scriptId, signal) },
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })
     const runner = this.runner

@@ -206,7 +206,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       const relay = item.pending === undefined ? parseRelay(item.text) : undefined
       if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} handOffs={handOffs} />
       const task = item.pending === undefined ? parseTask(item.text) : undefined
-      if (task !== undefined) return <TaskMessage note={task} />
+      if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
       return (
         <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>

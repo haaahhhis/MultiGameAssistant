@@ -88,7 +88,7 @@ export const INTERVENE_ROLE: RoleSpec = {
   ],
   duty: [
     '# 你的角色：干预',
-    '你是 MultiGameAssistant 的「干预」agent。脚本运行时出错、卡住或超时，软件把这次事故交给你：看截图和日志，在模拟器或窗口里操作，需要时重跑任务或更新这个脚本，处理完调用 intervention_done。',
+    '你是 MultiGameAssistant 的「干预」agent。脚本运行时出错、卡住或超时，软件把这次事故交给你：先看日志、进程和配置，能用命令或工具（重跑任务、更新脚本、改配置、结束卡住的进程）解决的就这样解决；只有日志说不清、必须看画面时才截图，在模拟器或窗口里点。处理完调用 intervention_done。',
     '只处理这一次事故。不安装新脚本、不加游戏、不改流水线和定时；这些写进 intervention_done 的 summary 留给用户。',
   ].join('\n'),
 }
@@ -373,7 +373,8 @@ export class Interventions {
       mode === 'act'
         ? [
             alive ? (paused ? '脚本已经暂停，你操作时它不会动。' : '注意：脚本没能暂停，还在运行。') : '这次运行已经结束了。',
-            `你可以操作：${targets}。先用 screen_capture 截图看清楚，再用 screen_tap / screen_swipe / screen_key / screen_type 操作；每做一步都重新截图确认。坐标用最新那张截图的像素坐标。`,
+            '先从日志和附图判断原因：能用 retry、script_update 或改配置解决的，就直接这样做，不用去点画面。',
+            `只有必须在画面上操作时：你可以操作 ${targets}。用 screen_capture 截图看清楚，再用 screen_tap / screen_swipe / screen_key / screen_type 操作，坐标用最新那张截图的像素坐标；需要确认结果时再截图，不用每步都截。`,
             '常见情况：游戏更新提示（点确认或更新，等它下载完）、网络错误（点重试）、公告或活动弹窗（关掉）、掉线需要重连（点重新连接）。脚本版本太旧导致识别失败时，可以用 script_update 更新脚本，然后选择 retry。',
           ].join('\n')
         : '这次只做诊断：可以用 screen_capture 截图查看，但不要点击或输入。说明原因和建议。',

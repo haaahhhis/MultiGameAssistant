@@ -1,66 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { SessionItem } from '@adg/protocol'
-import { MAIN, MAIN_AGENT, agentIdOf, agentOf, useLastReplies, useRoles, useSeen, type Agent } from '../agents.ts'
+import { MAIN, agentIdOf, agentOf, useRoles, useSeen, type Agent } from '../agents.ts'
 import { useNow, useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
 
-export const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl '
-
 const CHANNEL: Readonly<Record<string, string>> = { feishu: '飞书' }
-/** Earlier conversations listed under an agent before 「更多」. */
-const EARLIER_SHOWN = 12
+/** Earlier conversations listed before 「更多」. */
+const EARLIER_SHOWN = 30
 
-/**
- * The chat area's second column: the agents rather than their sessions
- * (docs/design/agent-roles.md §9, §10). One row per agent — 助手 first, then
- * the role agents (干预, 游戏, …) — with its latest reply, whether it is
- * working, and whether something came in since you last looked. A row opens
- * the agent's one conversation; its earlier ones fold away under it.
- */
-export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewAgent, onSchedule, scheduleOpen = false }: {
-  client: AdgClient
-  /** The agent whose page or session is open. */
-  agent: string
-  selected: string | null
-  onAgent: (agentId: string) => void
-  onSelect: (sessionId: string) => void
-  /** 新建 agent (AgentEditor.tsx). */
-  onNewAgent: () => void
-  /** Every agent's timed tasks together (AgentSchedule.tsx). */
-  onSchedule: () => void
-  scheduleOpen?: boolean
-}) {
-  const sessions = useStore(client.sessions)
+/** Sessions the person archived (`sessions/archived`), kept current. */
+function useArchived(client: AdgClient): ReadonlySet<string> {
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
-  const roles = useRoles(client)
-  const now = useNow(30_000)
-  const { seen, markSeen } = useSeen()
-  const [error, setError] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
   const [archived, setArchived] = useState<ReadonlySet<string>>(new Set())
-  const [showArchived, setShowArchived] = useState(false)
-  const [earlierOpen, setEarlierOpen] = useState(false)
-  const [allEarlier, setAllEarlier] = useState(false)
-  const [remote, setRemote] = useState<ReadonlyMap<string, { channel: string; user: string }>>(new Map())
-  const [notifyRevision, setNotifyRevision] = useState(0)
-  const search = useRef<HTMLInputElement>(null)
   const canArchive = capabilities.has('archive')
-
-  // Ctrl/⌘+K jumps to the session search from anywhere.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        search.current?.focus()
-        search.current?.select()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
   useEffect(() => {
     if (status.state !== 'open' || !canArchive) return
     let live = true
@@ -68,6 +22,102 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
     return () => { live = false }
   }, [client, status.state, canArchive])
   useEffect(() => client.connection.on('sessions/archived', r => setArchived(new Set(r.sessionIds))), [client])
+  return archived
+}
+
+export interface AgentState {
+  readonly agent: Agent
+  /** Its conversations working now. */
+  readonly running: number
+  /** Something came in since you last looked. */
+  readonly unread: boolean
+  /** Approvals and questions waiting in its conversations. */
+  readonly waiting: number
+}
+
+/**
+ * Every agent — 助手 first, then the role agents (干预, 游戏, …) — with
+ * whether it is working, whether something came in since you last looked at
+ * it, and what waits for you in its conversations (docs/design/agent-roles.md
+ * §9, §10). `open` is the agent on screen: what you are looking at counts as seen.
+ */
+export function useAgentStates(client: AdgClient, open: string | undefined): readonly AgentState[] {
+  const sessions = useStore(client.sessions)
+  const approvals = useStore(client.approvals)
+  const questions = useStore(client.questions)
+  const roles = useRoles(client)
+  const archived = useArchived(client)
+  const { seen, markSeen } = useSeen()
+  const agents: readonly Agent[] = useMemo(() => [MAIN, ...roles.map(agentOf)], [roles])
+  // Each agent's sessions, newest first, without the archived and the empty.
+  const byAgent = useMemo(() => {
+    const byAgent = new Map<string, SessionItem[]>(agents.map(a => [a.id, []]))
+    for (const item of sessions.items) {
+      if (item.origin === 'subagent' || item.blank || archived.has(item.id)) continue
+      byAgent.get(agentIdOf(item, roles))?.push(item)
+    }
+    for (const list of byAgent.values()) list.sort((a, b) => b.updatedAt - a.updatedAt)
+    return byAgent
+  }, [sessions.items, archived, agents, roles])
+
+  // An agent never looked at starts as seen, so nothing is unread on a first start.
+  useEffect(() => {
+    if (!sessions.loaded) return
+    for (const a of agents) {
+      const last = byAgent.get(a.id)?.[0]?.updatedAt
+      if (last === undefined) continue
+      if (a.id === open || seen[a.id] === undefined) markSeen(a.id, last)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions.loaded, byAgent, open])
+
+  const ownerOf = (sessionId: string) => {
+    const item = sessions.items.find(i => i.id === sessionId)
+    return item === undefined ? undefined : agentIdOf(item, roles)
+  }
+  return agents.map(agent => {
+    const items = byAgent.get(agent.id) ?? []
+    const last = items[0]
+    return {
+      agent,
+      running: items.filter(i => i.running).length,
+      unread: agent.id !== open && last !== undefined && last.updatedAt > (seen[agent.id] ?? Infinity),
+      waiting: [...approvals, ...questions].filter(r => ownerOf(r.sessionId) === agent.id).length,
+    }
+  })
+}
+
+/** Whether an agent has conversations besides its one conversation (its 「以前的对话」 tab). */
+export function useHasEarlier(client: AdgClient, agentId: string): boolean {
+  const sessions = useStore(client.sessions)
+  const roles = useRoles(client)
+  return sessions.items.some(i => i.origin !== 'subagent' && !i.blank && i.home !== agentId && agentIdOf(i, roles) === agentId)
+}
+
+/**
+ * An agent's earlier conversations (before it had one conversation, from
+ * 飞书, made by the app), newest first; the archived ones fold away below.
+ * Rename in place; archive and restore.
+ */
+export function AgentHistory({ client, agentId, onSelect }: {
+  client: AdgClient
+  agentId: string
+  onSelect: (sessionId: string) => void
+}) {
+  const sessions = useStore(client.sessions)
+  const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  const roles = useRoles(client)
+  const archived = useArchived(client)
+  const now = useNow(30_000)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
+  const [all, setAll] = useState(false)
+  const [remote, setRemote] = useState<ReadonlyMap<string, { channel: string; user: string }>>(new Map())
+  const [notifyRevision, setNotifyRevision] = useState(0)
+  const canArchive = capabilities.has('archive')
+
   useEffect(() => client.connection.on('notify/changed', () => setNotifyRevision(r => r + 1)), [client])
   useEffect(() => {
     if (status.state !== 'open' || !capabilities.has('notify')) return
@@ -84,43 +134,13 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
     return /^(飞书|feishu)：/.test(item.title ?? '') ? '飞书' : undefined
   }
 
-  const agents: readonly Agent[] = useMemo(() => [MAIN, ...roles.map(agentOf)], [roles])
-  // Each agent's sessions, newest first, without the archived and the empty.
-  const { byAgent, archivedItems } = useMemo(() => {
-    const all = sessions.items.filter(item => item.origin !== 'subagent' && (!item.blank || item.id === selected))
-    const byAgent = new Map<string, SessionItem[]>(agents.map(a => [a.id, []]))
-    const archivedItems: SessionItem[] = []
-    for (const item of all) {
-      if (archived.has(item.id)) { archivedItems.push(item); continue }
-      byAgent.get(agentIdOf(item, roles))?.push(item)
-    }
-    for (const list of byAgent.values()) list.sort((a, b) => b.updatedAt - a.updatedAt)
-    archivedItems.sort((a, b) => b.updatedAt - a.updatedAt)
-    return { byAgent, archivedItems }
-  }, [sessions.items, archived, agents, roles, selected])
-
-  // What a row shows: the agent's own conversation, else (none yet) its latest earlier one.
-  const latest = agents.map(a => { const items = byAgent.get(a.id) ?? []; return items.find(i => i.home === a.id) ?? items[0] }).filter((i): i is SessionItem => i !== undefined)
-  const replies = useLastReplies(client, latest.map(i => ({ id: i.id, updatedAt: i.updatedAt, running: i.running })))
-
-  // What you are looking at counts as seen; an agent never looked at starts as seen, so nothing is unread on a first start.
-  useEffect(() => {
-    if (!sessions.loaded) return
-    for (const a of agents) {
-      const last = byAgent.get(a.id)?.[0]?.updatedAt
-      if (last === undefined) continue
-      if (a.id === agent || seen[a.id] === undefined) markSeen(a.id, last)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.loaded, byAgent, agent])
-
-  const searching = query.trim() !== ''
-  const found = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (needle === '') return []
-    return sessions.items.filter(item => item.origin !== 'subagent' && !item.blank && !archived.has(item.id) && sessionTitle(item).toLowerCase().includes(needle))
+  const needle = query.trim().toLowerCase()
+  const { earlier, archivedItems } = useMemo(() => {
+    const mine = sessions.items.filter(i => i.origin !== 'subagent' && !i.blank && i.home !== agentId && agentIdOf(i, roles) === agentId
+      && (needle === '' || sessionTitle(i).toLowerCase().includes(needle)))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [sessions.items, query, archived])
+    return { earlier: mine.filter(i => !archived.has(i.id)), archivedItems: mine.filter(i => archived.has(i.id)) }
+  }, [sessions.items, agentId, roles, archived, needle])
 
   // Renaming in place: the pencil on hover, or a double-click on the row.
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null)
@@ -135,20 +155,14 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
 
   const toggleArchive = async (sessionId: string, archive: boolean) => {
     setError(null)
-    try {
-      const r = await client.connection.call(archive ? 'sessions/archive' : 'sessions/unarchive', { sessionId })
-      setArchived(new Set(r.sessionIds))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
+    await client.connection.call(archive ? 'sessions/archive' : 'sessions/unarchive', { sessionId }).catch(e => setError(e instanceof Error ? e.message : String(e)))
   }
 
-  /** One session in a list: 助手's conversations, the archive, search results. */
-  const sessionRow = (item: SessionItem, badge?: string) => {
+  const sessionRow = (item: SessionItem) => {
     const channel = channelOf(item)
     const isArchived = archived.has(item.id)
     return (
-      <div key={item.id} className={`session-row ${item.id === selected ? 'active' : ''}`}>
+      <div key={item.id} className="session-row">
         {renaming?.id === item.id ? (
           <input className="text-input session-rename" autoFocus value={renaming.value} maxLength={80} aria-label="会话名称"
             onFocus={e => e.target.select()}
@@ -159,10 +173,8 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
             }}
             onBlur={() => void rename()} />
         ) : (
-          <button className={`nav-item session-item ${item.id === selected ? 'active' : ''}`} aria-current={item.id === selected ? 'page' : undefined}
-            onClick={() => onSelect(item.id)} onDoubleClick={() => setRenaming({ id: item.id, value: sessionTitle(item) })} title="双击改名">
+          <button className="nav-item session-item" onClick={() => onSelect(item.id)} onDoubleClick={() => setRenaming({ id: item.id, value: sessionTitle(item) })} title="双击改名">
             {channel !== undefined && <span className="channel-badge">{channel}</span>}
-            {badge !== undefined && <span className="role-badge">{badge}</span>}
             <span className="nav-item-label">{channel !== undefined ? sessionTitle(item).replace(/^(飞书|feishu)：/, '') : sessionTitle(item)}</span>
             {item.running ? <span className="run-dot" role="img" aria-label="运行中" /> : <span className="session-time">{relativeTime(item.updatedAt, now)}</span>}
           </button>
@@ -185,98 +197,37 @@ export function AgentRoster({ client, agent, selected, onAgent, onSelect, onNewA
   }
 
   return (
-    <aside className="sidebar session-sidebar">
-      <div className="sidebar-actions">
-        <div className="sidebar-title">对话</div>
+    <section className="main history-page">
+      <div className="history-body">
         <label className="sidebar-search">
           <Icon name="search" />
-          <input ref={search} aria-label="搜索会话" placeholder="搜索全部会话" value={query} onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Escape') { setQuery(''); e.currentTarget.blur() } }} />
-          <kbd>{MOD_KEY}K</kbd>
+          <input aria-label="搜索以前的对话" placeholder="搜索以前的对话" value={query} onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setQuery('') }} />
         </label>
         {error !== null && <div className="error small">{error}</div>}
-      </div>
-
-      <nav className="session-list agent-roster" aria-label="agent">
-        {!sessions.loaded && status.state === 'open' && <div className="muted small pad">加载中…</div>}
-        {searching ? (
-          found.length === 0
-            ? <div className="sidebar-empty"><Icon name="search" /><span>没有匹配的会话</span></div>
-            : found.map(item => {
-              const owner = agentIdOf(item, roles)
-              return sessionRow(item, owner === MAIN_AGENT ? undefined : agents.find(a => a.id === owner)?.name)
-            })
-        ) : agents.map(a => {
-          const items = byAgent.get(a.id) ?? []
-          const last = items[0]
-          const own = items.find(i => i.home === a.id)
-          const earlier = items.filter(i => i.home !== a.id)
-          const running = items.filter(i => i.running).length
-          const unread = a.id !== agent && last !== undefined && last.updatedAt > (seen[a.id] ?? Infinity)
-          const shownItem = own ?? last
-          const line = shownItem === undefined ? a.description : replies.get(shownItem.id) ?? (own === undefined ? sessionTitle(shownItem) : a.description)
-          const open = a.id === agent
-          return (
-            <div key={a.id} className={`agent-entry ${open ? 'open' : ''}`}>
-              <button className={`agent-row ${open && (selected === null || selected === own?.id) ? 'active' : ''}`} aria-current={open && selected === null ? 'page' : undefined}
-                onClick={() => onAgent(a.id)} title={a.description}>
-                <span className={`agent-avatar agent-${a.id}`}>
-                  <Icon name={a.icon} />
-                  {running > 0 && <span className="agent-busy" role="img" aria-label={`${running} 个正在运行`} />}
-                </span>
-                <span className="agent-text">
-                  <span className="agent-head">
-                    <span className={`agent-name ${unread ? 'unread' : ''}`}>{a.name}</span>
-                    {running > 0 ? <span className="agent-working">进行中{running > 1 ? ` ${running}` : ''}</span>
-                      : last !== undefined && <span className="session-time">{relativeTime(last.updatedAt, now)}</span>}
-                    {unread && <span className="unread-dot" role="img" aria-label="有新结果" />}
-                  </span>
-                  <span className="roster-line">{line}</span>
-                </span>
+        <nav className="session-list" aria-label="以前的对话">
+          {!sessions.loaded && status.state === 'open' && <div className="muted small pad">加载中…</div>}
+          {sessions.loaded && earlier.length === 0 && (
+            <div className="sidebar-empty"><Icon name={needle === '' ? 'chat' : 'search'} /><span>{needle === '' ? '没有以前的对话' : '没有匹配的对话'}</span></div>
+          )}
+          {(all ? earlier : earlier.slice(0, EARLIER_SHOWN)).map(sessionRow)}
+          {!all && earlier.length > EARLIER_SHOWN && (
+            <button className="nav-item more-sessions" onClick={() => setAll(true)}>更多（{earlier.length - EARLIER_SHOWN}）</button>
+          )}
+          {canArchive && archivedItems.length > 0 && (
+            <div className="archive-entry">
+              <button className="nav-item role-row" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>
+                <Icon name="archive" />
+                <span className="nav-item-label">已归档</span>
+                <span className="tab-count">{archivedItems.length}</span>
+                <Icon name={showArchived ? 'chevron-down' : 'chevron'} className="role-chevron" />
               </button>
-              {open && earlier.length > 0 && (
-                <div className="agent-sessions">
-                  <button className="nav-item role-row earlier-toggle" onClick={() => setEarlierOpen(v => !v)} aria-expanded={earlierOpen || earlier.some(i => i.id === selected)}>
-                    <span className="nav-item-label">以前的对话</span>
-                    <span className="tab-count">{earlier.length}</span>
-                    <Icon name={earlierOpen || earlier.some(i => i.id === selected) ? 'chevron-down' : 'chevron'} className="role-chevron" />
-                  </button>
-                  {(earlierOpen || earlier.some(i => i.id === selected)) && (allEarlier ? earlier : earlier.slice(0, EARLIER_SHOWN)).map(item => sessionRow(item))}
-                  {(earlierOpen || earlier.some(i => i.id === selected)) && !allEarlier && earlier.length > EARLIER_SHOWN && (
-                    <button className="nav-item more-sessions" onClick={() => setAllEarlier(true)}>更多（{earlier.length - EARLIER_SHOWN}）</button>
-                  )}
-                </div>
-              )}
+              {showArchived && archivedItems.map(sessionRow)}
             </div>
-          )
-        })}
-        {!searching && capabilities.has('agents') && (
-          <button className="nav-item new-agent" onClick={onNewAgent} disabled={status.state !== 'open'} title="自己建一个 agent：名字、职责、能用的工具">
-            <Icon name="plus" /><span className="nav-item-label">新建 agent</span>
-          </button>
-        )}
-        {!searching && capabilities.has('pipelines') && (
-          <button className={`nav-item role-row schedule-entry ${scheduleOpen ? 'active' : ''}`} aria-current={scheduleOpen ? 'page' : undefined} onClick={onSchedule}
-            title="每个 agent 的定时任务，和按时运行的流水线">
-            <Icon name="calendar" /><span className="nav-item-label">定时任务</span>
-          </button>
-        )}
-        {!searching && canArchive && archivedItems.length > 0 && (
-          <div className="agent-entry archive-entry">
-            <button className="nav-item role-row" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>
-              <Icon name="archive" />
-              <span className="nav-item-label">已归档</span>
-              <span className="tab-count">{archivedItems.length}</span>
-              <Icon name={showArchived ? 'chevron-down' : 'chevron'} className="role-chevron" />
-            </button>
-            {showArchived && <div className="agent-sessions">{archivedItems.map(item => {
-              const owner = agentIdOf(item, roles)
-              return sessionRow(item, owner === MAIN_AGENT ? undefined : agents.find(x => x.id === owner)?.name)
-            })}</div>}
-          </div>
-        )}
-      </nav>
-    </aside>
+          )}
+        </nav>
+      </div>
+    </section>
   )
 }
 

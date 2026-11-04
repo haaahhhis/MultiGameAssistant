@@ -201,6 +201,15 @@ button.rail-item:active:not(:disabled) { transform: none; }
 .rail-label { font-size: 11px; font-weight: 500; line-height: 1.2; }
 button.rail-item.active { color: var(--text); background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
 .rail-item.active .ui-icon { color: var(--accent); }
+.rail-divider { flex-shrink: 0; width: 28px; height: 1px; margin: 4px 0; background: var(--border); }
+.rail-agent { padding-top: 6px; }
+.rail-avatar { width: 28px; height: 28px; }
+.rail-agent .rail-avatar .ui-icon { width: 15px; height: 15px; color: inherit; }
+.rail-item.active .rail-avatar { box-shadow: 0 0 0 2px var(--accent-line); }
+.rail-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-label.unread { color: var(--text); font-weight: 600; }
+.rail-unread { position: absolute; top: 5px; right: 11px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fill); }
+button.rail-item:disabled { opacity: .5; }
 .rail-badge { position: absolute; top: 3px; right: 9px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--warn); color: var(--panel); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
 .rail-connection { display: flex; align-items: center; justify-content: center; height: 24px; }
 .rail-connection.open .conn-dot { background: var(--ok); }
@@ -388,9 +397,15 @@ a.exchange-line:hover { border-color: var(--accent-line); background: var(--hove
 .exchange-msg-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .exchange-msg-body { margin-left: 29px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px 14px 14px 14px; background: var(--raised); font-size: 13.5px; }
 .exchange-msg.failed .exchange-msg-body { border-color: color-mix(in srgb, var(--error) 45%, var(--border)); }
-.watch-only { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 16px 14px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: var(--r-lg); color: var(--text-2); font-size: 13px; }
-.watch-only > span { flex: 1; min-width: 200px; }
-.watch-only > .ui-icon { flex-shrink: 0; width: 15px; height: 15px; color: var(--muted); }
+.exchange-footer { display: flex; flex-shrink: 0; justify-content: center; padding: 0 16px 14px; }
+.exchange-footer .ui-icon { width: 13px; height: 13px; }
+/* Work handed to this agent, in its own conversation: the same one line */
+.task-line { align-items: flex-start; }
+button.exchange-line { font-weight: 400; cursor: pointer; }
+button.exchange-line:hover { border-color: var(--accent-line); background: var(--hover); }
+.task-unfolded { margin-left: 0; max-width: 760px; }
+/* An agent's earlier conversations (its 以前的对话 tab) */
+.history-body { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 720px; min-height: 0; overflow-y: auto; padding: 18px 22px 24px; }
 a.small-button { color: var(--text); text-decoration: none; }
 /* The open agent's tabs, above its page */
 .agent-area { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }

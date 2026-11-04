@@ -117,6 +117,41 @@ test('a CLI task succeeds on exit code 0, fails on an error rule or a crash', as
   await assert.rejects(runner.start('tool', 'nope'), /没有任务 nope/)
 })
 
+test('a task updates the script first; a failed update is reported and the run goes on with what it has', async () => {
+  const old = scriptDir()
+  const updated = scriptDir()
+  let dir = old
+  let outcome: 'updated' | 'failed' = 'updated'
+  const manifest = parseManifest(PACK)
+  const runner = new Runner({
+    library: {
+      get: id => ({ id, name: id, source: { kind: 'local', path: dir }, dir, current: dir === old ? '1.0' : '1.1', versions: [], addedAt: 0 }) as ScriptInfo,
+      packOf: () => ({ manifest }),
+    },
+    dataDir: mkdtempSync(join(tmpdir(), 'adg-run-data-')),
+    onState: () => {},
+    onLog: () => {},
+    command: (_exe, args) => ({ file: process.execPath, args: [CLI, ...args] }),
+    log: { info() {}, warn() {} },
+    pollMs: 100,
+    updateFirst: async () => {
+      if (outcome === 'failed') return { state: 'failed', error: '下载超时' }
+      dir = updated
+      return { state: 'updated', version: '1.1' }
+    },
+  })
+  const first = await runner.finished((await runner.start('tool', 'cli')).id)
+  assert.equal(first.state, 'succeeded', first.outcome)
+  assert.equal(first.command[0], join(updated, 'tool.exe'))
+  assert.ok(runner.logs(first.id).some(l => l.text === '已更新到 1.1'))
+  assert.deepEqual(first.warnings, [])
+
+  outcome = 'failed'
+  const second = await runner.finished((await runner.start('tool', 'cli')).id)
+  assert.equal(second.state, 'succeeded', second.outcome)
+  assert.deepEqual(second.warnings, ['更新失败，先用现有版本 1.1 运行：下载超时'])
+})
+
 test('a config-driven task patches, follows the log file, stops after done, and restores the config', async () => {
   const dir = scriptDir()
   const original = readFileSync(join(dir, 'config', 'gui.json'), 'utf8')

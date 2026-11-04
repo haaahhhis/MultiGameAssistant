@@ -28,7 +28,7 @@ import { setupHandOff } from './setup-handoff.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
-export { ScriptLibrary, type InstallRequest, type LibraryOptions } from './library.ts'
+export { ScriptLibrary, type InstallRequest, type LibraryOptions, type PreRunUpdate } from './library.ts'
 export { loadPacks, packForRepo, type LoadedPack, type PackDir } from './packs.ts'
 export { TOOL_NAMES } from './tools.ts'
 export { frontmatter, readSkills, SkillHub, type HubItem, type HubSkill } from './skill-hub.ts'

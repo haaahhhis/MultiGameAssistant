@@ -11,8 +11,8 @@ import { useStore } from '../../hooks.ts'
  * the conversation that asked, each message between two agents is one line
  * — who to whom, about what, how it stands — and opens the exchange
  * (`#/h/<id>`), where the person can watch but not join in. In the
- * conversation that did the work, the work it was handed. Only messages
- * cross; the steps stay where they were taken.
+ * conversation that did the work, the same line for the work it was handed.
+ * Only messages cross; the steps stay where they were taken.
  */
 
 /** The main agent's tool for handing work to another agent (packages/notify/src/delegate.ts). */
@@ -101,18 +101,40 @@ export function RelayMessage({ client, note, handOffs }: { client: AdgClient; no
   )
 }
 
-/** Work handed to this agent (`（监控交给你的事：…）`): who asked and what; the app's own long instructions fold away. */
-export function TaskMessage({ note }: { note: TaskNote }) {
-  const from = note.by === BY_YOU ? '你在软件里点的' : `${note.by}交给的事`
-  const short = note.by === MAIN.name
-  return (
-    <div className="msg user delegated">
-      <div className="msg-from">{from}</div>
-      <div className="bubble">
-        {short
-          ? <div className="task-note-body">{note.body}</div>
-          : <details className="task-note"><summary>{note.title}</summary><div className="task-note-body">{note.body}</div></details>}
+/**
+ * Work handed to this agent (`（助手交给你的事：…）`): one line from whoever
+ * asked, opening their exchange; without one (a timed task for 助手 itself),
+ * the line unfolds what was asked. What you clicked in the app stays your message.
+ */
+export function TaskMessage({ client, note, handOffs }: { client: AdgClient; note: TaskNote; handOffs: readonly HandOff[] }) {
+  const [open, setOpen] = useState(false)
+  const handOff = handOffs.filter(h => h.by === note.by && h.title === note.title).at(-1)
+  const from = useAgent(client, note.by)
+  const to = useAgent(client, handOff?.to ?? '')
+  if (note.by === BY_YOU) {
+    return (
+      <div className="msg user delegated">
+        <div className="msg-from">你在软件里点的</div>
+        <div className="bubble"><details className="task-note"><summary>{note.title}</summary><div className="task-note-body">{note.body}</div></details></div>
       </div>
+    )
+  }
+  if (handOff !== undefined) {
+    return (
+      <div className="delegation task-line">
+        <ExchangeLine from={note.by} to={to?.name ?? handOff.to} avatar={from} title={note.title} state={STATE[handOff.state]} href={exchangeHref(handOff)} />
+      </div>
+    )
+  }
+  return (
+    <div className="delegation task-line">
+      <button className="exchange-line" onClick={() => setOpen(v => !v)} aria-expanded={open} title={open ? '收起' : '看交给了什么'}>
+        <span className={`agent-avatar small agent-${from?.id ?? 'unknown'}`}><Icon name={from?.icon ?? 'calendar'} /></span>
+        <span className="exchange-who">{note.by}交给的事</span>
+        <span className="exchange-title" title={note.title}>{note.title}</span>
+        <Icon name={open ? 'chevron-down' : 'chevron'} className="exchange-open" />
+      </button>
+      {open && <div className="exchange-msg-body task-unfolded"><Markdown text={note.body} /></div>}
     </div>
   )
 }
@@ -155,7 +177,7 @@ function useHandOff(client: AdgClient, id: string): { item: HandOff | null; erro
  * back, as messages. The person watches; the work itself, step by step, is
  * in the other agent's conversation.
  */
-export function HandOffPage({ client, id, onAgent }: { client: AdgClient; id: string; onAgent: (agentId: string) => void }) {
+export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: string; onClose: () => void }) {
   const { item, error } = useHandOff(client, id)
   const from = useAgent(client, item?.by ?? '')
   const to = useAgent(client, item?.to ?? '')
@@ -191,10 +213,8 @@ export function HandOffPage({ client, id, onAgent }: { client: AdgClient; id: st
             : <ExchangeMessage who={toName} agent={to} failed={item.state === 'failed'}><Markdown text={item.reply ?? (item.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>}
         </div></div>
       </div>
-      <footer className="watch-only">
-        <Icon name="info" />
-        <span>这是 {item.by} 和 {toName} 之间的交流，你只能旁观。{toName} 做事的每一步在它自己的对话里。</span>
-        {to !== undefined && <button className="small-button" onClick={() => onAgent(to.id)}>打开 {toName} 的对话</button>}
+      <footer className="exchange-footer">
+        <button className="small-button" onClick={onClose}><Icon name="close" />关闭</button>
       </footer>
     </section>
   )

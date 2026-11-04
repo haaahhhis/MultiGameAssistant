@@ -30,6 +30,14 @@ import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type
 
 /** Mirror酱's project list is read again after a day. */
 const CATALOGUE_TTL_MS = 24 * 60 * 60_000
+/** How long a check for a newer version may hold up a run. */
+const PRE_RUN_CHECK_MS = 30_000
+
+/** What {@link ScriptLibrary.updateBeforeRun} did (the runner's `updateFirst`). */
+export type PreRunUpdate =
+  | { readonly state: 'skipped' | 'current' }
+  | { readonly state: 'updated'; readonly version: string }
+  | { readonly state: 'failed'; readonly error: string }
 
 export interface LibraryOptions {
   readonly toolsDir: string
@@ -477,7 +485,7 @@ export class ScriptLibrary {
       if (found !== undefined) script.localVersion = found
       current = script.localVersion?.version
     }
-    const version = await this.#latestVersion(channels, pack, signal, script.sourceBranch)
+    const version = await this.#latestVersion(id, channels, pack, signal, script.sourceBranch)
     const managed = script.source.kind !== 'local'
     // Following a branch: any other head is the update (two commits of one day do not compare by their ids).
     const available = current === undefined || (script.sourceBranch !== undefined ? version !== current : compareVersions(version, current) > 0 || (managed && compareVersions(version, current) === 0 && version !== current))
@@ -502,6 +510,30 @@ export class ScriptLibrary {
     }
     const source = script.source
     return { upToDate: false, ...this.#jobs.start('update', id, ctl => this.#installJob(id, source, { byAgent: options.byAgent }, channels, this.#packOf(script), ctl)) }
+  }
+
+  /**
+   * Before a task runs: update when a newer version is out. Never throws —
+   * the run goes on with what it has. Left alone: a script without an update
+   * channel, or one another job is installing. A release that is a setup
+   * program is left waiting for the agent and counts as not updated.
+   */
+  async updateBeforeRun(id: string, signal: AbortSignal): Promise<PreRunUpdate> {
+    const script = this.#script(id)
+    const channels = this.#channels(script)
+    if ((channels.github === undefined && channels.mirror === undefined) || this.#jobs.active(id) !== undefined) return { state: 'skipped' }
+    try {
+      const started = await this.update(id, AbortSignal.any([signal, AbortSignal.timeout(PRE_RUN_CHECK_MS)]), { byAgent: true })
+      if (started.upToDate) return { state: 'current' }
+      const cancel = () => { this.#jobs.cancel(started.job.id) }
+      signal.addEventListener('abort', cancel, { once: true })
+      const job = await started.done.finally(() => signal.removeEventListener('abort', cancel))
+      if (job.phase !== 'done') return { state: 'failed', error: job.error ?? '没有更新完' }
+      if (job.setup !== undefined) return { state: 'failed', error: `新版本 ${job.version ?? ''} 是安装程序，要 agent 运行它装好（脚本页能看到）` }
+      return { state: 'updated', version: job.version ?? this.get(id).current ?? '' }
+    } catch (error) {
+      return { state: 'failed', error: signal.aborted ? '已停止' : errorText(error) }
+    }
   }
 
   /**
@@ -1047,9 +1079,9 @@ export class ScriptLibrary {
    * channel) those are errors instead.
    */
   async #fromMirror(scriptId: string, resource: MirrorResource, from: string | undefined, ctl: JobControl, required: boolean, have?: (version: string) => boolean): Promise<Fetched | undefined> {
-    const cdk = await this.#options.credential(this.#state.settings.cdkRef)
-    if (cdk === undefined || cdk === '') {
-      if (required) throw new Error(`${resource.rid} 只能从 Mirror酱 下载：请先在「设置 → 脚本安装」填写 Mirror酱 CDK`)
+    const cdk = await this.#cdk(scriptId)
+    if (cdk === undefined) {
+      if (required) throw new Error(`${resource.rid} 只能从 Mirror酱 下载：请先在「设置 → 脚本安装」填写 Mirror酱 CDK，或在脚本自己的设置里填好`)
       return undefined
     }
     const options = this.#mirrorOptions(cdk, ctl.signal)
@@ -1098,15 +1130,15 @@ export class ScriptLibrary {
    * The newest version where the update will come from: Mirror酱 with a CDK
    * (or when it is the only channel; asking needs no CDK), else GitHub.
    */
-  async #latestVersion(channels: Channels, pack: LoadedPack | undefined, signal?: AbortSignal, sourceBranch?: string): Promise<string> {
+  async #latestVersion(scriptId: string, channels: Channels, pack: LoadedPack | undefined, signal?: AbortSignal, sourceBranch?: string): Promise<string> {
     // Installed from a branch: its newest commit.
     if (sourceBranch !== undefined && channels.github !== undefined) {
       const head = await this.#github().commit(channels.github.repo, sourceBranch, signal)
       return sourceVersion(head.date, head.sha)
     }
     const mirror = channels.mirror?.resource
-    const cdk = mirror === undefined ? undefined : await this.#options.credential(this.#state.settings.cdkRef)
-    if (mirror !== undefined && ((cdk !== undefined && cdk !== '') || channels.github === undefined)) {
+    const cdk = mirror === undefined ? undefined : await this.#cdk(scriptId)
+    if (mirror !== undefined && (cdk !== undefined || channels.github === undefined)) {
       try {
         return versionOfTag((await mirrorLatest(mirror, this.#mirrorOptions(undefined, signal))).version)
       } catch (error) {
@@ -1116,6 +1148,20 @@ export class ScriptLibrary {
     }
     const latest = await this.#github().latest(channels.github!.repo, { includePrereleases: this.#prereleases(pack), ...(signal === undefined ? {} : { signal }) })
     return versionOfTag(latest.tag)
+  }
+
+  /**
+   * The Mirror酱 CDK: the one filled in here (设置 → 脚本安装), else the one
+   * the script keeps in its own settings — so a script already set up for
+   * Mirror酱 updates from there without asking again.
+   */
+  async #cdk(scriptId: string): Promise<string | undefined> {
+    const own = await this.#options.credential(this.#state.settings.cdkRef)
+    if (own !== undefined && own !== '') return own
+    const script = this.#state.scripts.find(s => s.id === scriptId)
+    const pack = script === undefined ? undefined : this.#packOf(script)
+    const dir = script === undefined ? undefined : this.#info(script).dir
+    return pack === undefined || dir === undefined ? undefined : scriptCdk(pack, dir)
   }
 
   #mirrorOptions(cdk: string | undefined, signal: AbortSignal | undefined) {
@@ -1763,6 +1809,27 @@ async function carryConfig(pack: LoadedPack, fromDir: string, toDir: string): Pr
     }
   }
   return copied
+}
+
+/** `"…Cdk": "…"`, `mirrorchyan_cdk: …`, `cdk=…`: a key ending in "cdk", in JSON, YAML or INI (not `…CdkExpiredTime`). */
+const CDK_ENTRY = /["']?[\w.-]*cdk["']?\s*[:=]\s*["']?([A-Za-z0-9_-]{8,64})["']?/i
+
+/** The Mirror酱 CDK in a script's own config files (the pack's), if it keeps one. */
+export async function scriptCdk(pack: LoadedPack, dir: string): Promise<string | undefined> {
+  for (const file of pack.manifest.config.files) {
+    const parts = file.path.split(/[\\/]/)
+    const last = parts.pop()!
+    const sub = parts.join('/')
+    const names = last.includes('*') || last.includes('?')
+      ? (await readdir(join(dir, sub)).catch(() => [] as string[])).filter(n => globToRegExp(last).test(n))
+      : [last]
+    for (const name of names) {
+      const text = await readFile(join(dir, sub, name), 'utf8').catch(() => '')
+      const found = CDK_ENTRY.exec(text)?.[1]
+      if (found !== undefined) return found
+    }
+  }
+  return undefined
 }
 
 function errorText(error: unknown): string {

@@ -75,6 +75,12 @@ export interface RunnerOptions {
   readonly log: { info(message: string): void; warn(message: string): void }
   /** Log file poll interval. @default 500 */
   readonly pollMs?: number
+  /**
+   * Bring the script up to date before a task runs (the script library's
+   * `updateBeforeRun`). Never throws: a failed update is reported on the run,
+   * which goes on with the version it has.
+   */
+  readonly updateFirst?: (scriptId: string, signal: AbortSignal) => Promise<{ readonly state: 'skipped' | 'current' } | { readonly state: 'updated'; readonly version: string } | { readonly state: 'failed'; readonly error: string }>
   /** Game start hooks, injected in tests. */
   readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'launchMaaEnd' | 'sleep'>
 }
@@ -492,8 +498,11 @@ export class Runner {
 
     /** Where this run started the game itself (see the catch below). */
     let launchedGame: 'emulator' | 'pc' | undefined
+    let dir = script.dir
     try {
-      const vars: Record<string, string> = { dir: script.dir }
+      // A newer version first (the script's own lock is held: none of its runs is using the files).
+      if (mode === 'task' && options.retryOf === undefined && this.#options.updateFirst !== undefined) dir = await this.#updateFirst(run, scriptId)
+      const vars: Record<string, string> = { dir }
       let emulatorManaged = false
       if (resources.input === 'adb') {
         const bridge = this.#options.emulators?.()
@@ -516,7 +525,7 @@ export class Runner {
       // The local config copy (plus this task's temporary edits) goes in for the run; the original comes back after.
       // Patches for a managed emulator only (e.g. turn the script's own emulator start off) apply when we started it.
       const patches = rendered.patches.filter(p => p.when !== 'emulator-managed' || emulatorManaged)
-      const injection = await this.profiles.inject(scriptId, script.dir, manifest, patches, backupDirFor(this.#options.dataDir, runId), profile.id)
+      const injection = await this.profiles.inject(scriptId, dir, manifest, patches, backupDirFor(this.#options.dataDir, runId), profile.id)
       run.release.push(() => injection.restore())
       if (mode === 'settings') {
         // Runs before the restore above (releases run in reverse).
@@ -536,7 +545,7 @@ export class Runner {
       // The game, for scripts that do not start it themselves (judged on the config now in place).
       if (mode === 'task') {
         await ensureGame({
-          manifest, settings: await this.launch.get(scriptId), input: resources.input, scriptDir: script.dir, address: vars['adb'],
+          manifest, settings: await this.launch.get(scriptId), input: resources.input, scriptDir: dir, address: vars['adb'],
           android: this.#options.emulators?.(), signal: run.controller.signal, line: text => this.#line(run, 'adg', text),
           launched: where => { launchedGame = where },
           ...this.#options.game,
@@ -544,8 +553,8 @@ export class Runner {
         run.controller.signal.throwIfAborted()
       }
 
-      const exe = inside(script.dir, rendered.exe)
-      const cwd = rendered.cwd === undefined ? script.dir : inside(script.dir, rendered.cwd)
+      const exe = inside(dir, rendered.exe)
+      const cwd = rendered.cwd === undefined ? dir : inside(dir, rendered.cwd)
       const command = (this.#options.command ?? ((file, args) => ({ file, args })))(exe, rendered.args)
       run.info.command = [exe, ...rendered.args]
       const child = spawn(command.file, [...command.args], { cwd, windowsHide: false, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -554,7 +563,7 @@ export class Runner {
         child.once('spawn', () => resolve())
         child.once('error', error => reject(new Error(`无法启动 ${rendered.exe}：${error.message}`)))
       })
-      this.#follow(run, manifest, script.dir)
+      this.#follow(run, manifest, dir)
       run.info.state = 'running'
       this.#line(run, 'adg', `已启动：${run.info.command.map(quote).join(' ')}`)
       this.#publish(run)
@@ -572,6 +581,23 @@ export class Runner {
       }
       return run.info
     }
+  }
+
+  /** Update first; whatever happens, the directory the run uses. */
+  async #updateFirst(run: ActiveRun, scriptId: string): Promise<string> {
+    this.#line(run, 'adg', '检查脚本更新…')
+    const result = await this.#options.updateFirst!(scriptId, run.controller.signal)
+    run.controller.signal.throwIfAborted()
+    const script = this.#options.library.get(scriptId)
+    if (result.state === 'updated') this.#line(run, 'adg', `已更新到 ${result.version}`)
+    else if (result.state === 'current') this.#line(run, 'adg', '已是最新版本')
+    else if (result.state === 'failed') {
+      const text = `更新失败，先用现有版本${script.current === undefined ? '' : ` ${script.current} `}运行：${result.error}`
+      run.info.warnings.push(text)
+      this.#line(run, 'adg', text)
+    }
+    if (script.dir === undefined) throw new Error(`${script.name} 还没有安装`)
+    return script.dir
   }
 
   /**
