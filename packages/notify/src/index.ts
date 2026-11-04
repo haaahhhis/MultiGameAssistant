@@ -75,8 +75,10 @@ export class AdgNotify extends Service {
       respondQuestion: (id, answers) => ctx.get('adgGateway')?.respondQuestion(id, answers) ?? false,
       sessions: {
         get: key => this.sessionMap[key],
-        keyOf: sessionId => Object.entries(this.sessionMap).find(([, id]) => id === sessionId)?.[0],
+        // The one who wrote last: set moves them to the end.
+        keyOf: sessionId => Object.entries(this.sessionMap).findLast(([, id]) => id === sessionId)?.[0],
         set: async (key, sessionId) => {
+          delete this.sessionMap[key]
           this.sessionMap[key] = sessionId
           await writeFileAtomic(this.sessionsFile, JSON.stringify(this.sessionMap, null, 2))
           ctx.get('adgGateway')?.broadcast('notify/changed', {})

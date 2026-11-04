@@ -173,7 +173,10 @@ export interface NotifyOptions {
   readonly respondApproval: (approvalId: string, decision: 'allow-once' | 'reject') => boolean
   /** Answer the agent's question at the gateway. @returns false when it is gone or answered. */
   readonly respondQuestion?: (questionId: string, answers: readonly QuestionAnswerItem[]) => boolean
-  /** Person → the conversation their messages go to (助手's), persisted by the caller: approvals and questions from it go to them. */
+  /**
+   * Person → the conversation their messages go to (助手's), persisted by the caller: approvals and questions from it go to
+   * them. Everyone's is 助手's one conversation, so `keyOf` gives the one who wrote last (`set` again on each message).
+   */
   readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void>; keyOf?(sessionId: string): string | undefined }
   readonly changed: () => void
   readonly log: { info(message: string): void; warn(message: string): void }
@@ -215,6 +218,8 @@ export class Notify {
   readonly #questions = new Map<string, { request: QuestionRequested; key: string | undefined; answers: Map<string, QuestionAnswerItem> }>()
   /** Open approvals asked of one person (their conversation's): approval id → `channel:user`. */
   readonly #approvals = new Map<string, string>()
+  /** Who wrote to a conversation last from a chat app (`channel:user`): its approvals and questions go to them. */
+  readonly #speakers = new Map<string, string>()
   /** Messages people sent from a chat app, as the agent got them, until the mirror has seen them: who wrote them. */
   readonly #origins = new Map<string, Actor>()
   /** The notices, oldest first (`notices`). */
@@ -398,7 +403,9 @@ export class Notify {
     } catch (error) {
       return textReply(`agent 现在不可用：${message(error)}`)
     }
-    if (this.#options.sessions.get(key) !== sessionId) await this.#options.sessions.set(key, sessionId)
+    // Several people (Feishu, QQ) share 助手's conversation: what it asks next goes to the one talking now.
+    if (this.#options.sessions.get(key) !== sessionId || this.#speakers.get(sessionId) !== key) await this.#options.sessions.set(key, sessionId)
+    this.#speakers.set(sessionId, key)
     let prompt = text
     const lastActive = await conversations.lastActive?.(sessionId).catch(() => undefined)
     if (lastActive !== undefined && this.#now() - lastActive >= IDLE_NOTE_MS) {
@@ -467,7 +474,7 @@ export class Notify {
    * they asked for in Feishu). @returns false when the session is not a chat-channel conversation.
    */
   async sendToSession(sessionId: string, notice: Notice): Promise<boolean> {
-    const key = this.#options.sessions.keyOf?.(sessionId)
+    const key = this.#ownerKey(sessionId)
     if (key === undefined) return false
     const [channelId, ...rest] = key.split(':')
     const channel = this.#channels.get(channelId!)
@@ -480,7 +487,7 @@ export class Notify {
 
   askApproval(request: ApprovalRequested): void {
     const routes = this.#routes(request.sessionId, 'approvals')
-    const key = this.#options.sessions.keyOf?.(request.sessionId)
+    const key = this.#ownerKey(request.sessionId)
     if (key !== undefined && routes.length > 0) this.#approvals.set(request.approvalId, key)
     for (const { channel, owner } of routes) {
       void channel.approvals!.ask(request, owner).catch(error => this.#options.log.warn(`approval card via ${channel.id} failed: ${message(error)}`))
@@ -493,7 +500,7 @@ export class Notify {
    * channels); any other session's to the channels that take those.
    */
   #routes(sessionId: string, kind: 'approvals' | 'questions'): { channel: Channel; owner: string | undefined }[] {
-    const key = this.#options.sessions.keyOf?.(sessionId)
+    const key = this.#ownerKey(sessionId)
     if (key !== undefined) {
       const [channelId, ...rest] = key.split(':')
       const channel = this.#channels.get(channelId!)
@@ -506,6 +513,11 @@ export class Notify {
   approvalResolved(approvalId: string, outcome: string): void {
     this.#approvals.delete(approvalId)
     for (const channel of this.#channels.values()) void channel.approvals?.resolved(approvalId, outcome).catch(() => {})
+  }
+
+  /** The person a conversation belongs to just now (`channel:user`): the one who wrote to it last from a chat app. */
+  #ownerKey(sessionId: string): string | undefined {
+    return this.#speakers.get(sessionId) ?? this.#options.sessions.keyOf?.(sessionId)
   }
 
   /** A person answered an approval card. @returns false when someone else answered first. */
@@ -532,7 +544,7 @@ export class Notify {
   askQuestion(request: QuestionRequested): void {
     const routes = this.#routes(request.sessionId, 'questions')
     if (routes.length === 0) return
-    const key = this.#options.sessions.keyOf?.(request.sessionId)
+    const key = this.#ownerKey(request.sessionId)
     this.#questions.set(request.questionId, { request, key, answers: new Map() })
     for (const { channel, owner } of routes) {
       void channel.questions!.ask(request, owner).catch(error => this.#options.log.warn(`question card via ${channel.id} failed: ${message(error)}`))

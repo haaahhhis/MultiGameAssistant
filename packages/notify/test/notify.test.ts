@@ -322,3 +322,39 @@ test('an approval asked of a chat person is answered by 「同意」 or 「拒�
   assert.equal(notify.waiting(actor), false)
   assert.match(approvalText({ approvalId: 'ap-2', sessionId: 's', toolName: 'script_run', reason: '跑 MAA 日常' }), /agent 想要执行：script_run\n原因：跑 MAA 日常\n回复「同意」/)
 })
+
+test("everyone shares 助手's conversation: its question goes to the person who wrote last, on their app, and their reply answers it", async () => {
+  const asked: string[] = []
+  const answered: string[] = []
+  const conversations = conversationsWith({ ask: async () => '好的' })
+  const sessions = new Map<string, string>()
+  const notify = new Notify({
+    conversations: () => conversations,
+    respondApproval: () => true,
+    respondQuestion: (id, answers) => { answered.push(`${id}:${JSON.stringify(answers)}`); return true },
+    // As the service keeps it: the one who wrote last comes last.
+    sessions: { get: key => sessions.get(key), set: async (key, id) => { sessions.delete(key); sessions.set(key, id) }, keyOf: id => [...sessions].findLast(([, s]) => s === id)?.[0] },
+    changed: () => {},
+    log: { info() {}, warn() {} },
+  })
+  const channel = (id: string): Channel => ({
+    id, name: id, status: () => ({ id, name: id, state: 'ready', recipients: 1, checks: [] }), send: async () => {},
+    questions: { active: owner => owner !== undefined, ask: async (_request, owner) => { asked.push(`${id}:${owner}`) }, resolved: async () => {} },
+  })
+  notify.registerChannel(channel('feishu'))
+  notify.registerChannel(channel('qq'))
+  const feishu = { channel: 'feishu', userId: 'ou_1' }
+  const qq = { channel: 'qq', userId: 'Q1' }
+  await notify.inbound({ actor: feishu, text: '你好' })
+  await notify.inbound({ actor: qq, text: '给我两个选择' })
+  const question = { questionId: 'q1', sessionId: 's-main', questions: [{ id: 'when', question: '几点？', options: [{ label: '早上' }, { label: '晚上' }] }] }
+  notify.askQuestion(question as never)
+  assert.deepEqual(asked, ['qq:Q1'], 'not the first person ever mapped to the conversation')
+  assert.equal(notify.waiting(qq), true)
+  assert.equal(notify.waiting(feishu), false)
+  assert.equal(replyMarkdown(await notify.inbound({ actor: qq, text: '2' })), '收到，已经告诉 agent：晚上')
+  assert.deepEqual(answered, ['q1:[{"id":"when","selected":["晚上"]}]'])
+  await notify.inbound({ actor: feishu, text: '再问一次' })
+  notify.askQuestion({ ...question, questionId: 'q2' } as never)
+  assert.deepEqual(asked.at(-1), 'feishu:ou_1')
+})
