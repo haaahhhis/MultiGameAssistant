@@ -3,21 +3,36 @@
  * notices and 助手's conversation out as text to the allowed people; their
  * direct messages in, answered as replies. What a message means is decided
  * by `@adg/notify` (a reply like "停止" acts on a notice, anything else goes
- * to 助手). QQ shows no markdown in plain messages and has no cards here, so
- * everything goes as text: approvals and the agent's questions too, to the
- * person whose conversation asks (a plain reply answers them; other
- * sessions' stay in the app).
+ * to 助手). Messages go as markdown, with buttons under notices, approvals and
+ * the agent's questions (to the person whose conversation asks; other
+ * sessions' stay in the app): a button sends its choice as the person's
+ * message, answered like a typed one. QQ may refuse buttons (custom ones can
+ * need the platform's approval) or markdown: then the message goes without
+ * them, as text saying what to reply, and the bot remembers not to try again
+ * until it reconnects.
  */
-import type { ApprovalRequested, ChannelCheck, ChannelStatus, QQPending, QQSettings, QuestionRequested } from '@adg/protocol'
-import { approvalText, questionText, replyPlain, type Actor, type Channel, type MirrorPost, type Notice, type Reply } from '@adg/notify'
-import type { ConnectionState, QQApi, QQMessage } from './api.ts'
+import type { ApprovalRequested, ChannelCheck, ChannelStatus, QQPending, QQSettings, QuestionItem, QuestionRequested } from '@adg/protocol'
+import { approvalText, questionText, replyMarkdown, replyPlain, type Actor, type Channel, type MirrorPost, type Notice, type Reply } from '@adg/notify'
+import { QQError, type ConnectionState, type QQApi, type QQButton, type QQMessage } from './api.ts'
 
 /** What the bot needs from `@adg/notify`. */
 export interface NotifyPort {
   inbound(message: { actor: Actor; text: string }): Promise<Reply>
   /** The agent waits for this person's answer: their message goes at once, not after the one waiting for it. */
   waiting?(actor: Actor): boolean
+  /** The question the agent waits for this person to answer next: its choices go under the reply. */
+  nextQuestion?(actor: Actor): QuestionItem | undefined
 }
+
+/** A message as markdown with buttons, and as the text it falls back to. */
+export interface Outgoing {
+  readonly markdown: string
+  readonly plain: string
+  readonly buttons?: readonly (readonly QQButton[])[]
+}
+
+/** Codes that are not about the message's form: sending it another way would not help. */
+const NOT_FORMAT = new Set([11241, 11243, 11265, 22009, 40034005, 40054005])
 
 export interface QQState {
   settings: QQSettings
@@ -58,6 +73,8 @@ export class QQBot implements Channel {
   readonly #queues = new Map<string, Promise<void>>()
   /** Approvals and questions asked of a person here: id → their user_openid. */
   readonly #asked = new Map<string, string>()
+  /** What QQ took or refused since connecting (undefined: not tried yet). */
+  #formats: { markdown?: boolean; buttons?: boolean } = {}
   #generation = 0
   #retryTimer: ReturnType<typeof setTimeout> | undefined
   #retries = 0
@@ -94,6 +111,7 @@ export class QQBot implements Channel {
     }
     const api = this.#options.createApi({ appId: settings.appId, secret: secret! })
     this.#api = api
+    this.#formats = {}
     await this.check()
     if (generation !== this.#generation) return
     if (this.#checks.find(c => c.id === 'token')?.ok !== true) {
@@ -234,7 +252,7 @@ export class QQBot implements Channel {
     let delivered = 0
     for (const { openId } of people) {
       try {
-        await api.sendText(openId, noticeText(notice))
+        await this.#deliver(api, openId, noticeMessage(notice))
         delivered++
       } catch (error) {
         errors.push(message(error))
@@ -253,7 +271,7 @@ export class QQBot implements Channel {
     const api = this.#ready()
     for (const { openId } of this.#state.settings.allowedUsers) {
       if (openId === except) continue
-      await api.sendText(openId, post.markdown === true ? plainText(post.text) : post.text)
+      await this.#deliver(api, openId, post.markdown === true ? { markdown: post.text, plain: plainText(post.text) } : { markdown: post.text, plain: post.text })
     }
   }
 
@@ -261,7 +279,7 @@ export class QQBot implements Channel {
   readonly approvals = {
     active: (owner: string | undefined) => owner !== undefined && this.#connection === 'connected' && this.#allowed(owner),
     ask: async (request: ApprovalRequested, owner: string | undefined) => {
-      await this.#ready().sendText(owner!, approvalText(request))
+      await this.#deliver(this.#ready(), owner!, approvalMessage(request))
       this.#asked.set(request.approvalId, owner!)
     },
     resolved: async (approvalId: string, outcome: string) => this.#settled(approvalId, outcome === 'cancelled' ? 'agent 已取消这个操作' : outcome === 'unavailable' ? '这个确认已失效' : undefined),
@@ -271,7 +289,7 @@ export class QQBot implements Channel {
   readonly questions = {
     active: (owner: string | undefined) => this.approvals.active(owner),
     ask: async (request: QuestionRequested, owner: string | undefined) => {
-      await this.#ready().sendText(owner!, questionText(request))
+      await this.#deliver(this.#ready(), owner!, questionMessage(request))
       this.#asked.set(request.questionId, owner!)
     },
     resolved: async (questionId: string, outcome: string) => this.#settled(questionId, outcome === 'cancelled' ? 'agent 不再等这个回答了' : outcome === 'unavailable' ? '这个问题已失效' : undefined),
@@ -283,6 +301,29 @@ export class QQBot implements Channel {
     this.#asked.delete(id)
     if (owner === undefined || note === undefined || this.#api === undefined) return
     await this.#api.sendText(owner, `（${note}）`).catch(() => {})
+  }
+
+  /**
+   * Send as markdown with its buttons; what QQ refuses is dropped — the buttons, then markdown — and not
+   * tried again until the bot reconnects. Without buttons the text says what to reply.
+   */
+  async #deliver(api: QQApi, openId: string, message: Outgoing, reply?: { msgId: string; seq: number }): Promise<void> {
+    const buttons = message.buttons !== undefined && message.buttons.length > 0
+    const tries: { buttons: boolean }[] = this.#formats.markdown === false ? [] : [...(buttons && this.#formats.buttons !== false ? [{ buttons: true }] : []), { buttons: false }]
+    for (const attempt of tries) {
+      try {
+        await api.sendMessage(openId, { text: attempt.buttons || !buttons ? message.markdown : `${message.markdown}\n\n${replyHint(message.buttons!)}`, markdown: true, ...(attempt.buttons ? { buttons: message.buttons! } : {}) }, reply)
+        this.#formats.markdown = true
+        if (attempt.buttons) this.#formats.buttons = true
+        return
+      } catch (error) {
+        if (!(error instanceof QQError) || (error.code !== undefined && NOT_FORMAT.has(error.code))) throw error
+        const what = attempt.buttons ? 'buttons' : 'markdown'
+        this.#formats[what] = false
+        this.#options.log.info(`qq: ${what} not accepted (${errorText(error)}), sending without`)
+      }
+    }
+    await api.sendText(openId, buttons ? `${message.plain}\n${replyHint(message.buttons!)}` : message.plain, reply)
   }
 
   #ready(): QQApi {
@@ -324,7 +365,8 @@ export class QQBot implements Channel {
     const started = Date.now()
     let seq = 0
     // A reply to the message while QQ still takes it as one; after that, an active message.
-    const reply = (text: string) => api.sendText(event.openId, text, Date.now() - started < PASSIVE_MS ? { msgId: event.id, seq: ++seq } : undefined)
+    const passive = () => (Date.now() - started < PASSIVE_MS ? { msgId: event.id, seq: ++seq } : undefined)
+    const reply = (text: string) => api.sendText(event.openId, text, passive())
     if (notify === undefined) {
       await reply('消息服务没有加载。')
       return
@@ -332,9 +374,13 @@ export class QQBot implements Channel {
     let answered = false
     const ack = setTimeout(() => { if (!answered) void reply('收到，正在处理…').catch(() => {}) }, this.#options.ackAfterMs ?? 4000)
     try {
-      const answer = await notify.inbound({ actor: this.#actor(event), text: event.text })
+      const actor = this.#actor(event)
+      const answer = await notify.inbound({ actor, text: event.text })
       answered = true
-      await reply(plainText(replyPlain(answer))).catch(() => api.sendText(event.openId, plainText(replyPlain(answer))))
+      // Still a question waiting for this person (one of several): its choices go under the reply.
+      const next = notify.nextQuestion?.(actor)
+      const out: Outgoing = { markdown: replyMarkdown(answer), plain: plainText(replyPlain(answer)), ...(next === undefined ? {} : { buttons: choiceButtons(next) }) }
+      await this.#deliver(api, event.openId, out, passive()).catch(() => this.#deliver(api, event.openId, out))
     } catch (error) {
       answered = true
       await reply(`出错了：${message(error)}`).catch(() => {})
@@ -354,6 +400,54 @@ export class QQBot implements Channel {
     await this.#options.save(this.#state).catch(() => {})
     this.#options.changed()
   }
+}
+
+/** A notice as markdown, its actions as buttons. */
+export function noticeMessage(notice: Notice): Outgoing {
+  const actions = notice.actions ?? []
+  return {
+    markdown: [`**${notice.title}**`, notice.text, ...(notice.image === undefined ? [] : ['（截图在软件里）'])].join('\n'),
+    plain: noticeText({ ...notice, actions: [] }),
+    ...(actions.length === 0 ? {} : { buttons: [actions.map(a => ({ label: a.label, send: a.label, primary: a.style === 'primary' }))] }),
+  }
+}
+
+/** An approval: what the agent wants to do, 同意 / 拒绝 as buttons. */
+export function approvalMessage(request: ApprovalRequested): Outgoing {
+  const text = approvalText(request)
+  return {
+    markdown: text.replace(/^【需要你确认】/, '**需要你确认**'),
+    plain: text,
+    buttons: [[{ label: '同意（这一次）', send: '同意', primary: true }, { label: '拒绝', send: '拒绝' }]],
+  }
+}
+
+/** The agent's question: the first one, its choices as buttons (each sends its number). */
+export function questionMessage(request: QuestionRequested): Outgoing {
+  const first = request.questions[0]
+  const text = questionText(request)
+  return {
+    markdown: text.replace(/^【助手问你】/, '**助手问你**'),
+    plain: text,
+    ...(first === undefined || (first.options ?? []).length === 0 ? {} : { buttons: choiceButtons(first) }),
+  }
+}
+
+/** A question's choices as buttons, up to 5 rows of 2; each sends its number (a reply picks a choice by number). */
+export function choiceButtons(item: QuestionItem): QQButton[][] {
+  const buttons = (item.options ?? []).slice(0, 10).map((o, i) => ({ label: clip(`${i + 1}. ${o.label}`, 16), send: String(i + 1), primary: i === 0 }))
+  const rows: QQButton[][] = []
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2))
+  return rows
+}
+
+/** For when the buttons do not show: what to reply instead. */
+function replyHint(rows: readonly (readonly QQButton[])[]): string {
+  return `回复「${rows.flat().map(b => b.send).join('」「')}」`
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
 /** A notice as one text message: its title, then its text, then what to reply to act on it. */
@@ -390,3 +484,5 @@ function put(checks: ChannelCheck[], id: string, ok: boolean | null, detail?: st
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+const errorText = message

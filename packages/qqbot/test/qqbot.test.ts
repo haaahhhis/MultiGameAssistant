@@ -48,14 +48,14 @@ test('connects over the gateway with direct-message intents and passes the self-
   }
 })
 
-test('an allowed person\'s message goes to 助手 once (QQ may send it twice); the answer is a reply to it, as text', async () => {
+test('an allowed person\'s message goes to 助手 once (QQ may send it twice); the answer is a reply to it, in markdown', async () => {
   const { fake, bot, inbound } = await setup()
   try {
     await bot.start()
     await until('ready', () => bot.status().state === 'ready')
     const id = fake.sendMessage({ openId: 'AAAA1111BBBB2222', text: '现在什么状态', repeat: true })
-    const answer = await fake.waitForMessage(m => m.text.startsWith('收到'))
-    assert.deepEqual(answer, { openId: 'AAAA1111BBBB2222', text: '收到：现在什么状态', msgId: id, seq: 1 })
+    const answer = await fake.waitForMessage(m => m.text.startsWith('**收到**'))
+    assert.deepEqual(answer, { openId: 'AAAA1111BBBB2222', text: '**收到**：现在什么状态', markdown: true, msgId: id, seq: 1 })
     assert.deepEqual(inbound, [{ text: '现在什么状态', userId: 'AAAA1111BBBB2222', name: '我' }])
   } finally {
     bot.stop()
@@ -82,17 +82,18 @@ test('strangers are told their user_openid and wait to be allowed; allowing them
   }
 })
 
-test("notices and 助手's conversation go to each allowed person as text, not back to whoever it came from", async () => {
+test("notices and 助手's conversation go to each allowed person in markdown, a notice's actions as buttons, not back to whoever it came from", async () => {
   const { fake, bot } = await setup({ allowedUsers: [{ openId: 'AAAA1111BBBB2222', addedAt: 0 }, { openId: 'EEEE5555FFFF6666', addedAt: 0 }] })
   try {
     await bot.start()
     await until('ready', () => bot.status().state === 'ready')
     await bot.send({ id: 'inc-1', scope: 'monitor', title: 'MAA · 日常：出错', text: '重连失败', severity: 'error', actions: [{ id: 'stop', label: '停止' }, { id: 'retry', label: '重试' }] })
     await bot.mirror({ text: '**跑完了**', markdown: true }, 'AAAA1111BBBB2222')
-    assert.deepEqual(fake.sent.map(m => [m.openId, m.text, m.msgId]), [
-      ['AAAA1111BBBB2222', '【MAA · 日常：出错】\n重连失败\n回复「停止」「重试」处理', undefined],
-      ['EEEE5555FFFF6666', '【MAA · 日常：出错】\n重连失败\n回复「停止」「重试」处理', undefined],
-      ['EEEE5555FFFF6666', '跑完了', undefined],
+    const buttons = [[{ label: '停止', data: '停止' }, { label: '重试', data: '重试' }]]
+    assert.deepEqual(fake.sent.map(m => [m.openId, m.text, m.markdown, m.buttons]), [
+      ['AAAA1111BBBB2222', '**MAA · 日常：出错**\n重连失败', true, buttons],
+      ['EEEE5555FFFF6666', '**MAA · 日常：出错**\n重连失败', true, buttons],
+      ['EEEE5555FFFF6666', '**跑完了**', true, undefined],
     ])
   } finally {
     bot.stop()
@@ -109,6 +110,29 @@ test('after the gateway drops the connection, it resumes the session', async () 
     await until('resumed', () => fake.resumed.length === 1, 8000)
     assert.deepEqual(fake.resumed, ['sess-1'])
     await until('ready again', () => bot.status().state === 'ready')
+  } finally {
+    bot.stop()
+    await fake.close()
+  }
+})
+
+test('buttons or markdown QQ refuses are dropped — the text then says what to reply — and not tried again', async () => {
+  const { fake, bot } = await setup()
+  try {
+    await bot.start()
+    await until('ready', () => bot.status().state === 'ready')
+    fake.refuse.keyboard = true
+    const notice = { id: 'inc-1', scope: 'monitor', title: '出错', text: '重连失败', severity: 'error' as const, actions: [{ id: 'stop', label: '停止' }, { id: 'retry', label: '重试' }] }
+    await bot.send(notice)
+    await bot.send({ ...notice, id: 'inc-2' })
+    assert.deepEqual(fake.sent.map(m => [m.text, m.markdown, m.buttons]), [
+      ['**出错**\n重连失败\n\n回复「停止」「重试」', true, undefined],
+      ['**出错**\n重连失败\n\n回复「停止」「重试」', true, undefined],
+    ])
+    fake.refuse.markdown = true
+    await bot.mirror({ text: '**跑完了**', markdown: true }, undefined)
+    await bot.send({ ...notice, id: 'inc-3' })
+    assert.deepEqual(fake.sent.slice(2).map(m => [m.text, m.markdown]), [['跑完了', undefined], ['【出错】\n重连失败\n回复「停止」「重试」', undefined]])
   } finally {
     bot.stop()
     await fake.close()
@@ -161,8 +185,9 @@ test("助手's question reaches the person whose conversation asks, as text; the
     assert.equal(bot.questions.active('AAAA1111BBBB2222'), true)
     assert.equal(bot.questions.active(undefined), false, "other sessions' questions stay in the app")
     fake.sendMessage({ openId: 'AAAA1111BBBB2222', text: '提醒我换赤金' })
-    const asked = await fake.waitForMessage(m => m.text.startsWith('【助手问你】'))
+    const asked = await fake.waitForMessage(m => m.text.startsWith('**助手问你**'))
     assert.match(asked.text, /什么时候提醒？\n1\. 今天\n2\. 明天\n回复选项的数字/)
+    assert.deepEqual(asked.buttons, [[{ label: '1. 今天', data: '1' }, { label: '2. 明天', data: '2' }]], 'a button sends its number, answered like a typed one')
     fake.sendMessage({ openId: 'AAAA1111BBBB2222', text: '2' })
     await fake.waitForMessage(m => m.text === '收到，已经告诉 agent：明天')
     await fake.waitForMessage(m => m.text === '好的，明天提醒你')

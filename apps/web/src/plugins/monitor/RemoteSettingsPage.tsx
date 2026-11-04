@@ -21,7 +21,7 @@ export function RemoteSettingsPage({ client }: { client: AdgClient }) {
   return (
     <div className="settings-page">
       <h2>远程连接</h2>
-      <p>不在电脑前也能用：在飞书或 QQ 里和助手说话。和助手的对话两边完全一样——在软件里说的、在聊天软件里说的、助手和其他 agent 之间的往来、助手的回复，都会同步过去（都是文字）；脚本出问题的通知也发到那里。</p>
+      <p>不在电脑前也能用：在飞书或 QQ 里和助手说话。和助手的对话两边完全一样——在软件里说的、在聊天软件里说的、助手和其他 agent 之间的往来、助手的回复，都会同步过去；脚本出问题的通知也发到那里，在聊天软件里点按钮或直接回复就能处理。</p>
       {shown.length > 1 && (
         <nav className="agent-tabs remote-tabs" role="tablist" aria-label="远程连接方式">
           {shown.map(c => (

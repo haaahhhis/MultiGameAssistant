@@ -65,7 +65,7 @@ export class AdgQQBot extends Service {
         }
       },
       save: async state => { await writeFileAtomic(file, `${JSON.stringify(state, null, 2)}\n`) },
-      notify: () => ({ inbound: m => notify.inbound(m), waiting: actor => notify.notify.waiting(actor) }),
+      notify: () => ({ inbound: m => notify.inbound(m), waiting: actor => notify.notify.waiting(actor), nextQuestion: actor => notify.notify.nextQuestion(actor) }),
       changed: () => notify.changed(),
       log: logPort,
     })

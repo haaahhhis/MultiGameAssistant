@@ -72,7 +72,7 @@ export function QQSection({ client }: { client: AdgClient }) {
 
   return (
     <div className="remote-section">
-      <p className="muted">QQ 官方机器人：在 QQ 里和它单聊。通知和对话都是文字；需要确认的操作在软件里点，agent 问你问题时直接回复文字就行。</p>
+      <p className="muted">QQ 官方机器人：在 QQ 里和它单聊。消息用 markdown 显示；通知、需要你确认的操作和助手问你的问题下面有按钮，点一下就是回复，也可以直接打字。机器人没有按钮权限时会改成文字，告诉你回复什么。</p>
 
       <details className="card guide">
         <summary><strong>第一次使用：在 QQ 开放平台创建机器人（约 10 分钟）</strong></summary>

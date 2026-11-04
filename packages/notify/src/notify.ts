@@ -418,6 +418,13 @@ export class Notify {
     return [...this.#questions.values()].some(q => q.key === key) || [...this.#approvals.values()].some(k => k === key)
   }
 
+  /** The question the agent waits for this person to answer next, if any (a channel puts its choices under its reply). */
+  nextQuestion(actor: Actor): QuestionItem | undefined {
+    const key = `${actor.channel}:${actor.userId}`
+    const open = [...this.#questions.values()].find(q => q.key === key)
+    return open?.request.questions.find(q => !open.answers.has(q.id))
+  }
+
   /** Who sent this message of 助手's conversation from a chat app (undefined: someone in the app); asked once. */
   originOf(text: string): Actor | undefined {
     const actor = this.#origins.get(text.trim())

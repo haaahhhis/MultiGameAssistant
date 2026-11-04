@@ -1,7 +1,9 @@
 /**
  * A fake QQ bot open platform (API v2), enough for the QQ channel: the
  * access token, the gateway address, the WebSocket gateway (Hello, Identify,
- * READY, heartbeats, Resume) and direct messages both ways.
+ * READY, heartbeats, Resume) and direct messages both ways — text, or markdown
+ * with a keyboard; `refuse` makes it turn down keyboards or markdown the way
+ * QQ does for a bot not allowed them.
  */
 import { createServer, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -12,6 +14,9 @@ export interface FakeQQSent {
   readonly text: string
   readonly msgId?: string
   readonly seq?: number
+  readonly markdown?: boolean
+  /** The keyboard's buttons by row: what each shows and sends. */
+  readonly buttons?: readonly (readonly { label: string; data: string }[])[]
 }
 
 export async function startFakeQQ(options: { appId: string; secret: string; port?: number }) {
@@ -22,6 +27,7 @@ export async function startFakeQQ(options: { appId: string; secret: string; port
   let socket: WebSocket | undefined
   let seq = 0
   let messages = 0
+  const refuse = { keyboard: false, markdown: false }
   const token = `tok-${options.appId}`
 
   const read = (req: IncomingMessage) => new Promise<string>(resolve => {
@@ -42,8 +48,15 @@ export async function startFakeQQ(options: { appId: string; secret: string; port
     if (url.pathname === '/gateway') return reply(200, { url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/websocket` })
     const to = /^\/v2\/users\/([^/]+)\/messages$/.exec(url.pathname)
     if (to !== null && req.method === 'POST') {
-      const body = JSON.parse(await read(req)) as { content?: string; msg_id?: string; msg_seq?: number }
-      const message: FakeQQSent = { openId: decodeURIComponent(to[1]!), text: body.content ?? '', ...(body.msg_id === undefined ? {} : { msgId: body.msg_id }), ...(body.msg_seq === undefined ? {} : { seq: body.msg_seq }) }
+      const body = JSON.parse(await read(req)) as { content?: string; msg_type?: number; markdown?: { content?: string }; keyboard?: { content?: { rows?: { buttons?: { render_data?: { label?: string }; action?: { data?: string } }[] }[] } }; msg_id?: string; msg_seq?: number }
+      if (body.keyboard !== undefined && refuse.keyboard) return reply(200, { code: 304003, err_code: 304003, message: 'keyboard not allowed' })
+      if (body.msg_type === 2 && refuse.markdown) return reply(200, { code: 304004, err_code: 304004, message: 'markdown not allowed' })
+      const buttons = body.keyboard?.content?.rows?.map(r => (r.buttons ?? []).map(b => ({ label: b.render_data?.label ?? '', data: b.action?.data ?? '' })))
+      const message: FakeQQSent = {
+        openId: decodeURIComponent(to[1]!), text: body.msg_type === 2 ? body.markdown?.content ?? '' : body.content ?? '',
+        ...(body.msg_type === 2 ? { markdown: true } : {}), ...(buttons === undefined ? {} : { buttons }),
+        ...(body.msg_id === undefined ? {} : { msgId: body.msg_id }), ...(body.msg_seq === undefined ? {} : { seq: body.msg_seq }),
+      }
       sent.push(message)
       for (const waiter of [...waiters]) if (waiter.match(message)) { waiters.splice(waiters.indexOf(waiter), 1); waiter.resolve(message) }
       return reply(200, { id: `ROBOT1.0_${sent.length}`, timestamp: new Date().toISOString() })
@@ -76,6 +89,8 @@ export async function startFakeQQ(options: { appId: string; secret: string; port
     sent,
     identified,
     resumed,
+    /** Turn down messages with a keyboard, or any markdown. */
+    refuse,
     connected: () => socket !== undefined && socket.readyState === socket.OPEN,
     /** A person's direct message to the bot; `repeat` sends the same message twice, as QQ may. @returns its id. */
     sendMessage(input: { openId: string; text: string; repeat?: boolean }): string {

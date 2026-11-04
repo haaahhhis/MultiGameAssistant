@@ -9,8 +9,13 @@
  * - Gateway: GET /gateway gives the address; Hello → Identify (intents
  *   GROUP_AND_C2C_EVENT) → READY; heartbeats with the last sequence; after a
  *   drop, Resume with the session, else Identify again.
- * - Send: POST /v2/users/{openid}/messages, text (msg_type 0). A reply carries
- *   the message's id and a sequence (several replies to one message); without
+ * - Send: POST /v2/users/{openid}/messages, text (msg_type 0) or markdown
+ *   (msg_type 2, open to every bot in direct messages), which may carry a
+ *   keyboard of buttons. Ours are command buttons that send at once (action
+ *   type 2, enter): pressing one sends its text as the person's message, so
+ *   it is answered like a typed reply and needs no INTERACTION intent (which
+ *   must be applied for; Identify fails without it). A reply carries the
+ *   message's id and a sequence (several replies to one message); without
  *   them it is an active message, which a person may have turned off.
  */
 
@@ -25,11 +30,27 @@ export interface QQMessage {
   readonly text: string
 }
 
+/** A button under a message: pressing it sends `send` as the person's message. */
+export interface QQButton {
+  readonly label: string
+  readonly send: string
+  readonly primary?: boolean
+}
+
+/** A message out: text, or markdown with buttons in rows (at most 5 rows of 5). */
+export interface QQOutgoing {
+  readonly text: string
+  readonly markdown?: boolean
+  readonly buttons?: readonly (readonly QQButton[])[]
+}
+
 export interface QQApi {
   /** @throws QQError when the AppID / AppSecret are wrong. */
   token(): Promise<string>
   /** @returns the sent message's id. `reply`: the message answered and which answer to it this is (1, 2, …). */
   sendText(openId: string, text: string, reply?: { readonly msgId: string; readonly seq: number }): Promise<string>
+  /** The same for any message: markdown, and buttons under it. @throws QQError when QQ does not take it (e.g. buttons the bot may not send). */
+  sendMessage(openId: string, message: QQOutgoing, reply?: { readonly msgId: string; readonly seq: number }): Promise<string>
   /** Open the gateway; reconnects by itself after a drop. */
   connect(handlers: { message(event: QQMessage): void }, onState: (state: ConnectionState, error?: string) => void): Promise<void>
   connectionState(): ConnectionState
@@ -190,14 +211,20 @@ export function httpApi(options: HttpApiOptions): QQApi {
     ws.addEventListener('error', () => { /* the close that follows says what to do */ })
   }
 
+  const sendMessage = async (openId: string, message: QQOutgoing, reply?: { readonly msgId: string; readonly seq: number }): Promise<string> => {
+    const body = message.markdown === true
+      ? { msg_type: 2, markdown: { content: message.text }, ...(message.buttons === undefined || message.buttons.length === 0 ? {} : { keyboard: keyboardOf(message.buttons) }) }
+      : { msg_type: 0, content: message.text }
+    const sent = await request<{ id?: string }>('发送消息', 'POST', `/v2/users/${encodeURIComponent(openId)}/messages`, {
+      ...body, ...(reply === undefined ? {} : { msg_id: reply.msgId, msg_seq: reply.seq }),
+    })
+    return sent.id ?? ''
+  }
+
   return {
     token,
-    async sendText(openId, text, reply) {
-      const sent = await request<{ id?: string }>('发送消息', 'POST', `/v2/users/${encodeURIComponent(openId)}/messages`, {
-        content: text, msg_type: 0, ...(reply === undefined ? {} : { msg_id: reply.msgId, msg_seq: reply.seq }),
-      })
-      return sent.id ?? ''
-    },
+    sendText: (openId, text, reply) => sendMessage(openId, { text }, reply),
+    sendMessage,
     async connect(handlers, onState) {
       closed = false
       await open(handlers, onState)
@@ -211,6 +238,21 @@ export function httpApi(options: HttpApiOptions): QQApi {
       socket = undefined
       session = undefined
       state = 'idle'
+    },
+  }
+}
+
+/** Our buttons as QQ's custom keyboard: command buttons anyone in the chat may press, sending at once. */
+export function keyboardOf(rows: readonly (readonly QQButton[])[]): object {
+  return {
+    content: {
+      rows: rows.slice(0, 5).map((row, r) => ({
+        buttons: row.slice(0, 5).map((button, i) => ({
+          id: `${r}-${i}`,
+          render_data: { label: button.label, visited_label: button.label, style: button.primary === true ? 1 : 0 },
+          action: { type: 2, permission: { type: 2 }, data: button.send, enter: true, unsupport_tips: `请直接回复「${button.send}」` },
+        })),
+      })),
     },
   }
 }
