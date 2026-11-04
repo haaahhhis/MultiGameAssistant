@@ -4,16 +4,19 @@
  * direct messages in, answered as replies. What a message means is decided
  * by `@adg/notify` (a reply like "停止" acts on a notice, anything else goes
  * to 助手). QQ shows no markdown in plain messages and has no cards here, so
- * everything goes as text, and approvals and questions stay in the app (a
- * plain reply still answers a question 助手 is waiting on).
+ * everything goes as text: approvals and the agent's questions too, to the
+ * person whose conversation asks (a plain reply answers them; other
+ * sessions' stay in the app).
  */
-import type { ChannelCheck, ChannelStatus, QQPending, QQSettings } from '@adg/protocol'
-import { replyPlain, type Actor, type Channel, type MirrorPost, type Notice, type Reply } from '@adg/notify'
+import type { ApprovalRequested, ChannelCheck, ChannelStatus, QQPending, QQSettings, QuestionRequested } from '@adg/protocol'
+import { approvalText, questionText, replyPlain, type Actor, type Channel, type MirrorPost, type Notice, type Reply } from '@adg/notify'
 import type { ConnectionState, QQApi, QQMessage } from './api.ts'
 
 /** What the bot needs from `@adg/notify`. */
 export interface NotifyPort {
   inbound(message: { actor: Actor; text: string }): Promise<Reply>
+  /** The agent waits for this person's answer: their message goes at once, not after the one waiting for it. */
+  waiting?(actor: Actor): boolean
 }
 
 export interface QQState {
@@ -53,6 +56,8 @@ export class QQBot implements Channel {
   #checks: ChannelCheck[] = []
   #secretConfigured = false
   readonly #queues = new Map<string, Promise<void>>()
+  /** Approvals and questions asked of a person here: id → their user_openid. */
+  readonly #asked = new Map<string, string>()
   #generation = 0
   #retryTimer: ReturnType<typeof setTimeout> | undefined
   #retries = 0
@@ -252,6 +257,34 @@ export class QQBot implements Channel {
     }
   }
 
+  /** A conversation's approvals, to its person only, as text; other sessions' stay in the app. */
+  readonly approvals = {
+    active: (owner: string | undefined) => owner !== undefined && this.#connection === 'connected' && this.#allowed(owner),
+    ask: async (request: ApprovalRequested, owner: string | undefined) => {
+      await this.#ready().sendText(owner!, approvalText(request))
+      this.#asked.set(request.approvalId, owner!)
+    },
+    resolved: async (approvalId: string, outcome: string) => this.#settled(approvalId, outcome === 'cancelled' ? 'agent 已取消这个操作' : outcome === 'unavailable' ? '这个确认已失效' : undefined),
+  }
+
+  /** The agent's questions, routed like approvals. */
+  readonly questions = {
+    active: (owner: string | undefined) => this.approvals.active(owner),
+    ask: async (request: QuestionRequested, owner: string | undefined) => {
+      await this.#ready().sendText(owner!, questionText(request))
+      this.#asked.set(request.questionId, owner!)
+    },
+    resolved: async (questionId: string, outcome: string) => this.#settled(questionId, outcome === 'cancelled' ? 'agent 不再等这个回答了' : outcome === 'unavailable' ? '这个问题已失效' : undefined),
+  }
+
+  /** An approval or question is over: say so when it ended without an answer (an answer's reply says itself). */
+  async #settled(id: string, note: string | undefined): Promise<void> {
+    const owner = this.#asked.get(id)
+    this.#asked.delete(id)
+    if (owner === undefined || note === undefined || this.#api === undefined) return
+    await this.#api.sendText(owner, `（${note}）`).catch(() => {})
+  }
+
   #ready(): QQApi {
     if (this.#api === undefined || this.#connection !== 'connected') throw new Error(this.status().detail ?? 'QQ 机器人还没有连接')
     return this.#api
@@ -275,7 +308,11 @@ export class QQBot implements Channel {
       void api.sendText(event.openId, '目前只看得懂文字消息。', { msgId: event.id, seq: 1 }).catch(() => {})
       return
     }
-    // One person's messages are handled in order.
+    // One person's messages are handled in order. An answer the agent waits for goes at once: the message before it is waiting for it.
+    if (this.#options.notify()?.waiting?.(this.#actor(event)) === true) {
+      void this.#answer(api, event).catch(error => this.#options.log.warn(`qq reply failed: ${message(error)}`))
+      return
+    }
     const previous = this.#queues.get(event.openId) ?? Promise.resolve()
     const next = previous.then(() => this.#answer(api, event)).catch(error => this.#options.log.warn(`qq reply failed: ${message(error)}`))
     this.#queues.set(event.openId, next)
@@ -295,8 +332,7 @@ export class QQBot implements Channel {
     let answered = false
     const ack = setTimeout(() => { if (!answered) void reply('收到，正在处理…').catch(() => {}) }, this.#options.ackAfterMs ?? 4000)
     try {
-      const shown = this.#state.settings.allowedUsers.find(u => u.openId === event.openId)?.name ?? event.name
-      const answer = await notify.inbound({ actor: { channel: this.id, userId: event.openId, ...(shown === undefined ? {} : { name: shown }) }, text: event.text })
+      const answer = await notify.inbound({ actor: this.#actor(event), text: event.text })
       answered = true
       await reply(plainText(replyPlain(answer))).catch(() => api.sendText(event.openId, plainText(replyPlain(answer))))
     } catch (error) {
@@ -305,6 +341,11 @@ export class QQBot implements Channel {
     } finally {
       clearTimeout(ack)
     }
+  }
+
+  #actor(event: QQMessage): Actor {
+    const shown = this.#state.settings.allowedUsers.find(u => u.openId === event.openId)?.name ?? event.name
+    return { channel: this.id, userId: event.openId, ...(shown === undefined ? {} : { name: shown }) }
   }
 
   async #rememberStranger(event: QQMessage): Promise<void> {

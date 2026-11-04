@@ -3,7 +3,7 @@ import { useFollowTail } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { isQuiet, parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
-import { MAIN, agentIdOf, useHandOffs, useRoles } from '../../agents.ts'
+import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
@@ -11,6 +11,7 @@ import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
 import { SkillOffer } from './SkillOffer.tsx'
+import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 80
@@ -26,6 +27,8 @@ type Row =
   | { readonly kind: 'process'; readonly id: string; readonly items: readonly ChatItem[]; readonly header: TurnHeader | null }
   /** Work 助手 handed to another agent (agent_delegate): what it asked and what came back, never folded. */
   | { readonly kind: 'delegation'; readonly item: ToolItem; readonly header: TurnHeader | null }
+  /** Something the app told the person through the chat apps, between 助手's turns (SentNotices.tsx). */
+  | { readonly kind: 'sent'; readonly item: SentItem }
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
@@ -36,7 +39,11 @@ export function ChatView({ client, session, state }: SessionViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.events, state.live, state.pending, state.version],
   )
-  const rows = useMemo(() => groupRows(items), [items])
+  // 助手's one conversation has the notices sent to the chat apps in it.
+  const home = useHome(client, MAIN_AGENT)
+  const notices = useSentNotices(client, home.sessionId === session.id)
+  const from = state.hasMore ? (state.events[0]?.time ?? 0) : 0
+  const rows = useMemo(() => groupRows(withNotices(items, notices, from, startsTurn)), [items, notices, from])
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
   const agentName = roles.find(r => r.id === (item === undefined ? undefined : agentIdOf(item, roles)))?.name ?? MAIN.name
@@ -55,7 +62,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
   useLayoutEffect(() => {
     const el = scroller.current
     if (el !== null && stick.current) el.scrollTop = el.scrollHeight
-  }, [items])
+  }, [items, notices])
 
   // Keep the scroll position stable when older history is prepended.
   const firstSeq = state.events[0]?.seq
@@ -85,7 +92,9 @@ export function ChatView({ client, session, state }: SessionViewProps) {
             <p>一个问题、一段代码，或一个还不成熟的想法。<br />在下方写下来，让对话开始。</p>
           </div>
         )}
-        {rows.map((row, index) => row.kind === 'tools'
+        {rows.map((row, index) => row.kind === 'sent'
+          ? <SentNotice key={row.item.id} client={client} notice={row.item.notice} />
+          : row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
           : row.kind === 'delegation'
             ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
@@ -110,13 +119,15 @@ export function ChatView({ client, session, state }: SessionViewProps) {
  * turn's steps with no tool call.
  * The first agent row of each turn carries the turn header.
  */
-function groupRows(items: readonly ChatItem[]): Row[] {
+function groupRows(items: readonly (ChatItem | SentItem)[]): Row[] {
   const rows: Row[] = []
   let start = 0
   for (let i = 0; i <= items.length; i++) {
-    if (i < items.length && !startsTurn(items[i]!)) continue
-    turnRows(items.slice(start, i), rows)
-    if (i < items.length) rows.push({ kind: 'item', item: items[i]!, header: null })
+    const item = items[i]
+    if (item !== undefined && item.kind !== 'sent' && !startsTurn(item)) continue
+    // Notices only come between turns (withNotices), so a turn is chat items alone.
+    turnRows(items.slice(start, i) as ChatItem[], rows)
+    if (item !== undefined) rows.push(item.kind === 'sent' ? { kind: 'sent', item } : { kind: 'item', item, header: null })
     start = i + 1
   }
   return rows

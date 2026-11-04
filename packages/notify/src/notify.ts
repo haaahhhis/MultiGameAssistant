@@ -14,16 +14,23 @@
  *   or written from another chat app, work handed to 助手, 助手's messages
  *   with the other agents, its replies — goes to every chat person as text
  *   (mirror.ts), so the app and the chat apps show the same conversation.
+ * - Notices are part of that conversation too: kept (`notices`), shown in
+ *   助手's conversation in the app with their buttons, and told to 助手 when
+ *   its next turn starts (`untold`, index.ts), so a reply in words (「改吧」)
+ *   reaches an agent that knows what it answers — it acts with notice_act.
+ *   An action picked anywhere is told to the other places.
  * - Approvals and the agent's questions (ask_user_question): a chat
- *   conversation's go to its person only, on its channel; other sessions' go
- *   to channels that take them (Feishu's 「软件里的会话」 setting). A reply
- *   while the agent waits for that person answers the question. The first
+ *   conversation's go to its person only, on its channel; other sessions'
+ *   go to channels that take them (Feishu's 「软件里的会话」 setting). A reply
+ *   while the agent waits for that person answers the question, or the
+ *   approval (「同意」「拒绝」); channels let it past the person's other
+ *   messages (`waiting`), since the one before it waits for it. The first
  *   answer anywhere (UI or chat) wins.
  *
  * Channels (Feishu, QQ; WeCom / Telegram later) only translate.
  */
 import { randomUUID } from 'node:crypto'
-import { type ApprovalRequested, type ChannelStatus, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
+import { type ApprovalRequested, type ChannelStatus, type ChatNotice, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
 import { MAIN } from './handoff.ts'
 import { textReply, type Reply } from './reply.ts'
 
@@ -170,8 +177,15 @@ export interface NotifyOptions {
   readonly sessions: { get(key: string): string | undefined; set(key: string, sessionId: string): Promise<void>; keyOf?(sessionId: string): string | undefined }
   readonly changed: () => void
   readonly log: { info(message: string): void; warn(message: string): void }
+  /** Where the notices are kept between starts. Absent: in memory only. */
+  readonly history?: { load(): Promise<readonly KeptNotice[]>; save(items: readonly KeptNotice[]): Promise<void> }
+  /** A notice was sent, or what came of it changed. */
+  readonly noticeChanged?: (item: ChatNotice) => void
   readonly now?: () => number
 }
+
+/** A notice as kept: `told`, 助手 has been told about it. */
+export type KeptNotice = ChatNotice & { told?: boolean }
 
 interface Sent {
   readonly notice: Notice
@@ -181,7 +195,10 @@ interface Sent {
 
 const KEEP_NOTICES = 200
 const KEEP_ORIGINS = 50
+const KEEP_HISTORY = 100
 const REPLY_WINDOW_MS = 24 * 3_600_000
+/** At most this many notices are told to 助手 at once (the latest). */
+const TELL_AT_MOST = 8
 /**
  * A message after this long a silence says so: a long conversation is
  * compacted into a summary without dates, and the model then takes old open
@@ -196,8 +213,12 @@ export class Notify {
   readonly #sent = new Map<string, Sent>()
   /** Open questions: whose conversation asked (`channel:user`, if one did) and the answers so far. */
   readonly #questions = new Map<string, { request: QuestionRequested; key: string | undefined; answers: Map<string, QuestionAnswerItem> }>()
+  /** Open approvals asked of one person (their conversation's): approval id → `channel:user`. */
+  readonly #approvals = new Map<string, string>()
   /** Messages people sent from a chat app, as the agent got them, until the mirror has seen them: who wrote them. */
   readonly #origins = new Map<string, Actor>()
+  /** The notices, oldest first (`notices`). */
+  #history: KeptNotice[] = []
   readonly #now: () => number
 
   constructor(options: NotifyOptions) {
@@ -233,6 +254,44 @@ export class Notify {
 
   // ── notices ───────────────────────────────────────────────────────────
 
+  /** Read the notices kept before this start. */
+  async loadHistory(): Promise<void> {
+    const kept = await this.#options.history?.load().catch(() => [] as KeptNotice[]) ?? []
+    this.#history = [...kept, ...this.#history].slice(-KEEP_HISTORY)
+  }
+
+  /** The notices, oldest first. */
+  notices(): ChatNotice[] {
+    return this.#history.map(shown)
+  }
+
+  /** Notices of the last day 助手 has not been told about yet (the latest few), oldest first. */
+  untold(): ChatNotice[] {
+    const since = this.#now() - REPLY_WINDOW_MS
+    return this.#history.filter(n => n.told !== true && n.at >= since).slice(-TELL_AT_MOST).map(shown)
+  }
+
+  /** 助手 has been told about these (and so no longer needs the older ones). */
+  markTold(ids: readonly string[]): void {
+    const last = Math.max(-1, ...ids.map(id => this.#history.findIndex(n => n.id === id)))
+    if (last < 0) return
+    this.#history = this.#history.map((n, i) => (i <= last && n.told !== true ? { ...n, told: true } : n))
+    this.#saveHistory()
+  }
+
+  #changeNotice(id: string, change: (item: KeptNotice) => KeptNotice): void {
+    const index = this.#history.findIndex(n => n.id === id)
+    if (index < 0) return
+    const item = change(this.#history[index]!)
+    this.#history[index] = item
+    this.#saveHistory()
+    this.#options.noticeChanged?.(shown(item))
+  }
+
+  #saveHistory(): void {
+    void this.#options.history?.save(this.#history).catch(error => this.#options.log.warn(`saving notices failed: ${message(error)}`))
+  }
+
   /** @returns a disposer. */
   onAction(scope: string, handler: ActionHandler): () => void {
     this.#handlers.set(scope, handler)
@@ -258,11 +317,22 @@ export class Notify {
         this.#options.log.warn(`notice ${notice.id} via ${channel.id} failed: ${message(error)}`)
       }
     }
+    const item: KeptNotice = {
+      id: notice.id, title: notice.title, text: notice.text, severity: notice.severity, at: this.#now(),
+      actions: (notice.actions ?? []).map(a => ({ id: a.id, label: a.label, ...(a.style === undefined ? {} : { style: a.style }) })),
+      channels: reached,
+      ...(notice.image === undefined ? {} : { image: true }),
+    }
+    this.#history = [...this.#history.filter(n => n.id !== notice.id), item].slice(-KEEP_HISTORY)
+    this.#saveHistory()
+    this.#options.noticeChanged?.(shown(item))
     if (reached.length === 0 && errors.length > 0) throw new Error(errors.join('；'))
     return reached
   }
 
   async update(id: string, patch: NoticePatch): Promise<void> {
+    // The kept copy too, also for one sent before this start (the channels no longer know it).
+    this.#changeNotice(id, item => ({ ...item, ...(patch.text === undefined ? {} : { text: patch.text }), ...(patch.done === undefined ? {} : { done: patch.done }) }))
     const sent = this.#sent.get(id)
     if (sent === undefined) return
     if (patch.done !== undefined) sent.open = false
@@ -279,7 +349,22 @@ export class Notify {
     const handler = this.#handlers.get(scope)
     if (handler === undefined) throw new Error('这条消息对应的功能没有加载')
     this.#options.log.info(`${actor.channel}:${actor.userId} → ${actionId} on ${noticeId}`)
-    return handler(noticeId, actionId, actor)
+    const result = await handler(noticeId, actionId, actor)
+    // What came of it, where the others see it: the app's conversation, and the chat apps but the one who picked it.
+    const kept = this.#history.find(n => n.id === noticeId)
+    const label = (sent?.notice.actions ?? kept?.actions)?.find(a => a.id === actionId)?.label ?? actionId
+    const by = this.#actorName(actor)
+    if (sent !== undefined) sent.open = false
+    this.#changeNotice(noticeId, item => ({ ...item, acted: { by, label, result, at: this.#now() } }))
+    this.mirror({ text: `「${sent?.notice.title ?? kept?.title ?? noticeId}」：${by}选了「${label}」——${result}` }, actor.channel === 'app' || actor.channel === 'agent' ? undefined : actor)
+    return result
+  }
+
+  /** Who picked an action, for people: 你（软件）, 你（QQ）, 助手. */
+  #actorName(actor: Actor): string {
+    if (actor.channel === 'agent') return actor.name ?? '助手'
+    if (actor.channel === 'app') return '你（软件）'
+    return `${actor.name ?? '你'}（${this.channelName(actor.channel)}）`
   }
 
   // ── what people write ─────────────────────────────────────────────────
@@ -295,6 +380,8 @@ export class Notify {
     const key = `${message_.actor.channel}:${message_.actor.userId}`
     const waiting = [...this.#questions.entries()].find(([, q]) => q.key === key)
     if (waiting !== undefined && text !== '') return textReply(await this.#replyToQuestion(waiting[0], text, message_.actor))
+    const approval = [...this.#approvals.entries()].find(([, k]) => k === key)
+    if (approval !== undefined && text !== '') return textReply(this.#replyToApproval(approval[0], text, message_.actor))
     const target = this.#noticeFor(text, message_.replyTo)
     if (target !== undefined) {
       try {
@@ -323,6 +410,12 @@ export class Notify {
     this.#origins.set(prompt.trim(), message_.actor)
     while (this.#origins.size > KEEP_ORIGINS) this.#origins.delete(this.#origins.keys().next().value!)
     return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
+  }
+
+  /** The agent waits for this person's answer (a question, an approval): their next message is it, not one to queue. */
+  waiting(actor: Actor): boolean {
+    const key = `${actor.channel}:${actor.userId}`
+    return [...this.#questions.values()].some(q => q.key === key) || [...this.#approvals.values()].some(k => k === key)
   }
 
   /** Who sent this message of 助手's conversation from a chat app (undefined: someone in the app); asked once. */
@@ -379,7 +472,10 @@ export class Notify {
   // ── approvals ─────────────────────────────────────────────────────────
 
   askApproval(request: ApprovalRequested): void {
-    for (const { channel, owner } of this.#routes(request.sessionId, 'approvals')) {
+    const routes = this.#routes(request.sessionId, 'approvals')
+    const key = this.#options.sessions.keyOf?.(request.sessionId)
+    if (key !== undefined && routes.length > 0) this.#approvals.set(request.approvalId, key)
+    for (const { channel, owner } of routes) {
       void channel.approvals!.ask(request, owner).catch(error => this.#options.log.warn(`approval card via ${channel.id} failed: ${message(error)}`))
     }
   }
@@ -401,6 +497,7 @@ export class Notify {
   }
 
   approvalResolved(approvalId: string, outcome: string): void {
+    this.#approvals.delete(approvalId)
     for (const channel of this.#channels.values()) void channel.approvals?.resolved(approvalId, outcome).catch(() => {})
   }
 
@@ -409,6 +506,18 @@ export class Notify {
     const answered = this.#options.respondApproval(approvalId, decision)
     if (answered) this.#options.log.info(`${actor.channel}:${actor.userId} ${decision} approval ${approvalId}`)
     return answered
+  }
+
+  /** A reply while an approval waits for this person: 「同意」 allows it once, 「拒绝」 does not; anything else asks again. */
+  #replyToApproval(approvalId: string, text: string, actor: Actor): string {
+    const plain = text.replace(/[。.!！\s]/g, '')
+    const decision = /^(同意|允许|可以|行|好的?|确认|ok|yes|y)$/i.test(plain) ? 'allow-once' as const
+      : /^(拒绝|不同意|不行|不要|不可以|别|no|n)$/i.test(plain) ? 'reject' as const
+      : undefined
+    if (decision === undefined) return 'agent 在等你确认：回复「同意」允许这一次，或回复「拒绝」。'
+    if (!this.respondApproval(approvalId, decision, actor)) return '这个操作已经在别处确认过了。'
+    this.#approvals.delete(approvalId)
+    return decision === 'allow-once' ? '已允许这一次。' : '已拒绝。'
   }
 
   // ── the agent's questions ─────────────────────────────────────────────
@@ -490,6 +599,33 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** A kept notice as the app and 助手 see it. */
+function shown({ told: _told, ...item }: KeptNotice): ChatNotice {
+  return item
+}
+
+/**
+ * What 助手 is told at the start of its next turn about the notices sent since (index.ts): what each said, what came of it,
+ * and how to pick an action for the person (notice_act) when what they write answers one.
+ */
+export function noticesNote(items: readonly ChatNotice[], timeZone?: string): string {
+  const clock = (at: number) => new Date(at).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(timeZone === undefined ? {} : { timeZone }) })
+  const lines = items.map((n, i) => {
+    const text = n.text.length > 400 ? `${n.text.slice(0, 400)}…` : n.text
+    const where = n.channels.length > 0 ? `发到了${n.channels.join('、')}，软件里也有` : '只在软件里'
+    const state = n.acted !== undefined ? `已处理：${n.acted.by}选了「${n.acted.label}」——${n.acted.result}`
+      : n.done !== undefined ? `已结束：${n.done}`
+      : n.actions.length > 0 ? `等主人选：${n.actions.map(a => `「${a.label}」(action=${a.id})`).join(' ')}，notice=${n.id}`
+      : '不需要回复'
+    return `${i + 1}. 【${n.title}】${clock(n.at)}，${where}\n${text}\n（${state}）`
+  })
+  return [
+    '（通知）在这之前，软件给主人发了这些通知；主人接下来的话可能是在回应它们：',
+    ...lines,
+    '主人的话是在回应某条还在等选择的通知时（例如「改吧」「好」「不用了」「停」），用 notice_act 替他选对应的操作，再告诉他结果；拿不准指哪条就问。跟通知无关就照常回答，不用提这些通知。',
+  ].join('\n')
+}
+
 /** Put before each chat message to the agent: only its last message of the round reaches the person. */
 export function channelNote(channel: string): string {
   return `（这条消息来自${CHANNEL_NAMES[channel] ?? channel}。只有你这一轮的最后一条消息会发给对方，中间的话和步骤对方看不到：最后用几句话总结这一轮——结论、做了什么、需要对方做什么。）`
@@ -500,6 +636,19 @@ const CHANNEL_NAMES: Readonly<Record<string, string>> = { feishu: '飞书', qq: 
 /** What a person wrote, without the notes the app put before it for the agent (where it came from, how long it has been). */
 export function personWords(text: string): string {
   return text.replace(/^（这条消息来自[^\n]*）\n/, '').replace(/^（距离这个对话的上一条消息已经过了[^\n]*）\n/, '').trim()
+}
+
+/** An approval as chat text, for channels without cards: what the agent wants to do, why, and how to answer. */
+export function approvalText(request: ApprovalRequested): string {
+  const reason = request.displayReason?.['zh-CN'] ?? request.displayReason?.['zh'] ?? request.reason
+  return ['【需要你确认】', `agent 想要执行：${request.toolName}`, ...(reason === undefined ? [] : [`原因：${reason}`]), '回复「同意」允许这一次，回复「拒绝」不允许。也可以在软件里回答，先回答的生效。'].join('\n')
+}
+
+/** The agent's questions as chat text, for channels without cards: the first one, and how to answer. */
+export function questionText(request: QuestionRequested): string {
+  const first = request.questions[0]
+  const more = request.questions.length > 1 ? `（共 ${request.questions.length} 个问题，答完一个发下一个）` : ''
+  return ['【助手问你】' + more, first === undefined ? '' : describeQuestion(first), '回复选项的数字或文字，或直接写你的回答。'].join('\n')
 }
 
 /** A question as chat text: the question, then its choices numbered (reply with the number or the words). */

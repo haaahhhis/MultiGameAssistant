@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import type { ApprovalRequested, ChannelStatus } from '@adg/protocol'
-import { channelNote, Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
+import { approvalText, channelNote, noticesNote, Notify, type Channel, type Conversations, type Notice } from '../src/notify.ts'
+import { noticeActTool } from '../src/notices.ts'
 import { replyMarkdown, replyPlain, type Reply } from '../src/reply.ts'
 
 function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: string; others?: boolean } = {}) {
@@ -250,4 +251,74 @@ test("a chat reply is the round's summary: the agent's last words and how many s
   assert.equal(replyMarkdown({ blocks: [{ kind: 'text', text: '好的' }] }), '好的', 'no steps, no tally')
   assert.equal(replyMarkdown({ blocks: [] }), '（agent 没有回复文字）')
   assert.equal(replyMarkdown({ blocks: [{ kind: 'text', text: '我先看看' }], ended: '（这一轮没有完成：超时了）' }), '我先看看\n\n（这一轮没有完成：超时了）', 'cut short: its last words are not a summary')
+})
+
+test('notices are part of 助手\'s conversation: kept for the app, told to 助手 once, and an action picked anywhere is told to the others', async () => {
+  let now = 1_000_000
+  const changed: string[] = []
+  const saved: unknown[] = []
+  const notify = new Notify({
+    conversations: () => undefined,
+    respondApproval: () => true,
+    sessions: { get: () => undefined, set: async () => {} },
+    changed: () => {},
+    log: { info() {}, warn() {} },
+    history: { load: async () => [], save: async items => { saved.push(items) } },
+    noticeChanged: item => changed.push(`${item.id}:${item.acted?.label ?? item.done ?? 'sent'}`),
+    now: () => now,
+  })
+  const posts: string[] = []
+  const chat = fakeChannel()
+  notify.registerChannel({ ...chat.channel, mirror: async (post, except) => { posts.push(`${except ?? '*'}:${post.text}`) } })
+  notify.onAction('monitor', async (_id, action) => (action === 'stop' ? '已停止' : '好的'))
+
+  await notify.send(notice('inc-1'))
+  await notify.send({ id: 'report', scope: 'games', title: '日报', text: '今天没有活动结束', severity: 'info' })
+  assert.deepEqual(notify.notices().map(n => [n.id, n.channels, n.actions.length]), [['inc-1', ['假渠道'], 3], ['report', ['假渠道'], 0]])
+  assert.deepEqual(notify.untold().map(n => n.id), ['inc-1', 'report'], 'not told to 助手 yet')
+  notify.markTold(['report'])
+  assert.deepEqual(notify.untold(), [], 'told once, older ones with it')
+
+  now += 60_000
+  assert.equal(await notify.act('inc-1', 'stop', { channel: 'app', userId: 'app' }), '已停止')
+  const acted = notify.notices().find(n => n.id === 'inc-1')!
+  assert.deepEqual(acted.acted, { by: '你（软件）', label: '停止', result: '已停止', at: now })
+  assert.deepEqual(posts, ['*:「MAA · 日常：出错」：你（软件）选了「停止」——已停止'], 'the chat apps learn what was picked in the app')
+  assert.deepEqual(changed, ['inc-1:sent', 'report:sent', 'inc-1:停止'])
+  assert.ok(saved.length > 0, 'kept between starts')
+  assert.equal((saved.at(-1) as { told?: boolean }[]).every(n => n.told === true), true)
+})
+
+test('notice_act: 助手 picks a notice\'s action for the person who answered it in words', async () => {
+  const { notify } = setup()
+  const chat = fakeChannel()
+  notify.registerChannel(chat.channel)
+  const picked: string[] = []
+  notify.onAction('pack-review', async (id, action, who) => { picked.push(`${id}:${action}:${who.channel}`); return '好的，agent 先读更新日志' })
+  await notify.send({ id: 'pack-review:maa:6.21.4', scope: 'pack-review', title: 'MAA 更新了：脚本包要不要跟着改？', text: '…', severity: 'info', actions: [{ id: 'check', label: '让 agent 检查' }, { id: 'keep', label: '不用改' }] })
+  const note = noticesNote(notify.untold(), 'Asia/Shanghai')
+  assert.match(note, /「让 agent 检查」\(action=check\) 「不用改」\(action=keep\)，notice=pack-review:maa:6\.21\.4/)
+  assert.match(note, /notice_act/)
+
+  const tool = noticeActTool(notify, '助手')
+  const run = (args: unknown) => tool.execute(args as never, {} as never) as Promise<{ result: string }>
+  await assert.rejects(run({ notice: 'pack-review:maa:6.21.4', action: 'nope' }), /可选：check（让 agent 检查）、keep（不用改）/)
+  assert.deepEqual(await run({ notice: 'pack-review:maa:6.21.4', action: 'check' }), { result: '好的，agent 先读更新日志' })
+  assert.deepEqual(picked, ['pack-review:maa:6.21.4:check:agent'])
+  await assert.rejects(run({ notice: 'pack-review:maa:6.21.4', action: 'keep' }), /已经处理过了：助手选了「让 agent 检查」/)
+})
+
+test('an approval asked of a chat person is answered by 「同意」 or 「拒绝」 in words, and lets that answer past their waiting message', async () => {
+  const { notify, answered, sessions } = setup(conversationsWith({}))
+  const chat = fakeChannel()
+  notify.registerChannel(chat.channel)
+  sessions.set('fake:ou_1', 's-main')
+  notify.askApproval({ approvalId: 'ap-1', sessionId: 's-main', toolName: 'script_run', reason: '跑 MAA 日常' })
+  assert.deepEqual(chat.owners, ['ou_1'])
+  assert.equal(notify.waiting(actor), true)
+  assert.equal(replyMarkdown(await notify.inbound({ actor, text: '嗯？' })), 'agent 在等你确认：回复「同意」允许这一次，或回复「拒绝」。')
+  assert.equal(replyMarkdown(await notify.inbound({ actor, text: '同意' })), '已允许这一次。')
+  assert.deepEqual(answered, ['ap-1:allow-once'])
+  assert.equal(notify.waiting(actor), false)
+  assert.match(approvalText({ approvalId: 'ap-2', sessionId: 's', toolName: 'script_run', reason: '跑 MAA 日常' }), /agent 想要执行：script_run\n原因：跑 MAA 日常\n回复「同意」/)
 })

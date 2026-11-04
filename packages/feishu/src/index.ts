@@ -72,6 +72,7 @@ export class AdgFeishu extends Service {
         inbound: m => notify.inbound(m),
         respondApproval: (id, decision, actor) => notify.notify.respondApproval(id, decision, actor),
         answerQuestion: (id, item, actor) => notify.notify.answerQuestion(id, item, actor),
+        waiting: actor => notify.notify.waiting(actor),
       }),
       changed: () => notify.changed(),
       log: { info: m => log.info(m), warn: m => log.warn(m) },

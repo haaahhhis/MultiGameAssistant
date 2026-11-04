@@ -119,7 +119,13 @@ export class AdgOrchestrator extends Service {
       scoped.effect(() => scoped.adgNotify.onAction('pipeline', async (noticeId, actionId) => {
         const [, runId, nodeId] = noticeId.split(':')
         if (runId === undefined || nodeId === undefined || (actionId !== 'continue' && actionId !== 'stop')) throw new Error('不认识这个按钮')
-        engine.gate(runId, nodeId, actionId)
+        try {
+          engine.gate(runId, nodeId, actionId)
+        } catch (error) {
+          // Answered already, or its run is gone (the app restarted): the question is over wherever it shows.
+          await scoped.adgNotify.update(noticeId, { done: '这次运行已经不在等确认了' })
+          throw error
+        }
         return actionId === 'continue' ? '已继续' : '已停止'
       }), 'adg-orchestrator gate actions')
     })

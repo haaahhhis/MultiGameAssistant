@@ -5,12 +5,12 @@ import { Requests, type QQSettings } from '@adg/protocol'
 import { textReply } from '@adg/notify'
 import { startFakeQQ } from '../../test-kit/src/fake-qqbot.ts'
 import { httpApi } from '../src/api.ts'
-import { DEFAULT_QQ, noticeText, plainText, QQBot, type QQState } from '../src/bot.ts'
+import { DEFAULT_QQ, noticeText, plainText, QQBot, type NotifyPort, type QQState } from '../src/bot.ts'
 
 const APP_ID = '102000001'
 const log = { info() {}, warn() {} }
 
-async function setup(settings: Partial<QQSettings> = {}, options: { secret?: string } = {}) {
+async function setup(settings: Partial<QQSettings> = {}, options: { secret?: string; notify?: NotifyPort } = {}) {
   const fake = await startFakeQQ({ appId: APP_ID, secret: 'secret-ok' })
   let saved: QQState | undefined
   const inbound: { text: string; userId: string; name: string | undefined }[] = []
@@ -19,7 +19,7 @@ async function setup(settings: Partial<QQSettings> = {}, options: { secret?: str
     secret: async () => options.secret ?? 'secret-ok',
     load: async () => ({ settings: { ...DEFAULT_QQ, enabled: true, appId: APP_ID, allowedUsers: [{ openId: 'AAAA1111BBBB2222', name: '我', addedAt: 0 }], ...settings }, pending: [] }),
     save: async state => { saved = state },
-    notify: () => ({ inbound: async m => { inbound.push({ text: m.text, userId: m.actor.userId, name: m.actor.name }); return textReply(`**收到**：${m.text}`) } }),
+    notify: () => options.notify ?? ({ inbound: async m => { inbound.push({ text: m.text, userId: m.actor.userId, name: m.actor.name }); return textReply(`**收到**：${m.text}`) } }),
     changed: () => {},
     log,
     retryDelaysMs: [],
@@ -136,4 +136,38 @@ test('the settings take a numeric AppID and a user_openid as QQ gives them', () 
   assert.equal(Requests['qqbot/settings/set'].params.parse({ appId: ' 102000001 ' }).appId, '102000001')
   assert.throws(() => Requests['qqbot/settings/set'].params.parse({ appId: 'cli_abc' }), /AppID 是一串数字/)
   assert.equal(Requests['qqbot/users/allow'].params.parse({ openId: 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4' }).openId, 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4')
+})
+
+test("助手's question reaches the person whose conversation asks, as text; their answer goes past the message waiting for it", async () => {
+  let waiting = false
+  let answered: (() => void) | undefined
+  let bot!: QQBot
+  const notify: NotifyPort = {
+    inbound: async m => {
+      if (m.text === '2') { waiting = false; answered?.(); return textReply('收到，已经告诉 agent：明天') }
+      waiting = true
+      await bot.questions.ask({ questionId: 'q1', sessionId: 's-main', questions: [{ id: 'when', question: '什么时候提醒？', options: [{ label: '今天' }, { label: '明天' }] }] } as never, m.actor.userId)
+      await new Promise<void>(resolve => { answered = resolve })
+      return textReply('好的，明天提醒你')
+    },
+    waiting: () => waiting,
+  }
+  const ready = await setup({}, { notify })
+  bot = ready.bot
+  const { fake } = ready
+  try {
+    await bot.start()
+    await until('ready', () => bot.status().state === 'ready')
+    assert.equal(bot.questions.active('AAAA1111BBBB2222'), true)
+    assert.equal(bot.questions.active(undefined), false, "other sessions' questions stay in the app")
+    fake.sendMessage({ openId: 'AAAA1111BBBB2222', text: '提醒我换赤金' })
+    const asked = await fake.waitForMessage(m => m.text.startsWith('【助手问你】'))
+    assert.match(asked.text, /什么时候提醒？\n1\. 今天\n2\. 明天\n回复选项的数字/)
+    fake.sendMessage({ openId: 'AAAA1111BBBB2222', text: '2' })
+    await fake.waitForMessage(m => m.text === '收到，已经告诉 agent：明天')
+    await fake.waitForMessage(m => m.text === '好的，明天提醒你')
+  } finally {
+    bot.stop()
+    await fake.close()
+  }
 })

@@ -306,6 +306,12 @@
     "notify/conversations": {
       "capability": "notify"
     },
+    "notify/notices": {
+      "capability": "notify"
+    },
+    "notify/act": {
+      "capability": "notify"
+    },
     "notify/test": {
       "capability": "notify"
     },
@@ -532,6 +538,7 @@
     "packs/changed",
     "monitor/incident",
     "notify/changed",
+    "notify/notice",
     "pipelines/changed",
     "pipelines/run",
     "schedule/changed",
@@ -13055,6 +13062,154 @@
       ],
       "additionalProperties": false
     },
+    "notify/notices.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "notify/notices.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "success",
+                  "warning",
+                  "error"
+                ]
+              },
+              "at": {
+                "type": "number"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "style": {
+                      "type": "string",
+                      "enum": [
+                        "primary",
+                        "danger",
+                        "default"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "channels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "image": {
+                "type": "boolean"
+              },
+              "done": {
+                "type": "string"
+              },
+              "acted": {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "by",
+                  "label",
+                  "result",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "text",
+              "severity",
+              "at",
+              "actions",
+              "channels"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "notify/act.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "noticeId": {
+          "type": "string"
+        },
+        "actionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "noticeId",
+        "actionId"
+      ],
+      "additionalProperties": false
+    },
+    "notify/act.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
     "notify/test.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -23551,6 +23706,115 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "notify/notice.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "info",
+                "success",
+                "warning",
+                "error"
+              ]
+            },
+            "at": {
+              "type": "number"
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "style": {
+                    "type": "string",
+                    "enum": [
+                      "primary",
+                      "danger",
+                      "default"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "label"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "channels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "image": {
+              "type": "boolean"
+            },
+            "done": {
+              "type": "string"
+            },
+            "acted": {
+              "type": "object",
+              "properties": {
+                "by": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "by",
+                "label",
+                "result",
+                "at"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "text",
+            "severity",
+            "at",
+            "actions",
+            "channels"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "item"
+      ],
       "additionalProperties": false
     },
     "pipelines/changed.notification": {

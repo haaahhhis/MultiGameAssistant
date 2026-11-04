@@ -88,6 +88,29 @@ export type QQPending = z.infer<typeof QQPending>
 
 const QQView = z.object({ settings: QQSettings, secretConfigured: z.boolean(), pending: z.array(QQPending) })
 
+/**
+ * Something the app told the person through the chat apps (an incident, a pipeline's message or
+ * question, the daily report, 「脚本包要不要跟着改」): part of 助手's conversation, so the app shows it
+ * there too and 助手 knows about it when the person answers in words.
+ */
+export const ChatNotice = z.object({
+  id: z.string(),
+  title: z.string(),
+  text: z.string(),
+  severity: z.enum(['info', 'success', 'warning', 'error']),
+  at: z.number(),
+  actions: z.array(z.object({ id: z.string(), label: z.string(), style: z.enum(['primary', 'danger', 'default']).optional() })),
+  /** The chat apps it reached (飞书, QQ); empty: shown in the app only. */
+  channels: z.array(z.string()),
+  /** It came with a picture (a screenshot), sent to the chat apps only. */
+  image: z.boolean().optional(),
+  /** Its buttons no longer apply (dealt with, or over): what came of it. */
+  done: z.string().optional(),
+  /** Someone picked one of its actions: who, which, what came of it. */
+  acted: z.object({ by: z.string(), label: z.string(), result: z.string(), at: z.number() }).optional(),
+})
+export type ChatNotice = z.infer<typeof ChatNotice>
+
 export const NotifyRequests = {
   'notify/status': {
     capability: NOTIFY_CAPABILITY,
@@ -99,6 +122,18 @@ export const NotifyRequests = {
     capability: NOTIFY_CAPABILITY,
     params: z.object({}),
     result: z.object({ items: z.array(z.object({ sessionId: z.string(), channel: z.string(), user: z.string() })) }),
+  },
+  /** What the app told the person through the chat apps lately, oldest first (助手's conversation shows them). */
+  'notify/notices': {
+    capability: NOTIFY_CAPABILITY,
+    params: z.object({}),
+    result: z.object({ items: z.array(ChatNotice) }),
+  },
+  /** Pick one of a notice's actions in the app, as its button in a chat app would. */
+  'notify/act': {
+    capability: NOTIFY_CAPABILITY,
+    params: z.object({ noticeId: z.string(), actionId: z.string() }),
+    result: z.object({ result: z.string() }),
   },
   /** Send a test notice through one channel, or all. */
   'notify/test': {
@@ -174,4 +209,6 @@ export const NotifyRequests = {
 export const NotifyNotifications = {
   /** A channel's state or its settings changed. */
   'notify/changed': z.object({}),
+  /** A notice was sent, or what came of it changed. */
+  'notify/notice': z.object({ item: ChatNotice }),
 } as const

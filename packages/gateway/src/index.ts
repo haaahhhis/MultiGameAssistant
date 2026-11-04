@@ -208,7 +208,7 @@ const MAIN_AGENT: RoleSpec = {
   description: '',
   order: 0,
   tools: [
-    'agent_delegate', 'system_info', 'skill_focus', 'skill_save', 'skill_hub_list',
+    'agent_delegate', 'notice_act', 'system_info', 'skill_focus', 'skill_save', 'skill_hub_list',
     'script_list', 'script_runs', 'script_run_log', 'script_help', 'script_search', 'script_tasks',
     'game_list', 'game_activities', 'game_report',
     'pipeline_*', 'schedule_*', 'monitor_incidents', 'emulator_status', 'window_list',

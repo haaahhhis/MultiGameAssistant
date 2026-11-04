@@ -360,6 +360,19 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .chat-inner { max-width: 808px; min-height: 100%; margin: 0 auto; padding: 36px 24px 28px; display: flex; flex-direction: column; gap: 18px; }
 .chat-inner > * { animation: rise .18s var(--ease) both; }
 .load-older { align-self: center; }
+/* Something the app told the person through the chat apps, in 助手's conversation (SentNotices.tsx) */
+.sent-notice { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r-md); background: var(--raised); }
+.sent-notice.warning { border-left-color: var(--warn); }
+.sent-notice.error { border-left-color: var(--error); }
+.sent-notice.success { border-left-color: var(--ok); }
+.sent-notice-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sent-notice-head > .ui-icon { width: 15px; height: 15px; flex: none; color: var(--text-2); }
+.sent-notice-title { font-weight: 600; font-size: 13.5px; }
+.sent-notice-text { white-space: pre-wrap; font-size: 13.5px; line-height: 1.7; color: var(--text); }
+.sent-notice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.sent-notice-actions .tool-spinner { width: 11px; height: 11px; margin-right: 4px; }
+.sent-notice-result { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+.sent-notice-result .ui-icon { width: 13px; height: 13px; color: var(--ok); }
 .turn-header { display: flex; align-items: center; gap: 8px; margin-top: 10px; margin-bottom: -6px; }
 .turn-name { font-size: 13px; font-weight: 600; }
 .turn-model { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }

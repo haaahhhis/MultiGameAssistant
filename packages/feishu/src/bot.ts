@@ -16,6 +16,8 @@ export interface NotifyPort {
   respondApproval(approvalId: string, decision: 'allow-once' | 'reject', actor: Actor): boolean
   /** One of the agent's questions answered from a card button. @returns undefined when it was answered elsewhere. */
   answerQuestion(questionId: string, item: QuestionAnswerItem, actor: Actor): QuestionProgress | undefined
+  /** The agent waits for this person's answer (a question, an approval): their message goes at once. */
+  waiting?(actor: Actor): boolean
 }
 
 export interface FeishuState {
@@ -405,7 +407,7 @@ export class FeishuBot implements Channel {
     if (event.text === '') return
     // One person's messages are handled in order; different people in parallel. An
     // answer to the agent's question goes at once: the message before it is waiting for it.
-    if ([...this.#questions.values()].some(q => q.owner === event.senderOpenId)) {
+    if ([...this.#questions.values()].some(q => q.owner === event.senderOpenId) || this.#options.notify()?.waiting?.(this.#actor(event.senderOpenId)) === true) {
       void this.#answer(api, event).catch(error => this.#options.log.warn(`reply failed: ${message(error)}`))
       return
     }

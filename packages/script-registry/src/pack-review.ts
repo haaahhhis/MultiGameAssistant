@@ -16,6 +16,9 @@ import { SCRIPT_ROLE } from './role.ts'
 import { taskMessage } from '@adg/protocol'
 
 export const PACK_REVIEW_SCOPE = 'pack-review'
+
+/** The notice asking about one script's update to one version. */
+const noticeIdOf = (scriptId: string, version: string) => `${PACK_REVIEW_SCOPE}:${scriptId}:${version}`
 const REVIEW_TIMEOUT_MS = 30 * 60_000
 
 export interface PackReview {
@@ -28,11 +31,17 @@ export interface PackReview {
 export function packReview(ctx: Context, library: () => ScriptLibrary, log: { warn(message: string): void }): PackReview {
   const decide: PackReview['decide'] = async (id, decision) => {
     const lib = library()
+    const script = lib.get(id)
+    // Decided anywhere (the 脚本 page, a chat app, 助手 for the person): the question in the chat apps and 助手's conversation is over.
+    const close = (done: string) => {
+      if (script.packReview === undefined) return
+      void ctx.get('adgNotify')?.update(noticeIdOf(id, script.packReview.to), { done }).catch(() => {})
+    }
     if (decision === 'keep') {
+      close('脚本包保持不变')
       await lib.packReviewed(id)
       return {}
     }
-    const script = lib.get(id)
     const sessions = ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const gateway = ctx.get('adgGateway')
@@ -49,6 +58,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
       '4. 最后用两三句话告诉用户结论。',
     ].join('\n')
     void conversations.ask(sessionId, taskMessage('你', `检查脚本包：${script.name}`, prompt), AbortSignal.timeout(REVIEW_TIMEOUT_MS)).catch(error => log.warn(`pack review for ${id}: ${error instanceof Error ? error.message : String(error)}`))
+    close('已交给「脚本」检查，改好的草稿会在「脚本」页等你确认')
     return { sessionId }
   }
 
@@ -68,7 +78,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
       const notify = ctx.get('adgNotify')
       if (notify === undefined) return
       void notify.send({
-        id: `${PACK_REVIEW_SCOPE}:${script.id}:${review.to}`,
+        id: noticeIdOf(script.id, review.to),
         scope: PACK_REVIEW_SCOPE,
         title: `${script.name} 更新了：脚本包要不要跟着改？`,
         text: [
