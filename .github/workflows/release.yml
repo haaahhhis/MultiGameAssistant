@@ -139,7 +139,7 @@ jobs:
             echo
             echo "- Windows x64（大多数电脑）：\`$x64\`"
             echo "- Windows ARM64（骁龙等 ARM 处理器的电脑）：\`$arm64\`"
-            echo "- 已经装了 dsh：dsh 插件版 \`$plugin\`，或在 dsh 的「Add plugin」里填 \`dsh-multigameassistant\`（安装方法见 README「已经装了 dsh」）"
+            echo "- 已经装了 dsh：在 dsh 的「Add plugin」里填 \`dsh-multigameassistant\`（npm 连不上时用插件包 \`$plugin\` 的链接；见 README「已经装了 dsh」）"
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi

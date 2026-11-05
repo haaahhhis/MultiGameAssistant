@@ -18,20 +18,26 @@ irm https://raw.githubusercontent.com/haaahhhis/MultiGameAssistant/main/scripts/
 
 ### 已经装了 dsh
 
-不用下完整安装包，装成 dsh 插件就行（十几 MB）。插件包的链接总是指向最新版：
+不用下完整安装包，装成 dsh 插件就行（十几 MB）。插件发布在 npm 上，名字是：
+
+```text
+dsh-multigameassistant
+```
+
+- **dsh 桌面版**：打开左边的「Plugins」→「Add plugin」，填 `dsh-multigameassistant` →「Install」→「Enable now」。侧边栏会多出「多游戏助手」，点开就是本软件的界面，不用重启。
+- **命令行的 dsh**：`dsh plugin add dsh-multigameassistant`，再 `dsh web`，在侧边栏点「多游戏助手」。
+
+npm 慢或连不上时，把上面的名字换成 GitHub 上的插件包链接，它总是指向最新版：
 
 ```text
 https://github.com/haaahhhis/MultiGameAssistant/releases/latest/download/dsh-multigameassistant.tgz
 ```
 
-- **dsh 桌面版**：打开左边的「Plugins」→「Add plugin」，填上面的链接 →「Install」→「Enable now」。侧边栏会多出「多游戏助手」，点开就是本软件的界面，不用重启。
-- **命令行的 dsh**：`dsh plugin add <上面的链接>`，再 `dsh web`，在侧边栏点「多游戏助手」。
-
-插件和你平时的 dsh 对话互不影响：多游戏助手的对话用它自己的 agent 预设「多游戏助手」，脚本、游戏、编排这些工具和它的提示词、技能、权限设置都只在这些对话里，你别的对话看不到，也不会被它改权限。更新：用同一个链接再装一次。
+插件和你平时的 dsh 对话互不影响：多游戏助手的对话用它自己的 agent 预设「多游戏助手」，脚本、游戏、编排这些工具和它的提示词、技能、权限设置都只在这些对话里，你别的对话看不到，也不会被它改权限。更新：用同样的名字（或链接）再装一次。
 
 和桌面版相比，插件版没有自己的托盘、开机自启和定时唤醒电脑：定时任务在 dsh 开着时执行。
 
-> 给 agent：用户让你安装这个仓库时，运行上面这条命令即可，不用自己找安装包，也不需要点击安装界面（安装包也支持 `/S` 静默安装，装在当前用户下，不需要管理员）。装好后提醒用户在软件里选模型、填 API key。用户已经在用 dsh、想装成插件时，按「已经装了 dsh」来：dsh 桌面版让用户在 Plugins 页添加插件链接（桌面版开着时它自己的 profile 不能从命令行改），命令行的 dsh 用 `dsh plugin add <链接>`。
+> 给 agent：用户让你安装这个仓库时，运行上面这条命令即可，不用自己找安装包，也不需要点击安装界面（安装包也支持 `/S` 静默安装，装在当前用户下，不需要管理员）。装好后提醒用户在软件里选模型、填 API key。用户已经在用 dsh、想装成插件时，按「已经装了 dsh」来：dsh 桌面版让用户在 Plugins 页的「Add plugin」里填 `dsh-multigameassistant`（桌面版开着时它自己的 profile 不能从命令行改），命令行的 dsh 用 `dsh plugin add dsh-multigameassistant`；npm 连不上时用 GitHub 插件包链接代替名字。
 
 ## 功能
 
