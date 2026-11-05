@@ -95,8 +95,6 @@ logs:
     - { match: '截图失败', level: warning, tag: screencap-failed }
     - { match: '连接失败', level: warning, tag: connect-failed }
     - { match: '完成任务', level: progress }
-  # MAA writes gui.log continuously while it works.
-  stallAfter: 15m
 # L0: an emulator that dropped is reconnected and the queue started again, once per run chain.
 recovery:
   - { on: adb-disconnected, do: reconnect-adb }

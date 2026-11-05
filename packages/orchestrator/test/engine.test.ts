@@ -394,3 +394,28 @@ test('a "wait for all" node starts only once every node not after it has finishe
   assert.equal((await engine.finished(engine.start(twin, { kind: 'manual' }).id)).state, 'succeeded')
   engine.dispose()
 })
+
+test('a run someone stopped on purpose (「停止」 on its incident) is not run again by the step\'s retries; the pipeline carries on', async () => {
+  const slow = script('slow', 'none', { t: ok(30_000) })
+  const good = script('good', 'none', { t: ok(100) })
+  const { runner, engine } = setup([slow, good])
+  const p = pipeline({
+    nodes: [
+      { id: 'a', kind: 'script-task', scriptId: 'slow', taskId: 't', onFailure: { retries: 2, then: 'continue' } },
+      { id: 'b', kind: 'script-task', scriptId: 'good', taskId: 't' },
+    ],
+    edges: [{ from: 'a', to: 'b', when: 'always' }],
+  })
+  const started = engine.start(p, { kind: 'manual' })
+  let first: string | undefined
+  for (let i = 0; i < 100 && first === undefined; i++) {
+    await new Promise(r => setTimeout(r, 50))
+    first = runner.list().find(r => r.scriptId === 'slow' && r.state === 'running')?.id
+  }
+  await runner.stop(first!, '按异常处理停止（张三）')
+  const run = await engine.finished(started.id)
+  assert.equal(run.nodes['a']!.state, 'failed')
+  assert.equal(run.nodes['a']!.attempts, 1, 'not tried again behind their back')
+  assert.equal(run.nodes['b']!.state, 'succeeded')
+  engine.dispose()
+})

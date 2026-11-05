@@ -515,13 +515,15 @@ export class ScriptLibrary {
   /**
    * Before a task runs: update when a newer version is out. Never throws —
    * the run goes on with what it has. Left alone: a script without an update
-   * channel, or one another job is installing. A release that is a setup
+   * channel, one following a branch's source (official releases only), or one another job is installing. A release that is a setup
    * program is left waiting for the agent and counts as not updated.
    */
   async updateBeforeRun(id: string, signal: AbortSignal): Promise<PreRunUpdate> {
     const script = this.#script(id)
     const channels = this.#channels(script)
     if ((channels.github === undefined && channels.mirror === undefined) || this.#jobs.active(id) !== undefined) return { state: 'skipped' }
+    // Following a branch's source is pulling code: only when someone asks (script_update), never by itself before a run.
+    if (script.sourceBranch !== undefined) return { state: 'skipped' }
     try {
       const started = await this.update(id, AbortSignal.any([signal, AbortSignal.timeout(PRE_RUN_CHECK_MS)]), { byAgent: true })
       if (started.upToDate) return { state: 'current' }

@@ -464,13 +464,17 @@ export class Runner {
     renderTask(manifest, taskId, params, { dir: script.dir, adb: '0.0.0.0:0' })
 
     const runId = `run-${new Date(this.#now()).toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`
+    // The same task run again while an earlier run of it is still held (its problem being handled: the agent
+    // logged in and reran it, or the user did): this is that run's next attempt, so a pipeline waiting on it follows this one.
+    const adopted = mode === 'task' && options.retryOf === undefined ? this.#heldAttempt(scriptId, taskId) : undefined
+    const retryOf = options.retryOf ?? adopted
     let resolveFinished!: (run: RunInfo) => void
     const finished = new Promise<RunInfo>(resolve => { resolveFinished = resolve })
     const run: ActiveRun = {
       info: {
         id: runId, scriptId, scriptName: script.name, taskId, taskTitle: task?.title ?? taskId, params: {}, state: 'starting',
         startedAt: this.#now(), command: [], resources: [], tags: [], warnings: [], kind: mode, profile: profile.id, profileName: profile.name,
-        ...(options.retryOf === undefined ? {} : { retryOf: options.retryOf }),
+        ...(retryOf === undefined ? {} : { retryOf }),
       },
       mode,
       stopRequested: false, doneSeen: false, controller: new AbortController(), lines: [], pendingLines: [], release: [], finished, resolveFinished,
@@ -482,6 +486,10 @@ export class Runner {
     run.release.push(this.locks.acquire(keys, { runId, label: `${script.name} · ${run.info.taskTitle}` }))
     run.info.resources = keys.filter(k => !k.startsWith('script:'))
     this.#runs.set(runId, run)
+    if (adopted !== undefined) {
+      this.#successors.set(adopted, Promise.resolve(run.info))
+      this.#line(run, 'adg', `接着 ${adopted} 运行（那次的问题正在处理）`)
+    }
     this.#prune()
     const signal = options.signal
     if (signal !== undefined) {
@@ -756,6 +764,17 @@ export class Runner {
       this.#holds.delete(runId)
       for (const resolve of entry.waiters.splice(0)) resolve()
     }
+  }
+
+  /** The latest ended run of this task that someone is still deciding about and nothing has replaced yet. */
+  #heldAttempt(scriptId: string, taskId: string): string | undefined {
+    let found: ActiveRun | undefined
+    for (const id of this.#holds.keys()) {
+      const held = this.#runs.get(id)
+      if (held === undefined || held.mode !== 'task' || held.info.endedAt === undefined || held.info.scriptId !== scriptId || held.info.taskId !== taskId || this.#successors.has(id)) continue
+      if (found === undefined || held.info.startedAt > found.info.startedAt) found = held
+    }
+    return found?.info.id
   }
 
   /** Is someone still deciding about this run? */

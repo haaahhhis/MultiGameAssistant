@@ -190,17 +190,17 @@ export class AdgIntervene extends Service {
   }
 
   /** The monitor hands over an incident. Never throws. */
-  async handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined): Promise<Outcome> {
+  async handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined, related: readonly Incident[] = []): Promise<Outcome> {
     await this.ready
-    return this.interventions.handle(incident, mode, screenshot)
+    return this.interventions.handle(incident, mode, screenshot, related)
   }
 
   countToday(): number {
     return this.interventions.countToday()
   }
 
-  cancel(incidentId: string, why: string): void {
-    this.interventions.cancel(incidentId, why)
+  cancel(incidentId: string, why: string, summary?: string): void {
+    this.interventions.cancel(incidentId, why, summary)
   }
 
   /** The latest screenshot the screen tools took in a session. */

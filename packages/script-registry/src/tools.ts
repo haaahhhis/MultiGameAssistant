@@ -175,7 +175,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
       description: [
         '从 GitHub（repo 或用户给的链接 url）或 Mirror酱（mirrorchyan，资源 id）安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。',
         '用户贴了 GitHub 链接就原样放进 url：仓库主页、发布页（/releases/tag/…）、某个文件的下载链接、分支（/tree/…）、.git 地址、加了下载加速前缀的链接都可以，版本和文件会从链接里读出来。',
-        '默认装最新正式版；仓库没有发布版本时装默认分支的源码（之后跟着这个分支更新）。几个文件都适合本机时会返回让你先问用户选哪一个。填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。',
+        '默认装最新正式版；仓库没有发布版本时装默认分支的源码（之后跟着这个分支更新）——这等于拉代码，只在确实没有发布版本、并且用户同意时这样装。几个文件都适合本机时会返回让你先问用户选哪一个。填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。',
         '不在内置脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。装好后还没有脚本包的，按结果里的 next 去分析。',
       ].join(''),
       properties: {

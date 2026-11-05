@@ -64,7 +64,8 @@ interface Active {
   resolve: (run: PipelineRun) => void
 }
 
-type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stopPipeline?: boolean }
+/** `noRetry`: a run someone stopped on purpose (a person, the agent): the step is not tried again. */
+type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stopPipeline?: boolean; noRetry?: boolean }
 
 /** The role agent that runs pipelines' agent steps: their sessions are listed under it. */
 export const PIPELINE_ROLE: RoleSpec = {
@@ -282,7 +283,7 @@ export class Engine {
     }
     const policy = node.onFailure ?? active.pipeline.onFailure
     const attempts = active.run.nodes[node.id]!.attempts
-    if (!outcome.stopPipeline && attempts <= policy.retries) {
+    if (!outcome.stopPipeline && outcome.noRetry !== true && attempts <= policy.retries) {
       this.#set(active, node.id, { state: 'pending', detail: `第 ${attempts} 次失败（${outcome.detail}），重试` })
       return
     }
@@ -302,10 +303,12 @@ export class Engine {
           if (current.endedAt !== undefined && current.state === 'failed') return { ok: false, detail: current.outcome ?? '没有启动' }
           const ended = await this.#deps.runner.finished(current.id)
           // The monitor (or the agent, or the user) may still restart it: wait for that before going on.
-          if (this.#deps.runner.held?.(current.id) === true) this.#set(active, node.id, { detail: '运行出了问题，正在处理（可能会重新运行），处理完再继续' })
+          if (this.#deps.runner.held?.(current.id) === true) this.#set(active, node.id, { detail: '运行出了问题，正在处理：处理好、重新跑成功，或你选「重试」「忽略」之后再往下走' })
           const next = await this.#deps.runner.successor(current.id)
           if (next === undefined || active.cancelReason !== undefined) {
-            return ended.state === 'succeeded' ? { ok: true, detail: ended.outcome ?? '成功' } : { ok: false, detail: ended.outcome ?? ended.state }
+            if (ended.state === 'succeeded') return { ok: true, detail: ended.outcome ?? '成功' }
+            // Stopped on purpose by someone else (「停止」 on its incident): not run again behind their back.
+            return { ok: false, detail: ended.outcome ?? ended.state, ...(ended.halted === true ? { noRetry: true } : {}) }
           }
           current = next
         }

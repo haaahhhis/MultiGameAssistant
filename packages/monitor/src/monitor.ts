@@ -4,8 +4,11 @@
  *
  *   error / warning   a log rule of that level matched (the pack's rules)
  *   failed            the run ended failed with no earlier error incident
- *   stalled           no new script log line for `logs.stallAfter` (or the
- *                     default, once the run has logged at least one line)
+ *   stalled           no new script log line for the script's stall time: its
+ *                     own (learned from its clean runs — 1.5 × their longest
+ *                     quiet stretch — or set by the agent / the user), else
+ *                     its pack's `logs.stallAfter`, else the default (30 s,
+ *                     once the run has logged at least one line)
  *   overtime          running past twice the task's `expectedDuration`
  *
  * L0: the pack's `recovery` entries for the incident's tag (`stalled`,
@@ -18,7 +21,7 @@
  * tests drive `tick()` with an injected clock.
  */
 import type { Recovery, ScriptManifest } from '@adg/pack-schema'
-import type { Incident, IncidentKind, IncidentStep, MonitorSettings, RunInfo, RunLogLine } from '@adg/protocol'
+import type { Incident, IncidentKind, IncidentStep, MonitorSettings, RunInfo, RunLogLine, ScriptStall } from '@adg/protocol'
 import type { EmulatorBridge, Runner } from '@adg/runner'
 import { parseDuration } from '@adg/runner'
 
@@ -41,11 +44,15 @@ export interface MonitorNotice {
 
 /** What the monitor needs from `@adg/intervene` (L1/L2). */
 export interface InterventionPort {
-  handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined): Promise<{ state: string; summary: string; paused: boolean; image?: Buffer; sessionId?: string }>
+  /** `related`: the other incidents open now, which may have the same cause. */
+  handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined, related?: readonly Incident[]): Promise<{ state: string; summary: string; paused: boolean; image?: Buffer; sessionId?: string }>
   countToday(): number
   resumeRun(runId: string): Promise<boolean>
-  /** The user acted on the incident while the agent is still on it: the agent stops. */
-  cancel?(incidentId: string, why: string): void
+  /**
+   * The user acted on the incident while the agent is still on it (or waiting to start): the agent stops.
+   * `summary`: what to record instead of "you pressed …" (it was settled otherwise, e.g. a later run succeeded).
+   */
+  cancel?(incidentId: string, why: string, summary?: string): void
   /**
    * The desktop, after bringing the run's windows in front when one of them
    * was out of sight (an error box behind another window, or minimized).
@@ -55,7 +62,7 @@ export interface InterventionPort {
 }
 
 export interface MonitorDeps {
-  readonly runner: Pick<Runner, 'watch' | 'get' | 'list' | 'logs' | 'stop' | 'restart' | 'warn'> & Partial<Pick<Runner, 'hold'>>
+  readonly runner: Pick<Runner, 'watch' | 'get' | 'list' | 'logs' | 'stop' | 'restart' | 'warn'> & Partial<Pick<Runner, 'hold' | 'readLog'>>
   readonly packOf: (scriptId: string) => { manifest: ScriptManifest } | undefined
   readonly emulators: () => EmulatorBridge | undefined
   readonly notices: () => NoticeSink | undefined
@@ -66,7 +73,6 @@ export interface MonitorDeps {
   readonly onIncident: (incident: Incident) => void
   readonly now?: () => number
   /** How long a pipeline waits for the user after an incident was pushed. @default 5 minutes */
-  readonly userWaitMs?: number
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
@@ -81,14 +87,21 @@ export interface IncidentStore {
   readScreenshot(incidentId: string): Promise<Buffer | undefined>
 }
 
-export const DEFAULT_SETTINGS: MonitorSettings = { defaultStallMinutes: 30, notifyWarnings: false, screenshot: true, intervene: 'act', interventionsPerDay: 10 }
+/** Seconds a script may be quiet before the agent steps in, until its own normal rhythm is known (`scriptStall`). */
+export const DEFAULT_STALL_SECONDS = 30
+/** A learned stall time is this much longer than the longest quiet stretch of the recent clean runs. */
+const STALL_HEADROOM = 1.5
+/** Clean runs a learned stall time is drawn from. */
+const STALL_SAMPLES = 5
+
+export const DEFAULT_SETTINGS: MonitorSettings = { defaultStallSeconds: DEFAULT_STALL_SECONDS, scriptStall: {}, notifyWarnings: false, screenshot: true, intervene: 'act', interventionsPerDay: 10 }
 
 const ACTION_WORD = { stop: '停止', retry: '重试', resolve: '忽略', resume: '继续' } as const
 
 /** How long a pipeline waits for the user's answer to a pushed incident before going on. */
-const USER_WAIT_MS = 5 * 60_000
-
 const KEEP_INCIDENTS = 300
+/** Incidents opened this close together are shown to the agent with the one it handles. */
+const RELATED_MS = 60 * 60_000
 const TAIL_LINES = 12
 
 interface Watched {
@@ -99,6 +112,10 @@ interface Watched {
   sawScriptLine: boolean
   stalled?: string | undefined
   overtime: boolean
+  /** The longest stretch between two script log lines so far (ms). */
+  longestQuietMs: number
+  /** Something was wrong in this run: its quiet stretches do not show the normal rhythm. */
+  troubled: boolean
 }
 
 type Who = { by: IncidentStep['by']; name?: string }
@@ -150,6 +167,69 @@ export class Monitor {
     this.#settings = withPatch(this.#settings, patch)
     await this.#deps.store.saveSettings(this.#settings)
     return this.#settings
+  }
+
+  /**
+   * How long this script may be quiet before it counts as stalled: its own (learned from its normal runs, or set
+   * by the agent or the user), else what its pack says, else the default.
+   */
+  stallFor(scriptId: string): { seconds: number; source: 'script' | 'pack' | 'default'; entry?: ScriptStall } {
+    const own = this.#settings.scriptStall[scriptId]
+    if (own !== undefined) return { seconds: own.seconds, source: 'script', entry: own }
+    const declared = parseDuration(this.#deps.packOf(scriptId)?.manifest.logs.stallAfter)
+    if (declared !== undefined) return { seconds: Math.round(declared / 1000), source: 'pack' }
+    return { seconds: this.#settings.defaultStallSeconds, source: 'default' }
+  }
+
+  /** Set (the agent after looking at its normal logs, or the user) or clear (`null`: back to learning from the default) a script's stall time. */
+  async setStall(scriptId: string, seconds: number | null, by: 'agent' | 'user', note?: string): Promise<{ seconds: number; source: 'script' | 'pack' | 'default' }> {
+    const scriptStall = { ...this.#settings.scriptStall }
+    if (seconds === null) delete scriptStall[scriptId]
+    else scriptStall[scriptId] = { seconds: Math.max(5, Math.round(seconds)), by, ...(note === undefined || note === '' ? {} : { note: note.slice(0, 300) }), samples: scriptStall[scriptId]?.samples ?? [], at: this.#now() }
+    await this.configure({ scriptStall })
+    const now = this.stallFor(scriptId)
+    return { seconds: now.seconds, source: now.source }
+  }
+
+  /**
+   * The script's normal rhythm, from the saved logs of its recent runs that went through: the longest and the
+   * usual (95%) quiet stretch between two of its log lines in each, for choosing its stall time.
+   */
+  async rhythm(scriptId: string, runs = 5): Promise<{ runs: { id: string; task: string; lines: number; longestQuietSeconds: number; p95QuietSeconds: number; minutes: number }[]; suggestedSeconds: number | undefined }> {
+    const done = this.#deps.runner.list(scriptId).filter(r => r.kind === 'task' && r.state === 'succeeded').sort((a, b) => b.startedAt - a.startedAt).slice(0, runs)
+    const out: { id: string; task: string; lines: number; longestQuietSeconds: number; p95QuietSeconds: number; minutes: number }[] = []
+    for (const run of done) {
+      const times: number[] = []
+      for (let from = 1; ; from += 2000) {
+        const page = await this.#deps.runner.readLog?.(run.id, { fromLine: from, limit: 2000 }).catch(() => undefined)
+        if (page === undefined) break
+        for (const line of page.lines) if (line.source !== 'adg') times.push(line.at)
+        if (page.lines.length < 2000) break
+      }
+      const gaps = times.slice(1).map((t, i) => t - times[i]!).sort((a, b) => a - b)
+      if (gaps.length === 0) continue
+      out.push({
+        id: run.id, task: run.taskTitle, lines: times.length,
+        longestQuietSeconds: Math.round(gaps.at(-1)! / 1000), p95QuietSeconds: Math.round(gaps[Math.floor(gaps.length * 0.95)]! / 1000),
+        minutes: Math.round(((run.endedAt ?? run.startedAt) - run.startedAt) / 60_000),
+      })
+    }
+    const longest = Math.max(0, ...out.map(r => r.longestQuietSeconds))
+    return { runs: out, suggestedSeconds: out.length === 0 ? undefined : Math.max(this.#settings.defaultStallSeconds, Math.ceil(longest * STALL_HEADROOM)) }
+  }
+
+  /** A clean run went through: its longest quiet stretch is one more sample of the script's normal rhythm. */
+  #learn(watched: Watched): void {
+    const { run } = watched
+    if (watched.troubled || !watched.sawScriptLine) return
+    const current = this.#settings.scriptStall[run.scriptId]
+    const samples = [...(current?.samples ?? []), Math.round(watched.longestQuietMs / 1000)].slice(-STALL_SAMPLES)
+    // Set by the agent or the user: theirs stays; the samples are kept for the next look.
+    const seconds = current !== undefined && current.by !== 'learned' ? current.seconds : Math.max(this.#settings.defaultStallSeconds, Math.ceil(Math.max(...samples) * STALL_HEADROOM))
+    // Still as quick as the default: nothing to keep yet.
+    if (current === undefined && seconds === this.#settings.defaultStallSeconds && this.stallFor(run.scriptId).source === 'default') return
+    const entry: ScriptStall = { seconds, by: current?.by ?? 'learned', ...(current?.note === undefined ? {} : { note: current.note }), samples, at: this.#now() }
+    void this.configure({ scriptStall: { ...this.#settings.scriptStall, [run.scriptId]: entry } }).catch(error => this.#deps.log.warn(`saving the stall time of ${run.scriptId} failed: ${message(error)}`))
   }
 
   incidents(filter: { status?: 'open' | 'all' | undefined; runId?: string | undefined; limit?: number | undefined } = {}): Incident[] {
@@ -216,11 +296,10 @@ export class Monitor {
       const { run } = watched
       if (run.endedAt !== undefined || run.state !== 'running') continue
       const manifest = this.#deps.packOf(run.scriptId)?.manifest
-      const declared = parseDuration(manifest?.logs.stallAfter)
-      const stallMs = declared ?? (watched.sawScriptLine && this.#settings.defaultStallMinutes > 0 ? this.#settings.defaultStallMinutes * 60_000 : undefined)
+      const stall = this.stallFor(run.scriptId)
+      const stallMs = stall.seconds > 0 && (watched.sawScriptLine || stall.source !== 'default') ? stall.seconds * 1000 : undefined
       if (stallMs !== undefined && watched.stalled === undefined && now - watched.lastScriptLineAt > stallMs) {
-        const minutes = Math.round((now - watched.lastScriptLineAt) / 60_000)
-        const text = `已经 ${minutes} 分钟没有新的日志，可能卡住了`
+        const text = `已经 ${quiet(now - watched.lastScriptLineAt)}没有新的日志，可能卡住了（这个脚本超过 ${quiet(stallMs)}没动静就算卡住${stall.source === 'default' ? '，默认值' : ''}）`
         this.#deps.runner.warn(run.id, text)
         watched.stalled = this.#raise(run, 'stalled', 'stalled', text).id
       }
@@ -241,7 +320,7 @@ export class Monitor {
     if (watched === undefined) {
       const chain = run.retryOf === undefined ? run.id : this.#chains.get(run.retryOf) ?? run.retryOf
       this.#chains.set(run.id, chain)
-      watched = { run, chain, lastScriptLineAt: this.#now(), sawScriptLine: false, overtime: false }
+      watched = { run, chain, lastScriptLineAt: this.#now(), sawScriptLine: false, overtime: false, longestQuietMs: 0, troubled: false }
       this.#watched.set(run.id, watched)
     }
     watched.run = run
@@ -252,6 +331,7 @@ export class Monitor {
     if (run.kind !== 'task') return
     const watched = this.#track(run)
     if (line.source !== 'adg') {
+      if (watched.sawScriptLine) watched.longestQuietMs = Math.max(watched.longestQuietMs, line.at - watched.lastScriptLineAt)
       watched.lastScriptLineAt = line.at
       watched.sawScriptLine = true
       if (watched.stalled !== undefined) {
@@ -263,6 +343,8 @@ export class Monitor {
     if (line.level !== 'error' && line.level !== 'warning') return
     // What a run prints while it is being stopped (or after it was stopped on purpose) is the stop, not a problem.
     if (run.halted === true || run.state === 'stopping') return
+    // Read after the run already went through (its log flushed at the end): nothing to handle.
+    if (run.state === 'succeeded') return
     const tag = line.tag ?? line.level
     if (this.#incidents.some(i => i.runId === run.id && i.tag === tag && i.status === 'open')) return
     this.#raise(run, line.level, tag, line.text)
@@ -293,12 +375,19 @@ export class Monitor {
         this.#raise(run, 'failed', 'failed', run.outcome ?? '运行失败')
       }
     } else if (run.state === 'succeeded') {
-      // A restart that went through settles the incidents of the runs before it.
+      this.#learn(watched)
+      // The task went through after all: what was open about it — this run's (the script got over it itself, e.g.
+      // fixed the resolution and went on) and earlier runs' (a restart, or a run the agent or the user started after
+      // fixing it) — needs nothing more, and an agent still about to handle one is called off.
       const chain = this.#chains.get(run.id) ?? run.id
       for (const incident of this.#incidents) {
-        if (incident.status === 'open' && incident.runId !== run.id && this.#chains.get(incident.runId) === chain) this.#resolve(incident, `重新运行后成功（${run.id}）`)
+        if (incident.status !== 'open' || incident.scriptId !== run.scriptId || incident.taskId !== run.taskId) continue
+        const why = incident.runId === run.id ? '运行最终成功（脚本自己恢复了）'
+          : this.#chains.get(incident.runId) === chain ? `重新运行后成功（${run.id}）`
+          : `之后同一任务运行成功了（${run.id}），不用再处理`
+        this.#deps.intervene?.()?.cancel?.(incident.id, '已解决', `不用再处理：${why}`)
+        this.#resolve(incident, why)
       }
-      for (const incident of open) if (incident.kind === 'warning' || incident.kind === 'overtime' || incident.kind === 'stalled') this.#resolve(incident, '运行最终成功')
     }
   }
 
@@ -317,22 +406,24 @@ export class Monitor {
       status: 'open', createdAt: now, updatedAt: now, steps: [], screenshot: false,
     }
     this.#incidents.push(incident)
+    const watched = this.#watched.get(run.id)
+    if (watched !== undefined) watched.troubled = true
     if (this.#incidents.length > KEEP_INCIDENTS) this.#incidents.splice(0, this.#incidents.length - KEEP_INCIDENTS)
     this.#deps.log.info(`incident ${incident.id} ${kind}/${tag} on ${run.id}: ${detail}`)
     this.#changed(incident)
-    // A pipeline following this run waits for what is decided here (a restart counts as the same step).
+    // A pipeline following this run waits until the problem is settled — handled, 重试 / 忽略 / 停止, or the task
+    // run again successfully (by the agent, the user) — not on a timer: the next step must not start meanwhile.
     if (severity === 'error') {
       const release = this.#deps.runner.hold?.(run.id)
       if (release !== undefined) this.#holds.set(incident.id, release)
     }
-    this.#enqueue(run.id, async () => {
-      let pushed = false
+    // One script's problems one at a time (often one cause): a later one starts after the earlier is handled, and is
+    // checked again first — the earlier handling may have settled it.
+    this.#enqueue(run.scriptId, async () => {
       try {
-        pushed = await this.#handle(incident)
+        await this.#handle(incident)
       } finally {
-        // Told the user: give them a while to answer (重试 from Feishu still counts), then let the pipeline go on.
-        if (pushed && incident.status === 'open') setTimeout(() => this.#release(incident.id), this.#deps.userWaitMs ?? USER_WAIT_MS).unref?.()
-        else this.#release(incident.id)
+        if (incident.status !== 'open') this.#release(incident.id)
       }
     })
     return incident
@@ -347,6 +438,7 @@ export class Monitor {
   /** @returns whether the user was told (a notice went out). */
   async #handle(incident: Incident): Promise<boolean> {
     if (this.#settled(incident)) return false
+    const now = this.#now()
     const recovered = await this.#recover(incident)
     if (this.#settled(incident)) return false
     if (incident.severity === 'warning' && !this.#settings.notifyWarnings) return false
@@ -362,7 +454,9 @@ export class Monitor {
         this.#step(incident, { action: 'intervene', by: 'rule', ok: false, detail: `今天的 agent 处理次数（${this.#settings.interventionsPerDay}）已用完，直接交给你` })
       } else {
         this.#step(incident, { action: 'intervene', by: 'agent', ok: true, detail: this.#settings.intervene === 'act' ? '交给 agent 处理（脚本暂停，agent 看屏幕并操作）' : '交给 agent 诊断' })
-        agent = await port.handle(incident, this.#settings.intervene, image)
+        // The others open now, often the same cause (the game logged out, a resolution, the network): the agent sees them together.
+        const related = this.#incidents.filter(i => i.status === 'open' && i.id !== incident.id && now - i.createdAt < RELATED_MS)
+        agent = await port.handle(incident, this.#settings.intervene, image, related)
         const fixed = agent.state === 'resolved' || agent.state === 'retried'
         this.#step(incident, { action: 'intervene', by: 'agent', ok: fixed, detail: `${AGENT_STATE[agent.state] ?? agent.state}：${agent.summary}` })
         if (fixed) {
@@ -539,6 +633,12 @@ const AGENT_STATE: Readonly<Record<string, string>> = {
   resolved: '已处理，脚本继续', retried: '已处理，重新运行', 'gave-up': '处理不了', timeout: '超时', failed: '没能开始', 'taken-over': '你接管了',
 }
 
+/** A quiet stretch in words: 45 秒, 3 分钟. */
+function quiet(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  return seconds < 120 ? `${seconds} 秒` : `${Math.round(seconds / 60)} 分钟`
+}
+
 const TITLE: Readonly<Record<IncidentKind, string>> = {
   error: '出错', warning: '警告', failed: '运行失败', stalled: '可能卡住了', overtime: '运行超时',
 }
@@ -546,7 +646,8 @@ const DO: Readonly<Record<Recovery['do'], string>> = { 'reconnect-adb': '重连�
 
 function withPatch(base: MonitorSettings, patch: SettingsPatch): MonitorSettings {
   return {
-    defaultStallMinutes: patch.defaultStallMinutes ?? base.defaultStallMinutes,
+    defaultStallSeconds: patch.defaultStallSeconds ?? base.defaultStallSeconds,
+    scriptStall: patch.scriptStall ?? base.scriptStall,
     notifyWarnings: patch.notifyWarnings ?? base.notifyWarnings,
     screenshot: patch.screenshot ?? base.screenshot,
     intervene: patch.intervene ?? base.intervene,

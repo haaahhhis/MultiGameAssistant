@@ -58,13 +58,30 @@ export const Incident = z.object({
 })
 export type Incident = z.infer<typeof Incident>
 
+/**
+ * How long one script may be quiet before it counts as stalled, as found on this computer: `learned` from its runs
+ * that went through (1.5 × the longest quiet stretch of the last few), or set by the `agent` (monitor_stall_set) or the `user`.
+ */
+export const ScriptStall = z.object({
+  seconds: z.number().int().min(5).max(24 * 3600),
+  by: z.enum(['learned', 'agent', 'user']),
+  /** Why (the agent's words), for people. */
+  note: z.string().max(300).optional(),
+  /** The longest quiet stretch (seconds) of each of the last runs that went through cleanly, newest last. */
+  samples: z.array(z.number().min(0)).max(10).default([]),
+  at: z.number(),
+})
+export type ScriptStall = z.infer<typeof ScriptStall>
+
 export const MonitorSettings = z.object({
   /**
-   * Minutes without a new script log line before a run counts as stalled,
-   * for packs that declare no `logs.stallAfter`; 0 turns it off. Applies only
+   * Seconds without a new script log line before a run counts as stalled and goes to the agent, for a script
+   * with nothing of its own in `scriptStall` (nor `logs.stallAfter` in its pack); 0 turns it off. Applies only
    * once the run has written at least one log line.
    */
-  defaultStallMinutes: z.number().int().min(0).max(24 * 60),
+  defaultStallSeconds: z.number().int().min(0).max(24 * 3600),
+  /** Script id → its own stall time (learned from its normal runs, or set by the agent or the user). */
+  scriptStall: z.record(z.string(), ScriptStall),
   /** Also push `warning` incidents to chat channels. */
   notifyWarnings: z.boolean(),
   /** Take a screenshot (emulator or desktop) when an incident is raised. */

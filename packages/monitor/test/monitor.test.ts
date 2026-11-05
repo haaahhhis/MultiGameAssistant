@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { parseManifest } from '@adg/pack-schema'
 import type { Incident, ScriptInfo } from '@adg/protocol'
 import { Runner, type EmulatorBridge } from '@adg/runner'
-import { Monitor, type IncidentStore, type InterventionPort, type MonitorNotice } from '../src/monitor.ts'
+import { DEFAULT_SETTINGS, DEFAULT_STALL_SECONDS, Monitor, type IncidentStore, type InterventionPort, type MonitorNotice } from '../src/monitor.ts'
 
 const CLI = fileURLToPath(new URL('../../test-kit/src/fake-script-cli.ts', import.meta.url))
 const SAMPLES = fileURLToPath(new URL('./samples/', import.meta.url))
@@ -340,4 +340,90 @@ test("a desktop task's screenshot brings its hidden windows forward first; when 
   assert.equal(failing.shots.get(plain.id)?.toString(), 'desktop')
   assert.equal(plain.steps.find(s => s.action === 'screenshot')!.detail, '已截取桌面')
   failing.monitor.stop()
+})
+
+test('a failed run stays held while its incident is open (the pipeline waits); the task run again meanwhile is its next attempt, and its success settles it', async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }').replace('success: done-log', 'success: exit-code')
+  const cancelled: string[] = []
+  const intervene: InterventionPort = {
+    handle: async () => ({ state: 'gave-up', summary: '账号登录过期，要主人登录', paused: false }),
+    countToday: () => 0,
+    resumeRun: async () => false,
+    cancel: (id, why, summary) => { cancelled.push(`${id}:${why}:${summary ?? ''}`) },
+  }
+  const { dir, runner, monitor, notices } = setup(pack, { 'daily.json': { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { exit: 3 }] } }, intervene)
+  await monitor.configure({ intervene: 'act' })
+  await monitor.start(0)
+  const first = await runner.finished((await runner.start('maa', 'daily')).id)
+  await monitor.idle()
+  const [incident] = monitor.incidents()
+  assert.equal(notices.length, 1, 'the agent gave up: the user is told')
+  assert.equal(runner.held(first.id), true, 'not let go on a timer: the next pipeline step must not start')
+
+  // The agent (or the user) logs in and runs the task again by hand.
+  writeFileSync(join(dir, 'daily.json'), JSON.stringify({ steps: [{ exit: 0 }] }))
+  const again = await runner.start('maa', 'daily')
+  assert.equal(again.retryOf, first.id, 'the next attempt of the held run')
+  const done = await runner.finished(again.id)
+  await monitor.idle()
+  assert.equal(done.state, 'succeeded')
+  const settled = monitor.incident(incident!.id)
+  assert.equal(settled.status, 'resolved')
+  assert.match(settled.resolution ?? '', /重新运行后成功/)
+  assert.equal(runner.held(first.id), false)
+  assert.equal((await runner.successor(first.id))?.id, again.id, 'a pipeline waiting on the failed run follows the new one')
+  assert.equal(cancelled.length, 1, 'an agent still about to handle it is called off')
+  assert.match(cancelled[0]!, /不用再处理/)
+  monitor.stop()
+})
+
+
+test('no new log line for the default 30 seconds: stalled, and to the agent; the stall time says where it came from', async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }')
+  const { runner, monitor, later } = setup(pack, { 'daily.json': { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { sleepMs: 60_000 }] } })
+  await monitor.start(0)
+  assert.equal(DEFAULT_SETTINGS.defaultStallSeconds, DEFAULT_STALL_SECONDS)
+  assert.equal(DEFAULT_STALL_SECONDS, 30)
+  assert.deepEqual(monitor.stallFor('maa'), { seconds: 30, source: 'default' })
+  const run = await runner.start('maa', 'daily')
+  for (let i = 0; i < 100 && !runner.logs(run.id).some(l => l.text.includes('开始任务')); i++) await new Promise(r => setTimeout(r, 50))
+  later(20_000)
+  monitor.tick()
+  assert.equal(monitor.incidents().length, 0, 'quiet for 20 s is fine')
+  later(15_000)
+  monitor.tick()
+  const [stalled] = monitor.incidents()
+  assert.equal(stalled?.kind, 'stalled')
+  assert.match(stalled?.detail ?? '', /已经 3\d 秒没有新的日志，可能卡住了（这个脚本超过 30 秒没动静就算卡住，默认值）/)
+  await runner.stop(run.id)
+  await monitor.idle()
+  monitor.stop()
+})
+
+test("each script learns its own stall time from its clean runs; the agent can set one after reading the rhythm, and clear it", async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }').replace('success: done-log', 'success: exit-code')
+  const { runner, monitor } = setup(pack, { 'daily.json': { steps: [{ logFile: 'debug/gui.log', line: '开始' }, { sleepMs: 1600 }, { logFile: 'debug/gui.log', line: '还在' }, { sleepMs: 200 }, { exit: 0 }] } })
+  await monitor.start(0)
+  await monitor.configure({ defaultStallSeconds: 1 })
+  const run = await runner.finished((await runner.start('maa', 'daily')).id)
+  await monitor.idle()
+  assert.equal(run.state, 'succeeded')
+  const learned = monitor.stallFor('maa')
+  assert.equal(learned.source, 'script')
+  assert.equal(learned.entry?.by, 'learned')
+  assert.equal(learned.seconds, Math.ceil(learned.entry!.samples.at(-1)! * 1.5), '1.5 × its longest quiet stretch')
+  assert.ok(learned.seconds >= 2)
+
+  const rhythm = await monitor.rhythm('maa')
+  assert.equal(rhythm.runs[0]?.id, run.id)
+  assert.ok((rhythm.runs[0]?.longestQuietSeconds ?? 0) >= 1)
+  assert.equal(rhythm.suggestedSeconds, Math.max(1, Math.ceil(rhythm.runs[0]!.longestQuietSeconds * 1.5)))
+
+  assert.deepEqual(await monitor.setStall('maa', 90, 'agent', '战斗时最长 60 秒不输出'), { seconds: 90, source: 'script' })
+  await runner.finished((await runner.start('maa', 'daily')).id)
+  await monitor.idle()
+  assert.equal(monitor.stallFor('maa').seconds, 90, "the agent's value stays; later runs only add samples")
+  assert.equal(monitor.stallFor('maa').entry?.samples.length, 2)
+  assert.deepEqual(await monitor.setStall('maa', null, 'agent'), { seconds: 1, source: 'default' })
+  monitor.stop()
 })

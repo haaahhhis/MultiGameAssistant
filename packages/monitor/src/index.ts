@@ -4,8 +4,9 @@
  *
  * Needs the runner and the script library; uses the emulator plugin for ADB
  * reconnects and screenshots, and `@adg/notify` for chat channels, when they
- * are loaded. Contributes the `monitor_incidents` agent tool and the
- * `monitor@1` capability.
+ * are loaded. Contributes the `monitor_incidents` agent tool, the stall-time
+ * tools (`monitor_stall_check` reads a script's normal log rhythm,
+ * `monitor_stall_set` sets how long it may be quiet) and the `monitor@1` capability.
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -21,7 +22,7 @@ import { Monitor } from './monitor.ts'
 import { desktopScreenshot } from './screenshot.ts'
 import { FileIncidentStore } from './store.ts'
 
-export { Monitor, DEFAULT_SETTINGS, type IncidentStore, type InterventionPort, type SettingsPatch, type MonitorDeps, type MonitorNotice, type NoticeSink } from './monitor.ts'
+export { Monitor, DEFAULT_SETTINGS, DEFAULT_STALL_SECONDS, type IncidentStore, type InterventionPort, type SettingsPatch, type MonitorDeps, type MonitorNotice, type NoticeSink } from './monitor.ts'
 export { FileIncidentStore } from './store.ts'
 export { desktopScreenshot } from './screenshot.ts'
 
@@ -34,8 +35,8 @@ declare module '@deepseek-ai/cordis' {
 const ConfigSchema = z.object({
   /** Incidents, settings and screenshots: `<dataDir>/monitor/`. */
   dataDir: z.string().min(1),
-  /** Stall and overtime check interval. @default 15000 */
-  tickMs: z.number().int().min(0).default(15_000),
+  /** Stall and overtime check interval: often enough for a 30-second stall time. @default 5000 */
+  tickMs: z.number().int().min(0).default(5_000),
 })
 export type Config = z.input<typeof ConfigSchema>
 
@@ -77,6 +78,8 @@ export class AdgMonitor extends Service {
     ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-monitor tools', agent => {
       const registered: Array<() => void> = []
       registered.push(agent.tools.register(incidentsTool(monitor, this.ready)))
+      registered.push(agent.tools.register(stallCheckTool(monitor, this.ready)))
+      registered.push(agent.tools.register(stallSetTool(monitor, this.ready)))
       return () => { for (const dispose of registered) dispose() }
     }))
 
@@ -136,6 +139,66 @@ function incidentsTool(monitor: Monitor, ready: Promise<void>): ToolDefinition {
       })) as never
     },
     presentCall: () => ({ card: 'generic', title: '查看运行异常', kind: 'read' }),
+  }
+}
+
+const ScriptIdArg = z.string().trim().min(1).max(64)
+
+function stallCheckTool(monitor: Monitor, ready: Promise<void>): ToolDefinition {
+  return {
+    name: 'monitor_stall_check',
+    description: '看一个脚本正常运行时日志的节奏，用来定它「多久没动静算卡住」：最近几次成功运行里，两条日志之间最长和通常（95%）隔多久，以及现在用的卡住时间和来源（脚本自己的：学到的或设过的 / 脚本包写的 / 默认）。默认 30 秒没新日志就交给干预。',
+    parameters: { type: 'object', properties: { id: { type: 'string', description: '脚本 id。' } }, required: ['id'], additionalProperties: false },
+    output: { schema: {}, render: (_args, value): ContentBlock[] => [{ type: 'text', text: JSON.stringify(value, null, 1) }] },
+    timeoutMs: 60_000,
+    isConcurrencySafe: () => true,
+    execute: async args => {
+      await ready
+      const id = ScriptIdArg.parse((args as { id?: unknown } | undefined)?.id)
+      const now = monitor.stallFor(id)
+      const rhythm = await monitor.rhythm(id)
+      return JSON.parse(JSON.stringify({
+        stall_seconds: now.seconds,
+        source: now.source === 'script' ? (now.entry?.by === 'learned' ? '从这台电脑上的成功运行学到的' : now.entry?.by === 'agent' ? 'agent 设的' : '用户设的') : now.source === 'pack' ? '脚本包写的' : '默认值',
+        note: now.entry?.note,
+        learned_from: now.entry?.samples.length === 0 ? undefined : now.entry?.samples,
+        default_seconds: monitor.settings.defaultStallSeconds,
+        recent_successful_runs: rhythm.runs,
+        suggested_seconds: rhythm.suggestedSeconds,
+        how: '建议值 = 最近成功运行里最长的安静时间 × 1.5（不低于默认值）。脚本有正常的长时间安静（等加载、等体力、长战斗）时把卡住时间设得比它长；真卡住时越短越早发现。',
+      })) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `看日志节奏：${String((args as { id?: unknown } | undefined)?.id ?? '')}`, kind: 'read' }),
+  }
+}
+
+function stallSetTool(monitor: Monitor, ready: Promise<void>): ToolDefinition {
+  return {
+    name: 'monitor_stall_set',
+    description: '设一个脚本「多久没有新日志算卡住」（秒），先用 monitor_stall_check 看它正常时的日志节奏再定。seconds 填 null 恢复成自动：从它之后的成功运行里学（没学到之前用默认 30 秒）。一个「可能卡住了」的异常其实是这个脚本正常的安静期时，用它调大，再结束异常。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '脚本 id。' },
+        seconds: { type: ['integer', 'null'], description: '秒数（5 以上）；null 恢复自动。' },
+        note: { type: 'string', description: '为什么这样定，例如「战斗中最长 70 秒不输出」。' },
+      },
+      required: ['id', 'seconds'],
+      additionalProperties: false,
+    },
+    output: { schema: {}, render: (_args, value): ContentBlock[] => [{ type: 'text', text: JSON.stringify(value) }] },
+    timeoutMs: 30_000,
+    isConcurrencySafe: () => false,
+    execute: async args => {
+      await ready
+      const a = z.object({ id: ScriptIdArg, seconds: z.number().int().min(5).max(24 * 3600).nullable(), note: z.string().max(300).optional() }).parse(args ?? {})
+      const now = await monitor.setStall(a.id, a.seconds, 'agent', a.note)
+      return { stall_seconds: now.seconds, source: now.source } as never
+    },
+    presentCall: args => {
+      const a = (args ?? {}) as { id?: unknown; seconds?: unknown }
+      return { card: 'generic', title: a.seconds === null ? `卡住时间恢复自动：${String(a.id ?? '')}` : `卡住时间设为 ${String(a.seconds)} 秒：${String(a.id ?? '')}`, kind: 'other' }
+    },
   }
 }
 

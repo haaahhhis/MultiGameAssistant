@@ -7,7 +7,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { RunLog, RUN_STATE } from '../scripts/RunsCard.tsx'
-import { errorText } from '../scripts/data.ts'
+import { errorText, useScriptList } from '../scripts/data.ts'
 import { Select } from '../../components/Select.tsx'
 
 /** The agent's interventions by incident, and opening its session, for the incident rows. */
@@ -249,14 +249,29 @@ function MonitorSettingsCard({ client }: { client: AdgClient }) {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => { client.connection.call('monitor/settings', {}).then(setSettings).catch(e => setError(errorText(e))) }, [client])
   const set = (patch: Partial<MonitorSettings>) => client.connection.call('monitor/settings/set', patch).then(setSettings).catch(e => setError(errorText(e)))
+  const scripts = useScriptList(client).data?.scripts ?? []
+  const own = Object.entries(settings?.scriptStall ?? {}).sort(([a], [b]) => a.localeCompare(b))
   return (
     <section className="card">
       <h3>监控设置</h3>
       {settings !== null && (
         <>
-          <label className="field-label" htmlFor="stall-minutes">多少分钟没有新日志算卡住（脚本包没写时；0 = 不检测）</label>
-          <input id="stall-minutes" className="text-input plain" type="number" min={0} max={1440} defaultValue={settings.defaultStallMinutes}
-            onBlur={e => void set({ defaultStallMinutes: Math.max(0, Math.min(1440, Math.round(Number(e.target.value) || 0))) })} />
+          <label className="field-label" htmlFor="stall-seconds">多少秒没有新日志算卡住、交给干预（默认值；0 = 不检测）</label>
+          <input id="stall-seconds" className="text-input plain" type="number" min={0} max={86400} defaultValue={settings.defaultStallSeconds}
+            onBlur={e => void set({ defaultStallSeconds: Math.max(0, Math.min(86400, Math.round(Number(e.target.value) || 0))) })} />
+          <p className="muted small">每个脚本会从自己跑成功的记录里学：卡住时间取最近几次里最长安静时间的 1.5 倍（不低于上面的默认值）；agent 看过日志节奏后也会替它调。</p>
+          {own.length > 0 && (
+            <ul className="stall-list">
+              {own.map(([id, entry]) => (
+                <li key={id}>
+                  <span>{scripts.find(s => s.id === id)?.name ?? id}</span>
+                  <span className="muted small">{entry.seconds} 秒 · {entry.by === 'learned' ? '学到的' : entry.by === 'agent' ? 'agent 设的' : '你设的'}{entry.note === undefined ? '' : `：${entry.note}`}</span>
+                  <span className="spacer" />
+                  <button className="link-button small" onClick={() => { const { [id]: _gone, ...rest } = settings.scriptStall; void set({ scriptStall: rest }) }}>恢复自动</button>
+                </li>
+              ))}
+            </ul>
+          )}
           <label className="check-label"><input type="checkbox" checked={settings.screenshot} onChange={e => void set({ screenshot: e.target.checked })} />出错时截图（模拟器画面或桌面）并随通知发送</label>
           <label className="check-label"><input type="checkbox" checked={settings.notifyWarnings} onChange={e => void set({ notifyWarnings: e.target.checked })} />警告也推送（默认只推送出错、失败、卡住）</label>
           <label className="field-label" htmlFor="intervene-mode">自动处理解决不了的问题，先交给 agent（需要能看图的模型）</label>

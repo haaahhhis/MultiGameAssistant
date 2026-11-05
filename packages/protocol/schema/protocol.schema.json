@@ -12832,10 +12832,57 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "defaultStallMinutes": {
+        "defaultStallSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1440
+          "maximum": 86400
+        },
+        "scriptStall": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "seconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 86400
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "learned",
+                  "agent",
+                  "user"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "samples": {
+                "default": [],
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "seconds",
+              "by",
+              "samples",
+              "at"
+            ],
+            "additionalProperties": false
+          }
         },
         "notifyWarnings": {
           "type": "boolean"
@@ -12858,7 +12905,8 @@
         }
       },
       "required": [
-        "defaultStallMinutes",
+        "defaultStallSeconds",
+        "scriptStall",
         "notifyWarnings",
         "screenshot",
         "intervene",
@@ -12870,10 +12918,57 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "defaultStallMinutes": {
+        "defaultStallSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1440
+          "maximum": 86400
+        },
+        "scriptStall": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "seconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 86400
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "learned",
+                  "agent",
+                  "user"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "samples": {
+                "default": [],
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "seconds",
+              "by",
+              "samples",
+              "at"
+            ],
+            "additionalProperties": false
+          }
         },
         "notifyWarnings": {
           "type": "boolean"
@@ -12901,10 +12996,57 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "defaultStallMinutes": {
+        "defaultStallSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1440
+          "maximum": 86400
+        },
+        "scriptStall": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "seconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 86400
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "learned",
+                  "agent",
+                  "user"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "samples": {
+                "default": [],
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "seconds",
+              "by",
+              "samples",
+              "at"
+            ],
+            "additionalProperties": false
+          }
         },
         "notifyWarnings": {
           "type": "boolean"
@@ -12927,7 +13069,8 @@
         }
       },
       "required": [
-        "defaultStallMinutes",
+        "defaultStallSeconds",
+        "scriptStall",
         "notifyWarnings",
         "screenshot",
         "intervene",

@@ -18,7 +18,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Incident, Intervention, QuestionAnswerItem } from '@adg/protocol'
+import { UPDATE_RULE, type Incident, type Intervention, type QuestionAnswerItem } from '@adg/protocol'
 import type { RoleSpec } from '@adg/gateway'
 import { finalText, type Conversations } from '@adg/notify'
 import type { Runner } from '@adg/runner'
@@ -84,7 +84,7 @@ export const INTERVENE_ROLE: RoleSpec = {
     'screen_*', 'window_*', 'emulator_*', 'game_launch', 'game_close', 'game_locate',
     'script_runs', 'script_run_log', 'script_run', 'script_stop', 'script_tasks', 'script_help', 'script_changelog', 'script_update',
     'script_config_*', 'script_settings', 'script_profiles', 'script_env_check', 'script_env_fix',
-    'monitor_incidents', 'intervention_done', 'system_info', 'skill_focus', 'skill_save',
+    'monitor_incidents', 'monitor_stall_*', 'intervention_done', 'system_info', 'skill_focus', 'skill_save',
   ],
   duty: [
     '# 你的角色：干预',
@@ -217,7 +217,7 @@ export class Interventions {
   }
 
   /** Hand an incident to the agent and wait for it to finish. Never throws. */
-  async handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined): Promise<Outcome> {
+  async handle(incident: Incident, mode: 'diagnose' | 'act', screenshot: Buffer | undefined, related: readonly Incident[] = []): Promise<Outcome> {
     const now = this.#now()
     const item: Intervention = {
       id: `iv-${new Date(now).toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${(++this.#seq).toString(36)}`,
@@ -269,7 +269,7 @@ export class Interventions {
       this.#changed(item)
       const reply = await conversations.handOff({
         to: { id: INTERVENE_ROLE.id, name: INTERVENE_ROLE.name }, by: '监控', title: incident.title, focus, relay: true,
-        task: this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows),
+        task: this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows, related),
         signal: AbortSignal.any([active.controller.signal, timeout]),
         ...(screenshot === undefined ? {} : { images: [screenshot] }),
       })
@@ -317,11 +317,16 @@ export class Interventions {
     return item
   }
 
-  /** The user stopped, reran, ignored or resumed the incident's run while the agent was on it. */
-  cancel(incidentId: string, why: string): void {
+  /**
+   * The user stopped, reran, ignored or resumed the incident's run while the agent was on it — or it was settled
+   * otherwise (`summary`), e.g. the task then ran through: the agent stops, or never starts if it was still waiting its turn.
+   */
+  cancel(incidentId: string, why: string, summary?: string): void {
     const item = this.#items.find(i => i.incidentId === incidentId && i.state === 'running')
     if (item === undefined) return
-    Object.assign(item, { state: 'taken-over', summary: `你已经点了「${why}」，agent 已停止`, endedAt: this.#now() })
+    // Settled while the agent is on it (most likely by its own rerun): it finishes in its own words.
+    if (summary !== undefined && item.sessionId !== undefined && this.#bySession.get(item.sessionId)?.[0] === item.id) return
+    Object.assign(item, { state: 'taken-over', summary: summary ?? `你已经点了「${why}」，agent 已停止`, endedAt: this.#now() })
     this.#active.get(item.id)?.controller.abort(new Error(`用户点了「${why}」`))
     this.#changed(item)
   }
@@ -355,10 +360,11 @@ export class Interventions {
     try { this.#deps.runner.note(item.runId, '异常已处理，脚本继续运行') } catch { /* the run is gone */ }
   }
 
-  #prompt(incident: Incident, mode: 'diagnose' | 'act', paused: boolean, alive: boolean, resources: readonly string[], windows: readonly RunWindow[] = []): string {
+  #prompt(incident: Incident, mode: 'diagnose' | 'act', paused: boolean, alive: boolean, resources: readonly string[], windows: readonly RunWindow[] = [], related: readonly Incident[] = []): string {
     const targets = this.#deps.describeTargets({ resources })
+    const clock = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour12: false })
     return [
-      `自动脚本运行中出了问题，需要你看一下。`,
+      `自动脚本运行中出了问题，需要你看一下。（发现于 ${clock(incident.createdAt)}；你可能是排队之后才开始处理的。）`,
       `脚本与任务：${incident.scriptName} · ${incident.taskTitle}（脚本 id ${incident.scriptId}，运行 id ${incident.runId}）`,
       `问题：${incident.title}`,
       `详情：${incident.detail}`,
@@ -369,6 +375,15 @@ export class Interventions {
       '',
       '附图是发现问题时的截图。',
       ...windowLines(windows),
+      ...(related.length === 0 ? [] : [
+        '',
+        '同时还开着这些异常，常常是同一个原因（游戏掉了登录、分辨率不对、网络、窗口被挡），一起看：',
+        ...related.slice(0, 8).map(r => `- ${clock(r.createdAt)} ${r.title}（运行 ${r.runId}）：${r.detail.slice(0, 120)}`),
+        '找到共同原因时一次处理好，在 summary 里说明也解决了哪些；这次只调用一次 intervention_done（针对上面这条）。',
+      ]),
+      '',
+      ...(incident.kind === 'stalled' ? ['「可能卡住了」是按这个脚本多久没新日志判断的（默认 30 秒）。先用 monitor_stall_check 看它正常时的日志节奏：要是这只是它正常的安静期（还在加载、战斗、等待），用 monitor_stall_set 把它的卡住时间调到比正常最长的安静期长，再调用 intervention_done（resolved）让脚本继续；真卡住了才往下处理。', ''] : []),
+      '第一步：先确认现在还需不需要处理。问题发现到现在可能已经过了一会儿，脚本可能自己恢复了（比如自己重启游戏改好了分辨率并跑完）、用户或别的 agent 可能已经处理过或重跑成功了。用 script_runs 看这个任务在这之后有没有成功的运行、这次运行现在的状态，再看进程和窗口；已经不需要处理就直接调用 intervention_done（resolved），summary 写「不需要处理」和依据，不要再去改设置或点画面。',
       '',
       mode === 'act'
         ? [
@@ -376,6 +391,7 @@ export class Interventions {
             '先从日志和附图判断原因：能用 retry、script_update 或改配置解决的，就直接这样做，不用去点画面。',
             `只有必须在画面上操作时：你可以操作 ${targets}。用 screen_capture 截图看清楚，再用 screen_tap / screen_swipe / screen_key / screen_type 操作，坐标用最新那张截图的像素坐标；需要确认结果时再截图，不用每步都截。`,
             '常见情况：游戏更新提示（点确认或更新，等它下载完）、网络错误（点重试）、公告或活动弹窗（关掉）、掉线需要重连（点重新连接）。脚本版本太旧导致识别失败时，可以用 script_update 更新脚本，然后选择 retry。',
+            UPDATE_RULE,
           ].join('\n')
         : '这次只做诊断：可以用 screen_capture 截图查看，但不要点击或输入。说明原因和建议。',
       '不要修改脚本的文件；不要付费、不要输入密码或验证码（需要的话交给用户）。旁边可能没有人：不要用 ask_user_question 提问，需要用户做的写进 summary。',

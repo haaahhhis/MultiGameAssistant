@@ -338,3 +338,25 @@ test("the agent is told about the run's windows, which are brought forward befor
   assert.match(prompt, /先看清它写了什么/)
   assert.match(prompt, /screen_capture（target=window/)
 })
+
+test('the agent first checks the incident still needs handling, sees the others open with it, and updates only through official channels', async () => {
+  let prompt = ''
+  const env = interventions({ ask: async (s, text) => { prompt = text; env.iv().done(s, 'resolved', '不需要处理：10:53 同一任务已经跑成功'); return '' } })
+  const other: Incident = { ...incident, id: 'inc-2', runId: 'run-0', title: '三月七小助手 · 日常：警告', detail: '账号登录过期', createdAt: 1000 }
+  await env.iv().handle({ ...incident, createdAt: 2000 }, 'act', undefined, [other])
+  assert.match(prompt, /第一步：先确认现在还需不需要处理/)
+  assert.match(prompt, /script_runs/)
+  assert.match(prompt, /同时还开着这些异常[\s\S]*三月七小助手 · 日常：警告（运行 run-0）：账号登录过期/)
+  assert.match(prompt, /不要用 git clone \/ pull \/ checkout 拉代码/)
+})
+
+test('settled otherwise (the task then ran through) while the agent is already at it: it is left to finish in its own words', async () => {
+  let release!: () => void
+  const env = interventions({ ask: () => new Promise(r => { release = () => r('') }) })
+  const working = env.iv().handle(incident, 'act', undefined)
+  await new Promise(r => setTimeout(r, 20))
+  env.iv().cancel('inc-1', '已解决', '不用再处理：之后同一任务运行成功了')
+  assert.equal(env.iv().list()[0]?.state, 'running', 'the one whose turn is running is left to finish')
+  release()
+  await working
+})
