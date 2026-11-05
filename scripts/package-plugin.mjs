@@ -4,7 +4,8 @@
  * desktop installer's Electron and dsh. The file name has no version, so a
  * release's `releases/latest/download/dsh-multigameassistant.tgz` is always the
  * newest (the version is in its package.json). The release workflow attaches
- * it to the GitHub release and publishes it to npm under the same name.
+ * it to the GitHub release and stages it on npm under the same name (live once
+ * a maintainer approves it).
  *
  *   pnpm package:plugin [--skip-build] [--version 1.1.0] [--out <folder>]
  *

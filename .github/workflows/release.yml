@@ -3,7 +3,8 @@
 # `pnpm release` makes the tag, scripts/release.mjs). Run by hand
 # (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
 # The dsh plugin package (dsh-multigameassistant.tgz, no version in the name, so the release's
-# latest/download link is always the newest) also goes to npm under the same name (the npm job).
+# latest/download link is always the newest) is also staged on npm under the same name (the npm job):
+# it goes live once a maintainer approves it on npmjs.com (Staged Packages), with 2FA.
 name: Release
 
 on:
@@ -147,14 +148,15 @@ jobs:
             --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md "${flags[@]}"
 
   npm:
-    name: Publish the dsh plugin to npm
+    name: Stage the dsh plugin on npm
     if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Trusted publishing: npm takes this workflow's OIDC identity instead of a token (set up once on
+    # Trusted publishing: npm takes this workflow's OIDC identity instead of a token (set up on
     # npmjs.com → the package → Settings → Trusted publishing: haaahhhis/MultiGameAssistant, release.yml),
-    # and records where the package was built (provenance).
+    # and records where the package was built (provenance). The version is only staged: nothing is
+    # live on npm until a maintainer approves it there.
     permissions:
       contents: read
       id-token: write
@@ -169,13 +171,24 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Publish
+      - name: Stage
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          # Trusted publishing needs npm 11.5.1 or later.
+          # Trusted publishing and `npm stage` need a recent npm 11.
           npm install -g npm@11
+          # Staged from the release's own package (npm stage publish packs a folder): the same files as on GitHub.
+          mkdir stage
+          tar -xzf release/dsh-multigameassistant.tgz -C stage
+          cd stage/package
+          [[ "$(node -p "require('./package.json').version")" == "${TAG#v}" ]] || { echo "package.json is not ${TAG#v}"; exit 1; }
           # A pre-release (v2.1.0-rc.1) goes out as "next", so `dsh plugin add dsh-multigameassistant` keeps the stable one.
           dist=latest
           if [[ "$TAG" == *-* ]]; then dist=next; fi
-          npm publish release/dsh-multigameassistant.tgz --access public --tag "$dist"
+          npm stage publish --access public --tag "$dist"
+          {
+            echo "## npm"
+            echo
+            echo "dsh-multigameassistant@${TAG#v} is staged as \`$dist\`. It goes live once approved on"
+            echo "npmjs.com → the package → Staged Packages (Approve, with 2FA), or \`npm stage approve <id>\`."
+          } >> "$GITHUB_STEP_SUMMARY"

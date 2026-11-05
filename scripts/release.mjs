@@ -5,7 +5,8 @@
  * drafts the release notes from the feat and fix commits since the previous
  * release and opens them in the editor, then tags the commit with the edited
  * notes and pushes the tag. The push starts .github/workflows/release.yml,
- * which builds the installers and publishes them with these notes.
+ * which builds the installers and publishes them with these notes, and stages
+ * the dsh plugin on npm, live there once approved on npmjs.com.
  *
  *   --skip-checks   no build, typecheck or tests (the workflow runs them anyway)
  *   --notes <file>  the notes from this file instead of a draft
@@ -113,6 +114,8 @@ if (repository !== undefined) {
   console.log(`  构建进度  https://github.com/${repository}/actions`)
   console.log(`  发布页面  https://github.com/${repository}/releases/tag/${tag}`)
 }
+// The workflow only stages the dsh plugin on npm: it is live there once approved.
+console.log(`  npm       构建完后到 https://www.npmjs.com/package/dsh-multigameassistant 的 Staged Packages 里批准 ${version}（要两步验证）`)
 
 /** The editor git uses (GIT_EDITOR, core.editor, VISUAL, EDITOR); Notepad on Windows when none is set. */
 function editorCommand() {
