@@ -6,7 +6,7 @@ import { Markdown } from '../../components/Markdown.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { errorText, useScriptList } from '../scripts/data.ts'
-import { findGame, gameOfScript, placesOf, type GameRef } from '../../skillPlaces.ts'
+import { findGame, gameOfScript, placeLabel, placesOf, type GameRef } from '../../skillPlaces.ts'
 import { SkillHubPanel } from './SkillHubPanel.tsx'
 import './skills.css'
 
@@ -34,6 +34,16 @@ interface Sub { key: string; label: string; script: string; items: SkillInfo[] }
  */
 interface Section { key: string; label: string; game?: string; script?: string; items: SkillInfo[]; subs: Sub[] }
 const GENERAL = '通用'
+/** Sections folded away in the list, kept for the next visit. */
+const FOLDED_KEY = 'adg:skills:folded'
+
+function readFolded(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]') as string[]) } catch { return new Set() }
+}
+function writeFolded(folded: ReadonlySet<string>): void {
+  try { localStorage.setItem(FOLDED_KEY, JSON.stringify([...folded])) } catch { /* private window: unfolded next time */ }
+}
+const sectionIcon = (key: string): 'gamepad' | 'package' | 'layers' => (key.startsWith('game:') ? 'gamepad' : key.startsWith('script:') ? 'package' : 'layers')
 
 /** A skill being made (`original` undefined) or changed. */
 interface Draft { original?: string; name: string; description: string; content: string; scripts: string[]; games: string[] }
@@ -58,6 +68,13 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
   const [revision, setRevision] = useState(0)
   const [copied, setCopied] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [folded, setFolded] = useState(readFolded)
+  const fold = (key: string) => setFolded(f => {
+    const next = new Set(f)
+    if (!next.delete(key)) next.add(key)
+    writeFolded(next)
+    return next
+  })
   const scripts = useScriptList(client).data?.scripts ?? []
   const [games, setGames] = useState<readonly GameRef[]>([])
 
@@ -81,7 +98,6 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
     return () => { live = false }
   }, [client, status.state, revision, tab])
 
-  const scriptOf = (id: string): ScriptInfo | undefined => scripts.find(s => s.id === id || s.packId === id)
   const needle = query.trim().toLowerCase()
   const shown = useMemo(() => (skills ?? []).filter(s => needle === '' || `${s.name} ${s.description} ${s.whenToUse ?? ''}`.toLowerCase().includes(needle)), [skills, needle])
   const sections = useMemo(() => {
@@ -145,14 +161,16 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
       setError(errorText(e))
     }
   }
-  const owners = (skill: SkillInfo) => [...(skill.owner?.scripts ?? []).map(id => scriptOf(id)?.name ?? id), ...(skill.owner?.games ?? []).map(g => findGame(g, games)?.name ?? g)]
+  /** Where it belongs, in words: 明日方舟 · MAA; empty for a general skill. */
+  const owners = (skill: SkillInfo) => [...new Set(placesOf(skill.owner, scripts, games).map(placeLabel))]
   const blank = (to: { game?: string; script?: string }): Draft => ({ name: '', description: '', content: '', scripts: to.script === undefined ? [] : [to.script], games: to.script === undefined && to.game !== undefined ? [to.game] : [] })
   const row = (skill: SkillInfo) => (
-    <button key={skill.name} className={`script-row ${draft === null && current?.name === skill.name ? 'active' : ''}`} onClick={() => { setDraft(null); setSelected(skill.name) }}>
+    <button key={skill.name} className={`script-row skill-row ${draft === null && current?.name === skill.name ? 'active' : ''}`} onClick={() => { setDraft(null); setSelected(skill.name) }}>
       <span className="script-row-main">
         <span className="script-row-name">{skill.name}</span>
         <span className="muted small skills-row-desc">{skill.description}</span>
       </span>
+      {skill.removable === true && <span className="skill-row-mark" title="在这里存的：可以编辑和删除"><Icon name="pencil" /></span>}
     </button>
   )
   const addButton = (label: string, to: { game?: string; script?: string }, title: string) => (
@@ -189,20 +207,29 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
             <Icon name="search" />
             <input className="text-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索技能" aria-label="搜索技能" />
           </div>
-          {skills !== null && shown.length === 0 && <p className="muted small pad">{needle === '' ? '还没有技能。' : '没有匹配的技能。'}</p>}
-          {sections.map(section => (
-            <div key={section.key} className="skills-group">
-              <div className="sidebar-label">
-                <span className="skills-group-name">{section.label}</span>
-                <span className="skills-count">{new Set([...section.items, ...section.subs.flatMap(s => s.items)]).size}</span>
-                <span className="spacer" />
+          {skills !== null && needle !== '' && <p className="muted small skills-found">{shown.length === 0 ? '没有匹配的技能。' : `找到 ${shown.length} 个技能`}</p>}
+          {skills !== null && needle === '' && shown.length === 0 && <p className="muted small pad">还没有技能。</p>}
+          {sections.map(section => {
+            // Searching shows every match, folded or not.
+            const open = needle !== '' || !folded.has(section.key)
+            return (
+            <div key={section.key} className={`skills-group ${open ? '' : 'folded'}`}>
+              <div className="skills-section-head">
+                <button className="skills-fold" aria-expanded={open} onClick={() => fold(section.key)}>
+                  <Icon name="chevron-down" className="skills-chevron" />
+                  <Icon name={sectionIcon(section.key)} className="skills-section-icon" />
+                  <span className="skills-group-name">{section.label}</span>
+                  <span className="skills-count">{new Set([...section.items, ...section.subs.flatMap(s => s.items)]).size}</span>
+                </button>
                 {addButton(section.label, section, section.game !== undefined ? `给游戏「${section.label}」新建一个技能（处理这个游戏的对话都能用）` : section.script !== undefined ? `给「${section.label}」新建一个技能（只给它用）` : '新建一个通用技能')}
               </div>
+              {open && <>
               {section.items.map(row)}
               {section.script !== undefined && section.items.length === 0 && <p className="muted small skills-empty">还没有只给它用的技能</p>}
               {section.subs.map(s => (
                 <div key={s.key} className="skills-sub">
                   <div className="skills-sub-label">
+                    <Icon name="package" className="skills-section-icon" />
                     <span className="skills-group-name">{s.label}</span><span className="skills-count">{s.items.length}</span>
                     <span className="spacer" />
                     {addButton(s.label, { script: s.script }, `给「${s.label}」新建一个技能（只给它用）`)}
@@ -211,8 +238,10 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
                   {s.items.map(row)}
                 </div>
               ))}
+              </>}
             </div>
-          ))}
+            )
+          })}
         </aside>
         <div className="scripts-detail">
           <div className="script-detail">
@@ -223,44 +252,59 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
             ) : (
               <>
                 {skills === null && error === null && <p className="muted">正在读取…</p>}
+                {skills !== null && current === undefined && (
+                  <div className="skills-blank">
+                    <Icon name="sparkles" />
+                    <strong>还没有技能</strong>
+                    <span className="muted small">agent 做成一件事后会提议存成技能；也可以自己写一个。</span>
+                    <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => setDraft(blank({}))}><Icon name="plus" />新建技能</button>
+                  </div>
+                )}
                 {current !== undefined && (
                   <article className="card skill-card">
-                    <div className="skill-head">
-                      <h2>{current.name}</h2>
-                      <span className="badge">{sourceOf(current)}</span>
-                      {current.modelInvocable && <span className="badge ok" title="agent 遇到相关的事会自己读这个技能">agent 自动使用</span>}
-                      {current.userInvocable && <span className="badge" title="在对话里输入 /名字 来用它">可以用 /{current.name} 调用</span>}
-                      {current.owner !== undefined && (
-                        <span className="badge warn" title="技能隔离：只有在处理这些脚本或游戏的对话里，agent 才看得到、用得了这个技能">
-                          只给 {owners(current).join('、')} 用
-                        </span>
-                      )}
-                    </div>
+                    <header className="skill-top">
+                      <div className="skill-title">
+                        <h2>{current.name}</h2>
+                        <div className="skill-meta">
+                          {owners(current).length === 0
+                            ? <span className="badge" title="所有对话都看得到、用得了"><Icon name="layers" />通用</span>
+                            : <span className="badge warn" title="技能隔离：只有在处理这些游戏或脚本的对话里，agent 才看得到、用得了这个技能"><Icon name={current.owner?.scripts?.length ? 'package' : 'gamepad'} />只给 {owners(current).join('、')} 用</span>}
+                          {current.modelInvocable && <span className="badge ok" title="agent 遇到相关的事会自己读这个技能">agent 自动使用</span>}
+                          <span className="badge" title={current.removable === true ? '存在这个软件的技能文件夹里，可以编辑和删除' : `在这里不能改和删${current.source === 'hub' ? '，到「技能库」里卸载' : ''}`}>
+                            {sourceOf(current)}{current.removable === true ? '' : ' · 只读'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="skill-buttons">
+                        {current.userInvocable && (
+                          <button className="small-button" onClick={() => copyCommand(current.name)} title="复制后粘贴到对话框，后面写要它做的事">
+                            <Icon name={copied ? 'check' : 'copy'} />{copied ? '已复制' : `/${current.name}`}
+                          </button>
+                        )}
+                        {current.removable === true && (
+                          <>
+                            <button className="small-button" disabled={detail?.name !== current.name}
+                              onClick={() => setDraft({ original: current.name, name: current.name, description: current.description, content: detail?.content ?? '', scripts: [...(current.owner?.scripts ?? [])], games: [...(current.owner?.games ?? [])] })}>
+                              <Icon name="pencil" />编辑
+                            </button>
+                            <button className="small-button danger-outline" onClick={() => void remove(current)}>删除</button>
+                          </>
+                        )}
+                        {current.path !== undefined && desktop()?.openPath !== undefined && (
+                          <button className="icon-button skill-folder" title={`打开所在文件夹：${current.path}`} aria-label="打开所在文件夹"
+                            onClick={() => void desktop()?.openPath?.(current.path!.replace(/[\\/][^\\/]+$/, ''))}>
+                            <Icon name="layers" />
+                          </button>
+                        )}
+                      </div>
+                    </header>
                     <p className="skill-desc">{current.description}</p>
                     {current.whenToUse !== undefined && <p className="muted small">什么时候用：{current.whenToUse}</p>}
-                    <div className="skill-actions">
-                      {current.userInvocable && <button className="small-button" onClick={() => copyCommand(current.name)}><Icon name="copy" />{copied ? '已复制' : `复制 /${current.name}`}</button>}
-                      {current.removable === true && (
-                        <>
-                          <button className="small-button" disabled={detail?.name !== current.name}
-                            onClick={() => setDraft({ original: current.name, name: current.name, description: current.description, content: detail?.content ?? '', scripts: [...(current.owner?.scripts ?? [])], games: [...(current.owner?.games ?? [])] })}>
-                            <Icon name="pencil" />编辑
-                          </button>
-                          <button className="small-button danger-outline" onClick={() => void remove(current)}><Icon name="close" />删除</button>
-                        </>
-                      )}
-                      {current.path !== undefined && (
-                        <button className="small-button" title={current.path} disabled={desktop()?.openPath === undefined}
-                          onClick={() => void desktop()?.openPath?.(current.path!.replace(/[\\/][^\\/]+$/, ''))}>
-                          <Icon name="layers" />打开所在文件夹
-                        </button>
-                      )}
-                      {current.path !== undefined && <code className="muted small skill-path" title={current.path}>{current.path}</code>}
-                    </div>
-                    {current.removable !== true && <p className="muted small">{sourceOf(current)}的技能在这里不能改和删{current.source === 'hub' ? '，到「技能库」里卸载' : ''}。</p>}
-                    <div className="skill-body">
+                    <section className="skill-body" aria-label="技能内容">
+                      <div className="skill-body-label">技能内容</div>
                       {detail?.name === current.name ? <Markdown text={detail.content} /> : <p className="muted">正在读取…</p>}
-                    </div>
+                    </section>
+                    {current.path !== undefined && <code className="muted small skill-path" title={current.path}>{current.path}</code>}
                   </article>
                 )}
               </>
