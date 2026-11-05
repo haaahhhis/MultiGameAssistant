@@ -115,6 +115,11 @@ export class AgentTasks {
     return run
   }
 
+  /** Settles once every change so far is written (tests, before removing the folder). */
+  idle(): Promise<void> {
+    return this.#writing
+  }
+
   #end(run: AgentTaskRun, state: 'done' | 'failed', outcome: string): void {
     const ended: AgentTaskRun = { ...run, state, outcome: outcome.trim().slice(0, 300), endedAt: this.#now() }
     this.#runs = this.#runs.map(r => (r.id === run.id ? ended : r))

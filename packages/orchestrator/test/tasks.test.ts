@@ -37,6 +37,8 @@ test('a timed task is handed to its agent; the run ends with what it said, and i
   assert.equal(tasks.list('main').length, 0, 'listed by agent')
   assert.ok(tasks.lastSuccessAt(task.id) !== undefined)
   assert.equal(handed[0]?.prompt, '看看今天结束的活动')
+  // The run's end is still being written; the folder goes after it.
+  await tasks.idle()
 })
 
 test('a run still going when the app stopped reads back as not finished', async t => {
