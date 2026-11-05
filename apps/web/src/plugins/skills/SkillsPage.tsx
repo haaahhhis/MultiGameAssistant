@@ -6,6 +6,7 @@ import { Markdown } from '../../components/Markdown.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { errorText, useScriptList } from '../scripts/data.ts'
+import { findGame, gameOfScript, placesOf, type GameRef } from '../../skillPlaces.ts'
 import { SkillHubPanel } from './SkillHubPanel.tsx'
 import './skills.css'
 
@@ -25,8 +26,13 @@ function sourceOf(skill: SkillInfo): string {
   return SOURCES.find(g => g.match(skill.source))?.label ?? '其他'
 }
 
-/** One group of the list: a script's skills, a game's, or the general ones; `script` to add one to it. */
-interface Group { key: string; label: string; script?: string; items: SkillInfo[] }
+/** Skills of one script, inside its game's section; `script` to add one to it. */
+interface Sub { key: string; label: string; script: string; items: SkillInfo[] }
+/**
+ * One section of the list: a game (its own skills, then its scripts'), a script
+ * that plays no known game, or the general skills. `game` / `script` to add one to it.
+ */
+interface Section { key: string; label: string; game?: string; script?: string; items: SkillInfo[]; subs: Sub[] }
 const GENERAL = '通用'
 
 /** A skill being made (`original` undefined) or changed. */
@@ -53,6 +59,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
   const [copied, setCopied] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const scripts = useScriptList(client).data?.scripts ?? []
+  const [games, setGames] = useState<readonly GameRef[]>([])
 
   useEffect(() => {
     if (arg === undefined) return
@@ -60,6 +67,13 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
     else { setTab('mine'); setSelected(arg) }
   }, [arg])
   useEffect(() => client.connection.on('skills/changed', () => setRevision(r => r + 1)), [client])
+  // The games, to put each skill under the game it (or its script) belongs to.
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('games')) return
+    let live = true
+    client.connection.call('games/list', {}).then(r => { if (live) setGames(r.games) }, () => {})
+    return () => { live = false }
+  }, [client, status.state, capabilities])
   useEffect(() => {
     if (status.state !== 'open') return
     let live = true
@@ -70,32 +84,45 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
   const scriptOf = (id: string): ScriptInfo | undefined => scripts.find(s => s.id === id || s.packId === id)
   const needle = query.trim().toLowerCase()
   const shown = useMemo(() => (skills ?? []).filter(s => needle === '' || `${s.name} ${s.description} ${s.whenToUse ?? ''}`.toLowerCase().includes(needle)), [skills, needle])
-  const groups = useMemo(() => {
-    const byKey = new Map<string, Group>()
-    const put = (key: string, label: string, skill: SkillInfo | undefined, script?: string) => {
-      const group = byKey.get(key) ?? { key, label, items: [], ...(script === undefined ? {} : { script }) }
-      if (skill !== undefined && !group.items.includes(skill)) group.items.push(skill)
-      byKey.set(key, group)
+  const sections = useMemo(() => {
+    const byKey = new Map<string, Section>()
+    const section = (key: string, label: string, add: { game?: string; script?: string }) => {
+      const found = byKey.get(key) ?? { key, label, items: [], subs: [], ...add }
+      byKey.set(key, found)
+      return found
     }
-    // Every installed script has its group, so a skill can be added to it while it has none.
-    if (needle === '') for (const script of scripts) put(`script:${script.id}`, script.name, undefined, script.id)
+    const gameSection = (game: { id: string; name: string }) => section(`game:${game.id}`, game.name, { game: game.id })
+    const sub = (owner: Section, script: { id: string; name: string }) => {
+      const found = owner.subs.find(s => s.script === script.id) ?? { key: `${owner.key}/${script.id}`, label: script.name, script: script.id, items: [] }
+      if (!owner.subs.includes(found)) owner.subs.push(found)
+      return found
+    }
+    const add = (list: SkillInfo[], skill: SkillInfo) => { if (!list.includes(skill)) list.push(skill) }
+    // Every installed script has its place (in its game), so a skill can be added to it while it has none.
+    if (needle === '') {
+      for (const script of scripts) {
+        const game = gameOfScript(script, games)
+        if (game === undefined) section(`script:${script.id}`, script.name, { script: script.id })
+        else sub(gameSection(game), script)
+      }
+    }
     for (const skill of shown) {
-      const owned = skill.owner?.scripts ?? []
-      for (const id of owned) {
-        const script = scriptOf(id)
-        put(`script:${script?.id ?? id}`, script?.name ?? id, skill, script?.id ?? id)
-      }
-      if (owned.length === 0) {
-        for (const game of skill.owner?.games ?? []) put(`game:${game}`, `游戏 · ${game}`, skill)
-        if ((skill.owner?.games ?? []).length === 0) put('general', GENERAL, skill)
+      const places = placesOf(skill.owner, scripts, games)
+      if (places.length === 0) add(section('general', GENERAL, {}).items, skill)
+      for (const place of places) {
+        if (place.game !== undefined && place.script !== undefined) add(sub(gameSection(place.game), place.script).items, skill)
+        else if (place.game !== undefined) add(gameSection(place.game).items, skill)
+        else if (place.script !== undefined) add(section(`script:${place.script.id}`, place.script.name, { script: place.script.id }).items, skill)
       }
     }
-    const order = (g: Group) => (g.key.startsWith('script:') ? 0 : g.key.startsWith('game:') ? 1 : 2)
+    const byName = (a: SkillInfo, b: SkillInfo) => a.name.localeCompare(b.name)
+    const order = (s: Section) => (s.key.startsWith('game:') ? 0 : s.key.startsWith('script:') ? 1 : 2)
     return [...byKey.values()]
-      .map(g => ({ ...g, items: g.items.sort((a, b) => a.name.localeCompare(b.name)) }))
+      .map(s => ({ ...s, items: s.items.sort(byName), subs: s.subs.map(x => ({ ...x, items: x.items.sort(byName) })).sort((a, b) => a.label.localeCompare(b.label)) }))
       .sort((a, b) => order(a) - order(b) || a.label.localeCompare(b.label))
-  }, [shown, scripts, needle])
-  const current = shown.find(s => s.name === selected) ?? groups.find(g => g.items.length > 0)?.items[0]
+  }, [shown, scripts, games, needle])
+  const firstSkill = sections.flatMap(s => [...s.items, ...s.subs.flatMap(x => x.items)])[0]
+  const current = shown.find(s => s.name === selected) ?? firstSkill
 
   useEffect(() => {
     if (current === undefined) { setDetail(null); return }
@@ -118,7 +145,21 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
       setError(errorText(e))
     }
   }
-  const owners = (skill: SkillInfo) => [...(skill.owner?.scripts ?? []).map(id => scriptOf(id)?.name ?? id), ...(skill.owner?.games ?? [])]
+  const owners = (skill: SkillInfo) => [...(skill.owner?.scripts ?? []).map(id => scriptOf(id)?.name ?? id), ...(skill.owner?.games ?? []).map(g => findGame(g, games)?.name ?? g)]
+  const blank = (to: { game?: string; script?: string }): Draft => ({ name: '', description: '', content: '', scripts: to.script === undefined ? [] : [to.script], games: to.script === undefined && to.game !== undefined ? [to.game] : [] })
+  const row = (skill: SkillInfo) => (
+    <button key={skill.name} className={`script-row ${draft === null && current?.name === skill.name ? 'active' : ''}`} onClick={() => { setDraft(null); setSelected(skill.name) }}>
+      <span className="script-row-main">
+        <span className="script-row-name">{skill.name}</span>
+        <span className="muted small skills-row-desc">{skill.description}</span>
+      </span>
+    </button>
+  )
+  const addButton = (label: string, to: { game?: string; script?: string }, title: string) => (
+    <button className="icon-button skills-add" title={title} aria-label={`在${label}下新建技能`} disabled={status.state !== 'open'} onClick={() => setDraft(blank(to))}>
+      <Icon name="plus" />
+    </button>
+  )
 
   return (
     <section className="main scripts-page skills-page">
@@ -132,7 +173,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
             </div>
           )}
           {tab === 'mine' && (
-            <button className="small-button" disabled={status.state !== 'open'} onClick={() => setDraft({ name: '', description: '', content: '', scripts: [], games: [] })}>
+            <button className="small-button" disabled={status.state !== 'open'} onClick={() => setDraft(blank({}))}>
               <Icon name="plus" />新建技能
             </button>
           )}
@@ -149,25 +190,26 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
             <input className="text-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索技能" aria-label="搜索技能" />
           </div>
           {skills !== null && shown.length === 0 && <p className="muted small pad">{needle === '' ? '还没有技能。' : '没有匹配的技能。'}</p>}
-          {groups.map(group => (
-            <div key={group.key} className="skills-group">
+          {sections.map(section => (
+            <div key={section.key} className="skills-group">
               <div className="sidebar-label">
-                <span className="skills-group-name">{group.label}</span><span className="skills-count">{group.items.length}</span>
+                <span className="skills-group-name">{section.label}</span>
+                <span className="skills-count">{new Set([...section.items, ...section.subs.flatMap(s => s.items)]).size}</span>
                 <span className="spacer" />
-                <button className="icon-button skills-add" title={group.script === undefined ? '新建一个通用技能' : `给「${group.label}」新建一个技能（只给它用）`}
-                  aria-label={`在${group.label}下新建技能`} disabled={status.state !== 'open'}
-                  onClick={() => setDraft({ name: '', description: '', content: '', scripts: group.script === undefined ? [] : [group.script], games: [] })}>
-                  <Icon name="plus" />
-                </button>
+                {addButton(section.label, section, section.game !== undefined ? `给游戏「${section.label}」新建一个技能（处理这个游戏的对话都能用）` : section.script !== undefined ? `给「${section.label}」新建一个技能（只给它用）` : '新建一个通用技能')}
               </div>
-              {group.items.length === 0 && <p className="muted small skills-empty">还没有只给它用的技能</p>}
-              {group.items.map(skill => (
-                <button key={skill.name} className={`script-row ${draft === null && current?.name === skill.name ? 'active' : ''}`} onClick={() => { setDraft(null); setSelected(skill.name) }}>
-                  <span className="script-row-main">
-                    <span className="script-row-name">{skill.name}</span>
-                    <span className="muted small skills-row-desc">{skill.description}</span>
-                  </span>
-                </button>
+              {section.items.map(row)}
+              {section.script !== undefined && section.items.length === 0 && <p className="muted small skills-empty">还没有只给它用的技能</p>}
+              {section.subs.map(s => (
+                <div key={s.key} className="skills-sub">
+                  <div className="skills-sub-label">
+                    <span className="skills-group-name">{s.label}</span><span className="skills-count">{s.items.length}</span>
+                    <span className="spacer" />
+                    {addButton(s.label, { script: s.script }, `给「${s.label}」新建一个技能（只给它用）`)}
+                  </div>
+                  {s.items.length === 0 && <p className="muted small skills-empty">还没有只给它用的技能</p>}
+                  {s.items.map(row)}
+                </div>
               ))}
             </div>
           ))}
@@ -176,7 +218,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
           <div className="script-detail">
             {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
             {draft !== null ? (
-              <SkillForm client={client} draft={draft} scripts={scripts} onCancel={() => setDraft(null)}
+              <SkillForm client={client} draft={draft} scripts={scripts} games={games} onCancel={() => setDraft(null)}
                 onSaved={name => { setDraft(null); setSelected(name); setError(null); setRevision(r => r + 1) }} />
             ) : (
               <>
@@ -232,10 +274,11 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
 }
 
 /** Make a skill, or change one kept in this app's skills folder. */
-function SkillForm({ client, draft, scripts, onCancel, onSaved }: {
+function SkillForm({ client, draft, scripts, games, onCancel, onSaved }: {
   client: PageProps['client']
   draft: Draft
   scripts: readonly ScriptInfo[]
+  games: readonly GameRef[]
   onCancel: () => void
   onSaved: (name: string) => void
 }) {
@@ -248,7 +291,12 @@ function SkillForm({ client, draft, scripts, onCancel, onSaved }: {
   const ready = nameOk && form.description.trim().length >= 10 && form.content.trim().length >= 20
   // An owner the script list does not have (removed, or a pack id) stays as it was.
   const unknown = form.scripts.filter(id => !scripts.some(s => s.id === id))
+  const unknownGames = form.games.filter(key => findGame(key, games) === undefined)
   const toggle = (id: string) => setForm(f => ({ ...f, scripts: f.scripts.includes(id) ? f.scripts.filter(s => s !== id) : [...f.scripts, id] }))
+  const toggleGame = (id: string) => setForm(f => {
+    const has = f.games.some(key => key === id || findGame(key, games)?.id === id)
+    return { ...f, games: has ? f.games.filter(key => key !== id && findGame(key, games)?.id !== id) : [...f.games, id] }
+  })
 
   const save = async () => {
     setBusy(true)
@@ -278,7 +326,7 @@ function SkillForm({ client, draft, scripts, onCancel, onSaved }: {
         {form.name !== '' && !nameOk && <span className="error small">只能用小写英文字母、数字和短横线，例如 maa-daily-check</span>}
       </label>
       <fieldset className="field skill-owners">
-        <legend className="field-label">给哪个脚本用（都不选就是通用技能，所有对话都能用）</legend>
+        <legend className="field-label">给哪个脚本用（只在用这个脚本时才用得上的做法：它的配置、报错、日志）</legend>
         {scripts.length === 0 && unknown.length === 0 && <span className="muted small">还没有装脚本。</span>}
         <div className="skill-owner-list">
           {scripts.map(script => (
@@ -292,8 +340,25 @@ function SkillForm({ client, draft, scripts, onCancel, onSaved }: {
             </label>
           ))}
         </div>
-        {form.games.length > 0 && <span className="muted small">还属于游戏：{form.games.join('、')}</span>}
       </fieldset>
+      {(games.length > 0 || unknownGames.length > 0) && (
+        <fieldset className="field skill-owners">
+          <legend className="field-label">给哪个游戏用（和游戏本身有关、换个脚本也用得上的：游戏里的操作、界面、活动、机制）</legend>
+          <div className="skill-owner-list">
+            {games.map(game => (
+              <label key={game.id} className="check-label">
+                <input type="checkbox" checked={form.games.some(key => key === game.id || findGame(key, games)?.id === game.id)} onChange={() => toggleGame(game.id)} />{game.name}
+              </label>
+            ))}
+            {unknownGames.map(key => (
+              <label key={key} className="check-label">
+                <input type="checkbox" checked onChange={() => toggleGame(key)} />{key}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <p className="muted small">脚本和游戏都不选就是通用技能，所有对话都能用。</p>
       <label className="field">
         <span className="field-label">说明：做什么、什么时候用（agent 靠它决定什么时候用，10–400 字）</span>
         <textarea className="text-input" rows={2} maxLength={400} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}

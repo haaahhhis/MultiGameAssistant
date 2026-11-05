@@ -41,3 +41,6 @@
 .skill-owners { border: none; margin: 0; padding: 0; }
 .skill-owner-list { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .skill-content-input { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; resize: vertical; }
+/* A game's scripts, inside its section. */
+.skills-sub { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px 10px; padding-left: 6px; border-left: 1px solid var(--border); }
+.skills-sub-label { display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px 4px; font-size: 12px; color: var(--text-2); }

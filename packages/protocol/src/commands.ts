@@ -17,6 +17,7 @@ export const SAVE_SKILL_PROMPT = [
   '- 只写最后成功的路径，不写失败的尝试和闲聊；',
   '- 写清楚适用场景（用户会怎么说）、一步一步的操作（用到的工具、命令、路径、参数照实写，会变的写成「把 X 换成…」）、怎样算成功、注意事项和踩过的坑；',
   '- 名字用简短的英文小写加短横线，description 一两句话说清楚做什么、什么时候用；',
+  '- 分到对应的游戏和脚本：只有用某个脚本时才用得上的（它的配置、报错、日志），scripts 填脚本 id；和游戏本身有关、换个脚本也用得上的（游戏里的操作、界面、活动、机制），games 填游戏 id（用 game_list 查）；和哪个游戏都无关才当通用技能；',
   '- 保存后告诉我技能名，以及以后我说什么时会用到它。',
 ].join('\n')
 
@@ -32,7 +33,7 @@ export function optimizeScriptPrompt(target: string, why?: string, id?: string):
     `优化脚本${target === '' ? '：最近运行过的脚本（script_runs 看最近一周跑过哪些，一个一个来）' : `「${target}」${id === undefined ? '' : `（脚本 id ${id}）`}`}${why === undefined ? '' : `（${why}）`}。把这段时间运行攒下的信息用起来，一次做完下面几件事：`,
     '1. 重新总结脚本包：script_tasks、script_help 看它现在有哪些任务和参数，script_runs、script_run_log 看最近的运行（成功的看正常流程和用时，失败的看原因）；更新过版本就先用 script_changelog 读更新日志。对照它的脚本包，任务、参数、配置文件、完成和出错的日志文字、预计用时有不对或缺的，用原来的脚本包 id 提交 pack_propose（summary 写明依据）；都对就不提交；',
     '2. 改善监控时间：monitor_stall_check 看它正常运行时日志的节奏，按建议值和你看日志的判断用 monitor_stall_set 设它多久没新日志算卡住，note 写明依据（例如「战斗中最长 70 秒不输出」）；',
-    '3. 把做过的步骤总结成技能：运行和处理这个脚本时反复用到、已经走通的做法（常见报错怎么处理、怎么确认跑完、配置怎么改）用 skill_save 存成技能，scripts 填这个脚本的 id，只给它用；已有的技能就合并更新（replace），不要重复存，没有值得存的就不存；',
+    '3. 把做过的步骤总结成技能，分到对应的游戏和脚本：运行和处理这个脚本时反复用到、已经走通的做法（常见报错怎么处理、怎么确认跑完、配置怎么改）用 skill_save 存成技能，scripts 填这个脚本的 id，只给它用；其中和游戏本身有关、别的脚本也用得上的（游戏里的操作、界面、活动、机制）单独存，games 填它玩的游戏 id（game_list 查），不填 scripts；已有的技能就合并更新（replace），不要重复存，没有值得存的就不存；',
     '4. 不要运行脚本、不要改它的配置；最后用几句话告诉我：脚本包改了什么（草稿在「脚本」页等我确认）、卡住时间设成多少、存了或更新了哪些技能。',
   ].join('\n')
 }
@@ -120,7 +121,7 @@ export function localCommand(text: string): SlashCommand['local'] {
 export interface SlashSkill {
   readonly name: string
   readonly description: string
-  /** The script it belongs to, by name (技能隔离); absent: a general skill. The menu lists skills under their script. */
+  /** Where it belongs, by name: 游戏 · 脚本 (技能隔离); absent: a general skill. The menu lists skills under it. */
   readonly group?: string | undefined
 }
 
@@ -160,7 +161,7 @@ export function splitSlash(text: string): { typed: string; expansion: string } |
 
 /**
  * Menu entries for what is typed after the slash (before any space): commands first, then skills under their
- * script (scripts by name, general skills last); in each, name starts first, then contains.
+ * game and script (by name, general skills last); in each, name starts first, then contains.
  * `inSession`: typed in an open conversation, so its own commands (`/压缩`) are offered too.
  */
 export function slashOptions(text: string, skills: readonly SlashSkill[], inSession = false): SlashOption[] {

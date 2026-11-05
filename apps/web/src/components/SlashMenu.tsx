@@ -2,39 +2,41 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import type { AdgClient } from '@adg/client-core'
 import { expandSlash, slashOptions, type SlashOption, type SlashSkill } from '@adg/protocol'
 import { useStore } from '../hooks.ts'
+import { placeLabel, placesOf, type GameRef } from '../skillPlaces.ts'
 
 // The agent's skills, shared by every box with a slash menu; read again when a box mounts or a skill is saved.
 let cached: readonly SlashSkill[] = []
 
 /**
- * The skills people can call with `/name` (skills@1), each with the script it belongs to by name,
+ * The skills people can call with `/name` (skills@1), each with where it belongs (游戏 · 脚本, skillPlaces.ts),
  * or none while they load or without the capability.
  */
 export function useSkills(client: AdgClient): readonly SlashSkill[] {
   const capabilities = useStore(client.capabilities)
   const has = capabilities.has('skills')
   const scripts = capabilities.has('scripts')
+  const games = capabilities.has('games')
   const [skills, setSkills] = useState(cached)
   const [revision, setRevision] = useState(0)
   useEffect(() => client.connection.on('skills/changed', () => setRevision(r => r + 1)), [client])
   useEffect(() => {
     if (!has) return
     let live = true
-    const names = scripts ? client.connection.call('scripts/list', {}).then(r => r.scripts, () => []) : Promise.resolve([])
-    Promise.all([client.connection.call('skills/list', {}), names]).then(([r, list]) => {
-      const nameOf = (id: string) => list.find(s => s.id === id || s.packId === id)?.name ?? id
+    const scriptList = scripts ? client.connection.call('scripts/list', {}).then(r => r.scripts, () => []) : Promise.resolve([])
+    const gameList: Promise<readonly GameRef[]> = games ? client.connection.call('games/list', {}).then(r => r.games, () => []) : Promise.resolve([])
+    Promise.all([client.connection.call('skills/list', {}), scriptList, gameList]).then(([r, list, known]) => {
       cached = r.skills.filter(s => s.userInvocable).map(s => {
-        const group = [...new Set((s.owner?.scripts ?? []).map(nameOf))].join('、')
+        const group = [...new Set(placesOf(s.owner, list, known).map(placeLabel))].join('、')
         return { name: s.name, description: s.description, ...(group === '' ? {} : { group }) }
       })
       if (live) setSkills(cached)
     }, () => {})
     return () => { live = false }
-  }, [client, has, scripts, revision])
+  }, [client, has, scripts, games, revision])
   return skills
 }
 
-/** The header an entry of the menu goes under: 命令, a script's name, or 通用技能. */
+/** The header an entry of the menu goes under: 命令, 游戏 · 脚本 (or just one of them), or 通用技能. */
 const groupLabel = (o: SlashOption) => (o.kind === 'command' ? '命令' : o.group ?? '通用技能')
 
 /**
