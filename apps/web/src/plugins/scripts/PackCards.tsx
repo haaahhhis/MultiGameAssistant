@@ -50,7 +50,13 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
     if (sessionId !== undefined) openSession(sessionId)
   })
 
+  const optimize = (decision: 'run' | 'keep') => act(async () => {
+    const { sessionId } = await client.connection.call('scripts/optimize', { id: script.id, decision })
+    if (sessionId !== undefined) openSession(sessionId)
+  })
+
   const draft = drafts[0]
+  const due = script.optimize?.due
   return (
     <section className="card">
       <div className="card-head">
@@ -58,7 +64,15 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
           <h3>脚本包</h3>
           <p className="muted small">{script.packId === undefined ? '还没有脚本包：agent 还不知道怎么运行它。' : `使用脚本包 ${script.packId}。`}</p>
         </div>
-        <button className="small-button" disabled={busy || status.state !== 'open'} onClick={() => void analyze()}><Icon name="sparkles" />{script.packId === undefined ? '让 agent 分析' : '让 agent 改进'}</button>
+        <span className="key-actions">
+          {script.packId !== undefined && (
+            <button className="small-button" disabled={busy || status.state !== 'open'} onClick={() => void optimize('run')}
+              title="用运行攒下的信息：重新总结脚本包、调「多久没动静算卡住」、把走通的步骤存成只给它用的技能">
+              <Icon name="sparkles" />优化脚本
+            </button>
+          )}
+          <button className="small-button" disabled={busy || status.state !== 'open'} onClick={() => void analyze()}><Icon name="sparkles" />{script.packId === undefined ? '让 agent 分析' : '让 agent 改进'}</button>
+        </span>
       </div>
       {script.packReview !== undefined && draft === undefined && (
         <div className="notice left pack-review">
@@ -67,6 +81,16 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
           <span className="key-actions">
             <button className="small-button" disabled={busy} onClick={() => void review('keep')}>不用改</button>
             <button className="primary small-button" disabled={busy || status.state !== 'open'} onClick={() => void review('check')}>让 agent 检查</button>
+          </span>
+        </div>
+      )}
+      {due !== undefined && script.packReview === undefined && draft === undefined && (
+        <div className="notice left pack-review">
+          <Icon name="sparkles" />
+          <span>{due === 'updated' ? `${script.name} 更新后已经跑通了。` : `${script.name} ${script.optimize?.at === undefined ? '装好以来' : '上次优化以来'}已经跑成功 ${script.optimize?.runs ?? 0} 次。`}要让 agent 用这些运行记录优化它吗：重新总结脚本包、调卡住时间、把走通的步骤存成技能。</span>
+          <span className="key-actions">
+            <button className="small-button" disabled={busy} onClick={() => void optimize('keep')}>这次不用</button>
+            <button className="primary small-button" disabled={busy || status.state !== 'open'} onClick={() => void optimize('run')}>优化脚本</button>
           </span>
         </div>
       )}

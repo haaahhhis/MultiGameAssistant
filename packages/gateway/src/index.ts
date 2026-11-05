@@ -35,7 +35,7 @@ import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
 import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
-import { skillSaveTool, userSkills } from './skill-save.ts'
+import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
 import { skillFocusTool } from './skill-focus-tool.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
@@ -49,7 +49,6 @@ import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
 import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
-import { roleOf, TOOL_GROUPS, UserAgents } from './user-agents.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -280,10 +279,9 @@ export class AdgGateway extends Service {
   /** Live agents by session, and what narrows each to its role (`narrow`). */
   private readonly agents = new Map<string, LiveAgent>()
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly dispose: () => void }>()
-  /** The agents the person made (user-agents.ts), each registered as a role. */
-  readonly userAgents: UserAgents
-  private readonly userRoles = new Map<string, () => void>()
   private readonly log: ReturnType<Context['logger']>
+  /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
+  private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'adgGateway')
@@ -295,10 +293,8 @@ export class AdgGateway extends Service {
     this.parts = new AgentParts(log)
     this.roleModelStore = new RoleModel(config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
-    this.userAgents = new UserAgents(config.dataDir === undefined ? undefined : join(config.dataDir, 'agents.json'))
     this.homes = new AgentHomes(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-homes.json'))
     this.handOffs = new HandOffs(config.dataDir === undefined ? undefined : join(config.dataDir, 'handoffs.json'), item => this.broadcast('handoffs/changed', { item }))
-    void this.userAgents.loaded.then(() => { this.userAgents.list().forEach((agent, i) => this.userRoles.set(agent.id, this.role(roleOf(agent, i)))) })
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
@@ -560,43 +556,11 @@ export class AdgGateway extends Service {
       },
     }), 'adg-gateway capability role-model')
 
-    // 新建 agent: the person's own agents (user-agents.ts), roles like the plugins'.
+    // Each agent's one conversation, the work they hand each other, their reminders.
     ctx.effect(() => this.registry.register({
       id: AGENTS_CAPABILITY,
       version: 1,
       methods: {
-        'agents/list': async () => {
-          await this.userAgents.loaded
-          return { items: [...this.userAgents.list()], groups: TOOL_GROUPS.map(({ id, name, description }) => ({ id, name, description })) }
-        },
-        'agents/save': async params => {
-          const input = params as RequestParams<'agents/save'>
-          const taken = ['助手', ...this.roles.list().filter(r => r.custom !== true).map(r => r.name)]
-          let agent
-          try {
-            agent = await this.userAgents.save(input, taken)
-          } catch (error) {
-            throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
-          }
-          const order = this.userAgents.list().findIndex(a => a.id === agent.id)
-          this.userRoles.set(agent.id, this.role(roleOf(agent, order)))
-          // Its conversation goes on with the model chosen now.
-          const home = this.homes.get(agent.id)
-          const model = this.roleModel(agent.id)
-          if (home !== undefined && model !== undefined) await ctx.sessionController.selectModel({ sessionId: home as never, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
-          log.info(`agent ${input.id === undefined ? 'made' : 'changed'}: ${agent.name} (${agent.id})`)
-          return { agent }
-        },
-        'agents/delete': async params => {
-          const { id } = params as RequestParams<'agents/delete'>
-          if (!(await this.userAgents.delete(id))) return {}
-          this.userRoles.get(id)?.()
-          this.userRoles.delete(id)
-          // Its conversation stays, as an earlier one under 助手.
-          await this.homes.drop(id)
-          log.info(`agent deleted: ${id}`)
-          return {}
-        },
         'agents/home': async params => {
           const { agentId } = params as RequestParams<'agents/home'>
           try {
@@ -709,7 +673,12 @@ export class AdgGateway extends Service {
         modelInvocable: s.invocation.modelInvocable,
         userInvocable: s.invocation.userInvocable,
         ...ownerInfo(this.skillScope.ownerOf(s.name)),
+        ...(this.savedSkills?.registered.has(s.name) === true ? { removable: true } : {}),
       })
+      const saved = () => {
+        if (this.savedSkills === undefined) throw new RpcError(ErrorCode.InvalidParams, '这里没有可以写的技能文件夹')
+        return this.savedSkills
+      }
       const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
       scoped.effect(() => this.registry.register({
         id: SKILLS_CAPABILITY,
@@ -721,6 +690,21 @@ export class AdgGateway extends Service {
             const skill = await scoped.skills.get(name, options(call.signal))
             if (skill === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
             return { ...info(skill), content: skill.content }
+          },
+          'skills/save': async params => {
+            const p = params as RequestParams<'skills/save'>
+            try {
+              const { replaced } = await saveSkill(saved().deps, p)
+              log.info(`skill ${replaced ? 'changed' : 'made'} on the 技能 page: ${p.name}`)
+              return { name: p.name, replaced }
+            } catch (error) {
+              throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
+            }
+          },
+          'skills/remove': async params => {
+            const { name } = params as RequestParams<'skills/remove'>
+            await saved().remove(name)
+            return {}
           },
         },
       }), 'adg-gateway capability skills')
@@ -803,7 +787,12 @@ export class AdgGateway extends Service {
     // registered for its agents only, not in a skill folder other agents on the machine read.
     if (config.skillsDir !== undefined) {
       const dir = config.skillsDir
-      let savedSkills: { registered: ReadonlyMap<string, unknown>; register(name?: string): Promise<void> } | undefined
+      let savedSkills: { registered: Map<string, () => void>; register(name?: string): Promise<void> } | undefined
+      const deps: SkillSaveDeps = {
+        dir,
+        taken: async () => (await ctx.get('skills')?.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) }) ?? []).filter(s => savedSkills?.registered.has(s.name) !== true).map(s => s.name),
+        saved: async name => { await savedSkills?.register(name); this.broadcast('skills/changed', {}) },
+      }
       ctx.inject(['skills'], scoped => {
         const registered = new Map<string, () => void>()
         const register = async (name?: string) => {
@@ -820,12 +809,19 @@ export class AdgGateway extends Service {
         void register().catch(error => log.warn(`saved skills not loaded: ${String(error)}`))
         scoped.effect(() => () => { for (const dispose of registered.values()) dispose(); registered.clear() }, 'adg-gateway saved skills')
         savedSkills = { registered, register }
+        this.savedSkills = {
+          registered, deps,
+          remove: async name => {
+            if (!(await removeSkill(dir, name))) throw new RpcError(ErrorCode.InvalidParams, `「${name}」不是这里存的技能，删不了`)
+            registered.get(name)?.()
+            registered.delete(name)
+            log.info(`skill deleted on the 技能 page: ${name}`)
+            this.broadcast('skills/changed', {})
+          },
+        }
+        scoped.effect(() => () => { this.savedSkills = undefined }, 'adg-gateway saved skills api')
       })
-      const save = skillSaveTool({
-        dir,
-        taken: async () => (await ctx.get('skills')?.list({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }) }) ?? []).filter(s => savedSkills?.registered.has(s.name) !== true).map(s => s.name),
-        saved: async name => { await savedSkills?.register(name) },
-      })
+      const save = skillSaveTool(deps)
       this.agentPart('adg-gateway skill_save', agent => agent.tools.register({ ...save, execute: async (args, exec) => { await this.guardTool(exec); return save.execute(args, exec) } }))
     }
 
@@ -1014,7 +1010,7 @@ Content-Length: 0
   /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */
   roleModel(role: string): ModelSelection | undefined {
     if (!this.roles.list().some(r => r.id === role)) return undefined
-    return this.userAgents.get(role)?.model ?? this.roleModelStore.get()
+    return this.roleModelStore.get()
   }
 
   /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */

@@ -144,6 +144,12 @@ export const ScriptInfo = z.object({
    * user is asked whether the agent should read the changelog and check it.
    */
   packReview: z.object({ from: z.string().optional(), to: z.string() }).optional(),
+  /**
+   * 优化脚本: clean runs since it was last optimized (or the offer turned down),
+   * when that was, and `due` when the app offers it: `runs` enough of them to
+   * learn from, `updated` it went through on a new version.
+   */
+  optimize: z.object({ runs: z.number(), at: z.number().optional(), due: z.enum(['runs', 'updated']).optional() }).optional(),
 })
 export type ScriptInfo = z.infer<typeof ScriptInfo>
 
@@ -453,6 +459,15 @@ export const ScriptRequests = {
    * Remove from the library. Installed versions are deleted only with
    * `deleteFiles`; an imported directory is never deleted.
    */
+  /**
+   * 优化脚本 (ScriptInfo.optimize): `run` starts the 脚本 agent on it (pack summed
+   * up again, stall time, skills of its own); `keep` turns this offer down.
+   */
+  'scripts/optimize': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: ScriptId, decision: z.enum(['run', 'keep']) }),
+    result: z.object({ sessionId: z.string().optional() }),
+  },
   /** Have the agent sum up what the script is (its README, files, pack); the summary lands in `summary`. */
   'scripts/summarize': {
     capability: SCRIPTS_CAPABILITY,

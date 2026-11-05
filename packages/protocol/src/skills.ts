@@ -1,7 +1,9 @@
 /**
  * `skills@1`: the agent's skills (dsh's skill registry) for people to look
  * at: what each one is for, where it comes from, and its instructions. Served
- * by the gateway while the host has a skill registry.
+ * by the gateway while the host has a skill registry. The skills kept in this
+ * app's own skills folder (the agent's `skill_save`, or made on the 技能 page)
+ * can be written and deleted here too.
  */
 import { z } from 'zod'
 
@@ -35,8 +37,14 @@ export const SkillInfo = z.object({
    * of these scripts or games. Absent: a general skill, seen everywhere.
    */
   owner: SkillOwner.optional(),
+  /** Kept in this app's skills folder (saved by the agent or made on the 技能 page): it can be changed and deleted. */
+  removable: z.boolean().optional(),
 })
 export type SkillInfo = z.infer<typeof SkillInfo>
+
+/** A skill name as the skills folder keeps it: lowercase letters, digits and hyphens. */
+export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const MAX_SKILL_NAME = 48
 
 export const SkillsRequests = {
   'skills/list': {
@@ -50,4 +58,29 @@ export const SkillsRequests = {
     params: z.object({ name: z.string() }),
     result: SkillInfo.extend({ content: z.string() }),
   },
+  /** Write a skill into this app's skills folder; `replace` to change one already there. Seen by the agents at once. */
+  'skills/save': {
+    capability: SKILLS_CAPABILITY,
+    params: z.object({
+      name: z.string().regex(SKILL_NAME).max(MAX_SKILL_NAME),
+      description: z.string().trim().min(10).max(400),
+      content: z.string().trim().min(20).max(20_000),
+      /** Only these scripts (ids) see it; none: every session. */
+      scripts: z.array(z.string().min(1).max(64)).max(20).optional(),
+      games: z.array(z.string().min(1).max(64)).max(20).optional(),
+      replace: z.boolean().optional(),
+    }),
+    result: z.object({ name: z.string(), replaced: z.boolean() }),
+  },
+  /** Delete one of this app's skills folder (`removable`). */
+  'skills/remove': {
+    capability: SKILLS_CAPABILITY,
+    params: z.object({ name: z.string() }),
+    result: z.object({}),
+  },
+} as const
+
+export const SkillsNotifications = {
+  /** A skill was saved or deleted; re-read `skills/list`. */
+  'skills/changed': z.object({}),
 } as const

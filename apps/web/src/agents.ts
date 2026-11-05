@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { AgentToolGroup, HandOff, Role, UserAgent } from '@adg/protocol'
+import type { HandOff, Role } from '@adg/protocol'
 import type { IconName } from './components/Icons.tsx'
 import { useStore } from './hooks.ts'
 
@@ -40,22 +40,6 @@ export function useRoles(client: AdgClient): readonly Role[] {
   }, [client, status.state])
   useEffect(() => client.connection.on('roles/changed', r => setRoles(r.items)), [client])
   return roles
-}
-
-/** The agents the person made (`agents/list`), read again when the roster changes; null: not read yet or no such capability. */
-export function useUserAgents(client: AdgClient): { items: readonly UserAgent[]; groups: readonly AgentToolGroup[] } | null {
-  const status = useStore(client.connection.status)
-  const capabilities = useStore(client.capabilities)
-  const [state, setState] = useState<{ items: readonly UserAgent[]; groups: readonly AgentToolGroup[] } | null>(null)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => client.connection.on('roles/changed', () => setRevision(r => r + 1)), [client])
-  useEffect(() => {
-    if (status.state !== 'open' || !capabilities.has('agents')) return
-    let live = true
-    client.connection.call('agents/list', {}).then(r => { if (live) setState(r) }).catch(() => {})
-    return () => { live = false }
-  }, [client, status.state, capabilities, revision])
-  return state
 }
 
 /** The agent a session belongs to: its role when the server has that role, else the main agent. */

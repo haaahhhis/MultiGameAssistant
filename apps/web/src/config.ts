@@ -66,8 +66,6 @@ export type Route =
   | { readonly kind: 'handoff'; readonly id: string }
   /** Every agent's timed tasks and the pipelines on a timetable, together. */
   | { readonly kind: 'schedule' }
-  /** Making an agent (id null) or changing one the person made (AgentEditor.tsx). */
-  | { readonly kind: 'agentEdit'; readonly id: string | null }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
   /** One session view alone, in a popped-out window. */
@@ -90,9 +88,6 @@ export function readRoute(): Route {
   if (handOff !== null) return { kind: 'handoff', id: decodeURIComponent(handOff[1]!) }
   const tab = /^#\/a\/(.+)\/(schedule|history)$/.exec(location.hash)
   if (tab !== null) return { kind: 'agent', id: decodeURIComponent(tab[1]!), tab: tab[2] as AgentTab }
-  if (location.hash === '#/a/new') return { kind: 'agentEdit', id: null }
-  const editing = /^#\/a\/(.+)\/edit$/.exec(location.hash)
-  if (editing !== null) return { kind: 'agentEdit', id: decodeURIComponent(editing[1]!) }
   const agent = /^#\/a\/(.+)$/.exec(location.hash)
   if (agent !== null) return { kind: 'agent', id: decodeURIComponent(agent[1]!) }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
@@ -110,7 +105,6 @@ export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): voi
     : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.tab === undefined ? '' : `/${route.tab}`}`
     : route.kind === 'handoff' ? `#/h/${encodeURIComponent(route.id)}`
     : route.kind === 'schedule' ? '#/schedule'
-    : route.kind === 'agentEdit' ? (route.id === null ? '#/a/new' : `#/a/${encodeURIComponent(route.id)}/edit`)
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)
         : route.kind === 'home' ? '#/chat' : ''

@@ -7,7 +7,7 @@
  *   stalled           no new script log line for the script's stall time: its
  *                     own (learned from its clean runs — 1.5 × their longest
  *                     quiet stretch — or set by the agent / the user), else
- *                     its pack's `logs.stallAfter`, else the default (30 s,
+ *                     its pack's `logs.stallAfter`, else the default (60 s,
  *                     once the run has logged at least one line)
  *   overtime          running past twice the task's `expectedDuration`
  *
@@ -88,7 +88,9 @@ export interface IncidentStore {
 }
 
 /** Seconds a script may be quiet before the agent steps in, until its own normal rhythm is known (`scriptStall`). */
-export const DEFAULT_STALL_SECONDS = 30
+export const DEFAULT_STALL_SECONDS = 60
+/** The default before it became a minute: saved settings still holding it get the new one. */
+const OLD_DEFAULT_STALL_SECONDS = 30
 /** A learned stall time is this much longer than the longest quiet stretch of the recent clean runs. */
 const STALL_HEADROOM = 1.5
 /** Clean runs a learned stall time is drawn from. */
@@ -148,7 +150,8 @@ export class Monitor {
   async start(tickMs = 15_000): Promise<void> {
     const saved = await this.#deps.store.load()
     this.#incidents.push(...saved.incidents.slice(-KEEP_INCIDENTS))
-    this.#settings = withPatch(DEFAULT_SETTINGS, saved.settings)
+    const { defaultStallSeconds, ...rest } = saved.settings
+    this.#settings = withPatch(DEFAULT_SETTINGS, defaultStallSeconds === OLD_DEFAULT_STALL_SECONDS ? rest : saved.settings)
     for (const run of this.#deps.runner.list()) if (run.endedAt === undefined) this.#track(run)
     this.#unwatch = this.#deps.runner.watch({ state: run => this.#onState(run), line: (run, line) => this.#onLine(run, line) })
     if (tickMs > 0) this.#timer = setInterval(() => this.tick(), tickMs)
@@ -175,7 +178,8 @@ export class Monitor {
    */
   stallFor(scriptId: string): { seconds: number; source: 'script' | 'pack' | 'default'; entry?: ScriptStall } {
     const own = this.#settings.scriptStall[scriptId]
-    if (own !== undefined) return { seconds: own.seconds, source: 'script', entry: own }
+    // A learned time is never quicker than the default; one set by the agent or the user is theirs.
+    if (own !== undefined) return { seconds: own.by === 'learned' ? Math.max(own.seconds, this.#settings.defaultStallSeconds) : own.seconds, source: 'script', entry: own }
     const declared = parseDuration(this.#deps.packOf(scriptId)?.manifest.logs.stallAfter)
     if (declared !== undefined) return { seconds: Math.round(declared / 1000), source: 'pack' }
     return { seconds: this.#settings.defaultStallSeconds, source: 'default' }

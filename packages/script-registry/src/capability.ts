@@ -6,12 +6,14 @@ import type { CapabilityRegistration } from '@adg/gateway'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 import type { PackReview } from './pack-review.ts'
+import type { Optimizer } from './optimize.ts'
 
 /**
  * @param setupAgent - hand a waiting setup program to the agent; @returns its conversation.
  * @param review - answer whether to check a pack after its script updated (pack-review.ts).
+ * @param optimizer - 优化脚本 (optimize.ts).
  */
-export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview): CapabilityRegistration {
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview, optimizer: Optimizer): CapabilityRegistration {
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -88,6 +90,10 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
       'scripts/settings': () => library.settings(),
       'scripts/settings/set': params => library.setSettings(params as RequestParams<'scripts/settings/set'>),
       'scripts/mirrorchyan/check': (_params, call) => library.checkMirrorCdk(call.signal),
+      'scripts/optimize': async params => {
+        const p = params as RequestParams<'scripts/optimize'>
+        return optimizer.decide(p.id, p.decision, '你')
+      },
       'scripts/summarize': async params => ({ sessionId: await summaries.summarize((params as RequestParams<'scripts/summarize'>).id) }),
     },
   }

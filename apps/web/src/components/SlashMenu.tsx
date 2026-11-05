@@ -3,25 +3,39 @@ import type { AdgClient } from '@adg/client-core'
 import { expandSlash, slashOptions, type SlashOption, type SlashSkill } from '@adg/protocol'
 import { useStore } from '../hooks.ts'
 
-// The agent's skills, shared by every box with a slash menu; read again when a box mounts.
+// The agent's skills, shared by every box with a slash menu; read again when a box mounts or a skill is saved.
 let cached: readonly SlashSkill[] = []
 
-/** The skills people can call with `/name` (skills@1), or none while they load or without the capability. */
+/**
+ * The skills people can call with `/name` (skills@1), each with the script it belongs to by name,
+ * or none while they load or without the capability.
+ */
 export function useSkills(client: AdgClient): readonly SlashSkill[] {
   const capabilities = useStore(client.capabilities)
   const has = capabilities.has('skills')
+  const scripts = capabilities.has('scripts')
   const [skills, setSkills] = useState(cached)
+  const [revision, setRevision] = useState(0)
+  useEffect(() => client.connection.on('skills/changed', () => setRevision(r => r + 1)), [client])
   useEffect(() => {
     if (!has) return
     let live = true
-    client.connection.call('skills/list', {}).then(r => {
-      cached = r.skills.filter(s => s.userInvocable).map(s => ({ name: s.name, description: s.description }))
+    const names = scripts ? client.connection.call('scripts/list', {}).then(r => r.scripts, () => []) : Promise.resolve([])
+    Promise.all([client.connection.call('skills/list', {}), names]).then(([r, list]) => {
+      const nameOf = (id: string) => list.find(s => s.id === id || s.packId === id)?.name ?? id
+      cached = r.skills.filter(s => s.userInvocable).map(s => {
+        const group = [...new Set((s.owner?.scripts ?? []).map(nameOf))].join('、')
+        return { name: s.name, description: s.description, ...(group === '' ? {} : { group }) }
+      })
       if (live) setSkills(cached)
     }, () => {})
     return () => { live = false }
-  }, [client, has])
+  }, [client, has, scripts, revision])
   return skills
 }
+
+/** The header an entry of the menu goes under: 命令, a script's name, or 通用技能. */
+const groupLabel = (o: SlashOption) => (o.kind === 'command' ? '命令' : o.group ?? '通用技能')
 
 /**
  * The slash menu of a text box (protocol commands.ts): typing `/` lists the
@@ -104,7 +118,7 @@ function SlashMenu({ options, active, placement, onHover, onChoose }: {
       }}>
         {options.map((o, i) => (
           <div key={`${o.kind}:${o.name}`}>
-            {(i === 0 || options[i - 1]!.kind !== o.kind) && <div className="slash-group">{o.kind === 'command' ? '命令' : '技能'}</div>}
+            {(i === 0 || groupLabel(options[i - 1]!) !== groupLabel(o)) && <div className="slash-group">{groupLabel(o)}</div>}
             <button type="button" role="option" data-index={i} aria-selected={i === active} className={`slash-item ${i === active ? 'active' : ''}`}
               onMouseEnter={() => onHover(i)} onMouseDown={e => e.preventDefault()} onClick={() => onChoose(o)}>
               {o.name}
@@ -114,7 +128,7 @@ function SlashMenu({ options, active, placement, onHover, onChoose }: {
       </div>
       {current !== undefined && (
         <div className="slash-tip" style={{ top: tipTop }} role="tooltip">
-          {current.kind === 'skill' && <span className="slash-tip-kind">技能</span>}
+          {current.kind === 'skill' && <span className="slash-tip-kind">{current.group === undefined ? '技能' : `${current.group} 的技能`}</span>}
           {current.description}
           {current.kind === 'command' && current.arg !== undefined && <span className="slash-tip-arg">后面可以接：{current.arg}</span>}
           {current.kind === 'skill' && <span className="slash-tip-arg">后面写要它做的事</span>}

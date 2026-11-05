@@ -147,7 +147,7 @@ const ScriptIdArg = z.string().trim().min(1).max(64)
 function stallCheckTool(monitor: Monitor, ready: Promise<void>): ToolDefinition {
   return {
     name: 'monitor_stall_check',
-    description: '看一个脚本正常运行时日志的节奏，用来定它「多久没动静算卡住」：最近几次成功运行里，两条日志之间最长和通常（95%）隔多久，以及现在用的卡住时间和来源（脚本自己的：学到的或设过的 / 脚本包写的 / 默认）。默认 30 秒没新日志就交给干预。',
+    description: '看一个脚本正常运行时日志的节奏，用来定它「多久没动静算卡住」：最近几次成功运行里，两条日志之间最长和通常（95%）隔多久，以及现在用的卡住时间和来源（脚本自己的：学到的或设过的 / 脚本包写的 / 默认）。默认 60 秒没新日志就交给干预。',
     parameters: { type: 'object', properties: { id: { type: 'string', description: '脚本 id。' } }, required: ['id'], additionalProperties: false },
     output: { schema: {}, render: (_args, value): ContentBlock[] => [{ type: 'text', text: JSON.stringify(value, null, 1) }] },
     timeoutMs: 60_000,
@@ -175,7 +175,7 @@ function stallCheckTool(monitor: Monitor, ready: Promise<void>): ToolDefinition 
 function stallSetTool(monitor: Monitor, ready: Promise<void>): ToolDefinition {
   return {
     name: 'monitor_stall_set',
-    description: '设一个脚本「多久没有新日志算卡住」（秒），先用 monitor_stall_check 看它正常时的日志节奏再定。seconds 填 null 恢复成自动：从它之后的成功运行里学（没学到之前用默认 30 秒）。一个「可能卡住了」的异常其实是这个脚本正常的安静期时，用它调大，再结束异常。',
+    description: '设一个脚本「多久没有新日志算卡住」（秒），先用 monitor_stall_check 看它正常时的日志节奏再定。seconds 填 null 恢复成自动：从它之后的成功运行里学（没学到之前用默认 60 秒）。一个「可能卡住了」的异常其实是这个脚本正常的安静期时，用它调大，再结束异常。',
     parameters: {
       type: 'object',
       properties: {

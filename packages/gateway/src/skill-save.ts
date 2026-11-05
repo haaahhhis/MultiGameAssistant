@@ -8,14 +8,15 @@
  * scripts or games (`scripts` / `games` in its frontmatter) is seen only by
  * the sessions working on them (skill-scope.ts), the rest by every session.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
+import { MAX_SKILL_NAME, SKILL_NAME } from '@adg/protocol'
 
 const Args = z.object({
-  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, '小写字母、数字和短横线，例如 maa-daily-check').max(48),
+  name: z.string().regex(SKILL_NAME, '小写字母、数字和短横线，例如 maa-daily-check').max(MAX_SKILL_NAME),
   description: z.string().min(10).max(400),
   content: z.string().min(20).max(20_000),
   replace: z.boolean().nullish(),
@@ -30,6 +31,39 @@ export interface SkillSaveDeps {
   readonly taken: () => Promise<readonly string[]>
   /** Called after a save: register it so the agents see it now. */
   readonly saved?: (name: string) => Promise<void>
+}
+
+/** What a skill is saved with (the tool's arguments, or the 技能 page's form). */
+export type SkillInput = z.input<typeof Args>
+
+/** Write `<dir>/<name>/SKILL.md` and register it. */
+export async function saveSkill(deps: SkillSaveDeps, input: unknown): Promise<{ saved: string; replaced: boolean }> {
+  const parsed = Args.safeParse(input)
+  if (!parsed.success) throw new Error(`参数无效：${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`)
+  const { name, description, content, replace, scripts, games } = parsed.data
+  if ((await deps.taken()).includes(name)) throw new Error(`「${name}」是脚本包或软件自带的技能，换一个名字`)
+  const folder = join(deps.dir, name)
+  const file = join(folder, 'SKILL.md')
+  const existing = await readFile(file, 'utf8').catch(() => undefined)
+  if (existing !== undefined && replace !== true) throw new Error(`已经有技能「${name}」（${file}）。要更新它就加 replace=true，或者换一个名字`)
+  await mkdir(folder, { recursive: true })
+  // JSON strings are valid YAML scalars: no quoting surprises in the description.
+  const owner = [
+    ...(scripts == null || scripts.length === 0 ? [] : [`scripts: ${JSON.stringify(scripts)}\n`]),
+    ...(games == null || games.length === 0 ? [] : [`games: ${JSON.stringify(games)}\n`]),
+  ].join('')
+  await writeFile(file, `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s+/g, ' ').trim())}\n${owner}---\n\n${content.trim()}\n`)
+  await deps.saved?.(name)
+  return { saved: file, replaced: existing !== undefined }
+}
+
+/** Delete `<dir>/<name>/`; false when there is no such saved skill. */
+export async function removeSkill(dir: string, name: string): Promise<boolean> {
+  if (!SKILL_NAME.test(name)) return false
+  const folder = join(dir, name)
+  if (await readFile(join(folder, 'SKILL.md'), 'utf8').catch(() => undefined) === undefined) return false
+  await rm(folder, { recursive: true, force: true })
+  return true
 }
 
 export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
@@ -58,23 +92,8 @@ export function skillSaveTool(deps: SkillSaveDeps): ToolDefinition {
     timeoutMs: 30_000,
     isConcurrencySafe: () => false,
     execute: async args => {
-      const parsed = Args.safeParse(args)
-      if (!parsed.success) throw new Error(`参数无效：${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`)
-      const { name, description, content, replace, scripts, games } = parsed.data
-      if ((await deps.taken()).includes(name)) throw new Error(`「${name}」是脚本包或软件自带的技能，换一个名字`)
-      const folder = join(deps.dir, name)
-      const file = join(folder, 'SKILL.md')
-      const existing = await readFile(file, 'utf8').catch(() => undefined)
-      if (existing !== undefined && replace !== true) throw new Error(`已经有技能「${name}」（${file}）。要更新它就加 replace=true，或者换一个名字`)
-      await mkdir(folder, { recursive: true })
-      // JSON strings are valid YAML scalars: no quoting surprises in the description.
-      const owner = [
-        ...(scripts == null || scripts.length === 0 ? [] : [`scripts: ${JSON.stringify(scripts)}\n`]),
-        ...(games == null || games.length === 0 ? [] : [`games: ${JSON.stringify(games)}\n`]),
-      ].join('')
-      await writeFile(file, `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s+/g, ' ').trim())}\n${owner}---\n\n${content.trim()}\n`)
-      await deps.saved?.(name)
-      return { saved: file, replaced: existing !== undefined, note: '已保存，所有会话马上就能用；在「技能」页可以看到' } as never
+      const { saved, replaced } = await saveSkill(deps, args)
+      return { saved, replaced, note: '已保存，所有会话马上就能用；在「技能」页可以看到' } as never
     },
     presentCall: args => ({ card: 'generic', title: `保存技能：${String((args as Record<string, unknown> | undefined)?.['name'] ?? '')}`, kind: 'other' }),
   }

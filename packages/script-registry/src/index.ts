@@ -22,13 +22,15 @@ import { z } from 'zod'
 import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
 import { packReview } from './pack-review.ts'
+import { optimizer as scriptOptimizer, type Optimizer } from './optimize.ts'
 import { startSkillHub } from './skill-hub-plugin.ts'
 import { scriptSummaries } from './script-summary.ts'
 import { setupHandOff } from './setup-handoff.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
-export { ScriptLibrary, type InstallRequest, type LibraryOptions, type PreRunUpdate } from './library.ts'
+export { OPTIMIZE_AFTER_RUNS, ScriptLibrary, type InstallRequest, type LibraryOptions, type PreRunUpdate } from './library.ts'
+export type { Optimizer } from './optimize.ts'
 export { loadPacks, packForRepo, type LoadedPack, type PackDir } from './packs.ts'
 export { TOOL_NAMES } from './tools.ts'
 export { frontmatter, readSkills, SkillHub, type HubItem, type HubSkill } from './skill-hub.ts'
@@ -59,6 +61,8 @@ export class AdgScripts extends Service {
   readonly skillHub: SkillHub
   /** Settles once the library state and packs are loaded. */
   readonly ready: Promise<void>
+  /** 优化脚本: offered after enough clean runs (the runner reports them to `library.ranClean`) or an update. */
+  readonly optimizer: Optimizer
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'adgScripts')
@@ -70,6 +74,8 @@ export class AdgScripts extends Service {
     const handOff = setupHandOff(ctx, () => this.library, { info: message => log.info(message), warn: message => log.warn(message) })
 
     const review = packReview(ctx, () => this.library, { warn: message => log.warn(message) })
+    const optimizer = scriptOptimizer(ctx, () => this.library, { warn: message => log.warn(message) })
+    this.optimizer = optimizer
     this.library = new ScriptLibrary({
       toolsDir: spec.toolsDir,
       dataDir: spec.dataDir,
@@ -81,6 +87,7 @@ export class AdgScripts extends Service {
       onJob: job => ctx.get('adgGateway')?.broadcast('scripts/job', job),
       onSetup: handOff,
       onPackReview: script => review.ask(script),
+      onOptimize: script => optimizer.ask(script),
       log: { info: message => log.info(message), warn: message => log.warn(message) },
     })
     const library = this.library
@@ -120,7 +127,7 @@ export class AdgScripts extends Service {
         const setup = library.pendingSetup(id)
         if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
         return handOff(setup)
-      }, review)
+      }, review, optimizer)
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

@@ -9,7 +9,7 @@ const SKILLS = [
 ]
 
 test('the slash menu lists commands, then skills; filtered by what is typed', () => {
-  assert.deepEqual(slashOptions('/', SKILLS).map(o => `${o.kind}:${o.name}`), ['command:技能', 'command:资讯', 'command:编排', 'command:诊断', 'skill:game-arknights', 'skill:maa', 'skill:web-reading'])
+  assert.deepEqual(slashOptions('/', SKILLS).map(o => `${o.kind}:${o.name}`), ['command:技能', 'command:资讯', 'command:编排', 'command:诊断', 'command:优化脚本', 'skill:game-arknights', 'skill:maa', 'skill:web-reading'])
   assert.deepEqual(slashOptions('/诊', SKILLS).map(o => o.name), ['诊断'])
   assert.deepEqual(slashOptions('/why', SKILLS).map(o => o.name), ['诊断'], 'an alias finds its command')
   assert.deepEqual(slashOptions('/m', SKILLS).filter(o => o.kind === 'skill').map(o => o.name), ['maa', 'game-arknights'], 'names starting with it first')
@@ -37,4 +37,9 @@ test('/压缩 is the app\'s own: offered only in a conversation, never sent to t
   assert.equal(localCommand('/资讯'), undefined)
   assert.equal(localCommand('压缩一下'), undefined)
   assert.equal(expandSlash('/压缩', SKILLS), '/压缩', 'no instruction for the model')
+})
+
+test('skills are listed under their script, scripts by name, general ones last', () => {
+  const skills = [{ name: 'web-reading', description: '读网页' }, { name: 'maa-check', description: '检查', group: 'MAA' }, { name: 'bgi-fix', description: '修复', group: 'BetterGI' }, { name: 'maa-base', description: '基建', group: 'MAA' }]
+  assert.deepEqual(slashOptions('/', skills).filter(o => o.kind === 'skill').map(o => `${o.kind === 'skill' ? o.group ?? '通用' : ''}:${o.name}`), ['BetterGI:bgi-fix', 'MAA:maa-base', 'MAA:maa-check', '通用:web-reading'])
 })

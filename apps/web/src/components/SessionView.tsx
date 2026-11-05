@@ -7,13 +7,12 @@ import { viewsFor } from '../plugins.ts'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
 
-export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent, onEdit }: {
+export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
   sessionId: string
   /** Open an agent's conversation (its name in an earlier conversation's header). */
   onAgent?: (agentId: string) => void
   /** Change an agent the person made. */
-  onEdit?: (agentId: string) => void
   reminder?: ReactNode
   /** Typed on the home page; sent once, as soon as the session is open. */
   initialPrompt?: string | undefined
@@ -21,17 +20,16 @@ export function SessionView({ client, sessionId, reminder, initialPrompt, onInit
 }) {
   const session = useSessionHandle(client, sessionId)
   if (session === null) return <div className="main empty">正在打开会话…</div>
-  return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} onEdit={onEdit} />
+  return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} />
 }
 
-function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, onAgent, onEdit }: {
+function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
   session: NonNullable<ReturnType<typeof useSessionHandle>>
   reminder?: ReactNode
   initialPrompt?: string | undefined
   onInitialSent?: (() => void) | undefined
   onAgent?: ((agentId: string) => void) | undefined
-  onEdit?: ((agentId: string) => void) | undefined
 }) {
   const state = useStore(session.state)
   const connection = useStore(client.connection.status)
@@ -56,9 +54,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
             <div className="breadcrumb agent-heading">
               <span className={`agent-avatar small agent-${agent.id}`}><Icon name={agent.icon} /></span>
               <h1>{agent.name}</h1>
-              {role?.custom === true && onEdit !== undefined && (
-                <button type="button" className="icon-button rename-button" title="编辑这个 agent" aria-label="编辑这个 agent" onClick={() => onEdit(agentId)}><Icon name="pencil" /></button>
-              )}
             </div>
           ) : (
             <div className="breadcrumb">

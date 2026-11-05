@@ -382,7 +382,7 @@ export class Interventions {
         '找到共同原因时一次处理好，在 summary 里说明也解决了哪些；这次只调用一次 intervention_done（针对上面这条）。',
       ]),
       '',
-      ...(incident.kind === 'stalled' ? ['「可能卡住了」是按这个脚本多久没新日志判断的（默认 30 秒）。先用 monitor_stall_check 看它正常时的日志节奏：要是这只是它正常的安静期（还在加载、战斗、等待），用 monitor_stall_set 把它的卡住时间调到比正常最长的安静期长，再调用 intervention_done（resolved）让脚本继续；真卡住了才往下处理。', ''] : []),
+      ...(incident.kind === 'stalled' ? ['「可能卡住了」是按这个脚本多久没新日志判断的（默认 60 秒）。先用 monitor_stall_check 看它正常时的日志节奏：要是这只是它正常的安静期（还在加载、战斗、等待），用 monitor_stall_set 把它的卡住时间调到比正常最长的安静期长，再调用 intervention_done（resolved）让脚本继续；真卡住了才往下处理。', ''] : []),
       '第一步：先确认现在还需不需要处理。问题发现到现在可能已经过了一会儿，脚本可能自己恢复了（比如自己重启游戏改好了分辨率并跑完）、用户或别的 agent 可能已经处理过或重跑成功了。用 script_runs 看这个任务在这之后有没有成功的运行、这次运行现在的状态，再看进程和窗口；已经不需要处理就直接调用 intervention_done（resolved），summary 写「不需要处理」和依据，不要再去改设置或点画面。',
       '',
       mode === 'act'

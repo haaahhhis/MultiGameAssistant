@@ -378,25 +378,44 @@ test('a failed run stays held while its incident is open (the pipeline waits); t
 })
 
 
-test('no new log line for the default 30 seconds: stalled, and to the agent; the stall time says where it came from', async () => {
+test('no new log line for the default minute: stalled, and to the agent; the stall time says where it came from', async () => {
   const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }')
   const { runner, monitor, later } = setup(pack, { 'daily.json': { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { sleepMs: 60_000 }] } })
   await monitor.start(0)
   assert.equal(DEFAULT_SETTINGS.defaultStallSeconds, DEFAULT_STALL_SECONDS)
-  assert.equal(DEFAULT_STALL_SECONDS, 30)
-  assert.deepEqual(monitor.stallFor('maa'), { seconds: 30, source: 'default' })
+  assert.equal(DEFAULT_STALL_SECONDS, 60)
+  assert.deepEqual(monitor.stallFor('maa'), { seconds: 60, source: 'default' })
   const run = await runner.start('maa', 'daily')
   for (let i = 0; i < 100 && !runner.logs(run.id).some(l => l.text.includes('开始任务')); i++) await new Promise(r => setTimeout(r, 50))
-  later(20_000)
+  later(45_000)
   monitor.tick()
-  assert.equal(monitor.incidents().length, 0, 'quiet for 20 s is fine')
-  later(15_000)
+  assert.equal(monitor.incidents().length, 0, 'quiet for 45 s is fine')
+  later(20_000)
   monitor.tick()
   const [stalled] = monitor.incidents()
   assert.equal(stalled?.kind, 'stalled')
-  assert.match(stalled?.detail ?? '', /已经 3\d 秒没有新的日志，可能卡住了（这个脚本超过 30 秒没动静就算卡住，默认值）/)
+  assert.match(stalled?.detail ?? '', /已经 6\d 秒没有新的日志，可能卡住了（这个脚本超过 60 秒没动静就算卡住，默认值）/)
   await runner.stop(run.id)
   await monitor.idle()
+  monitor.stop()
+})
+
+test('saved settings with the old 30-second default get the minute; a learned time is never quicker than the default', async () => {
+  const learned = { seconds: 45, by: 'learned' as const, samples: [30], at: 0 }
+  const set = { seconds: 20, by: 'user' as const, samples: [], at: 0 }
+  const monitor = new Monitor({
+    runner: { list: () => [], watch: () => () => {} } as never,
+    packOf: () => undefined,
+    emulators: () => undefined,
+    notices: () => undefined,
+    store: { load: async () => ({ incidents: [], settings: { defaultStallSeconds: 30, scriptStall: { maa: learned, ok: set } } }), saveIncidents: async () => {}, saveSettings: async () => {}, saveScreenshot: async () => {}, readScreenshot: async () => undefined },
+    onIncident: () => {},
+    log: { info() {}, warn() {} },
+  } as never)
+  await monitor.start(0)
+  assert.equal(monitor.settings.defaultStallSeconds, 60)
+  assert.equal(monitor.stallFor('maa').seconds, 60)
+  assert.equal(monitor.stallFor('ok').seconds, 20, "the user's own value stays")
   monitor.stop()
 })
 

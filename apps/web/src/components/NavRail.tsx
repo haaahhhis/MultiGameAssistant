@@ -9,7 +9,6 @@ export type RailTarget =
   | { readonly kind: 'agent'; readonly id: string }
   | { readonly kind: 'page'; readonly id: string }
   | { readonly kind: 'schedule' }
-  | { readonly kind: 'newAgent' }
   | { readonly kind: 'settings' }
   | { readonly kind: 'none' }
 
@@ -20,14 +19,13 @@ export type RailTarget =
  * before the agents. An agent shows whether it is working, whether something
  * came in, and what waits for you there.
  */
-export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, onNewAgent, onSettings }: {
+export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, onSettings }: {
   client: AdgClient
   pages: readonly PageContribution[]
   current: RailTarget
   onAgent: (agentId: string) => void
   onPage: (pageId: string) => void
   onSchedule: () => void
-  onNewAgent: () => void
   onSettings: () => void
 }) {
   const status = useStore(client.connection.status)
@@ -47,9 +45,6 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
         {agents.map(state => (
           <AgentItem key={state.agent.id} state={state} active={current.kind === 'agent' && current.id === state.agent.id} onClick={() => onAgent(state.agent.id)} />
         ))}
-        {capabilities.has('agents') && (
-          <RailItem icon="plus" label="新建" title="自己建一个 agent：名字、职责、能用的工具" active={current.kind === 'newAgent'} onClick={onNewAgent} disabled={status.state !== 'open'} />
-        )}
         {pages.filter(page => page.order >= 0).map(pageItem)}
       </div>
       <div className="rail-footer">

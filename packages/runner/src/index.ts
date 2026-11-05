@@ -50,7 +50,11 @@ export class AdgRunner extends Service {
       library: { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) },
       dataDir: spec.dataDir,
       emulators: () => ctx.get('adgEmulators'),
-      onState: run => ctx.get('adgGateway')?.broadcast('runs/state', run),
+      onState: run => {
+        ctx.get('adgGateway')?.broadcast('runs/state', run)
+        // One more clean run of the script to learn from (优化脚本).
+        if (run.kind === 'task' && run.state === 'succeeded') void scripts.library.ranClean(run.scriptId).catch(error => log.warn(`counting the run of ${run.scriptId} failed: ${String(error)}`))
+      },
       onLog: (runId, lines) => ctx.get('adgGateway')?.broadcast('runs/log', { runId, lines }),
       updateFirst: async (scriptId, signal) => { await scripts.ready; return scripts.library.updateBeforeRun(scriptId, signal) },
       log: { info: m => log.info(m), warn: m => log.warn(m) },

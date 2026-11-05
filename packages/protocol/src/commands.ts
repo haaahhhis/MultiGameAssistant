@@ -2,7 +2,8 @@
  * Slash commands: a message (or a pipeline's agent step) that starts with
  * `/word` is sent as a full, careful instruction. `word` is one of the app's
  * commands (keep what was just done as a skill, look up game news, plan
- * scripts into a pipeline, find out why a script failed) or the name of one
+ * scripts into a pipeline, find out why a script failed, optimize a script
+ * from what its runs showed) or the name of one
  * of the agent's skills, which the agent then loads before acting. The
  * message keeps the typed line first, so the conversation shows what was
  * asked; the expansion follows after a blank line.
@@ -18,6 +19,23 @@ export const SAVE_SKILL_PROMPT = [
   '- 名字用简短的英文小写加短横线，description 一两句话说清楚做什么、什么时候用；',
   '- 保存后告诉我技能名，以及以后我说什么时会用到它。',
 ].join('\n')
+
+/**
+ * 优化脚本: everything the app learns from a script's runs, put to use in one go —
+ * its pack summed up again, its stall time from its log rhythm, the steps that
+ * keep working kept as skills of its own. `target`: the script (name or id),
+ * empty for the scripts run most lately; `id`: its id when `target` is its name;
+ * `why`: what made the app offer it.
+ */
+export function optimizeScriptPrompt(target: string, why?: string, id?: string): string {
+  return [
+    `优化脚本${target === '' ? '：最近运行过的脚本（script_runs 看最近一周跑过哪些，一个一个来）' : `「${target}」${id === undefined ? '' : `（脚本 id ${id}）`}`}${why === undefined ? '' : `（${why}）`}。把这段时间运行攒下的信息用起来，一次做完下面几件事：`,
+    '1. 重新总结脚本包：script_tasks、script_help 看它现在有哪些任务和参数，script_runs、script_run_log 看最近的运行（成功的看正常流程和用时，失败的看原因）；更新过版本就先用 script_changelog 读更新日志。对照它的脚本包，任务、参数、配置文件、完成和出错的日志文字、预计用时有不对或缺的，用原来的脚本包 id 提交 pack_propose（summary 写明依据）；都对就不提交；',
+    '2. 改善监控时间：monitor_stall_check 看它正常运行时日志的节奏，按建议值和你看日志的判断用 monitor_stall_set 设它多久没新日志算卡住，note 写明依据（例如「战斗中最长 70 秒不输出」）；',
+    '3. 把做过的步骤总结成技能：运行和处理这个脚本时反复用到、已经走通的做法（常见报错怎么处理、怎么确认跑完、配置怎么改）用 skill_save 存成技能，scripts 填这个脚本的 id，只给它用；已有的技能就合并更新（replace），不要重复存，没有值得存的就不存；',
+    '4. 不要运行脚本、不要改它的配置；最后用几句话告诉我：脚本包改了什么（草稿在「脚本」页等我确认）、卡住时间设成多少、存了或更新了哪些技能。',
+  ].join('\n')
+}
 
 export interface SlashCommand {
   /** Typed after the slash. */
@@ -77,6 +95,13 @@ export const COMMANDS: readonly SlashCommand[] = [
     ].join('\n'),
   },
   {
+    name: '优化脚本',
+    aliases: ['optimize'],
+    title: '用运行攒下的信息优化脚本：重新总结脚本包、调监控时间、把做过的步骤存成技能',
+    arg: '脚本名（可选，不写就看最近运行过的）',
+    expand: arg => optimizeScriptPrompt(arg),
+  },
+  {
     name: '压缩',
     aliases: ['compact'],
     title: '压缩这个对话：较早的部分换成摘要，agent 会忘掉其中的细节',
@@ -95,12 +120,14 @@ export function localCommand(text: string): SlashCommand['local'] {
 export interface SlashSkill {
   readonly name: string
   readonly description: string
+  /** The script it belongs to, by name (技能隔离); absent: a general skill. The menu lists skills under their script. */
+  readonly group?: string | undefined
 }
 
 /** One entry of the slash menu. */
 export type SlashOption =
   | { readonly kind: 'command'; readonly name: string; readonly description: string; readonly arg?: string; readonly command: SlashCommand }
-  | { readonly kind: 'skill'; readonly name: string; readonly description: string }
+  | { readonly kind: 'skill'; readonly name: string; readonly description: string; readonly group?: string | undefined }
 
 /** The skill instruction that follows `/name request`. */
 export function skillInstruction(name: string, request: string): string {
@@ -132,7 +159,8 @@ export function splitSlash(text: string): { typed: string; expansion: string } |
 }
 
 /**
- * Menu entries for what is typed after the slash (before any space): commands first, then skills; name starts first, then contains.
+ * Menu entries for what is typed after the slash (before any space): commands first, then skills under their
+ * script (scripts by name, general skills last); in each, name starts first, then contains.
  * `inSession`: typed in an open conversation, so its own commands (`/压缩`) are offered too.
  */
 export function slashOptions(text: string, skills: readonly SlashSkill[], inSession = false): SlashOption[] {
@@ -145,7 +173,7 @@ export function slashOptions(text: string, skills: readonly SlashSkill[], inSess
   const rank = (name: string) => (name.toLowerCase().startsWith(typed) ? 0 : 1)
   const found: SlashOption[] = skills
     .filter(s => s.name.toLowerCase().includes(typed) || (typed.length > 0 && s.description.toLowerCase().includes(typed)))
-    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
-    .map(s => ({ kind: 'skill', name: s.name, description: s.description }))
+    .sort((a, b) => Number(a.group === undefined) - Number(b.group === undefined) || (a.group ?? '').localeCompare(b.group ?? '') || rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
+    .map(s => ({ kind: 'skill', name: s.name, description: s.description, ...(s.group === undefined ? {} : { group: s.group }) }))
   return [...commands, ...found]
 }

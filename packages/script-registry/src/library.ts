@@ -62,6 +62,8 @@ export interface LibraryOptions {
   readonly onSetup?: (setup: PendingSetup) => Promise<string>
   /** A script with a pack of the user's (or the agent's) moved to a new version: ask whether to check the pack. Once per version. */
   readonly onPackReview?: (script: ScriptInfo) => void
+  /** Enough clean runs to learn from, or the first on a new version: offer 优化脚本. Once per stretch. */
+  readonly onOptimize?: (script: ScriptInfo) => void
   readonly log: { info(message: string): void; warn(message: string): void }
 }
 
@@ -1403,7 +1405,36 @@ export class ScriptLibrary {
       ...(job === undefined ? {} : { jobId: job.id }),
       ...(script.summary === undefined ? {} : { summary: script.summary }),
       ...(this.#packReview(script) === undefined ? {} : { packReview: this.#packReview(script)! }),
+      ...(script.optimize === undefined ? {} : { optimize: { runs: script.optimize.runs, ...(script.optimize.at === undefined ? {} : { at: script.optimize.at }), ...(optimizeDue(script) === undefined ? {} : { due: optimizeDue(script)! }) } }),
     }
+  }
+
+  /** One of its tasks went through: one more run to learn from; enough of them, or the first on a new version, offers 优化脚本. */
+  async ranClean(id: string, now = Date.now()): Promise<void> {
+    const script = this.#state.scripts.find(s => s.id === id)
+    if (script === undefined) return
+    const version = versionOf(script)
+    const before = script.optimize ?? { runs: 0, since: now, ...(version === undefined ? {} : { version }) }
+    script.optimize = { ...before, runs: before.runs + 1 }
+    const due = optimizeDue(script)
+    // Right after an update its pack is checked first (packReview); optimizing waits for that.
+    const key = due === undefined || (due === 'updated' && this.#packReview(script) !== undefined) ? undefined : `${due}:${script.optimize.since}:${version ?? ''}`
+    const ask = key !== undefined && script.optimize.asked !== key
+    if (ask) script.optimize.asked = key
+    await this.#save()
+    this.#options.onChanged(id)
+    if (ask) this.#options.onOptimize?.(this.#info(script))
+  }
+
+  /** 优化脚本 was started (`run`) or this offer turned down (`keep`): counting starts again at the version it is at. */
+  async optimizeDone(id: string, decision: 'run' | 'keep', now = Date.now()): Promise<ScriptInfo> {
+    const script = this.#script(id)
+    const version = versionOf(script)
+    const at = decision === 'run' ? now : script.optimize?.at
+    script.optimize = { runs: 0, since: now, ...(version === undefined ? {} : { version }), ...(at === undefined ? {} : { at }) }
+    await this.#save()
+    this.#options.onChanged(id)
+    return this.#info(script)
   }
 
   /**
@@ -1590,6 +1621,18 @@ async function changelogFiles(dir: string): Promise<string[]> {
 /** The version a script is at: what a local import's folder says, else the installed version in use. */
 function versionOf(script: StoredScript): string | undefined {
   return script.source.kind === 'local' ? script.localVersion?.version : script.current
+}
+
+/** Clean runs that make 优化脚本 worth offering. */
+export const OPTIMIZE_AFTER_RUNS = 5
+
+/** Why 优化脚本 is offered now: it went through on a version newer than the one counting started at, or ran cleanly often enough. */
+function optimizeDue(script: StoredScript): 'runs' | 'updated' | undefined {
+  const o = script.optimize
+  if (o === undefined) return undefined
+  const version = versionOf(script)
+  if (o.version !== undefined && version !== undefined && version !== o.version && o.runs > 0) return 'updated'
+  return o.runs >= OPTIMIZE_AFTER_RUNS ? 'runs' : undefined
 }
 
 /** A script's update channels, resolved (see `#channels`). */

@@ -58,6 +58,12 @@ export const StoredScript = z.object({
   packVersion: z.string().optional(),
   /** The version the user was last asked about, so each update asks once. */
   packReviewAsked: z.string().optional(),
+  /**
+   * 优化脚本: clean runs since `since` (it was last optimized, the offer turned
+   * down, or first counted), at `version`; `at` when it was last optimized;
+   * `asked` the offer already made for this stretch.
+   */
+  optimize: z.object({ runs: z.number(), since: z.number(), version: z.string().optional(), at: z.number().optional(), asked: z.string().optional() }).optional(),
 })
 export type StoredScript = z.infer<typeof StoredScript>
 
