@@ -1,7 +1,10 @@
 /**
  * Build MultiGameAssistant as one dsh plugin package, for people who already
- * have dsh: `dist/plugin/dsh-multigameassistant-<version>.tgz`, a few MB
- * instead of the desktop installer's Electron and dsh.
+ * have dsh: `dist/plugin/dsh-multigameassistant.tgz`, a few MB instead of the
+ * desktop installer's Electron and dsh. The file name has no version, so a
+ * release's `releases/latest/download/dsh-multigameassistant.tgz` is always the
+ * newest (the version is in its package.json). The release workflow attaches
+ * it to the GitHub release and publishes it to npm under the same name.
  *
  *   pnpm package:plugin [--skip-build] [--version 1.1.0] [--out <folder>]
  *
@@ -28,7 +31,7 @@
  *    sidebar entry's browser half (apps/web/dsh-client.js as `lib/client.js`).
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
@@ -190,10 +193,14 @@ writeFileSync(join(staging, 'README.md'), `# ${NAME}
 
 ## 安装
 
-插件包在 [Releases](https://github.com/haaahhhis/MultiGameAssistant/releases) 里（\`${NAME}-<版本>.tgz\`），复制它的链接：
+- **dsh 桌面版**：「Plugins」→「Add plugin」，填 \`${NAME}\` →「Install」→「Enable now」。
+- **命令行的 dsh**：\`dsh plugin add ${NAME}\`，再 \`dsh web\`。
 
-- **dsh 桌面版**：「Plugins」→「Add plugin」，填插件包的链接 →「Install」→「Enable now」。
-- **命令行的 dsh**：\`dsh plugin add <插件包的链接>\`，再 \`dsh web\`。
+npm 慢或连不上时，用 GitHub 上最新版的插件包链接代替名字：
+
+\`\`\`text
+https://github.com/haaahhhis/MultiGameAssistant/releases/latest/download/${NAME}.tgz
+\`\`\`
 
 侧边栏会多出「多游戏助手」，点开就是它的界面。它和你平时的 dsh 对话互不影响：它的对话用自己的 agent 预设「多游戏助手」，工具、提示词、技能和权限设置只在这些对话里。
 
@@ -202,7 +209,10 @@ writeFileSync(join(staging, 'README.md'), `# ${NAME}
 
 step('npm pack')
 run(npm, ['pack', '--pack-destination', out], staging)
-const tgz = join(out, `${NAME}-${version}.tgz`)
+// Without the version, so the release's latest/download link stays the same (the version is inside).
+const tgz = join(out, `${NAME}.tgz`)
+rmSync(tgz, { force: true })
+renameSync(join(out, `${NAME}-${version}.tgz`), tgz)
 console.log(`\ndone: ${relative(root, tgz)}\nplugins: ${plugins.join(', ')}\ndsh imports: ${[...peers].sort().join(', ')}`)
 
 /** The latest tag as the version: v0.6.0-beta.5 → 0.6.0-beta.5; 3 commits after it → 0.6.0-beta.5.3 (as package-desktop.mjs). */

@@ -18,16 +18,16 @@ irm https://raw.githubusercontent.com/haaahhhis/MultiGameAssistant/main/scripts/
 
 ### 已经装了 dsh
 
-不用下完整安装包，装成 dsh 插件就行（十几 MB）。插件包的链接是（`<版本>` 换成 [Releases](https://github.com/haaahhhis/MultiGameAssistant/releases) 里最新的版本号）：
+不用下完整安装包，装成 dsh 插件就行（十几 MB）。插件包的链接总是指向最新版：
 
 ```text
-https://github.com/haaahhhis/MultiGameAssistant/releases/download/v<版本>/dsh-multigameassistant-<版本>.tgz
+https://github.com/haaahhhis/MultiGameAssistant/releases/latest/download/dsh-multigameassistant.tgz
 ```
 
 - **dsh 桌面版**：打开左边的「Plugins」→「Add plugin」，填上面的链接 →「Install」→「Enable now」。侧边栏会多出「多游戏助手」，点开就是本软件的界面，不用重启。
 - **命令行的 dsh**：`dsh plugin add <上面的链接>`，再 `dsh web`，在侧边栏点「多游戏助手」。
 
-插件和你平时的 dsh 对话互不影响：多游戏助手的对话用它自己的 agent 预设「多游戏助手」，脚本、游戏、编排这些工具和它的提示词、技能、权限设置都只在这些对话里，你别的对话看不到，也不会被它改权限。更新：用新版本的链接再装一次。
+插件和你平时的 dsh 对话互不影响：多游戏助手的对话用它自己的 agent 预设「多游戏助手」，脚本、游戏、编排这些工具和它的提示词、技能、权限设置都只在这些对话里，你别的对话看不到，也不会被它改权限。更新：用同一个链接再装一次。
 
 和桌面版相比，插件版没有自己的托盘、开机自启和定时唤醒电脑：定时任务在 dsh 开着时执行。
 

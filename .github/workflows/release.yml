@@ -2,6 +2,8 @@
 # on that tag's GitHub Release, the tag's message as the notes (a tag with "-" is a pre-release;
 # `pnpm release` makes the tag, scripts/release.mjs). Run by hand
 # (Actions → Release → Run workflow), it only builds: the installers stay with the run as an artifact.
+# The dsh plugin package (dsh-multigameassistant.tgz, no version in the name, so the release's
+# latest/download link is always the newest) also goes to npm under the same name (the npm job).
 name: Release
 
 on:
@@ -136,10 +138,44 @@ jobs:
             echo
             echo "- Windows x64（大多数电脑）：\`$x64\`"
             echo "- Windows ARM64（骁龙等 ARM 处理器的电脑）：\`$arm64\`"
-            echo "- 已经装了 dsh：dsh 插件版 \`$plugin\`（安装方法见 README「已经装了 dsh」）"
+            echo "- 已经装了 dsh：dsh 插件版 \`$plugin\`，或在 dsh 的「Add plugin」里填 \`dsh-multigameassistant\`（安装方法见 README「已经装了 dsh」）"
           } > notes.md
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
           # The installers and the dsh plugin: GitHub shows each file's SHA-256, and the app's updater checks against that.
           gh release create "$TAG" *.exe *.tgz --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "MultiGameAssistant ${TAG#v}" --notes-file notes.md "${flags[@]}"
+
+  npm:
+    name: Publish the dsh plugin to npm
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Trusted publishing: npm takes this workflow's OIDC identity instead of a token (set up once on
+    # npmjs.com → the package → Settings → Trusted publishing: haaahhhis/MultiGameAssistant, release.yml),
+    # and records where the package was built (provenance).
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: installers
+          path: release
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Trusted publishing needs npm 11.5.1 or later.
+          npm install -g npm@11
+          # A pre-release (v2.1.0-rc.1) goes out as "next", so `dsh plugin add dsh-multigameassistant` keeps the stable one.
+          dist=latest
+          if [[ "$TAG" == *-* ]]; then dist=next; fi
+          npm publish release/dsh-multigameassistant.tgz --access public --tag "$dist"
