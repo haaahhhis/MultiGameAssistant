@@ -58,7 +58,9 @@ export interface HubItem extends HubSkill {
   readonly blocked?: string
 }
 
-const Installed = z.object({ repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), skipped: z.string().optional() })
+/** Games and scripts the user put a downloaded skill under, instead of the repository's. */
+const Owner = z.object({ games: z.array(z.string()).optional(), scripts: z.array(z.string()).optional() })
+const Installed = z.object({ repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), skipped: z.string().optional(), owner: Owner.optional() })
 const State = z.object({
   repos: z.array(z.object({ repo: z.string(), branch: z.string() })).optional(),
   installed: z.record(z.string(), Installed).default({}),
@@ -253,6 +255,15 @@ export class SkillHub {
     await this.#save()
   }
 
+  /** Put a downloaded skill under other games and scripts (empty: general); `null`: back to the repository's. */
+  async setOwner(name: string, owner: { games?: readonly string[] | undefined; scripts?: readonly string[] | undefined } | null): Promise<void> {
+    const record = this.#record(name)
+    if (owner === null) delete record.owner
+    else record.owner = { games: [...new Set(owner.games ?? [])], scripts: [...new Set(owner.scripts ?? [])] }
+    await this.#save()
+    await this.#register(name)
+  }
+
   /** Re-read a downloaded skill after its file changed (the agent or the user edited it). */
   async reload(name: string): Promise<void> {
     if (this.#state.installed[name] !== undefined) await this.#register(name)
@@ -301,7 +312,9 @@ export class SkillHub {
     await rm(join(this.#options.dir, 'base', skill.name), { recursive: true, force: true })
     await mkdir(join(this.#options.dir, 'base', skill.name), { recursive: true })
     await cp(join(from, SKILL_FILE), join(this.#options.dir, 'base', skill.name, SKILL_FILE))
-    this.#state.installed[skill.name] = { repo: skill.repo, path: skill.path, hash: skill.hash, at: this.#now() }
+    // Where the user put it stays across updates.
+    const owner = this.#state.installed[skill.name]?.owner
+    this.#state.installed[skill.name] = { repo: skill.repo, path: skill.path, hash: skill.hash, at: this.#now(), ...(owner === undefined ? {} : { owner }) }
     await this.#save()
     await this.#register(skill.name)
   }
@@ -315,9 +328,9 @@ export class SkillHub {
       this.#options.register(name, undefined)
       return
     }
-    // What it belongs to, from the repository's index as last read (skill isolation: only those scripts' and games' sessions see it).
+    // What it belongs to: where the user put it, else the repository's index as last read (skill isolation: only those scripts' and games' sessions see it).
     const record = this.#state.installed[name]
-    const listed = record === undefined ? undefined : Object.values(this.#state.read).flatMap(r => r.skills).find(s => s.name === name && s.repo === record.repo) as { games?: unknown; scripts?: unknown } | undefined
+    const listed = record?.owner ?? (record === undefined ? undefined : Object.values(this.#state.read).flatMap(r => r.skills).find(s => s.name === name && s.repo === record.repo) as { games?: unknown; scripts?: unknown } | undefined)
     const ids = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
     const games = ids(listed?.games)
     const scripts = ids(listed?.scripts)

@@ -492,6 +492,9 @@
     "skillhub/remove": {
       "capability": "skillhub"
     },
+    "skillhub/owner": {
+      "capability": "skillhub"
+    },
     "skillhub/repos/set": {
       "capability": "skillhub"
     },
@@ -21164,6 +21167,52 @@
       "additionalProperties": false
     },
     "skillhub/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "skillhub/owner.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "scripts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "games": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "owner"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/owner.result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},

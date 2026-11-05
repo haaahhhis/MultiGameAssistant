@@ -6,6 +6,7 @@
  */
 import { z } from 'zod'
 import { GitHubRepo } from './scripts.ts'
+import { SkillOwner } from './skills.ts'
 
 export const SKILLHUB_CAPABILITY = 'skillhub'
 
@@ -68,6 +69,16 @@ export const SkillHubRequests = {
   'skillhub/remove': {
     capability: SKILLHUB_CAPABILITY,
     params: ByName,
+    result: z.object({}),
+  },
+  /**
+   * Put a downloaded skill under other games and scripts than the repository
+   * says (it was picked for the wrong one); empty lists make it general, `null`
+   * goes back to the repository's. Kept across its updates.
+   */
+  'skillhub/owner': {
+    capability: SKILLHUB_CAPABILITY,
+    params: ByName.extend({ owner: SkillOwner.nullable() }),
     result: z.object({}),
   },
   /** Which repositories to read, in order (the first with a name wins). */

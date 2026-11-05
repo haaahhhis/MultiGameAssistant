@@ -69,6 +69,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
   const [copied, setCopied] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [folded, setFolded] = useState(readFolded)
+  const [moving, setMoving] = useState(false)
   const fold = (key: string) => setFolded(f => {
     const next = new Set(f)
     if (!next.delete(key)) next.add(key)
@@ -114,8 +115,9 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
       return found
     }
     const add = (list: SkillInfo[], skill: SkillInfo) => { if (!list.includes(skill)) list.push(skill) }
-    // Every installed script has its place (in its game), so a skill can be added to it while it has none.
+    // Every game and every installed script has its place (a script in its game), so a skill can be added while there is none.
     if (needle === '') {
+      for (const game of games) gameSection(game)
       for (const script of scripts) {
         const game = gameOfScript(script, games)
         if (game === undefined) section(`script:${script.id}`, script.name, { script: script.id })
@@ -141,6 +143,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
   const current = shown.find(s => s.name === selected) ?? firstSkill
 
   useEffect(() => {
+    setMoving(false)
     if (current === undefined) { setDetail(null); return }
     let live = true
     setCopied(false)
@@ -226,6 +229,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
               {open && <>
               {section.items.map(row)}
               {section.script !== undefined && section.items.length === 0 && <p className="muted small skills-empty">还没有只给它用的技能</p>}
+              {section.game !== undefined && section.items.length === 0 && section.subs.length === 0 && <p className="muted small skills-empty">还没有这个游戏的技能</p>}
               {section.subs.map(s => (
                 <div key={s.key} className="skills-sub">
                   <div className="skills-sub-label">
@@ -281,6 +285,11 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
                             <Icon name={copied ? 'check' : 'copy'} />{copied ? '已复制' : `/${current.name}`}
                           </button>
                         )}
+                        {(current.removable === true || current.source === 'hub') && (
+                          <button className="small-button" aria-expanded={moving} onClick={() => setMoving(m => !m)} title="放错了游戏或脚本时，换到对的那个">
+                            <Icon name="gamepad" />更换游戏和脚本
+                          </button>
+                        )}
                         {current.removable === true && (
                           <>
                             <button className="small-button" disabled={detail?.name !== current.name}
@@ -298,6 +307,11 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
                         )}
                       </div>
                     </header>
+                    {moving && (
+                      <MoveSkill key={current.name} client={client} skill={current} content={detail?.name === current.name ? detail.content : undefined}
+                        scripts={scripts} games={games} onCancel={() => setMoving(false)}
+                        onMoved={() => { setMoving(false); setError(null); setRevision(r => r + 1) }} />
+                    )}
                     <p className="skill-desc">{current.description}</p>
                     {current.whenToUse !== undefined && <p className="muted small">什么时候用：{current.whenToUse}</p>}
                     <section className="skill-body" aria-label="技能内容">
@@ -333,14 +347,6 @@ function SkillForm({ client, draft, scripts, games, onCancel, onSaved }: {
   const editing = draft.original !== undefined
   const nameOk = SKILL_NAME.test(form.name) && form.name.length <= MAX_SKILL_NAME
   const ready = nameOk && form.description.trim().length >= 10 && form.content.trim().length >= 20
-  // An owner the script list does not have (removed, or a pack id) stays as it was.
-  const unknown = form.scripts.filter(id => !scripts.some(s => s.id === id))
-  const unknownGames = form.games.filter(key => findGame(key, games) === undefined)
-  const toggle = (id: string) => setForm(f => ({ ...f, scripts: f.scripts.includes(id) ? f.scripts.filter(s => s !== id) : [...f.scripts, id] }))
-  const toggleGame = (id: string) => setForm(f => {
-    const has = f.games.some(key => key === id || findGame(key, games)?.id === id)
-    return { ...f, games: has ? f.games.filter(key => key !== id && findGame(key, games)?.id !== id) : [...f.games, id] }
-  })
 
   const save = async () => {
     setBusy(true)
@@ -369,40 +375,7 @@ function SkillForm({ client, draft, scripts, games, onCancel, onSaved }: {
           onChange={e => setForm(f => ({ ...f, name: e.target.value.trim().toLowerCase() }))} placeholder="例：maa-daily-check" />
         {form.name !== '' && !nameOk && <span className="error small">只能用小写英文字母、数字和短横线，例如 maa-daily-check</span>}
       </label>
-      <fieldset className="field skill-owners">
-        <legend className="field-label">给哪个脚本用（只在用这个脚本时才用得上的做法：它的配置、报错、日志）</legend>
-        {scripts.length === 0 && unknown.length === 0 && <span className="muted small">还没有装脚本。</span>}
-        <div className="skill-owner-list">
-          {scripts.map(script => (
-            <label key={script.id} className="check-label">
-              <input type="checkbox" checked={form.scripts.includes(script.id)} onChange={() => toggle(script.id)} />{script.name}
-            </label>
-          ))}
-          {unknown.map(id => (
-            <label key={id} className="check-label">
-              <input type="checkbox" checked onChange={() => toggle(id)} />{id}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {(games.length > 0 || unknownGames.length > 0) && (
-        <fieldset className="field skill-owners">
-          <legend className="field-label">给哪个游戏用（和游戏本身有关、换个脚本也用得上的：游戏里的操作、界面、活动、机制）</legend>
-          <div className="skill-owner-list">
-            {games.map(game => (
-              <label key={game.id} className="check-label">
-                <input type="checkbox" checked={form.games.some(key => key === game.id || findGame(key, games)?.id === game.id)} onChange={() => toggleGame(game.id)} />{game.name}
-              </label>
-            ))}
-            {unknownGames.map(key => (
-              <label key={key} className="check-label">
-                <input type="checkbox" checked onChange={() => toggleGame(key)} />{key}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      )}
-      <p className="muted small">脚本和游戏都不选就是通用技能，所有对话都能用。</p>
+      <OwnerFields scripts={scripts} games={games} value={form} onChange={owner => setForm(f => ({ ...f, ...owner }))} />
       <label className="field">
         <span className="field-label">说明：做什么、什么时候用（agent 靠它决定什么时候用，10–400 字）</span>
         <textarea className="text-input" rows={2} maxLength={400} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -419,5 +392,117 @@ function SkillForm({ client, draft, scripts, games, onCancel, onSaved }: {
         <button className="small-button primary" disabled={busy || !ready} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button>
       </div>
     </article>
+  )
+}
+
+/** What a skill belongs to: games and scripts, as checklists. */
+interface Owner { scripts: string[]; games: string[] }
+
+/** The game and script checklists of the form and of 更换游戏和脚本; none ticked: a general skill. */
+function OwnerFields({ scripts, games, value, onChange }: {
+  scripts: readonly ScriptInfo[]
+  games: readonly GameRef[]
+  value: Owner
+  onChange: (owner: Owner) => void
+}) {
+  // An owner the lists do not have (removed, or a pack id) stays listed while editing, so unticking it can be undone.
+  const [first] = useState(value)
+  const unknown = [...new Set([...first.scripts, ...value.scripts])].filter(id => !scripts.some(s => s.id === id))
+  const unknownGames = [...new Set([...first.games, ...value.games])].filter(key => findGame(key, games) === undefined)
+  const isGame = (key: string, id: string) => key === id || findGame(key, games)?.id === id
+  const toggle = (id: string) => onChange({ ...value, scripts: value.scripts.includes(id) ? value.scripts.filter(s => s !== id) : [...value.scripts, id] })
+  const toggleGame = (id: string) => onChange({ ...value, games: value.games.some(key => isGame(key, id)) ? value.games.filter(key => !isGame(key, id)) : [...value.games, id] })
+  return (
+    <>
+      {(games.length > 0 || unknownGames.length > 0) && (
+        <fieldset className="field skill-owners">
+          <legend className="field-label">给哪个游戏用（和游戏本身有关、换个脚本也用得上的：游戏里的操作、界面、活动、机制）</legend>
+          <div className="skill-owner-list">
+            {games.map(game => (
+              <label key={game.id} className="check-label">
+                <input type="checkbox" checked={value.games.some(key => isGame(key, game.id))} onChange={() => toggleGame(game.id)} />{game.name}
+              </label>
+            ))}
+            {unknownGames.map(key => (
+              <label key={key} className="check-label" title="游戏页上没有这个游戏">
+                <input type="checkbox" checked={value.games.includes(key)} onChange={() => toggleGame(key)} />{key}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <fieldset className="field skill-owners">
+        <legend className="field-label">给哪个脚本用（只在用这个脚本时才用得上的做法：它的配置、报错、日志）</legend>
+        {scripts.length === 0 && unknown.length === 0 && <span className="muted small">还没有装脚本。</span>}
+        <div className="skill-owner-list">
+          {scripts.map(script => (
+            <label key={script.id} className="check-label">
+              <input type="checkbox" checked={value.scripts.includes(script.id)} onChange={() => toggle(script.id)} />{script.name}
+            </label>
+          ))}
+          {unknown.map(id => (
+            <label key={id} className="check-label" title="这个脚本不在脚本库里（删掉了，或是脚本包 id）">
+              <input type="checkbox" checked={value.scripts.includes(id)} onChange={() => toggle(id)} />{id}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <p className="muted small">游戏和脚本都不选就是通用技能，所有对话都能用。</p>
+    </>
+  )
+}
+
+/**
+ * 更换游戏和脚本: put a skill picked for the wrong game or script under the
+ * right one. A skill saved here is written again with its new owner; one from
+ * the 技能库 keeps the choice beside it (kept across updates), and can go back
+ * to the repository's.
+ */
+function MoveSkill({ client, skill, content, scripts, games, onCancel, onMoved }: {
+  client: PageProps['client']
+  skill: SkillInfo
+  /** Its instructions, needed to write a saved skill again; undefined while they load. */
+  content: string | undefined
+  scripts: readonly ScriptInfo[]
+  games: readonly GameRef[]
+  onCancel: () => void
+  onMoved: () => void
+}) {
+  const [owner, setOwner] = useState<Owner>({ scripts: [...(skill.owner?.scripts ?? [])], games: [...(skill.owner?.games ?? [])] })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hub = skill.source === 'hub'
+  const run = async (next: Owner | null) => {
+    setBusy(true)
+    setError(null)
+    try {
+      if (hub) await client.connection.call('skillhub/owner', { name: skill.name, owner: next })
+      else {
+        if (content === undefined || next === null) return
+        await client.connection.call('skills/save', {
+          name: skill.name, description: skill.description, content, replace: true,
+          ...(next.scripts.length === 0 ? {} : { scripts: next.scripts }),
+          ...(next.games.length === 0 ? {} : { games: next.games }),
+        })
+      }
+      onMoved()
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="skill-move" role="group" aria-label="更换游戏和脚本">
+      <OwnerFields scripts={scripts} games={games} value={owner} onChange={setOwner} />
+      {hub && <p className="muted small">这是从技能库下载的技能：你选的会一直保留，技能库更新它也不变。</p>}
+      {error !== null && <p className="error small">{error}</p>}
+      <div className="skill-actions">
+        {hub && <button className="link-button small" disabled={busy} onClick={() => void run(null)}>恢复成技能库里的</button>}
+        <span className="spacer" />
+        <button className="small-button" disabled={busy} onClick={onCancel}>取消</button>
+        <button className="small-button primary" disabled={busy || (!hub && content === undefined)} onClick={() => void run(owner)}>{busy ? '保存中…' : '保存'}</button>
+      </div>
+    </div>
   )
 }

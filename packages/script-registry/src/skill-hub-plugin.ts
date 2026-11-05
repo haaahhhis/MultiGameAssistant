@@ -123,6 +123,13 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
         changed()
         return {}
       },
+      'skillhub/owner': async params => {
+        const p = params as RequestParams<'skillhub/owner'>
+        await hub.setOwner(p.name, p.owner)
+        changed()
+        ctx.get('adgGateway')?.broadcast('skills/changed', {})
+        return {}
+      },
       'skillhub/repos/set': async params => {
         const repos = await hub.setRepos((params as RequestParams<'skillhub/repos/set'>).repos)
         changed()

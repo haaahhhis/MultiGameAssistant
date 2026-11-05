@@ -71,3 +71,6 @@ button.skill-row { padding: 7px 10px; }
 .skill-path { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 10px; border-top: 1px dashed var(--border); }
 .skills-blank { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 72px 16px; text-align: center; color: var(--text-2); }
 .skills-blank > .ui-icon { width: 28px; height: 28px; color: var(--accent); }
+/* 更换游戏和脚本, inside the detail card. */
+.skill-move { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
+.skill-move p { margin: 0; }
