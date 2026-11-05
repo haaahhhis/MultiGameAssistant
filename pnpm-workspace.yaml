@@ -1,6 +1,8 @@
 packages:
   - packages/*
   - apps/*
+  # The dsh plugin's manifest and patch as published (scripts/package-plugin.mjs), not a package built here.
+  - '!packages/dsh-plugin'
 
 # Allow only the native/runtime install scripts dsh and Electron need.
 allowBuilds:

@@ -7,7 +7,7 @@
  * it to the GitHub release and stages it on npm under the same name (live once
  * a maintainer approves it).
  *
- *   pnpm package:plugin [--skip-build] [--version 1.1.0] [--out <folder>]
+ *   pnpm package:plugin [--skip-build] [--version 1.1.0] [--out <folder>] [--sync]
  *
  * Installed into the person's own dsh (dsh desktop: Plugins → Add plugin;
  * otherwise `dsh plugin add`), beside their other chats: the gateway runs
@@ -30,16 +30,18 @@
  *    package exports), the gateway set to share, and the app's agent preset;
  *    none of dsh's own rows. The package root is an entry too, for the
  *    sidebar entry's browser half (apps/web/dsh-client.js as `lib/client.js`).
+ *
+ * The package.json and the patch are also kept in packages/dsh-plugin/ (the
+ * folder the plugin catalogs read: it declares `dsh.bundle`). Making the
+ * package fails when they differ from what it would publish; `--sync`
+ * rewrites them (scripts/lib/plugin-manifest.mjs).
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-
-const NAME = 'dsh-multigameassistant'
-/** The dsh this was built and tested against, up to the next minor (dsh changes its plugin APIs between minors). */
-const DSH_RANGE = '>=0.2.1-rc.5 <0.3.0-0'
+import { KEPT_VERSION, NAME, PLUGIN_DIR, pluginManifest, pluginPatch, pluginsOf } from './lib/plugin-manifest.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -66,8 +68,7 @@ mkdirSync(join(staging, 'lib'), { recursive: true })
 
 // The plugins the bundle mounts, in its patch's order.
 const patch = readFileSync(join(root, 'packages', 'bundle', 'cordis.patch.yml'), 'utf8')
-const plugins = [...patch.matchAll(/name: '@adg\/([a-z-]+)'/g)].map(m => m[1])
-if (plugins.length === 0) throw new Error('no @adg plugins found in packages/bundle/cordis.patch.yml')
+const plugins = pluginsOf(patch)
 
 step(`esbuild: ${plugins.length} plugins → lib/`)
 const result = await build({
@@ -130,63 +131,20 @@ writeFileSync(join(staging, 'lib', 'index.js'), [
 ].join('\n'))
 cpSync(join(root, 'LICENSE'), join(staging, 'LICENSE'))
 
-// The plugin shares the dsh it goes into (dsh desktop's own profile, or another of the person's): its patch
-// adds the app's plugins and its own agent preset, and restates none of dsh's rows. The bundle's permission
-// presets, working folder and standard preset are the desktop app's, which has a dsh of its own.
-const cut = (from, to) => {
-  const start = patch.indexOf(from)
-  const end = patch.indexOf(to, start)
-  if (start < 0 || end < 0) throw new Error(`packages/bundle/cordis.patch.yml changed shape (${JSON.stringify(from)} … ${JSON.stringify(to)})`)
-  return patch.slice(start + 1, end)
+// Its manifest and patch (scripts/lib/plugin-manifest.mjs), as kept in packages/dsh-plugin/ but with the version.
+const keptPatch = pluginPatch(patch)
+const kept = pluginManifest({ version: KEPT_VERSION, plugins, peers })
+const keptDir = join(root, ...PLUGIN_DIR.split('/'))
+const keptFiles = { 'package.json': `${JSON.stringify(kept, null, 2)}\n`, 'cordis.patch.yml': keptPatch }
+const stale = Object.entries(keptFiles).filter(([file, text]) => (existsSync(join(keptDir, file)) ? readFileSync(join(keptDir, file), 'utf8').replace(/\r\n/g, '\n') : null) !== text).map(([file]) => file)
+if (stale.length > 0) {
+  if (!flag('--sync')) throw new Error(`${PLUGIN_DIR}/${stale.join(', ')} differ from what this package publishes: run pnpm package:plugin --sync and commit them`)
+  mkdirSync(keptDir, { recursive: true })
+  for (const file of stale) writeFileSync(join(keptDir, file), keptFiles[file])
+  console.log(`  updated ${PLUGIN_DIR}/${stale.join(', ')}`)
 }
-const gatewayEntry = "      name: '@adg/gateway'\n      config:\n"
-const presetHead = '    id: standard\n    order: 1\n'
-const rows = cut('\n- insert:\n', '\n# M4 of the plan')
-const preset = cut('\n- id: preset-standard\n', '\n# <<< preset-standard')
-if (!rows.includes(gatewayEntry) || !preset.includes(presetHead)) throw new Error('packages/bundle/cordis.patch.yml: the gateway or the standard preset changed shape')
-const appPreset = `${preset
-  .replace('- id: preset-standard\n', '- id: preset-mga\n')
-  .replace(presetHead, '    id: mga\n    name: 多游戏助手\n    description: MultiGameAssistant：安装、运行和编排游戏脚本，处理运行中的问题，查活动\n    order: 50\n')}
-      - id: adg-agent
-        name: '@adg/gateway/agent'`
-writeFileSync(join(staging, 'cordis.patch.yml'), [
-  `# ${NAME} ${version}: the app's plugins (packages/bundle/cordis.patch.yml, each @adg/<plugin> as ${NAME}/<plugin>)`,
-  "# sharing the dsh with the person's other chats, and the app's agent preset (dsh's standard one with the app's",
-  '# tools and prompts, and compaction as 设置 → 对话压缩 says). No row of dsh is restated.',
-  rows.replace(gatewayEntry, `${gatewayEntry}        # Only its own sessions are its concern; the UI is under dsh's web server, at /adg/.\n        shared: true\n        listen: false\n`).trimEnd(),
-  '',
-  "    # The package itself: dsh's page loads its sidebar entry (「多游戏助手」) from it.",
-  '    - id: adg-sidebar',
-  `      name: '${NAME}'`,
-  '',
-  "    # The app's agent preset: its sessions run this one (the gateway creates them so).",
-  appPreset.split('\n').map(line => line === '' ? line : `    ${line}`).join('\n'),
-  '',
-].join('\n').replace(/name: '@adg\/gateway\/agent'/g, `name: '${NAME}/agent'`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`))
-
-const exports = {
-  '.': './lib/index.js',
-  ...Object.fromEntries(plugins.map(name => [`./${name}`, `./lib/${name}.js`])),
-  './agent': './lib/agent.js',
-  './client': './lib/client.js',
-}
-writeFileSync(join(staging, 'package.json'), `${JSON.stringify({
-  name: NAME,
-  version,
-  description: '多游戏助手 MultiGameAssistant 的 dsh 插件版：让 agent 管好各个游戏的日常脚本（安装、编排定时流水线、看护运行、查活动），界面在自己的网页里。',
-  keywords: ['dsh', 'dsh-plugin', 'deepseek-harness', 'game', 'automation', 'maa', '明日方舟', '星穹铁道'],
-  license: 'AGPL-3.0-only',
-  homepage: 'https://github.com/haaahhhis/MultiGameAssistant',
-  repository: { type: 'git', url: 'git+https://github.com/haaahhhis/MultiGameAssistant.git' },
-  bugs: { url: 'https://github.com/haaahhhis/MultiGameAssistant/issues' },
-  type: 'module',
-  exports: { ...exports, './package.json': './package.json' },
-  files: ['lib', 'skills', 'web', 'cordis.patch.yml', 'README.md', 'LICENSE'],
-  engines: { dsh: DSH_RANGE, node: '>=22' },
-  os: ['win32'],
-  peerDependencies: Object.fromEntries([...peers].sort().map(name => [name, '*'])),
-  dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },
-}, null, 2)}\n`)
+writeFileSync(join(staging, 'cordis.patch.yml'), `# ${NAME} ${version}\n${keptPatch}`)
+writeFileSync(join(staging, 'package.json'), `${JSON.stringify({ ...kept, version }, null, 2)}\n`)
 
 writeFileSync(join(staging, 'README.md'), `# ${NAME}
 

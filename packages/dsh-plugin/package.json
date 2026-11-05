@@ -1,0 +1,73 @@
+{
+  "name": "dsh-multigameassistant",
+  "version": "0.0.0-source",
+  "description": "多游戏助手 MultiGameAssistant 的 dsh 插件版：让 agent 管好各个游戏的日常脚本（安装、编排定时流水线、看护运行、查活动），界面在自己的网页里。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "game",
+    "automation",
+    "maa",
+    "明日方舟",
+    "星穹铁道"
+  ],
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/haaahhhis/MultiGameAssistant",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haaahhhis/MultiGameAssistant.git",
+    "directory": "packages/dsh-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/haaahhhis/MultiGameAssistant/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js",
+    "./gateway": "./lib/gateway.js",
+    "./script-registry": "./lib/script-registry.js",
+    "./runner": "./lib/runner.js",
+    "./emulator": "./lib/emulator.js",
+    "./analyzer": "./lib/analyzer.js",
+    "./guard": "./lib/guard.js",
+    "./monitor": "./lib/monitor.js",
+    "./intervene": "./lib/intervene.js",
+    "./notify": "./lib/notify.js",
+    "./feishu": "./lib/feishu.js",
+    "./qqbot": "./lib/qqbot.js",
+    "./orchestrator": "./lib/orchestrator.js",
+    "./scheduler": "./lib/scheduler.js",
+    "./game-intel": "./lib/game-intel.js",
+    "./agent": "./lib/agent.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "skills",
+    "web",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0",
+    "node": ">=22"
+  },
+  "os": [
+    "win32"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-credentials": ">=0.2.1-rc.5 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}
