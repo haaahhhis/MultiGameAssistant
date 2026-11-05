@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { CredentialInfo, ModelSelection } from '@adg/protocol'
-import { useCredentials, useModelCatalog, useStore } from '../../hooks.ts'
+import { useModelCatalog, useStore } from '../../hooks.ts'
 import { ProvidersSection } from '../providers/ProvidersPage.tsx'
 import { Select } from '../../components/Select.tsx'
 
@@ -23,7 +23,7 @@ export function apiKeyProblem(draft: string): string | null {
   return null
 }
 
-/** Models in one place: the default model, every model service with its key and models, other credentials. */
+/** Models in one place: the default model, the role agents' model, every model service with its key and models. */
 export function ApiKeysPage({ client }: { client: AdgClient }) {
   const capabilities = useStore(client.capabilities)
   return (
@@ -35,7 +35,6 @@ export function ApiKeysPage({ client }: { client: AdgClient }) {
       <DefaultModel client={client} />
       {capabilities.has('role-model') && <RoleAgentModel client={client} />}
       {capabilities.has('providers') && <ProvidersSection client={client} />}
-      <OtherCredential client={client} />
     </div>
   )
 }
@@ -237,25 +236,5 @@ function RoleAgentModel({ client }: { client: AdgClient }) {
       )}
       {message !== null && <div className={message.tone === 'ok' ? 'muted small' : 'error small'}>{message.text}</div>}
     </section>
-  )
-}
-
-/** Any other credential by name, e.g. a custom provider's key. */
-function OtherCredential({ client }: { client: AdgClient }) {
-  const [name, setName] = useState('')
-  const valid = /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
-  const { items } = useCredentials(client, valid ? [name] : [])
-  return (
-    <details className="card advanced">
-      <summary>其他凭据（高级）</summary>
-      <label className="small">
-        凭据名称
-        <input className="text-input" value={name} onChange={e => setName(e.target.value.trim())} placeholder="例如 OPENROUTER_API_KEY" spellCheck={false} />
-      </label>
-      {name !== '' && !valid && <div className="error small">只能使用字母、数字和下划线，且不能以数字开头。</div>}
-      {valid && (
-        <CredentialCard client={client} refName={name} title={name} description="自定义凭据。" info={items?.[name] ?? null} />
-      )}
-    </details>
   )
 }

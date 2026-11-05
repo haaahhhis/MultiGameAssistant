@@ -737,7 +737,6 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .model-group { margin-top: 4px; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--sunken); overflow-wrap: anywhere; max-width: 100%; }
-.advanced summary { cursor: pointer; font-weight: 600; }
 .notice.left { text-align: left; justify-content: flex-start; }
 .settings-close { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
 
