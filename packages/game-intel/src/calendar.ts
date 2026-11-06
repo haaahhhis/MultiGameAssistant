@@ -66,11 +66,31 @@ interface Fact {
 /** The agent's web reading when it does not say which page. */
 const AGENT_PAGE = { id: 'agent', name: 'agent 查到的网页' } as const
 
+/** The fields of an activity the user can write themselves. */
+export const OWN_FIELDS = ['name', 'startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'] as const
+export type OwnField = (typeof OWN_FIELDS)[number]
+export interface OwnFields {
+  name?: string
+  startsAt?: number
+  endsAt?: number
+  kind?: string
+  description?: string
+  url?: string
+  /** An https address, or a picture the user added (`own:<file>`). */
+  cover?: string
+}
+/** Set a field (it beats the sources), `null` to take it back, absent to leave it. */
+export type OwnPatch = { [K in OwnField]?: OwnFields[K] | null | undefined } & { todo?: readonly string[] | undefined }
+
 interface Stored extends Activity {
   /** Every name it went by, for matching. */
   names: string[]
   /** What each source said, by source id, in the order they first said it. */
   facts: Record<string, Fact>
+  /** What the user wrote themselves: beats every source, and no refresh touches it. */
+  mine?: OwnFields & { at: number }
+  /** The sources' name while the user's own name is shown. */
+  baseName?: string
 }
 
 const StoredSchema = z.object({
@@ -269,7 +289,7 @@ export class Calendar {
       delete item.facts[source.id]
       this.#derive(item, timeZone)
     }
-    this.#items = this.#items.filter(a => a.game !== game || Object.keys(a.facts).length > 0 || a.screen !== undefined)
+    this.#items = this.#items.filter(a => a.game !== game || this.#sourced(a) || a.mine !== undefined)
     this.#prune(now)
     this.#saved.refreshed[game] = { at: now, ok: true, count: events.length }
     await this.save()
@@ -342,6 +362,80 @@ export class Calendar {
     return written
   }
 
+  /**
+   * The user's own word on an event (`target.id`), or an event of their own
+   * (a `name` and no id; one of that name already in the calendar is that
+   * one). Fields equal to what the sources say are not kept, so a later
+   * refresh still moves them; on an event only the user has, every field is.
+   * @returns the event; undefined when there is no event with that id in that game.
+   * @throws Error when a new one has no name.
+   */
+  async saveOwn(target: { game: string; id?: string | undefined }, patch: OwnPatch, now: number, timeZone: string): Promise<Activity | undefined> {
+    let item: Stored | undefined
+    if (target.id !== undefined) {
+      item = this.#items.find(a => a.id === target.id && a.game === target.game)
+      if (item === undefined) return undefined
+    } else {
+      const name = typeof patch.name === 'string' ? patch.name.trim() : ''
+      if (name === '') throw new Error('新活动要有名字')
+      item = this.#items.find(a => a.game === target.game && a.names.some(n => idKey(n) === idKey(name))) ?? this.#create(target.game, name)
+    }
+    const mine: OwnFields = { ...item.mine }
+    delete (mine as { at?: number }).at
+    for (const key of OWN_FIELDS) {
+      const value = patch[key]
+      if (value === undefined) continue
+      if (value === null || (typeof value === 'string' && value.trim() === '')) delete mine[key]
+      else (mine as Record<string, unknown>)[key] = typeof value === 'string' ? value.trim() : value
+    }
+    if (mine.startsAt !== undefined && mine.endsAt !== undefined && mine.endsAt <= mine.startsAt) throw new Error('结束时间要晚于开始时间')
+    // On an event the sources know, keep only where the user differs from them.
+    if (this.#sourced(item)) {
+      const base = structuredClone(item)
+      delete base.mine
+      this.#derive(base, timeZone)
+      for (const key of OWN_FIELDS) if (mine[key] !== undefined && mine[key] === base[key]) delete mine[key]
+    }
+    if (Object.keys(mine).length === 0) delete item.mine
+    else item.mine = { ...mine, at: now }
+    if (mine.name !== undefined) item.names = unique([...item.names, mine.name])
+    if (patch.todo !== undefined) item.todo = unique(patch.todo.map(t => t.trim()).filter(t => t !== '' && !item.done.includes(t)))
+    if (!this.#sourced(item) && item.mine === undefined) {
+      this.#items = this.#items.filter(a => a !== item)
+      await this.save()
+      return undefined
+    }
+    this.#derive(item, timeZone)
+    await this.save()
+    return this.#public(item)
+  }
+
+  /**
+   * Take back what the user wrote on an event: the sources' word shows again;
+   * an event only the user had goes.
+   * @returns the event as it is now; undefined when it went (or was not there).
+   */
+  async resetOwn(id: string, timeZone: string): Promise<Activity | undefined> {
+    const item = this.#items.find(a => a.id === id)
+    if (item === undefined) return undefined
+    delete item.mine
+    if (!this.#sourced(item)) {
+      this.#items = this.#items.filter(a => a !== item)
+      await this.save()
+      return undefined
+    }
+    this.#derive(item, timeZone)
+    await this.save()
+    return this.#public(item)
+  }
+
+  /** The pictures the user added that an event still shows (`own:<file>`). */
+  ownImages(): Set<string> {
+    const out = new Set<string>()
+    for (const a of this.#items) if (a.mine?.cover?.startsWith('own:') === true) out.add(a.mine.cover)
+    return out
+  }
+
   async remove(id: string): Promise<boolean> {
     const before = this.#items.length
     this.#items = this.#items.filter(a => a.id !== id)
@@ -366,6 +460,11 @@ export class Calendar {
     const loose = mine.filter(a => taken?.has(a) !== true && sameEvent(a.names, names) && overlaps(a))
     const running = loose.find(a => (a.startsAt ?? 0) <= now && now <= (a.endsAt ?? Infinity))
     return running ?? loose[0]
+  }
+
+  /** Some source (a data site, a web page, the game screen) knows it. */
+  #sourced(item: Stored): boolean {
+    return Object.keys(item.facts).length > 0 || item.screen !== undefined
   }
 
   #create(game: string, name: string): Stored {
@@ -405,7 +504,19 @@ export class Calendar {
     if (primary === undefined) delete item.site
     else item.site = { source: primary.id, name: primary.fact.name, at: primary.fact.at }
 
+    // The user's own word beats every source.
+    const mine = item.mine
+    if (mine?.name !== undefined) {
+      if (item.name !== mine.name) item.baseName = item.name
+      item.name = mine.name
+    } else if (item.baseName !== undefined) {
+      item.name = item.baseName
+      delete item.baseName
+    }
+    for (const key of ['startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'] as const) if (mine?.[key] !== undefined) set(key, mine[key])
+
     delete item.mismatch
+    if (mine?.endsAt !== undefined) return
     const siteEnd = site?.fact.endsAt
     if (site === undefined || siteEnd === undefined) return
     const page = ordered.find(o => o.fact.web && o.fact.endsAt !== undefined)
@@ -422,6 +533,8 @@ export class Calendar {
   #prune(now: number): void {
     this.#items = this.#items.filter(a => {
       if (a.endsAt === undefined) {
+        // The user's own, with no end: until they take it off.
+        if (a.mine !== undefined) return true
         const seen = [a.screen?.at, ...Object.values(a.facts).map(f => f.at)].filter((t): t is number => t !== undefined)
         return (seen.length === 0 ? now : Math.max(...seen)) + KEEP_UNDATED_MS > now
       }
@@ -430,9 +543,10 @@ export class Calendar {
   }
 
   #public(item: Stored): Activity {
-    const { names: _names, facts, ...activity } = item
+    const { names: _names, facts, mine, baseName: _baseName, ...activity } = item
     const sources = Object.entries(facts).map(([id, f]) => ({ id, name: f.name, at: f.at, web: f.web, ...(f.endsAt === undefined ? {} : { endsAt: f.endsAt }) }))
-    return structuredClone({ ...activity, ...(sources.length === 0 ? {} : { sources }) })
+    const own = mine === undefined ? undefined : { at: mine.at, fields: OWN_FIELDS.filter(k => mine[k] !== undefined) }
+    return structuredClone({ ...activity, ...(sources.length === 0 ? {} : { sources }), ...(own === undefined ? {} : { own }) })
   }
 }
 

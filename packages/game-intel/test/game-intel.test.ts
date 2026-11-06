@@ -281,3 +281,64 @@ test('following an SRA game without a pack, and stopping, which forgets its even
   await calendar.follow('ys', false, 'sra-ys')
   assert.deepEqual([calendar.settings.followed, calendar.list('sra-ys')], [[], []])
 })
+
+test("the user's own events: added by hand, kept through refreshes, with no end until taken off", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-own-'))
+  const calendar = new Calendar(dir)
+  await assert.rejects(calendar.saveOwn({ game: 'endfield' }, { kind: '签到' }, NOW, TZ), /名字/)
+  const added = await calendar.saveOwn({ game: 'endfield' }, { name: '周年庆签到', endsAt: NOW + 5 * DAY, kind: '签到', cover: 'own:0123456789abcdef0123456789abcdef.png', todo: ['每天签到'] }, NOW, TZ)
+  assert.ok(added !== undefined)
+  assert.equal(added.name, '周年庆签到')
+  assert.deepEqual(added.own?.fields, ['name', 'endsAt', 'kind', 'cover'])
+  assert.equal(added.sources, undefined)
+  assert.deepEqual(added.todo, ['每天签到'])
+  assert.deepEqual([...calendar.ownImages()], ['own:0123456789abcdef0123456789abcdef.png'])
+  // A data site that does not list it does not drop it.
+  await calendar.applySite('endfield', { id: 'sra', name: 'SRA 公共 API' }, [{ name: '丹青渡·版本活动', aliases: [], endsAt: NOW + 10 * DAY }], NOW, TZ)
+  await calendar.applySite('endfield', { id: 'sra', name: 'SRA 公共 API' }, [], NOW + HOUR, TZ)
+  assert.deepEqual(calendar.list('endfield').map(a => a.name), ['周年庆签到'])
+  // No end: it stays past the time an undated reading is forgotten.
+  const undated = await calendar.saveOwn({ game: 'endfield', id: added.id }, { endsAt: null }, NOW, TZ)
+  assert.equal(undated?.endsAt, undefined)
+  await calendar.applySite('endfield', { id: 'sra', name: 'SRA 公共 API' }, [], NOW + 30 * DAY, TZ)
+  assert.equal(calendar.list('endfield').length, 1)
+  // Same name again is the same event.
+  const again = await calendar.saveOwn({ game: 'endfield' }, { name: '周年庆签到', description: '登录领奖励' }, NOW, TZ)
+  assert.equal(again?.id, added.id)
+  assert.equal(again?.description, '登录领奖励')
+  const reloaded = new Calendar(dir)
+  await reloaded.load()
+  assert.equal(reloaded.get(added.id)?.description, '登录领奖励')
+  // Taking it back: one only the user had goes, and so does its picture.
+  assert.equal(await reloaded.resetOwn(added.id, TZ), undefined)
+  assert.equal(reloaded.list('endfield').length, 0)
+  assert.equal(reloaded.ownImages().size, 0)
+})
+
+test("the user's word on a site's event beats the site, survives a refresh, and can be taken back", async () => {
+  const calendar = new Calendar(mkdtempSync(join(tmpdir(), 'adg-own-')))
+  await calendar.applySite('arknights', { id: 'prts', name: 'PRTS' }, parseAsk(PRTS_RESULTS, prts, TZ, NOW), NOW, TZ)
+  const event = calendar.list('arknights').find(a => a.name === '恒远津梁')!
+  const siteEnd = event.endsAt!
+  // The same name as the site's is not kept as the user's; the end and picture are.
+  const edited = await calendar.saveOwn({ game: 'arknights', id: event.id }, { name: '恒远津梁', endsAt: siteEnd + 2 * DAY, cover: 'https://example.com/a.png' }, NOW, TZ)
+  assert.deepEqual(edited?.own?.fields, ['endsAt', 'cover'])
+  assert.equal(edited?.endsAt, siteEnd + 2 * DAY)
+  assert.equal(edited?.mismatch, undefined)
+  // A wrong id in another game is not found.
+  assert.equal(await calendar.saveOwn({ game: 'starrail', id: event.id }, { kind: 'x' }, NOW, TZ), undefined)
+  // Renamed by the user: the site still finds it by its own name, and does not take the name back.
+  await calendar.saveOwn({ game: 'arknights', id: event.id }, { name: '津梁（我的）' }, NOW, TZ)
+  await calendar.applySite('arknights', { id: 'prts', name: 'PRTS' }, parseAsk(PRTS_RESULTS, prts, TZ, NOW + HOUR), NOW + HOUR, TZ)
+  const after = calendar.get(event.id)!
+  assert.equal(after.name, '津梁（我的）')
+  assert.equal(after.endsAt, siteEnd + 2 * DAY)
+  assert.equal(calendar.list('arknights').filter(a => a.name.includes('津梁')).length, 1)
+  // Taking back one field, then everything: the site's word shows again.
+  const partly = await calendar.saveOwn({ game: 'arknights', id: event.id }, { endsAt: null }, NOW, TZ)
+  assert.equal(partly?.endsAt, siteEnd)
+  const back = await calendar.resetOwn(event.id, TZ)
+  assert.equal(back?.name, '恒远津梁')
+  assert.equal(back?.own, undefined)
+  assert.equal(back?.cover, undefined)
+})

@@ -48,8 +48,27 @@ export const Activity = z.object({
   finished: z.object({ at: z.number() }).optional(),
   /** The game and the data site disagree on when it ends. */
   mismatch: z.string().optional(),
+  /**
+   * What the user (or the agent for them) wrote themselves (`games/activity/save`):
+   * those fields beat every source, and a refresh never changes or drops them.
+   * An activity with no `sources` and no `screen` is one the user added.
+   */
+  own: z.object({ at: z.number(), fields: z.array(z.enum(['name', 'startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'])) }).optional(),
 })
 export type Activity = z.infer<typeof Activity>
+
+/** Base64 characters of a picture the user adds to an activity (≈8 MB decoded; fits one 16 MiB frame). */
+export const MAX_ACTIVITY_IMAGE_BASE64 = 11_200_000
+
+/** A picture for an activity, as the user picked it: base64 bytes without the `data:` prefix. */
+export const ActivityImage = z.object({
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']),
+  data: z.string().min(1).max(MAX_ACTIVITY_IMAGE_BASE64).regex(/^[A-Za-z0-9+/]+={0,2}$/, 'base64 without a data: prefix'),
+})
+export type ActivityImage = z.infer<typeof ActivityImage>
+
+/** A picture the user added, kept by the host: `own:<hash>.<ext>` (fetch it with `games/image`). */
+export const OWN_IMAGE = /^own:[0-9a-f]{32}\.(?:png|jpg|gif|webp|avif)$/
 
 export const GameSourceInfo = z.object({
   id: z.string(),
@@ -195,7 +214,8 @@ export const GamesRequests = {
    */
   'games/image': {
     capability: GAMES_CAPABILITY,
-    params: z.object({ url: z.string().url() }),
+    /** A data site's https address, or a picture the user added (`own:…`). */
+    params: z.object({ url: z.string().refine(u => OWN_IMAGE.test(u) || /^https?:\/\/\S+$/.test(u), '不是图片地址') }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
   },
   /** Ask the agent to find where a game's events can be read and add it (a game pack of the user's own). */
@@ -248,6 +268,38 @@ export const GamesRequests = {
       finished: z.boolean().optional(),
     }),
     result: Activity,
+  },
+  /**
+   * Add an event of the user's own, or write the user's word on one
+   * (`activityId`): each field set beats what the sources say, `null` takes
+   * the user's value back (the sources' shows again), absent leaves it. A
+   * field equal to what the sources say is not kept. `image`: a new picture
+   * (kept by the host, it becomes `cover`). A new one needs a `name`; one
+   * with the same name already in the calendar is that one.
+   */
+  'games/activity/save': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({
+      game: z.string(),
+      activityId: z.string().optional(),
+      name: z.string().trim().min(1).max(60).nullable().optional(),
+      startsAt: z.number().nullable().optional(),
+      endsAt: z.number().nullable().optional(),
+      kind: z.string().trim().max(20).nullable().optional(),
+      description: z.string().trim().max(500).nullable().optional(),
+      url: z.string().trim().refine(u => u === '' || /^https?:\/\/\S+$/.test(u), '只能是 http 或 https 网址').nullable().optional(),
+      /** null: drop the user's picture (the sources' shows again). */
+      cover: z.null().optional(),
+      image: ActivityImage.optional(),
+      todo: z.array(z.string().min(1).max(80)).max(30).optional(),
+    }),
+    result: Activity,
+  },
+  /** Take back everything the user wrote on an event: the sources' word shows again; one only the user added goes. */
+  'games/activity/reset': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ activityId: z.string() }),
+    result: z.object({ activity: Activity.optional() }),
   },
   /** Forget an event (wrongly read, or no longer wanted). */
   'games/activity/remove': {

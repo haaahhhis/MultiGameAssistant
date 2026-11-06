@@ -6,8 +6,10 @@ import { ImageViewer } from '../../components/ImageViewer.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { ActivityEditor } from './ActivityEditor.tsx'
 
 const DAY = 86_400_000
+const OWN_FIELD_NAMES: Record<NonNullable<Activity['own']>['fields'][number], string> = { name: '名字', startsAt: '开始时间', endsAt: '结束时间', kind: '类型', description: '说明', url: '页面', cover: '图片' }
 /** The timeline shows from a couple of days back to four weeks ahead. */
 const BEFORE_DAYS = 2
 const AFTER_DAYS = 28
@@ -242,8 +244,9 @@ export function ProgressPill({ progress: p }: { progress: ReturnType<typeof prog
 export function ActivitySources({ activity: a }: { activity: Activity }) {
   const now = useNow(60_000)
   const sources = a.sources ?? (a.site === undefined ? [] : [{ id: a.site.source, name: a.site.name, at: a.site.at, web: false }])
-  if (sources.length === 0 && a.screen === undefined) return null
-  const primary = a.site?.name
+  if (sources.length === 0 && a.screen === undefined && a.own === undefined) return null
+  // The user's own dates beat every source.
+  const primary = a.own?.fields.includes('endsAt') === true ? undefined : a.site?.name
   return (
     <div className="activity-sources">
       <span className="muted small">来源</span>
@@ -254,6 +257,11 @@ export function ActivitySources({ activity: a }: { activity: Activity }) {
         </span>
       ))}
       {a.screen !== undefined && <span className="fact-chip screen" title="agent 进游戏看到的剩余时间和进度">游戏画面<small>agent 看过 · {relativeTime(a.screen.at, now)}</small></span>}
+      {a.own !== undefined && (
+        <span className="fact-chip own" title={sources.length === 0 && a.screen === undefined ? '你自己添加的活动' : `你改过：${a.own.fields.map(f => OWN_FIELD_NAMES[f]).join('、')}；比来源优先，刷新不会改掉`}>
+          {sources.length === 0 && a.screen === undefined ? '我添加的' : '我改过'}<small>{sources.length === 0 && a.screen === undefined ? '' : `${a.own.fields.map(f => OWN_FIELD_NAMES[f]).join('、')} · `}{relativeTime(a.own.at, now)}</small>
+        </span>
+      )}
     </div>
   )
 }
@@ -268,6 +276,7 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
   openSession?: ((id: string) => void) | undefined
 }) {
   const [shot, setShot] = useState<{ src: string; width: number; height: number } | null>(null)
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -292,6 +301,15 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
     if (text === '' || a.todo.includes(text) || a.done.includes(text)) return
     setDraft('')
     void save({ todo: [...a.todo, text] })
+  }
+  const sourced = a.sources !== undefined || a.screen !== undefined
+  const reset = () => {
+    setBusy(true)
+    setError(null)
+    client.connection.call('games/activity/reset', { activityId: a.id }).then(onChanged, e => setError(errorText(e))).finally(() => setBusy(false))
+  }
+  if (editing && game !== undefined) {
+    return <div className="ov-detail"><ActivityEditor client={client} game={game} activity={a} onDone={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} /></div>
   }
   return (
     <div className="ov-detail">
@@ -328,6 +346,8 @@ export function ActivityDetail({ client, activity: a, game, onOpenGame, onChange
         {a.screen?.sessionId !== undefined && openSession !== undefined && <button className="link-button small" onClick={() => openSession(a.screen!.sessionId!)}>agent 的对话</button>}
         {a.url !== undefined && <a className="link-button small" href={a.url} target="_blank" rel="noreferrer">活动页面</a>}
         {onOpenGame !== undefined && <button className="link-button small" onClick={onOpenGame}>去{game?.name ?? '游戏'}</button>}
+        {game !== undefined && <button className="link-button small" disabled={busy} onClick={() => setEditing(true)}><Icon name="pencil" />编辑</button>}
+        {a.own !== undefined && sourced && <button className="link-button small muted" title="去掉你改过的名字、时间、图片等，恢复成来源的" disabled={busy} onClick={reset}>恢复来源的内容</button>}
         <button className="link-button small muted" title="读错了或不关心" disabled={busy} onClick={() => void client.connection.call('games/activity/remove', { activityId: a.id }).then(onChanged, e => setError(errorText(e)))}>从日历去掉</button>
       </div>
       {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}

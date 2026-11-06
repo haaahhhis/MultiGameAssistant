@@ -237,3 +237,24 @@ button.source-name:hover:not(:disabled) { background: var(--accent-soft); color:
 button.source-open { border: none; border-left: 1px solid var(--border); border-radius: 0; background: none; padding: 0; cursor: pointer; }
 .source-form { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
 .source-form .text-input { flex: 1 1 240px; min-width: 0; height: 30px; font-size: 13px; }
+
+/* Adding or editing an activity by hand (ActivityEditor.tsx): the picture as a banner, the fields under it. */
+.activity-editor { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.activity-editor-head { display: flex; flex-direction: column; gap: 2px; }
+.activity-editor-body { display: flex; flex-direction: column; gap: 10px; }
+.activity-editor-fields { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.activity-editor-fields .field-row { gap: 8px; }
+.activity-editor-fields .field-row .field { flex: 1 1 130px; }
+.activity-editor-fields .field-row .field.wide { flex: 2 1 180px; }
+.activity-editor-fields .text-input { height: auto; padding: 6px 10px; font-size: 13px; }
+.activity-editor-fields textarea.text-input { resize: vertical; min-height: 52px; }
+.activity-editor-image { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.activity-image-pick { width: 100%; height: 96px; padding: 0; overflow: hidden; border-radius: var(--r-md); border: 1px solid var(--border-strong); background: var(--sunken); display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 400; cursor: pointer; }
+.activity-image-pick.empty { border-style: dashed; }
+.activity-image-pick:hover { border-color: var(--accent-line); }
+.activity-image-pick img { width: 100%; height: 100%; object-fit: cover; }
+.activity-image-pick .ui-icon { width: 18px; height: 18px; }
+.activity-image-pick small { font-size: 11px; }
+.activity-editor-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fact-chip.own { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.schedule-head .icon-button[aria-pressed="true"] { color: var(--accent); }

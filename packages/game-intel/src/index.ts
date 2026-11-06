@@ -4,8 +4,8 @@
  * chat channels. Contributes the `games@1` capability.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-skill'
@@ -18,9 +18,9 @@ import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
 import { GAMES_DIR } from '@adg/packs'
-import { GAMES_CAPABILITY, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
+import { GAMES_CAPABILITY, OWN_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
-import { Calendar, type ReadEvent } from './calendar.ts'
+import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
@@ -29,7 +29,7 @@ import { matchScripts } from './script-match.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
 
-export { Calendar, DEFAULT_SETTINGS, type ReadEvent } from './calendar.ts'
+export { Calendar, DEFAULT_SETTINGS, OWN_FIELDS, type OwnFields, type OwnPatch, type ReadEvent } from './calendar.ts'
 export { DailyReport, localDay, realClock, type Clock, type DailyDeps } from './daily.ts'
 export { buildReport, recentDigest, type ReportGame } from './report.ts'
 export { parseAsk, parseSra, readSmw, readSra, readValue, smwQuery, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
@@ -168,6 +168,16 @@ export class AdgGameIntel extends Service {
         sendReport: () => this.sendReport(localDay(this.clock.now())),
         now: () => this.clock.now(),
         add: async (manifest, guide) => { await this.ready; return this.addGame(manifest, guide) },
+        saveActivity: async (game, id, patch, image, sessionId) => {
+          await this.ready
+          return this.saveActivity(game, id, patch, image === undefined ? undefined : await this.imageFrom(image, sessionId))
+        },
+        removeActivity: async (id, what) => {
+          await this.ready
+          if (what === 'mine') return this.resetActivity(id)
+          if (!(await this.removeActivity(id))) throw new Error('没有这个活动（可能已经结束被清掉了）')
+          return undefined
+        },
       })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } })) // 设置 → 权限 (guardTool)
       return () => { for (const dispose of registered) dispose() }
     }))
@@ -267,9 +277,18 @@ export class AdgGameIntel extends Service {
           },
           'games/activity/remove': async params => {
             await this.ready
-            await calendar.remove((params as RequestParams<'games/activity/remove'>).activityId)
-            changed()
+            await this.removeActivity((params as RequestParams<'games/activity/remove'>).activityId)
             return {}
+          },
+          'games/activity/save': async params => {
+            await this.ready
+            const { game, activityId, image, todo, ...fields } = params as RequestParams<'games/activity/save'>
+            return this.saveActivity(game, activityId, { ...fields, ...(todo === undefined ? {} : { todo }) }, image === undefined ? undefined : Buffer.from(image.data, 'base64'))
+          },
+          'games/activity/reset': async params => {
+            await this.ready
+            const activity = await this.resetActivity((params as RequestParams<'games/activity/reset'>).activityId)
+            return activity === undefined ? {} : { activity }
           },
         },
       })
@@ -286,6 +305,12 @@ export class AdgGameIntel extends Service {
    * gave are fetched: this is not a general-purpose proxy.
    */
   private async picture(url: string): Promise<{ mediaType: string; data: string }> {
+    if (OWN_IMAGE.test(url)) {
+      const file = url.slice('own:'.length)
+      const mediaType = IMAGE_TYPES.find(([ext]) => file.endsWith(`.${ext}`))![1]
+      const bytes = await readFile(join(this.dir, 'images', 'own', file)).catch(() => { throw new Error('这张图片已经不在了') })
+      return { mediaType, data: bytes.toString('base64') }
+    }
     if (!this.calendar.pictures().has(url) && !this.games.some(g => g.manifest.art === url)) throw new Error('这张图片不是数据站或游戏包给的地址')
     const name = createHash('sha256').update(url).digest('hex').slice(0, 32)
     const dir = join(this.dir, 'images')
@@ -353,6 +378,86 @@ export class AdgGameIntel extends Service {
     if (!(await this.calendar.removeLink(gameId, source))) throw new Error('这个来源不是在游戏页添加的网址，不能在这里删除')
     await this.loadGames(this.log)
     this.changed(gameId)
+  }
+
+  // ── the user's own events ──
+
+  /**
+   * Add an event of the user's own, or write their word on one (see
+   * `Calendar.saveOwn`); `image`: a new picture, kept under
+   * `<data>/games/images/own/`. @throws Error with what is wrong.
+   */
+  async saveActivity(gameId: string, activityId: string | undefined, patch: OwnPatch, image?: Buffer): Promise<Activity> {
+    const { manifest } = this.game(gameId)
+    if (activityId !== undefined && this.calendar.get(activityId)?.game !== manifest.id) throw new Error(`${manifest.name}没有活动「${activityId}」（可能已经结束被清掉了；game_activities 可查）`)
+    const cover = image === undefined ? patch.cover : await this.keepImage(image)
+    const activity = await this.calendar.saveOwn({ game: manifest.id, id: activityId }, { ...patch, ...(cover === undefined ? {} : { cover }) }, this.clock.now(), manifest.timezone)
+    await this.sweepImages()
+    this.changed(manifest.id)
+    if (activity === undefined) throw new Error('什么都没留下：这个活动只有你填的内容，清空后就从日历去掉了')
+    return activity
+  }
+
+  /** Take back what the user wrote on an event. @returns it as it is now; undefined when it went. */
+  async resetActivity(activityId: string): Promise<Activity | undefined> {
+    const before = this.calendar.get(activityId)
+    if (before === undefined) throw new Error('没有这个活动（可能已经结束被清掉了）')
+    const timezone = this.games.find(g => g.manifest.id === before.game)?.manifest.timezone ?? 'Asia/Shanghai'
+    const activity = await this.calendar.resetOwn(activityId, timezone)
+    await this.sweepImages()
+    this.changed(before.game)
+    return activity
+  }
+
+  async removeActivity(activityId: string): Promise<boolean> {
+    const removed = await this.calendar.remove(activityId)
+    await this.sweepImages()
+    this.changed()
+    return removed
+  }
+
+  /**
+   * A picture for an event, as the agent names it: an http(s) address (fetched
+   * now and kept, so it stays when the page goes), a file on this computer
+   * (a path relative to the workspace is fine), or `screenshot`, the last
+   * screenshot of this conversation.
+   */
+  async imageFrom(source: string, sessionId: string | undefined): Promise<Buffer> {
+    const from = source.trim()
+    if (from === 'screenshot') {
+      const shot = sessionId === undefined ? undefined : this.ctx.get('adgIntervene')?.lastShot(sessionId)
+      if (shot === undefined) throw new Error('这个对话还没有截图：先用 screen_capture 截一张')
+      return shot
+    }
+    if (/^https?:\/\//i.test(from)) {
+      const response = await fetch(from, { signal: AbortSignal.timeout(20_000), headers: { accept: 'image/*', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MultiGameAssistant' } })
+      if (!response.ok) throw new Error(`图片读不到：HTTP ${response.status}`)
+      return Buffer.from(await response.arrayBuffer())
+    }
+    const path = from.replace(/^file:\/\/\/?/i, '')
+    const workspace = this.ctx.get('adgGateway')?.workspaceDir()
+    const full = isAbsolute(path) || workspace === undefined ? path : resolve(workspace, path)
+    return readFile(full).catch(() => { throw new Error(`读不到图片文件：${full}`) })
+  }
+
+  /** Keep a picture the user added. @returns its address (`own:<hash>.<ext>`). */
+  private async keepImage(bytes: Buffer): Promise<string> {
+    if (bytes.length > MAX_IMAGE_BYTES) throw new Error('图片太大（最多 8 MB）')
+    const ext = imageType(bytes)
+    if (ext === undefined) throw new Error('不是支持的图片（png、jpg、gif、webp、avif）')
+    const file = `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}.${ext}`
+    const dir = join(this.dir, 'images', 'own')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, file), bytes)
+    return `own:${file}`
+  }
+
+  /** Pictures the user added that no event shows any more. */
+  private async sweepImages(): Promise<void> {
+    const dir = join(this.dir, 'images', 'own')
+    const used = this.calendar.ownImages()
+    const files = await readdir(dir).catch(() => [] as string[])
+    await Promise.all(files.filter(f => !used.has(`own:${f}`)).map(f => rm(join(dir, f), { force: true }).catch(() => {})))
   }
 
   /**
@@ -712,6 +817,17 @@ export class AdgGameIntel extends Service {
     this.changed()
     return { channels, text }
   }
+}
+
+/** The picture's type from its first bytes (not what a name or header claims). @returns its extension. */
+export function imageType(bytes: Uint8Array): 'png' | 'jpg' | 'gif' | 'webp' | 'avif' | undefined {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to))
+  if (bytes[0] === 0x89 && ascii(1, 4) === 'PNG') return 'png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpg'
+  if (ascii(0, 4) === 'GIF8') return 'gif'
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'webp'
+  if (ascii(4, 8) === 'ftyp' && /^avi[fs]$/.test(ascii(8, 12))) return 'avif'
+  return undefined
 }
 
 /** "news.example.com" for a page's address, without "www.". */

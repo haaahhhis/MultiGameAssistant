@@ -35,7 +35,7 @@ export const AGENT_AREAS: readonly AgentArea[] = [
   { id: 'scripts-install', title: '安装、更新、删除脚本', description: '从 GitHub 安装、更新、回滚、删除脚本，运行脚本的安装程序，导入本地脚本，修复运行环境，起草脚本包。', tools: ['script_install', 'script_update', 'script_rollback', 'script_remove', 'script_setup_run', 'script_import', 'script_env_fix', 'pack_propose'] },
   { id: 'screen', title: '操作屏幕和模拟器', description: '在游戏窗口或模拟器里点击、输入、按键、滑动、切换窗口（截图不算）。', tools: ['screen_tap', 'screen_type', 'screen_key', 'screen_scroll', 'screen_swipe', 'window_focus'] },
   { id: 'games', title: '启动、关闭游戏和模拟器', description: '打开、关掉游戏，启动、关闭、安装、设置模拟器。', tools: ['game_launch', 'game_close', 'emulator_start', 'emulator_stop', 'emulator_install', 'emulator_configure'] },
-  { id: 'game-records', title: '记录活动、添加游戏', description: '把读到的活动写进日历，给新游戏建游戏包。', tools: ['game_record', 'game_add'] },
+  { id: 'game-records', title: '记录活动、添加游戏', description: '把读到的活动写进日历，替你添加、修改或去掉活动，给新游戏建游戏包。', tools: ['game_record', 'game_activity_save', 'game_activity_remove', 'game_add'] },
   { id: 'skills', title: '保存技能', description: '把做法存成技能，以后的对话都会用到。', tools: ['skill_save'] },
   { id: 'web', title: '上网查资料', description: '读网页、搜索。', tools: ['web_fetch', 'web_search'] },
   { id: 'shell', title: '运行命令、改文件', description: 'dsh 自带的命令行和文件编辑。只在它请求确认时按这里的设置处理（沙箱里的普通命令不会请求）。', tools: ['pwsh', 'bash', 'edit', 'write'], approvalOnly: true },

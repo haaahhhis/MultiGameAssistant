@@ -7,8 +7,8 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { Activity, GameInfo } from '@adg/protocol'
 import { z } from 'zod'
-import type { ReadEvent } from './calendar.ts'
-import { leftText, shortDate } from './time.ts'
+import type { OwnPatch, ReadEvent } from './calendar.ts'
+import { leftText, parseDateText, shortDate } from './time.ts'
 
 export interface GameToolDeps {
   readonly games: () => GameInfo[]
@@ -22,7 +22,14 @@ export interface GameToolDeps {
   readonly now: () => number
   /** Write a game pack of the user's own. */
   readonly add: (manifest: unknown, guide: string | undefined) => Promise<GameInfo>
+  /** Add an event of the user's own, or write their word on one (`id`); `image`: as the agent named it (https, a file, `screenshot`). */
+  readonly saveActivity: (game: string, id: string | undefined, patch: OwnPatch, image: string | undefined, sessionId: string | undefined) => Promise<Activity>
+  /** `mine`: take back only what the user wrote; `all`: drop the event. @returns it as it is now (undefined: gone). */
+  readonly removeActivity: (id: string, what: 'mine' | 'all') => Promise<Activity | undefined>
 }
+
+/** The tool's names for the fields the user can write (OwnField). */
+const OWN_KEYS = { name: 'name', starts_at: 'startsAt', ends_at: 'endsAt', kind: 'kind', description: 'description', url: 'url', image: 'cover' } as const
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   const parsed = schema.safeParse(args)
@@ -69,7 +76,10 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       ...(a.startsAt !== undefined && a.startsAt > now ? { starts: shortDate(a.startsAt, timeZone) } : {}),
       ends: a.endsAt === undefined ? '未知' : `${shortDate(a.endsAt, timeZone)}（${leftText(a.endsAt, now)}）`,
       ...(a.shopEndsAt === undefined ? {} : { shop_ends: shortDate(a.shopEndsAt, timeZone) }),
-      dates_from: a.site?.name ?? (a.screen !== undefined ? '游戏画面' : '未知'),
+      dates_from: a.own?.fields.some(f => f === 'startsAt' || f === 'endsAt') === true ? '用户自己填的' : a.site?.name ?? (a.screen !== undefined ? '游戏画面' : '未知'),
+      ...(a.own === undefined ? {} : { set_by_user: a.own.fields.map(f => Object.entries(OWN_KEYS).find(([, v]) => v === f)![0]), ...(a.sources === undefined && a.screen === undefined ? { added_by_user: true } : {}) }),
+      ...(a.kind === undefined ? {} : { kind: a.kind }),
+      ...(a.cover === undefined ? {} : { image: a.cover.startsWith('own:') ? '用户的图片' : a.cover }),
       ...(a.screen === undefined ? {} : { read_in_game: shortDate(a.screen.at, timeZone), ...(a.progress === undefined ? {} : { progress: a.progress }) }),
       // The checklist (from the game screen or kept by the user on the board), and the user's own "done".
       ...(a.todo.length + a.done.length === 0 ? {} : { todo: a.todo, done: a.done }),
@@ -243,6 +253,78 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
           recorded: written.map(w => ({ ...brief(w.activity, game.timezone), ...(w.matched ? {} : { note: '日历里原来没有这个活动，新加了一条' }) })),
           next: a.source === 'screen' ? '读完了就回到游戏主界面；有 mismatch 的告诉用户以数据站为准。' : '记下了。',
         }
+      },
+    }),
+    tool({
+      name: 'game_activity_save',
+      description: [
+        '替用户手动添加一个活动，或改一个已有活动（id 从 game_activities 查）。用户说「帮我加一个 XX 活动」「把 XX 的结束时间改成…」「给这个活动换张图」时用。',
+        '写进去的字段是用户自己的说法：比数据站和网页优先，刷新不会改掉也不会删掉；和来源一样的值不单独保存。读到的网页或游戏画面用 game_record，不要用这个。',
+        'image 可以是图片网址（https，会下载保存）、本机图片文件路径（相对路径按工作区）、或 screenshot（这个对话最近一张截图）。clear 里的字段收回用户的值，恢复成来源的。',
+      ].join(''),
+      properties: {
+        game: GAME,
+        id: { type: 'string', description: '要改的活动 id（不填就是新加；同名的已有活动会当成同一个）。' },
+        name: { type: 'string', description: '活动名；新加时必填。' },
+        starts_at: { type: 'string', description: '开始时间，写成 2026/10/25 04:00 或 10/25 04:00（游戏服务器时间）。' },
+        ends_at: { type: 'string', description: '结束时间，写法同上。' },
+        kind: { type: 'string', description: '类型（可选），例如「SideStory」「签到」「限时商店」。' },
+        description: { type: 'string', description: '说明（可选），500 字以内。' },
+        url: { type: 'string', description: '活动页面地址（可选）。' },
+        image: { type: 'string', description: '活动卡片的图片：https 图片网址、本机图片文件路径，或 screenshot。' },
+        todo: { type: 'array', items: { type: 'string' }, description: '要做的事（可选，替换原来没做完的清单），例如「活动商店换完」。' },
+        clear: { type: 'array', items: { type: 'string', enum: Object.keys(OWN_KEYS) }, description: '收回用户填过的这些字段（恢复成来源的值）。' },
+      },
+      required: ['game'],
+      kind: 'other',
+      title: a => `${typeof a['id'] === 'string' ? '修改' : '添加'}活动：${String(a['name'] ?? a['id'] ?? '')}`,
+      execute: async (args, exec) => {
+        const a = parse(z.object({
+          game: z.string(), id: z.string().nullish(),
+          name: z.string().max(60).nullish(), starts_at: z.string().nullish(), ends_at: z.string().nullish(),
+          kind: z.string().max(20).nullish(), description: z.string().max(500).nullish(),
+          url: z.string().regex(/^https?:\/\/\S+$/, '只能是 http 或 https 网址').nullish(),
+          image: z.string().nullish(), todo: z.array(z.string().min(1).max(80)).max(30).nullish(),
+          clear: z.array(z.enum(Object.keys(OWN_KEYS) as [keyof typeof OWN_KEYS])).nullish(),
+        }), args)
+        const game = known(a.game)
+        if (a.id == null && (a.name == null || a.name.trim() === '')) throw new Error('新加活动要写 name；改已有的活动要写 id（game_activities 可查）')
+        const when = (text: string | null | undefined, what: string) => {
+          if (text == null) return undefined
+          const at = parseDateText(text, game.timezone, deps.now())
+          if (at == null) throw new Error(`${what}「${text}」看不懂：写成 2026/10/25 04:00 或 10/25 04:00`)
+          return at
+        }
+        const patch: OwnPatch = {
+          ...(a.name == null ? {} : { name: a.name }),
+          ...(a.starts_at == null ? {} : { startsAt: when(a.starts_at, '开始时间') }),
+          ...(a.ends_at == null ? {} : { endsAt: when(a.ends_at, '结束时间') }),
+          ...(a.kind == null ? {} : { kind: a.kind }),
+          ...(a.description == null ? {} : { description: a.description }),
+          ...(a.url == null ? {} : { url: a.url }),
+          ...(a.todo == null ? {} : { todo: a.todo }),
+        }
+        for (const key of a.clear ?? []) (patch as Record<string, unknown>)[OWN_KEYS[key]] = null
+        const sessionId = exec.agent?.session.id as string | undefined
+        const activity = await deps.saveActivity(game.id, a.id ?? undefined, patch, a.image ?? undefined, sessionId)
+        return { saved: brief(activity, game.timezone), note: a.id == null ? '已加到活动日历；游戏页和日报里都能看到' : '已改好' }
+      },
+    }),
+    tool({
+      name: 'game_activity_remove',
+      description: '去掉活动：what=mine 只收回用户自己填的内容（名字、时间、图片等恢复成来源的；只有用户填的活动会整个去掉）；what=all 把活动从日历去掉（数据站还列着的话，下次刷新会再出现）。只在用户要求时用。',
+      properties: {
+        id: { type: 'string', description: '活动 id（game_activities 可查）。' },
+        what: { type: 'string', enum: ['mine', 'all'], description: 'mine：只收回用户填的；all：整个去掉（默认）。' },
+      },
+      required: ['id'],
+      kind: 'other',
+      title: a => `${a['what'] === 'mine' ? '恢复' : '去掉'}活动：${String(a['id'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({ id: z.string(), what: z.enum(['mine', 'all']).nullish() }), args)
+        const activity = await deps.removeActivity(a.id, a.what ?? 'all')
+        const game = activity === undefined ? undefined : deps.games().find(g => g.id === activity.game)
+        return activity === undefined || game === undefined ? { removed: a.id } : { restored: brief(activity, game.timezone) }
       },
     }),
     tool({

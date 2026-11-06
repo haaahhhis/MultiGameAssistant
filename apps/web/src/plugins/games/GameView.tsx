@@ -7,6 +7,7 @@ import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { useFirstImage, useRemoteImage } from './images.ts'
 import { ActivityDetail, ProgressPill, progressOf } from './Overview.tsx'
+import { ActivityEditor } from './ActivityEditor.tsx'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -65,6 +66,7 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   openScripts: () => void
 }) {
   const [open, setOpen] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
   const [showFinished, setShowFinished] = useState(false)
   const live = activities.filter(a => Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
   const byEnd = (a: Activity, b: Activity) => (a.endsAt ?? Infinity) - (b.endsAt ?? Infinity)
@@ -122,12 +124,20 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
           <h3>活动日程</h3>
           <span className="spacer" />
           <span className="muted small">{game.sources.find(s => s.auto)?.name ?? '数据站'}</span>
+          <button className="icon-button" title="自己添加一个活动" aria-label="添加活动" aria-pressed={adding} onClick={() => setAdding(a => !a)}>
+            <Icon name="plus" />
+          </button>
           <button className="icon-button" title={auto ? '刷新数据站（不用模型）' : '这个游戏没有能自动读的数据站'} disabled={busy !== null || !auto} onClick={onRefresh}>
             <Icon name="refresh" />
           </button>
         </div>
         <div className="schedule-list">
-          {live.length === 0 && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新。' : '这个游戏没有能自动读的数据站，让 agent 进游戏读一次。'}</p>}
+          {adding && (
+            <div className="schedule-item open">
+              <ActivityEditor client={client} game={game} onCancel={() => setAdding(false)} onDone={saved => { setAdding(false); setOpen(saved.id); onChanged() }} />
+            </div>
+          )}
+          {live.length === 0 && !adding && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新，或点「+」自己添加。' : '这个游戏没有能自动读的数据站：让 agent 进游戏读一次，或点「+」自己添加。'}</p>}
           {groups.filter(g => g.rows.length > 0).map(g => (
             <section key={g.key} className={`schedule-group ${g.tone ?? ''}`}>
               <div className="schedule-group-title"><span>{g.title}</span><span className="count">{g.rows.length}</span><span className="muted small">{g.hint}</span></div>
@@ -419,6 +429,7 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
         <span className="sched-top">
           <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
           {a.kind !== undefined && <span className="sched-kind">{a.kind}</span>}
+          {a.own !== undefined && <span className="sched-kind" title={a.sources === undefined && a.screen === undefined ? '你自己添加的活动' : '你改过这个活动'}>{a.sources === undefined && a.screen === undefined ? '我添加的' : '我改过'}</span>}
           {a.sources?.some(s => s.web) === true && <span className="sched-kind" title={`来源：${a.sources.map(s => s.name).join('、')}`}>{a.sources.every(s => s.web) ? '网页读到' : '数据站 + 网页'}</span>}
           <span className="spacer" />
           <ProgressPill progress={p} />

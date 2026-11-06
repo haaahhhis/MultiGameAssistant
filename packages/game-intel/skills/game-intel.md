@@ -27,6 +27,14 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 7. 最后用 `ask_user_question` 问用户要不要把游戏关掉，选项「关掉游戏」「先开着」。游戏是你这次用 `game_launch` 打开的，就把「关掉游戏」放第一个、标签后面加 ` (Recommended)`。用户选关掉就 `game_close`，然后告诉用户已经关了；选开着就结束。第 2 步因为有脚本在用而结束的，不要问、也不要关。
    - 流水线的 agent 节点里没人等着回答：不要问，节点要求里说了关就关，没说就开着。
 
+## 用户自己加或改活动
+
+用户说「帮我加一个活动」「把 XX 改成 …结束」「给这个活动换张图」时用 `game_activity_save`，不要用 `game_record`（那是记读到的）：
+
+- 新加：写 `game`、`name`，有时间就写 `starts_at` / `ends_at`（游戏服务器时间）。改已有的：先 `game_activities` 找到 `id`，只写要改的字段。
+- 图片 `image`：用户给的图片网址、本机图片文件路径，或 `screenshot`（这个对话最近一张截图，比如刚用 `screen_capture` 截的活动页）。
+- 用户填的内容比数据站优先，刷新不会改掉。要恢复成来源的：`clear` 列出字段，或 `game_activity_remove`（what=mine）。用户要删掉才用 `game_activity_remove`（what=all）。
+
 ## 日报
 
 每天按「游戏」页里设置的时间自动发到飞书。用户要现在看：`game_report`；要发出去：`game_report`（send=true）。
