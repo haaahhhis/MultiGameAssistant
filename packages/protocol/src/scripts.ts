@@ -239,7 +239,7 @@ export type SetupAgent = z.infer<typeof SetupAgent>
 export const PendingSetupInfo = z.object({
   scriptId: z.string(),
   name: z.string(),
-  kind: z.enum(['nsis', 'inno']),
+  kind: z.enum(['nsis', 'inno', 'kachina']),
   version: z.string(),
   /** Where it installs (prefilled in its window): a new version folder, or a local import's own. */
   dir: z.string(),
@@ -261,7 +261,7 @@ export const ScriptJob = z.object({
   version: z.string().optional(),
   error: z.string().optional(),
   /** The release was a setup program (not an archive), left for the agent to run into `dir`; in that conversation when the app started one. */
-  setup: z.object({ kind: z.enum(['nsis', 'inno']), dir: z.string(), sessionId: z.string().optional() }).optional(),
+  setup: z.object({ kind: z.enum(['nsis', 'inno', 'kachina']), dir: z.string(), sessionId: z.string().optional() }).optional(),
   startedAt: z.number(),
   endedAt: z.number().optional(),
 })

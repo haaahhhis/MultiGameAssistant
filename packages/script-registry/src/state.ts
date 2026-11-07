@@ -75,7 +75,7 @@ export type StoredScript = z.infer<typeof StoredScript>
 export const PendingSetup = z.object({
   scriptId: z.string(),
   name: z.string(),
-  kind: z.enum(['nsis', 'inno']),
+  kind: z.enum(['nsis', 'inno', 'kachina']),
   /** The installer, kept in the script's downloads folder until it is done. */
   file: z.string(),
   version: z.string(),

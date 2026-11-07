@@ -101,7 +101,7 @@ test('extraction lifts a single top folder and refuses paths that escape', async
   assert.ok(existsSync(join(dir, 'apk', 'app.apk')))
 })
 
-test('setup programs: NSIS and Inno Setup told apart from other exes, and their quiet command lines', async () => {
+test('setup programs: NSIS, Inno Setup and Kachina told apart from other exes, and their quiet command lines', async () => {
   const dir = tmp('setup')
   const exe = (name: string, marker: string) => {
     writeFileSync(join(dir, name), Buffer.concat([Buffer.from('MZ'), Buffer.alloc(5000), Buffer.from(marker), Buffer.alloc(100)]))
@@ -110,6 +110,9 @@ test('setup programs: NSIS and Inno Setup told apart from other exes, and their 
   assert.equal(await setupKind(exe('ok.exe', '<assemblyIdentity name="Nullsoft.NSIS.exehead"/>')), 'nsis')
   assert.equal(await setupKind(exe('hutao.exe', '<assemblyIdentity name="JR.Inno.Setup"/>')), 'inno')
   assert.equal(await setupKind(exe('plain.exe', 'just a program')), undefined)
+  // Kachina writes its marker over the DOS stub (BetterGI.Install.0.66.0.exe has it at byte 78).
+  writeFileSync(join(dir, 'BetterGI.Install.exe'), Buffer.concat([Buffer.from('MZ'), Buffer.alloc(76), Buffer.from('!KachinaInstaller!'), Buffer.alloc(4000)]))
+  assert.equal(await setupKind(join(dir, 'BetterGI.Install.exe')), 'kachina')
   writeFileSync(join(dir, 'text.exe'), 'Nullsoft.NSIS.exehead but no MZ')
   assert.equal(await setupKind(join(dir, 'text.exe')), undefined)
   assert.equal(await setupKind(join(dir, 'missing.exe')), undefined)
@@ -117,6 +120,8 @@ test('setup programs: NSIS and Inno Setup told apart from other exes, and their 
   assert.equal(setupCommandLine('nsis', 'C:\\t', false), '/D=C:\\t')
   assert.equal(setupCommandLine('inno', 'C:\\My Tools\\h', true), '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="C:\\My Tools\\h"')
   assert.equal(setupExitText('inno', 5), '安装被取消了')
+  assert.equal(setupCommandLine('kachina', 'C:\\My Tools\\bettergi\\0.66.0', true), '/S /D=C:\\My Tools\\bettergi\\0.66.0', 'Kachina reads NSIS-style /S and /D=')
+  assert.equal(setupExitText('kachina', 1), '安装没有完成')
 })
 
 function fakeHost(spec: { dirs?: Record<string, string[]>; files?: string[]; exec?: Record<string, { code: number; stdout: string }> }): EnvHost {
@@ -213,3 +218,42 @@ test('a directory probe finds launchers, markers and the MaaFramework family', a
   assert.ok(await matchesDetect(dir, ['interface.json', 'MaaEnd.exe']))
   assert.ok(!(await matchesDetect(dir, ['MAA.exe'])))
 })
+
+test('a partial file that does not fit is dropped and the download starts over', () => withGitHub(async (github, zip) => {
+  const dir = tmp('stale')
+  const asset = (await new GitHubClient({ apiBase: github.url }).latest(REPO)).assets[0]!
+
+  // Longer than the file (another file's leftover): the server answers 416 to its range.
+  writeFileSync(join(dir, 'a.zip.part'), Buffer.alloc(zip.length * 3, 1))
+  const refused = await download({ url: asset.downloadUrl, dest: join(dir, 'a.zip') })
+  assert.equal(refused.resumed, false)
+  assert.deepEqual(readFileSync(join(dir, 'a.zip')), zip)
+
+  // Known to be longer than the file: not even asked for.
+  writeFileSync(join(dir, 'b.zip.part'), Buffer.alloc(zip.length + 1, 1))
+  assert.deepEqual(readFileSync((await download({ url: asset.downloadUrl, dest: join(dir, 'b.zip'), expectedSize: asset.size })).path), zip)
+
+  // The right length to resume from, but other bytes: the digest fails, so once more from the start.
+  writeFileSync(join(dir, 'c.zip.part'), Buffer.alloc(10, 7))
+  const redone = await download({ url: asset.downloadUrl, dest: join(dir, 'c.zip'), expectedSize: asset.size, digest: asset.digest! })
+  assert.equal(redone.resumed, false)
+  assert.deepEqual(readFileSync(join(dir, 'c.zip')), zip)
+
+  // A server that "resumes" from somewhere else.
+  writeFileSync(join(dir, 'd.zip.part'), zip.subarray(0, 10))
+  let calls = 0
+  const wrongStart: typeof fetch = async (url, init) => {
+    calls++
+    const range = new Headers(init?.headers).get('range')
+    if (range === null) return fetch(url, init)
+    return new Response(zip.subarray(5), { status: 206, headers: { 'content-range': `bytes 5-${zip.length - 1}/${zip.length}` } })
+  }
+  assert.deepEqual(readFileSync((await download({ url: asset.downloadUrl, dest: join(dir, 'd.zip'), expectedSize: asset.size, fetch: wrongStart })).path), zip)
+  assert.equal(calls, 2, 'one refused resume, one fresh download')
+
+  // A fresh download that comes out wrong is still an error, not retried forever.
+  await assert.rejects(download({ url: asset.downloadUrl, dest: join(dir, 'e.zip'), digest: `sha256:${'0'.repeat(64)}` }), /校验失败/)
+  writeFileSync(join(dir, 'f.zip.part'), zip.subarray(0, 10))
+  await assert.rejects(download({ url: asset.downloadUrl, dest: join(dir, 'f.zip'), digest: `sha256:${'0'.repeat(64)}` }), /校验失败/)
+  assert.ok(!existsSync(join(dir, 'f.zip.part')))
+}))

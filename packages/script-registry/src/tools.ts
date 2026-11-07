@@ -288,7 +288,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.setupRun,
-      description: `运行脚本安装或更新时下载到的安装程序（NSIS / Inno Setup 的 setup.exe，有的脚本只发布这种完整包）。quiet（默认 true）：不弹窗口，静默装进脚本的版本目录并等它装完，返回退出码和装出来的文件；false：打开安装程序自己的窗口（安装位置已预先填好）后立即返回，再用 screen_capture / screen_tap 一步步点完。装好后用 ${TOOL_NAMES.import} 导入那个目录（path 填返回的 dir，id 填这个脚本的 id），安装才算完成。只能运行脚本库下载的安装程序。`,
+      description: `运行脚本安装或更新时下载到的安装程序（NSIS / Inno Setup / Kachina 的 setup.exe，或只装着它的压缩包，例如 Mirror酱 的 BetterGI；有的脚本只发布这种完整包）。quiet（默认 true）：不弹窗口，静默装进脚本的版本目录并等它装完，返回退出码和装出来的文件；false：打开安装程序自己的窗口（安装位置已预先填好）后立即返回，再用 screen_capture / screen_tap 一步步点完。装好后用 ${TOOL_NAMES.import} 导入那个目录（path 填返回的 dir，id 填这个脚本的 id），安装才算完成。只能运行脚本库下载的安装程序。`,
       properties: {
         id: { type: 'string', description: '脚本 id（script_install / script_update 的结果里有）。' },
         quiet: { type: 'boolean', description: '静默安装并等待结束；默认 true。静默失败或需要在界面里选择时用 false。' },

@@ -70,10 +70,33 @@ export function mirrored(mirror: string, url: string): string {
 
 class IntegrityError extends DownloadError {}
 
+/** What was there from an earlier try does not fit this download: start it over. */
+class StalePartError extends DownloadError {}
+
+/**
+ * A partial file from an earlier try is resumed; when it does not fit (the
+ * server refuses its range, starts elsewhere, or the file comes out the
+ * wrong size or digest), it is dropped and the download starts over once.
+ */
 async function downloadFrom(url: string, options: DownloadOptions): Promise<DownloadResult> {
+  try {
+    return await downloadOnce(url, options)
+  } catch (error) {
+    if (!(error instanceof StalePartError)) throw error
+    await rm(`${options.dest}.part`, { force: true })
+    return downloadOnce(url, options)
+  }
+}
+
+async function downloadOnce(url: string, options: DownloadOptions): Promise<DownloadResult> {
   const part = `${options.dest}.part`
   await mkdir(dirname(options.dest), { recursive: true })
-  const have = await stat(part).then(s => s.size, () => 0)
+  let have = await stat(part).then(s => s.size, () => 0)
+  // Longer than the file can be: not this file.
+  if (options.expectedSize !== undefined && have > options.expectedSize) {
+    await rm(part, { force: true })
+    have = 0
+  }
   const fetchImpl = options.fetch ?? globalThis.fetch
   const response = await fetchImpl(url, {
     headers: { 'user-agent': options.userAgent ?? 'MultiGameAssistant', ...(have > 0 ? { range: `bytes=${have}-` } : {}) },
@@ -84,6 +107,13 @@ async function downloadFrom(url: string, options: DownloadOptions): Promise<Down
   const resumed = response.status === 206 && have > 0
   if (response.status === 416 && have > 0 && have === options.expectedSize) {
     await response.body?.cancel()
+  } else if (response.status === 416 && have > 0) {
+    // The server will not go on from there (a partial file of another file, or of a link that changed).
+    await response.body?.cancel()
+    throw new StalePartError(`${host(url)} 不接受从第 ${have} 字节续传`)
+  } else if (resumed && rangeStart(response.headers.get('content-range')) !== have) {
+    await response.body?.cancel()
+    throw new StalePartError(`${host(url)} 续传的位置不对`)
   } else if (!response.ok || response.body === null) {
     await response.body?.cancel()
     throw new DownloadError(`${host(url)} 返回 ${response.status}`)
@@ -120,17 +150,26 @@ async function downloadFrom(url: string, options: DownloadOptions): Promise<Down
   const bytes = (await stat(part)).size
   if (options.expectedSize !== undefined && bytes !== options.expectedSize) {
     await rm(part, { force: true })
+    // Resumed on top of an earlier try: that try may be what is wrong.
+    if (have > 0) throw new StalePartError(`续传后文件大小不符：应为 ${options.expectedSize} 字节，实际 ${bytes} 字节`)
     throw new DownloadError(`文件大小不符：应为 ${options.expectedSize} 字节，实际 ${bytes} 字节`)
   }
   const sha256 = await hashFile(part)
   const expected = parseDigest(options.digest)
   if (expected !== undefined && expected !== sha256) {
     await rm(part, { force: true })
+    if (have > 0) throw new StalePartError(`续传后校验失败：SHA-256 应为 ${expected}，实际 ${sha256}`)
     throw new IntegrityError(`校验失败：SHA-256 应为 ${expected}，实际 ${sha256}；文件已删除`)
   }
   await rm(options.dest, { force: true })
   await rename(part, options.dest)
   return { path: options.dest, bytes, sha256, via: url, finalUrl: response.url || url, resumed }
+}
+
+/** The first byte of `Content-Range: bytes 100-199/200`; undefined when there is none. */
+function rangeStart(header: string | null): number | undefined {
+  const match = header === null ? null : /^bytes\s+(\d+)-/i.exec(header.trim())
+  return match === null ? undefined : Number(match[1])
 }
 
 function parseDigest(digest: string | undefined): string | undefined {

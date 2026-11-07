@@ -32,6 +32,8 @@ import { DEFAULT_SETTINGS, StateStore, type LibraryState, type LocalBackup, type
 const CATALOGUE_TTL_MS = 24 * 60 * 60_000
 /** How long a check for a newer version may hold up a run. */
 const PRE_RUN_CHECK_MS = 30_000
+/** An unpacked archive with this many files at most, one of them a setup program, is that setup program (a readme beside it is fine). */
+const MAX_SETUP_ONLY_FILES = 4
 
 /** What {@link ScriptLibrary.updateBeforeRun} did (the runner's `updateFirst`). */
 export type PreRunUpdate =
@@ -566,7 +568,9 @@ export class ScriptLibrary {
   async #installJob(scriptId: string, source: ScriptSource, request: Pick<InstallRequest, 'tag' | 'asset' | 'branch' | 'byAgent'>, channels: Channels, pack: LoadedPack | undefined, ctl: JobControl): Promise<string> {
     const script = this.#state.scripts.find(s => s.id === scriptId)
     const previous = script === undefined ? undefined : currentVersion(script)
-    const have = (version: string) => script?.versions.some(v => v.version === version) === true
+    // A file asked for by name is downloaded even for a version already there from another file
+    // (installed from Mirror酱's package, now wanted from the release's own archive).
+    const have = (version: string) => script?.versions.some(v => v.version === version && (request.asset === undefined || v.asset?.name === request.asset)) === true
     // A script installed from a branch keeps following it, unless a release is asked for.
     const branch = request.branch ?? (request.tag === undefined && request.asset === undefined ? script?.sourceBranch : undefined)
     const previousAsset = script?.versions.find(v => v.version === previous?.version)?.asset?.name
@@ -596,6 +600,11 @@ export class ScriptLibrary {
     await rm(versionDir, { recursive: true, force: true })
     if (!fetched.incremental) {
       await extract(archive!, versionDir, { signal: ctl.signal, ...(root === undefined ? {} : { root }) })
+      // An archive holding only a setup program (Mirror酱's package of BetterGI): that program has to run.
+      const inner = await this.#takeSoleSetup(versionDir, archive!)
+      if (inner !== undefined) {
+        return this.#handOffSetup(inner.kind, { scriptId, file: inner.file, version, asset: fetched.asset, dir: versionDir, source: script?.source ?? source, ...(pack === undefined ? {} : { packId: pack.manifest.id }), update: script !== undefined }, request.byAgent === true, ctl)
+      }
     } else {
       // A copy of the installed version, the changed files over it, then what changes.json says went away.
       const patch = `${versionDir}.patch`
@@ -687,6 +696,29 @@ export class ScriptLibrary {
       ctl.phase('running', { message: `${what}，已交给 agent 安装（对话「安装脚本：${pending.name}」）`, setup: { ...handed, sessionId } })
     }
     return setup.version
+  }
+
+  /**
+   * An unpacked archive that is only a setup program (one exe, a few files at
+   * most, and that exe an installer): the exe is moved beside the archive,
+   * the unpacked folder and the archive deleted. @returns where the exe is
+   * now and what installer it is; undefined for anything else (left as it is).
+   */
+  async #takeSoleSetup(dir: string, archive: string): Promise<{ file: string; kind: SetupKind } | undefined> {
+    const files = await listFiles(dir).catch(() => [] as string[])
+    const exes = files.filter(f => f.toLowerCase().endsWith('.exe'))
+    if (exes.length !== 1 || files.length > MAX_SETUP_ONLY_FILES) return undefined
+    const inside = join(dir, ...exes[0]!.split('/'))
+    const kind = await setupKind(inside)
+    if (kind === undefined) return undefined
+    const file = join(dirname(archive), basename(inside))
+    if (!samePath(file, archive)) {
+      await rm(file, { force: true })
+      await rename(inside, file)
+      await rm(archive, { force: true })
+    }
+    await rm(dir, { recursive: true, force: true })
+    return { file, kind }
   }
 
   /** The setup program waiting to be run for a script, if any. */
@@ -789,6 +821,10 @@ export class ScriptLibrary {
       ctl.phase('extracting', { message: `解压 ${fetched.asset.name}` })
       await rm(staging, { recursive: true, force: true })
       await extract(archive, staging, { signal: ctl.signal, ...(fetched.incremental || root === undefined ? {} : { root }) })
+      const inner = fetched.incremental ? undefined : await this.#takeSoleSetup(staging, archive)
+      if (inner !== undefined) {
+        return this.#handOffSetup(inner.kind, { scriptId: script.id, file: inner.file, version, asset: fetched.asset, dir: target, source: script.source, ...(pack === undefined ? {} : { packId: pack.manifest.id }), update: true }, byAgent, ctl)
+      }
       const prefix = fetched.incremental ? await patchPrefix(staging, target, root) : undefined
       const from = prefix === undefined ? staging : join(staging, prefix)
       const keep = await keptFiles(pack, target)

@@ -1,6 +1,7 @@
 /**
  * A setup program waiting to be installed (the release was an NSIS / Inno
- * Setup installer, not an archive). The agent may be on it; the user can also
+ * Setup / Kachina installer, not an archive, or an archive holding only one).
+ * The agent may be on it; the user can also
  * install it themselves — needed when no model is set up yet: open its window
  * (the folder prefilled), click through, then import the folder it installed into.
  */
@@ -10,7 +11,7 @@ import type { PendingSetupInfo } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { errorText } from './data.ts'
 
-const KIND: Record<PendingSetupInfo['kind'], string> = { nsis: 'NSIS', inno: 'Inno Setup' }
+const KIND: Record<PendingSetupInfo['kind'], string> = { nsis: 'NSIS', inno: 'Inno Setup', kachina: 'Kachina' }
 
 export function SetupCard({ client, setup, openSession, onImported }: {
   client: AdgClient

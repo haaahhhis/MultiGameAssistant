@@ -1,15 +1,15 @@
 /**
  * Setup programs: some projects publish their full package only as an
- * installer (NSIS or Inno Setup `setup.exe`), not an archive, Mirror酱 too.
- * There is nothing to unpack; the installer has to run. Both kinds install
- * quietly into a chosen folder, or show their own window for someone (the
+ * installer (NSIS, Inno Setup or Kachina `setup.exe`), not an archive, Mirror酱 too.
+ * There is nothing to unpack; the installer has to run. Each kind installs
+ * quietly into a chosen folder, or shows its own window for someone (the
  * agent, through the screen tools) to click through.
  */
 import { spawn } from 'node:child_process'
 import { open } from 'node:fs/promises'
 import { basename } from 'node:path'
 
-export type SetupKind = 'nsis' | 'inno'
+export type SetupKind = 'nsis' | 'inno' | 'kachina'
 
 /** The installer's manifest and data headers sit in the first few megabytes of the exe. */
 const SNIFF_BYTES = 8 * 1024 * 1024
@@ -18,6 +18,8 @@ const MARKERS: readonly { kind: SetupKind; text: string }[] = [
   { kind: 'nsis', text: 'NullsoftInst' },
   { kind: 'inno', text: 'JR.Inno.Setup' },
   { kind: 'inno', text: 'Inno Setup Setup Data' },
+  // Kachina Installer (BetterGI's BetterGI.Install.*.exe) writes it over the DOS stub's text (native/builder/pack.rs).
+  { kind: 'kachina', text: '!KachinaInstaller!' },
 ]
 
 /** Which installer `file` is; undefined for anything else (an ordinary program, not an exe). */
@@ -36,15 +38,16 @@ export async function setupKind(file: string): Promise<SetupKind | undefined> {
   }
 }
 
-export const SETUP_NAMES: Readonly<Record<SetupKind, string>> = { nsis: 'NSIS', inno: 'Inno Setup' }
+export const SETUP_NAMES: Readonly<Record<SetupKind, string>> = { nsis: 'NSIS', inno: 'Inno Setup', kachina: 'Kachina' }
 
 /**
  * The command line after the exe. Quiet: no window, into `dir`. With a
  * window, `dir` is only the folder it suggests. NSIS takes `/D=` last and
- * unquoted, even with spaces.
+ * unquoted, even with spaces; Kachina reads NSIS's `/S` and `/D=` the same
+ * way (native/cli/mod.rs).
  */
 export function setupCommandLine(kind: SetupKind, dir: string, quiet: boolean): string {
-  if (kind === 'nsis') return `${quiet ? '/S ' : ''}/D=${dir}`
+  if (kind === 'nsis' || kind === 'kachina') return `${quiet ? '/S ' : ''}/D=${dir}`
   return `${quiet ? '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- ' : ''}/DIR="${dir}"`
 }
 
@@ -53,7 +56,8 @@ export function setupExitText(kind: SetupKind, code: number): string {
   if (code === 0) return '安装完成'
   const nsis: Record<number, string> = { 1: '安装被取消了', 2: '安装中途出错' }
   const inno: Record<number, string> = { 1: '安装程序没能启动', 2: '安装还没开始就被取消了', 3: '准备安装时出错', 4: '安装中途出错', 5: '安装被取消了', 6: '安装程序被强行结束', 7: '安装前检查没通过', 8: '安装前检查没通过，需要重启电脑' }
-  return (kind === 'nsis' ? nsis : inno)[code] ?? `安装程序退出码 ${code}`
+  const kachina: Record<number, string> = { 1: '安装没有完成' }
+  return ({ nsis, inno, kachina })[kind][code] ?? `安装程序退出码 ${code}`
 }
 
 export interface RunSetupOptions {

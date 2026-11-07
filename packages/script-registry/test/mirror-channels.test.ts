@@ -169,3 +169,61 @@ test('any script can be given a Mirror酱 channel; the agent installs from Mirro
     await github.close()
   }
 })
+
+/** The start of BetterGI's setup program: Kachina writes its marker over the DOS stub. */
+const KACHINA = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(76), Buffer.from('!KachinaInstaller!'), Buffer.alloc(4000)])
+
+test("Mirror酱's BetterGI package is a zip holding only its setup program: that program is handed over, not installed as the app", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-bgi-setup-'))
+  const github = await startFakeGitHub({ repos: {} })
+  const mirror = await fakeMirror({ rid: 'BGI', latest: '0.66.0', cdk: 'good', full: makeZip({ 'BetterGI.Install.0.66.0.exe': KACHINA }) })
+  const { library, jobs } = setup(root, { github: github.url, mirror: mirror.url, cdk: () => 'good' })
+  await library.start()
+  try {
+    const job = await library.install({ repo: 'babalae/better-genshin-impact', id: 'bettergi', byAgent: true }).done
+    assert.equal(job.phase, 'done', job.error)
+    assert.match(jobs.at(-1)?.message ?? '', /BetterGI\.Install\.0\.66\.0\.exe 是 Kachina 安装程序，不是压缩包.*script_setup_run/)
+    assert.throws(() => library.get('bettergi'), 'not recorded as installed: only its setup program is there')
+    const waiting = library.pendingSetup('bettergi')!
+    assert.equal(waiting.kind, 'kachina')
+    assert.equal(waiting.version, '0.66.0')
+    assert.equal(waiting.dir, join(root, 'tools', 'bettergi', '0.66.0'))
+    assert.equal(waiting.file, join(root, 'tools', 'bettergi', '.downloads', 'BetterGI.Install.0.66.0.exe'), 'taken out of the package')
+    assert.ok(existsSync(waiting.file))
+    assert.ok(!existsSync(waiting.dir), 'nothing left in the version folder')
+    assert.ok(!existsSync(join(root, 'tools', 'bettergi', '.downloads', 'mirrorchyan-BGI-0.66.0.zip')), 'the package itself is gone')
+  } finally {
+    library.dispose()
+    await mirror.close()
+    await github.close()
+  }
+})
+
+test('a file asked for by name is downloaded even when that version is already there from another file', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-bgi-asset-'))
+  const archive = makeZip({ 'BetterGI.exe': 'MZ from GitHub', 'BetterGI.dll': 'MZ' })
+  const github = await startFakeGitHub({ repos: { 'babalae/better-genshin-impact': [{ tag: '0.66.0', assets: [{ name: 'BetterGI_v0.66.0.zip', content: archive }] }] } })
+  const mirror = await fakeMirror({ rid: 'BGI', latest: '0.66.0', cdk: 'good', full: makeZip({ 'BetterGI.exe': 'MZ from Mirror酱' }) })
+  const { library } = setup(root, { github: github.url, mirror: mirror.url, cdk: () => 'good' })
+  await library.start()
+  try {
+    const first = await library.install({ repo: 'babalae/better-genshin-impact', id: 'bettergi' }).done
+    assert.equal(first.phase, 'done', first.error)
+    assert.equal(readFileSync(join(library.get('bettergi').dir!, 'BetterGI.exe'), 'utf8'), 'MZ from Mirror酱')
+
+    const again = await library.install({ repo: 'babalae/better-genshin-impact', id: 'bettergi', asset: 'BetterGI_v0.66.0.zip' }).done
+    assert.equal(again.phase, 'done', again.error)
+    assert.equal(readFileSync(join(library.get('bettergi').dir!, 'BetterGI.exe'), 'utf8'), 'MZ from GitHub')
+
+    // The same file again: nothing to download.
+    const downloads = github.requests.filter(r => r.includes('/download/')).length
+    assert.equal(downloads, 1, 'the release file was downloaded once')
+    const same = await library.install({ repo: 'babalae/better-genshin-impact', id: 'bettergi', asset: 'BetterGI_v0.66.0.zip' }).done
+    assert.equal(same.phase, 'done', same.error)
+    assert.equal(github.requests.filter(r => r.includes('/download/')).length, downloads)
+  } finally {
+    library.dispose()
+    await mirror.close()
+    await github.close()
+  }
+})
