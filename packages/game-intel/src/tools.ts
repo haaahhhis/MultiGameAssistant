@@ -79,7 +79,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       dates_from: a.own?.fields.some(f => f === 'startsAt' || f === 'endsAt') === true ? '用户自己填的' : a.site?.name ?? (a.screen !== undefined ? '游戏画面' : '未知'),
       ...(a.own === undefined ? {} : { set_by_user: a.own.fields.map(f => Object.entries(OWN_KEYS).find(([, v]) => v === f)![0]), ...(a.sources === undefined && a.screen === undefined ? { added_by_user: true } : {}) }),
       ...(a.kind === undefined ? {} : { kind: a.kind }),
-      ...(a.cover === undefined ? {} : { image: a.cover.startsWith('own:') ? '用户的图片' : a.cover }),
+      ...(a.cover === undefined ? {} : { image: a.cover.startsWith('own:') ? '用户的图片' : a.cover.startsWith('shot:') ? '游戏截图（没有别的图时用它）' : a.cover }),
       ...(a.screen === undefined ? {} : { read_in_game: shortDate(a.screen.at, timeZone), ...(a.progress === undefined ? {} : { progress: a.progress }) }),
       // The checklist (from the game screen or kept by the user on the board), and the user's own "done".
       ...(a.todo.length + a.done.length === 0 ? {} : { todo: a.todo, done: a.done }),

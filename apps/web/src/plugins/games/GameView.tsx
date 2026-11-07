@@ -94,7 +94,8 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
       <div className="game-main">
-        <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover)} />
+        {/* A screenshot is an event's background, not the version's art. */}
+        <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)} />
         <StatusCard client={client} game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onUnfollow={onUnfollow} openSession={openSession} openScripts={openScripts} />
         {(game.pools?.length ?? 0) > 0 && (
           <section className="card pools-card">
@@ -419,7 +420,7 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
   const big = target === undefined ? { value: '', unit: '', rest: '' } : split(target - now)
   return (
     <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''}`} onClick={onClick} aria-expanded={expanded}>
-      {art !== undefined && <img className="sched-art" src={art} alt="" />}
+      {art !== undefined && <img className={`sched-art ${a.cover?.startsWith('shot:') === true ? 'shot' : ''}`} src={art} alt="" title={a.cover?.startsWith('shot:') === true ? '没有活动图，用的是 agent 读这个活动时的游戏截图' : undefined} />}
       <span className="sched-shade" />
       <span className="sched-count" aria-label={target === undefined ? '时间未知' : `${!started ? '距开始' : '剩余'}${countdown(target, now)}`}>
         {target === undefined ? <b>?</b> : <><b>{big.value}</b><small>{big.unit}</small>{big.rest !== '' && <em>{big.rest}</em>}</>}

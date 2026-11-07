@@ -117,7 +117,7 @@ test('the calendar: site dates count, the screen adds progress, a disagreement i
     { name: '昨日海', remaining: '剩余 2天10小时', todo: ['活动商店还剩 3 项没换'] },
     { name: '恒远津梁', remaining: '剩余 2天', todo: [] , done: ['关卡全部通关'] },
     { name: '危机合约', remaining: '剩余 6天' },
-  ], { now: NOW, timeZone: TZ, sessionId: 's1', evidence: async () => true })
+  ], { now: NOW, timeZone: TZ, sessionId: 's1', shot: 'shot:0123456789abcdef0123456789abcdef.png' })
   assert.deepEqual(written.map(w => w.matched), [true, true, false])
   const ss = calendar.list('arknights').find(a => a.name === 'SideStory「昨日海」')!
   assert.deepEqual(ss.todo, ['活动商店还剩 3 项没换'])
@@ -341,4 +341,37 @@ test("the user's word on a site's event beats the site, survives a refresh, and 
   assert.equal(back?.name, '恒远津梁')
   assert.equal(back?.own, undefined)
   assert.equal(back?.cover, undefined)
+})
+
+test('an event with no picture shows the screenshot it was read from; a source or the user still wins', async () => {
+  const calendar = new Calendar(mkdtempSync(join(tmpdir(), 'adg-shot-')))
+  const SHOT = 'shot:0123456789abcdef0123456789abcdef.png'
+  const LATER_SHOT = 'shot:fedcba9876543210fedcba9876543210.png'
+  await calendar.applySite('endfield', { id: 'sra', name: 'SRA 公共 API' }, [
+    { name: '有图的活动', aliases: [], endsAt: NOW + 5 * DAY, cover: 'https://example.com/art.png' },
+    { name: '没图的活动', aliases: [], endsAt: NOW + 5 * DAY },
+  ], NOW, TZ)
+  await calendar.applyRead('endfield', 'screen', [{ name: '有图的活动', remaining: '5天' }, { name: '没图的活动', remaining: '5天' }, { name: '只在游戏里', remaining: '3天' }], { now: NOW, timeZone: TZ, shot: SHOT })
+  const cover = (name: string) => calendar.list('endfield').find(a => a.name === name)?.cover
+  assert.equal(cover('有图的活动'), 'https://example.com/art.png', "the site's picture first")
+  assert.equal(cover('没图的活动'), SHOT)
+  assert.equal(cover('只在游戏里'), SHOT)
+  assert.deepEqual([...calendar.shotImages()], [SHOT])
+  // Read again without a screenshot: no evidence this time, the last screenshot stays the picture.
+  await calendar.applyRead('endfield', 'screen', [{ name: '没图的活动', remaining: '4天' }], { now: NOW + HOUR, timeZone: TZ })
+  const again = calendar.list('endfield').find(a => a.name === '没图的活动')!
+  assert.equal(again.screen?.evidence, false)
+  assert.equal(again.cover, SHOT)
+  // A newer screenshot replaces it; the user's picture beats it, and taking that back shows it again.
+  await calendar.applyRead('endfield', 'screen', [{ name: '没图的活动', remaining: '4天' }], { now: NOW + 2 * HOUR, timeZone: TZ, shot: LATER_SHOT })
+  assert.equal(cover('没图的活动'), LATER_SHOT)
+  const id = again.id
+  await calendar.saveOwn({ game: 'endfield', id }, { cover: 'own:00000000000000000000000000000000.png' }, NOW, TZ)
+  assert.equal(cover('没图的活动'), 'own:00000000000000000000000000000000.png')
+  await calendar.saveOwn({ game: 'endfield', id }, { cover: null }, NOW, TZ)
+  assert.equal(cover('没图的活动'), LATER_SHOT)
+  // Screenshots kept the old way (one file per event) are taken in as pictures.
+  const old = calendar.list('endfield').find(a => a.name === '只在游戏里')!
+  await calendar.adoptShots(new Map([[old.id, LATER_SHOT]]), () => TZ)
+  assert.equal(cover('只在游戏里'), LATER_SHOT)
 })

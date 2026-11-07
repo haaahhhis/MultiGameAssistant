@@ -18,7 +18,7 @@ import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
 import { GAMES_DIR } from '@adg/packs'
-import { GAMES_CAPABILITY, OWN_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
+import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
@@ -125,6 +125,7 @@ export class AdgGameIntel extends Service {
     this.ready = (async () => {
       await calendar.load()
       await this.loadGames(log)
+      await this.adoptEvidence().catch(error => log.warn(`old screenshots not converted: ${String(error)}`))
       daily.start()
     })()
     ctx.effect(() => () => this.daily.stop(), 'adg-game-intel daily report')
@@ -219,8 +220,11 @@ export class AdgGameIntel extends Service {
             return settings
           },
           'games/evidence': async params => {
+            await this.ready
             const id = (params as RequestParams<'games/evidence'>).activityId
-            if (calendar.get(id)?.screen?.evidence !== true) throw new Error('这个活动没有保存截图')
+            const screen = calendar.get(id)?.screen
+            if (screen?.evidence !== true) throw new Error('这个活动没有保存截图')
+            if (screen.image !== undefined) return this.picture(screen.image)
             return { mediaType: 'image/png', data: (await readFile(this.evidenceFile(id))).toString('base64') }
           },
           'games/image': async params => {
@@ -305,10 +309,10 @@ export class AdgGameIntel extends Service {
    * gave are fetched: this is not a general-purpose proxy.
    */
   private async picture(url: string): Promise<{ mediaType: string; data: string }> {
-    if (OWN_IMAGE.test(url)) {
-      const file = url.slice('own:'.length)
+    if (OWN_IMAGE.test(url) || SHOT_IMAGE.test(url)) {
+      const [kind, file] = url.split(':') as ['own' | 'shot', string]
       const mediaType = IMAGE_TYPES.find(([ext]) => file.endsWith(`.${ext}`))![1]
-      const bytes = await readFile(join(this.dir, 'images', 'own', file)).catch(() => { throw new Error('这张图片已经不在了') })
+      const bytes = await readFile(join(this.imageDir(kind), file)).catch(() => { throw new Error('这张图片已经不在了') })
       return { mediaType, data: bytes.toString('base64') }
     }
     if (!this.calendar.pictures().has(url) && !this.games.some(g => g.manifest.art === url)) throw new Error('这张图片不是数据站或游戏包给的地址')
@@ -440,24 +444,32 @@ export class AdgGameIntel extends Service {
     return readFile(full).catch(() => { throw new Error(`读不到图片文件：${full}`) })
   }
 
-  /** Keep a picture the user added. @returns its address (`own:<hash>.<ext>`). */
-  private async keepImage(bytes: Buffer): Promise<string> {
-    if (bytes.length > MAX_IMAGE_BYTES) throw new Error('图片太大（最多 8 MB）')
+  /**
+   * Keep a picture the user added (`own`) or a screenshot an event was read
+   * from (`shot`), named by its content. @returns its address (`own:<hash>.<ext>`).
+   */
+  private async keepImage(bytes: Buffer, kind: 'own' | 'shot' = 'own'): Promise<string> {
+    if (kind === 'own' && bytes.length > MAX_IMAGE_BYTES) throw new Error('图片太大（最多 8 MB）')
     const ext = imageType(bytes)
     if (ext === undefined) throw new Error('不是支持的图片（png、jpg、gif、webp、avif）')
     const file = `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}.${ext}`
-    const dir = join(this.dir, 'images', 'own')
+    const dir = this.imageDir(kind)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, file), bytes)
-    return `own:${file}`
+    return `${kind}:${file}`
   }
 
-  /** Pictures the user added that no event shows any more. */
+  private imageDir(kind: 'own' | 'shot'): string {
+    return join(this.dir, 'images', kind === 'own' ? 'own' : 'shots')
+  }
+
+  /** Pictures the user added, and screenshots, that no event has any more. */
   private async sweepImages(): Promise<void> {
-    const dir = join(this.dir, 'images', 'own')
-    const used = this.calendar.ownImages()
-    const files = await readdir(dir).catch(() => [] as string[])
-    await Promise.all(files.filter(f => !used.has(`own:${f}`)).map(f => rm(join(dir, f), { force: true }).catch(() => {})))
+    for (const [kind, used] of [['own', this.calendar.ownImages()], ['shot', this.calendar.shotImages()]] as const) {
+      const dir = this.imageDir(kind)
+      const files = await readdir(dir).catch(() => [] as string[])
+      await Promise.all(files.filter(f => !used.has(`${kind}:${f}`)).map(f => rm(join(dir, f), { force: true }).catch(() => {})))
+    }
   }
 
   /**
@@ -588,6 +600,8 @@ export class AdgGameIntel extends Service {
       results.push({ game: manifest.id, ok: failures.length === 0 || count > 0, count, ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
       this.changed(manifest.id)
     }
+    // Events that ended went with their screenshots and pictures.
+    await this.sweepImages()
     return results
   }
 
@@ -606,22 +620,37 @@ export class AdgGameIntel extends Service {
       if (link !== undefined) return { ...event, source: { id: link.id, name: link.name } }
       return host === undefined ? event : { ...event, source: { id: 'agent', name: `${host}（agent 查到）` } }
     })
-    const written = await this.calendar.applyRead(gameId, from, credited, {
-      now: this.clock.now(),
-      timeZone: manifest.timezone,
-      sessionId,
-      ...(shot === undefined ? {} : {
-        evidence: async activity => {
-          await mkdir(join(this.dir, 'evidence'), { recursive: true })
-          await writeFile(this.evidenceFile(activity.id), shot)
-          return true
-        },
-      }),
+    // The screenshot is the evidence, and the picture of every event read from it that has none.
+    const kept = shot === undefined ? undefined : await this.keepImage(shot, 'shot').catch(error => {
+      this.log.warn(`screenshot not kept: ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
     })
+    const written = await this.calendar.applyRead(gameId, from, credited, { now: this.clock.now(), timeZone: manifest.timezone, sessionId, shot: kept })
+    await this.sweepImages()
     this.changed(gameId)
     return written
   }
 
+  /**
+   * Screenshots kept before they were pictures: one file per event under
+   * `evidence/`. Each becomes a `shot:` picture (and its event's background).
+   */
+  private async adoptEvidence(): Promise<void> {
+    const shots = new Map<string, string>()
+    for (const a of this.calendar.list()) {
+      if (a.screen?.evidence !== true || a.screen.image !== undefined) continue
+      const file = this.evidenceFile(a.id)
+      const bytes = await readFile(file).catch(() => undefined)
+      if (bytes === undefined) continue
+      const kept = await this.keepImage(bytes, 'shot').catch(() => undefined)
+      if (kept === undefined) continue
+      shots.set(a.id, kept)
+      await rm(file, { force: true }).catch(() => {})
+    }
+    await this.calendar.adoptShots(shots, game => this.games.find(g => g.manifest.id === game)?.manifest.timezone ?? 'Asia/Shanghai')
+  }
+
+  /** Where a screenshot was kept before `shot:` pictures. */
   private evidenceFile(activityId: string): string {
     return join(this.dir, 'evidence', `${activityId.replace(/[^\p{L}\p{N}-]+/gu, '_')}.png`)
   }

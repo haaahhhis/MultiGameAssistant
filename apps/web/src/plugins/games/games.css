@@ -89,6 +89,7 @@
 .sched-card { position: relative; overflow: hidden; display: block; width: 100%; min-height: 128px; padding: 0; border: none; border-radius: 12px; text-align: left; color: #fff; cursor: pointer; isolation: isolate; background: linear-gradient(135deg, color-mix(in srgb, var(--game) 55%, #15151a), #15151a 75%); box-shadow: var(--shadow-1); transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
 .sched-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-pop); }
 .sched-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; animation: fade-in .35s var(--ease) both; }
+.sched-art.shot { filter: saturate(.85) blur(1px); transform: scale(1.04); }
 .sched-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgb(12 12 16 / .86), rgb(12 12 16 / .55) 60%, rgb(12 12 16 / .3)); }
 .sched-card.no-art .sched-shade { background: radial-gradient(circle at 90% 10%, color-mix(in srgb, var(--game) 40%, transparent), transparent 55%); }
 .sched-card { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: stretch; }

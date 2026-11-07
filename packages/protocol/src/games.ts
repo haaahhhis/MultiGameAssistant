@@ -38,6 +38,12 @@ export const Activity = z.object({
     endsAt: z.number().optional(),
     /** A screenshot was kept (`games/evidence`). */
     evidence: z.boolean(),
+    /**
+     * The screenshot it was read from (`shot:…`, fetch it with `games/image`),
+     * also the activity's `cover` when no source and not the user gives one.
+     * Kept from an earlier reading when the last one saved none.
+     */
+    image: z.string().optional(),
     sessionId: z.string().optional(),
   }).optional(),
   /** Still to do, as read from the game ("活动商店还剩 3 项没换"). */
@@ -69,6 +75,8 @@ export type ActivityImage = z.infer<typeof ActivityImage>
 
 /** A picture the user added, kept by the host: `own:<hash>.<ext>` (fetch it with `games/image`). */
 export const OWN_IMAGE = /^own:[0-9a-f]{32}\.(?:png|jpg|gif|webp|avif)$/
+/** A screenshot an activity was read from, kept by the host: `shot:<hash>.<ext>` (fetch it with `games/image`). */
+export const SHOT_IMAGE = /^shot:[0-9a-f]{32}\.(?:png|jpg|gif|webp|avif)$/
 
 export const GameSourceInfo = z.object({
   id: z.string(),
@@ -214,8 +222,8 @@ export const GamesRequests = {
    */
   'games/image': {
     capability: GAMES_CAPABILITY,
-    /** A data site's https address, or a picture the user added (`own:…`). */
-    params: z.object({ url: z.string().refine(u => OWN_IMAGE.test(u) || /^https?:\/\/\S+$/.test(u), '不是图片地址') }),
+    /** A data site's https address, a picture the user added (`own:…`), or a kept screenshot (`shot:…`). */
+    params: z.object({ url: z.string().refine(u => OWN_IMAGE.test(u) || SHOT_IMAGE.test(u) || /^https?:\/\/\S+$/.test(u), '不是图片地址') }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
   },
   /** Ask the agent to find where a game's events can be read and add it (a game pack of the user's own). */

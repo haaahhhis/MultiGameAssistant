@@ -314,10 +314,11 @@ export class Calendar {
    * time, checked against the site's end); from a web page (`site`) it is
    * that page's word on the event (the user's page it came from, else
    * "agent 查到的网页"), kept beside the data sites' and used where they say
-   * nothing.
+   * nothing. `shot`: the screenshot read from the screen, already kept
+   * (`shot:<file>`): the evidence, and the picture where no source has one.
    * @returns the events written, with how each was matched.
    */
-  async applyRead(game: string, from: 'screen' | 'site', events: readonly ReadEvent[], context: { now: number; timeZone: string; sessionId?: string | undefined; source?: { id: string; name: string } | undefined; evidence?: (activity: Activity) => Promise<boolean> }): Promise<Array<{ activity: Activity; matched: boolean }>> {
+  async applyRead(game: string, from: 'screen' | 'site', events: readonly ReadEvent[], context: { now: number; timeZone: string; sessionId?: string | undefined; source?: { id: string; name: string } | undefined; shot?: string | undefined }): Promise<Array<{ activity: Activity; matched: boolean }>> {
     const { now, timeZone } = context
     const written: Array<{ activity: Activity; matched: boolean }> = []
     for (const event of events) {
@@ -341,11 +342,14 @@ export class Calendar {
           ...(event.cover !== undefined && /^https:\/\/\S+$/.test(event.cover) ? { cover: event.cover } : {}),
         }
       } else {
+        // A reading without a screenshot keeps the last one as the picture.
+        const image = context.shot ?? item.screen?.image
         item.screen = {
           at: now,
           ...(event.remaining === undefined ? {} : { remaining: event.remaining }),
           ...(end === undefined ? {} : { endsAt: end }),
-          evidence: false,
+          evidence: context.shot !== undefined,
+          ...(image === undefined ? {} : { image }),
           ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
         }
         if (event.todo !== undefined) item.todo = [...event.todo]
@@ -354,7 +358,6 @@ export class Calendar {
         else delete item.progress
       }
       this.#derive(item, timeZone)
-      if (from === 'screen' && context.evidence !== undefined) item.screen!.evidence = await context.evidence(this.#public(item)).catch(() => false)
       written.push({ activity: this.#public(item), matched: existing !== undefined })
     }
     this.#prune(now)
@@ -436,6 +439,28 @@ export class Calendar {
     return out
   }
 
+  /** The screenshots an event was read from that are still kept (`shot:<file>`). */
+  shotImages(): Set<string> {
+    const out = new Set<string>()
+    for (const a of this.#items) if (a.screen?.image !== undefined) out.add(a.screen.image)
+    return out
+  }
+
+  /**
+   * Screenshots kept before they were pictures (one file per event): now
+   * kept as `shot:<file>`, by event id.
+   */
+  async adoptShots(shots: ReadonlyMap<string, string>, timeZone: (game: string) => string): Promise<void> {
+    if (shots.size === 0) return
+    for (const item of this.#items) {
+      const shot = shots.get(item.id)
+      if (shot === undefined || item.screen === undefined) continue
+      item.screen.image = shot
+      this.#derive(item, timeZone(item.game))
+    }
+    await this.save()
+  }
+
   async remove(id: string): Promise<boolean> {
     const before = this.#items.length
     this.#items = this.#items.filter(a => a.id !== id)
@@ -514,6 +539,8 @@ export class Calendar {
       delete item.baseName
     }
     for (const key of ['startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'] as const) if (mine?.[key] !== undefined) set(key, mine[key])
+    // No picture from any source or the user: the screenshot it was read from.
+    if (item.cover === undefined && item.screen?.image !== undefined) item.cover = item.screen.image
 
     delete item.mismatch
     if (mine?.endsAt !== undefined) return
