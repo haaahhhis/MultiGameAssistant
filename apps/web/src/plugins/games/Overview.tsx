@@ -7,6 +7,7 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { ActivityEditor } from './ActivityEditor.tsx'
+import { useFirstImage, useRemoteImage } from './images.ts'
 
 const DAY = 86_400_000
 const OWN_FIELD_NAMES: Record<NonNullable<Activity['own']>['fields'][number], string> = { name: '名字', startsAt: '开始时间', endsAt: '结束时间', kind: '类型', description: '说明', url: '页面', cover: '图片' }
@@ -117,49 +118,59 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
     ticks.push({ at: t, ...(fromToday > 0 && fromToday % 7 === 0 ? { label: dayLabel(t, Intl.DateTimeFormat().resolvedOptions().timeZone) } : {}) })
   }
 
+  // Whatever the shown games are: a hidden game's tile still says what it has.
+  const liveOf = (id: string) => activities.filter(a => a.game === id && (a.startsAt ?? 0) <= now && (a.endsAt === undefined || Math.max(a.endsAt, a.shopEndsAt ?? 0) > now))
+
   return (
     <div className="games-overview">
-      <section className="card games-overview-head">
-        <div className="card-head">
-          <div>
-            <h3>全部活动</h3>
-            <p className="muted small">
-              进行中 {running.length} 个 · <span className={soonCount > 0 ? 'tone-warn' : ''}>{soonCount} 个快结束还没做完</span> · 做完 {counts.finished} 个 · 做了一部分 {counts.partial} 个 · 没记录 {counts.unknown} 个
-            </p>
+      <div className="game-tiles" role="group" aria-label="各游戏">
+        {games.map(g => {
+          const live = liveOf(g.id)
+          return (
+            <GameTile key={g.id} client={client} game={g} color={color.get(g.id) ?? PALETTE[0]!} now={now} shown={visible(g.id)} running={live.length}
+              soon={live.filter(a => a.endsAt !== undefined && a.endsAt - now < soonDays * DAY && progressOf(a).state !== 'finished').length}
+              covers={live.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true).slice(0, 6)}
+              onOpen={() => onOpenGame(g.id)} onToggle={() => toggle(g.id)} />
+          )
+        })}
+      </div>
+
+      <section className="card games-overview-board">
+        <div className="ov-toolbar">
+          <div className="ov-stats">
+            <Stat value={running.length} label="进行中" />
+            <Stat value={soonCount} label="快结束未做完" tone={soonCount > 0 ? 'warn' : undefined} />
+            <Stat value={counts.finished} label="做完" />
+            <Stat value={counts.partial} label="做了一部分" />
+            <Stat value={counts.unknown} label="没记录" />
           </div>
           <div className="segmented-control ov-mode" role="group" aria-label="排序">
             <button className={mode === 'time' ? 'active' : ''} aria-pressed={mode === 'time'} onClick={() => setMode('time')}>按时间</button>
             <button className={mode === 'game' ? 'active' : ''} aria-pressed={mode === 'game'} onClick={() => setMode('game')}>按游戏</button>
           </div>
         </div>
-        <div className="chip-row games-overview-games" role="group" aria-label="显示哪些游戏">
-          {games.map(g => (
-            <button key={g.id} className={`chip chip-button game-chip ${visible(g.id) ? 'active' : ''}`} style={{ '--game': color.get(g.id) } as CSSProperties} aria-pressed={visible(g.id)} onClick={() => toggle(g.id)}>
-              <span className="game-dot" />{g.name}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="card games-overview-board">
         <div className="ov-grid">
+        <div className="ov-lines" aria-hidden="true">
+          {ticks.filter(t => t.label !== undefined).map(t => <i key={t.at} style={{ left: `${x(t.at)}%` }} />)}
+        </div>
         <div className="ov-row ov-axis" aria-hidden="true">
           <div className="ov-label" />
           <div className="ov-track">
             {ticks.map(t => <span key={t.at} className={`ov-tick ${t.label !== undefined ? 'major' : ''}`} style={{ left: `${x(t.at)}%` }}>{t.label !== undefined && <em>{t.label}</em>}</span>)}
+            <span className="ov-today-label" style={{ left: `${x(now)}%` }}>今天</span>
           </div>
           <div className="ov-side" />
         </div>
-        {sections.every(s => s.rows.length === 0) && <div className="empty"><Icon name="calendar" /><p>{games.length === 0 ? '没有游戏。' : '选中的游戏现在没有活动。点「刷新全部数据站」读取，或在上面多选几个游戏。'}</p></div>}
+        {sections.every(s => s.rows.length === 0) && <div className="empty"><Icon name="calendar" /><p>{games.length === 0 ? '没有游戏。' : '显示的游戏现在没有活动。点「刷新全部」读取，或点上面游戏卡片的眼睛多显示几个。'}</p></div>}
         {sections.filter(s => s.rows.length > 0).map(s => (
-          <div key={s.key} className="ov-section">
+          <div key={s.key} className={`ov-section ${s.key === 'soon' ? 'warn' : ''} ${s.game !== undefined ? 'by-game' : ''}`} style={s.game === undefined ? undefined : { '--game': color.get(s.game.id) } as CSSProperties}>
             <div className="ov-section-title">
-              {s.game !== undefined && <span className="game-dot" style={{ '--game': color.get(s.game.id) } as CSSProperties} />}
-              <span>{s.title}</span>
+              {s.game !== undefined && <span className="game-dot" />}
+              <span className="ov-section-name">{s.title}</span>
+              <span className="ov-section-count">{s.rows.length}</span>
               {s.hint !== undefined && <span className="muted small">{s.hint}</span>}
-              {s.game?.version !== undefined && <span className="muted small">版本 {s.game.version.name}{s.game.version.title === undefined ? '' : `「${s.game.version.title}」`}</span>}
-              <span className="muted small">{s.rows.length} 个</span>
-              {s.game !== undefined && <button className="link-button small" onClick={() => onOpenGame(s.game!.id)}>打开</button>}
+              {s.game?.version !== undefined && <span className="muted small ov-section-version">{s.game.version.name}{s.game.version.title === undefined ? '' : `「${s.game.version.title}」`}</span>}
+              {s.game !== undefined && <button className="link-button small ov-section-open" onClick={() => onOpenGame(s.game!.id)}>打开<Icon name="chevron" /></button>}
             </div>
             {s.rows.map(a => {
               const game = games.find(g => g.id === a.game)
@@ -171,10 +182,49 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
             })}
           </div>
         ))}
-        <div className="ov-today" style={{ left: `calc(var(--ov-label) + (100% - var(--ov-label) - var(--ov-side)) * ${x(now) / 100})` }} aria-hidden="true"><span>今天</span></div>
+        <div className="ov-today" style={{ left: `calc(var(--ov-label) + (100% - var(--ov-label) - var(--ov-side)) * ${x(now) / 100})` }} aria-hidden="true" />
         </div>
       </section>
     </div>
+  )
+}
+
+function Stat({ value, label, tone }: { value: number; label: string; tone?: 'warn' | undefined }) {
+  return <span className={`ov-stat ${tone ?? ''} ${value === 0 ? 'zero' : ''}`}><strong>{value}</strong>{label}</span>
+}
+
+/** A game at a glance on its art: its version, what is on, what is ending. Opens the game; the eye shows or hides it on the timeline. */
+function GameTile({ client, game, color, covers, now, running, soon, shown, onOpen, onToggle }: {
+  client: AdgClient
+  game: GameInfo
+  color: string
+  covers: readonly (string | undefined)[]
+  now: number
+  running: number
+  soon: number
+  shown: boolean
+  onOpen: () => void
+  onToggle: () => void
+}) {
+  const v = game.version
+  const art = useFirstImage(client, [v?.cover, game.art, ...covers])
+  const ends = v?.endsAt !== undefined && v.endsAt > now ? ` · 还剩 ${leftText(v.endsAt, now)}` : ''
+  return (
+    <article className={`game-tile ${art === undefined ? 'no-art' : ''} ${shown ? '' : 'off'}`} style={{ '--game': color } as CSSProperties}>
+      {art !== undefined && <img className="game-tile-art" src={art} alt="" />}
+      <span className="game-tile-shade" />
+      <button className="game-tile-open" title={`打开${game.name}`} onClick={onOpen}>
+        <span className="game-tile-name"><span className="game-dot" />{game.name}</span>
+        <span className="game-tile-version">{v === undefined ? '没有版本信息' : `${v.name}${v.title === undefined ? '' : `「${v.title}」`}${ends}`}</span>
+        <span className="game-tile-counts">
+          <span><b>{running}</b> 进行中</span>
+          {soon > 0 && <span className="soon"><b>{soon}</b> 快结束</span>}
+        </span>
+      </button>
+      <button className="game-tile-eye" aria-pressed={shown} aria-label={`在时间线上显示${game.name}`} title={shown ? '在时间线上隐藏' : '在时间线上显示'} onClick={onToggle}>
+        <Icon name={shown ? 'eye' : 'eye-off'} />
+      </button>
+    </article>
   )
 }
 
@@ -199,14 +249,20 @@ function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays
   const left = x(a.startsAt ?? now - 30 * DAY)
   const right = end === undefined ? 100 : x(end)
   const shop = a.shopEndsAt === undefined || end === undefined || a.shopEndsAt <= end ? undefined : x(a.shopEndsAt)
+  const art = useRemoteImage(client, a.cover)
   return (
     <div className={`ov-item ${open ? 'open' : ''}`} style={{ '--game': color } as CSSProperties}>
       <button className={`ov-row ${soon ? 'soon' : ''} ${p.state === 'finished' ? 'finished' : ''}`} onClick={onToggle} aria-expanded={open}>
         <div className="ov-label">
-          <span className="ov-name">{a.name}</span>
-          <span className="ov-meta">
-            {showGame && <><span className="game-dot" />{game?.name ?? a.game}</>}
-            {a.kind !== undefined && <span className="ov-kind">{a.kind}</span>}
+          <span className="ov-thumb">{art !== undefined && <img src={art} alt="" decoding="async" />}</span>
+          <span className="ov-text">
+            <span className="ov-name" title={a.name}>{a.name}</span>
+            {(showGame || a.kind !== undefined) && (
+              <span className="ov-meta">
+                {showGame && <><span className="game-dot" />{game?.name ?? a.game}</>}
+                {a.kind !== undefined && <span className="ov-kind">{a.kind}</span>}
+              </span>
+            )}
           </span>
         </div>
         <div className="ov-track">

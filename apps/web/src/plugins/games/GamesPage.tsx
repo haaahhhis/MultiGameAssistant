@@ -86,20 +86,21 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
 
   return (
     <section className="main games-page">
-      <header className="page-header">
-        <div className="breadcrumb"><span>游戏</span><span className="breadcrumb-divider">/</span><h1>{showReport ? '每日日报' : current?.name ?? '全部活动'}</h1></div>
+      {/* The tabs say where you are, so they are the header: no second row repeating the same name. */}
+      <header className="page-header games-header">
+        <div className="breadcrumb"><h1>游戏</h1></div>
+        <nav className="game-tabs" role="tablist" aria-label="游戏">
+          <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="calendar" />全部活动</button>
+          <span className="game-tabs-divider" />
+          {games.map(tab)}
+          <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-expanded={catalogOpen} title="关注更多游戏（SRA 公共 API）" onClick={() => setCatalogOpen(o => !o)}><Icon name="plus" />更多游戏</button>
+          <span className="spacer" />
+          <button role="tab" aria-selected={showReport} className={`game-tab ${showReport ? 'active' : ''}`} onClick={() => select('report')}><Icon name="send" />日报</button>
+        </nav>
         <div className="page-actions">
           <button className="small-button" disabled={busy !== null || games.length === 0} onClick={() => void refresh()}><Icon name="refresh" />{busy === 'refresh:' ? '刷新中…' : '刷新全部'}</button>
         </div>
       </header>
-      <nav className="game-tabs" role="tablist" aria-label="游戏">
-        <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="calendar" />全部活动</button>
-        <span className="game-tabs-divider" />
-        {games.map(tab)}
-        <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-expanded={catalogOpen} title="关注更多游戏（SRA 公共 API）" onClick={() => setCatalogOpen(o => !o)}><Icon name="plus" />更多游戏</button>
-        <span className="spacer" />
-        <button role="tab" aria-selected={showReport} className={`game-tab ${showReport ? 'active' : ''}`} onClick={() => select('report')}><Icon name="send" />日报</button>
-      </nav>
       <div className="games-body">
         {catalogOpen && (
           <section className="card">

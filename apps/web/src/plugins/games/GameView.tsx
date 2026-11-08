@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { Activity, GameInfo, MirrorSearchItem, Pipeline, PipelineSummary } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
@@ -43,10 +43,10 @@ function zoneLabel(timeZone: string, at: number): string {
 }
 
 /**
- * One game: what is in it now (the version's art, banners, every event as a
- * card with its picture) side by side with where the user stands (progress
- * on each event, what is ending undone, the agent's last look in the game,
- * and the pipelines that play it on a timetable).
+ * One game: the version's art across the top, then what is in it now (banners,
+ * every event as a picture card) with, in a column beside them, where the user
+ * stands (progress, the agent's last look), the pipelines that play it on a
+ * timetable, and where its data comes from.
  */
 export function GameView({ client, game, activities, color, now, soonDays, busy, onRefresh, onRead, onReadWeb, onUnfollow, onChanged, openSession, openScripts }: {
   client: AdgClient
@@ -90,80 +90,94 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
       {open === a.id && <ActivityDetail client={client} activity={a} game={game} onChanged={onChanged} openSession={openSession} />}
     </div>
   )
+  // An open card takes a whole row of the grid, which can move it: keep it on screen.
+  const events = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (open !== null) events.current?.querySelector('.schedule-item.open')?.scrollIntoView({ block: 'nearest' })
+  }, [open])
 
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
-      <div className="game-main">
-        {/* A screenshot is an event's background, not the version's art. */}
-        <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)} />
-        <StatusCard client={client} game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onUnfollow={onUnfollow} openSession={openSession} openScripts={openScripts} />
-        {(game.pools?.length ?? 0) > 0 && (
-          <section className="card pools-card">
-            <h3>卡池</h3>
-            <div className="pool-list">{game.pools!.map(p => <PoolCard key={`${p.name}-${p.endsAt}`} client={client} pool={p} game={game} now={now} />)}</div>
-          </section>
-        )}
-        <div className="game-sources">
-          {game.sources.map(s => (
-            <span key={s.id} className={`source-chip ${s.auto ? 'auto' : 'agent'}`}>
-              {/* Read by the plugin each day, or by the agent when asked: the name does that; the arrow opens the page. */}
-              {s.auto
-                ? <span className="source-name" title="每天自动读取（不用模型）"><span className="source-dot auto" />{s.name}</span>
-                : <button className="source-name" disabled={busy !== null || game.webReading?.state === 'running'} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
-              {s.homepage !== undefined && <a className="source-open" href={s.homepage} target="_blank" rel="noreferrer" title="在浏览器里打开" aria-label={`打开${s.name}`}><Icon name="popout" /></a>}
-              {s.added === true && <button className="source-open" title="不再读这个网址" aria-label={`删除${s.name}`} onClick={() => void client.connection.call('games/source/remove', { game: game.id, source: s.id }).then(onChanged, () => {})}><Icon name="close" /></button>}
-            </span>
-          ))}
-          <AddLink client={client} game={game} onAdded={onChanged} />
-          {game.refreshed !== undefined && <span className="muted small">{relativeTime(game.refreshed.at, now)}刷新</span>}
-          {game.refreshed !== undefined && !game.refreshed.ok && <span className="tone-error small">上次没读到：{game.refreshed.detail}</span>}
-        </div>
-      </div>
-
-      <aside className="card game-schedule" aria-label="活动日程">
-        <div className="schedule-head">
-          <h3>活动日程</h3>
-          <span className="spacer" />
-          <span className="muted small">{game.sources.find(s => s.auto)?.name ?? '数据站'}</span>
-          <button className="icon-button" title="自己添加一个活动" aria-label="添加活动" aria-pressed={adding} onClick={() => setAdding(a => !a)}>
-            <Icon name="plus" />
-          </button>
-          <button className="icon-button" title={auto ? '刷新数据站（不用模型）' : '这个游戏没有能自动读的数据站'} disabled={busy !== null || !auto} onClick={onRefresh}>
-            <Icon name="refresh" />
-          </button>
-        </div>
-        <div className="schedule-list">
-          {adding && (
-            <div className="schedule-item open">
-              <ActivityEditor client={client} game={game} onCancel={() => setAdding(false)} onDone={saved => { setAdding(false); setOpen(saved.id); onChanged() }} />
-            </div>
-          )}
-          {live.length === 0 && !adding && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新，或点「+」自己添加。' : '这个游戏没有能自动读的数据站：让 agent 进游戏读一次，或点「+」自己添加。'}</p>}
-          {groups.filter(g => g.rows.length > 0).map(g => (
-            <section key={g.key} className={`schedule-group ${g.tone ?? ''}`}>
-              <div className="schedule-group-title"><span>{g.title}</span><span className="count">{g.rows.length}</span><span className="muted small">{g.hint}</span></div>
-              {g.rows.map(card)}
+      {/* A screenshot is an event's background, not the version's art. */}
+      <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)} />
+      <div className="game-columns">
+        <div className="game-main">
+          {(game.pools?.length ?? 0) > 0 && (
+            <section className="game-section pools-card">
+              <div className="game-section-head"><h3>卡池</h3><span className="count">{game.pools!.length}</span></div>
+              <div className="pool-list">{game.pools!.map(p => <PoolCard key={`${p.name}-${p.endsAt}`} client={client} pool={p} game={game} now={now} />)}</div>
             </section>
-          ))}
-          {finishedOnes.length > 0 && (
-            <section className="schedule-group done">
-              <button className="schedule-group-title toggle" aria-expanded={showFinished} onClick={() => setShowFinished(s => !s)}>
-                <span>已做完</span><span className="count">{finishedOnes.length}</span><span className="muted small">{showFinished ? '收起' : '展开'}</span>
-                <Icon name="chevron-down" className={`chevron-icon ${showFinished ? 'open' : ''}`} />
+          )}
+          <section className="game-section game-events" aria-label="活动日程" ref={events}>
+            <div className="game-section-head">
+              <h3>活动日程</h3>
+              <span className="count">{live.length}</span>
+              <span className="spacer" />
+              <span className="muted small">{game.sources.find(s => s.auto)?.name ?? '数据站'}</span>
+              <button className="icon-button" title="自己添加一个活动" aria-label="添加活动" aria-pressed={adding} onClick={() => setAdding(a => !a)}>
+                <Icon name="plus" />
               </button>
-              {showFinished && finishedOnes.map(card)}
-            </section>
-          )}
+              <button className="icon-button" title={auto ? '刷新数据站（不用模型）' : '这个游戏没有能自动读的数据站'} disabled={busy !== null || !auto} onClick={onRefresh}>
+                <Icon name="refresh" />
+              </button>
+            </div>
+            {adding && (
+              <div className="schedule-item open adding">
+                <ActivityEditor client={client} game={game} onCancel={() => setAdding(false)} onDone={saved => { setAdding(false); setOpen(saved.id); onChanged() }} />
+              </div>
+            )}
+            {live.length === 0 && !adding && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新，或点「+」自己添加。' : '这个游戏没有能自动读的数据站：让 agent 进游戏读一次，或点「+」自己添加。'}</p>}
+            {groups.filter(g => g.rows.length > 0).map(g => (
+              <section key={g.key} className={`schedule-group ${g.tone ?? ''}`}>
+                <div className="schedule-group-title"><span>{g.title}</span><span className="count">{g.rows.length}</span><span className="muted small">{g.hint}</span></div>
+                <div className="schedule-grid">{g.rows.map(card)}</div>
+              </section>
+            ))}
+            {finishedOnes.length > 0 && (
+              <section className="schedule-group done">
+                <button className="schedule-group-title toggle" aria-expanded={showFinished} onClick={() => setShowFinished(s => !s)}>
+                  <span>已做完</span><span className="count">{finishedOnes.length}</span><span className="muted small">{showFinished ? '收起' : '展开'}</span>
+                  <Icon name="chevron-down" className={`chevron-icon ${showFinished ? 'open' : ''}`} />
+                </button>
+                {showFinished && <div className="schedule-grid">{finishedOnes.map(card)}</div>}
+              </section>
+            )}
+          </section>
         </div>
-      </aside>
+
+        <aside className="game-side">
+          <StatusCard game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onUnfollow={onUnfollow} openSession={openSession} />
+          <section className="card game-runs-card">
+            <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
+          </section>
+          <section className="card game-sources-card">
+            <h3>数据来源</h3>
+            <div className="game-sources">
+              {game.sources.map(s => (
+                <span key={s.id} className={`source-chip ${s.auto ? 'auto' : 'agent'}`}>
+                  {/* Read by the plugin each day, or by the agent when asked: the name does that; the arrow opens the page. */}
+                  {s.auto
+                    ? <span className="source-name" title="每天自动读取（不用模型）"><span className="source-dot auto" />{s.name}</span>
+                    : <button className="source-name" disabled={busy !== null || game.webReading?.state === 'running'} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
+                  {s.homepage !== undefined && <a className="source-open" href={s.homepage} target="_blank" rel="noreferrer" title="在浏览器里打开" aria-label={`打开${s.name}`}><Icon name="popout" /></a>}
+                  {s.added === true && <button className="source-open" title="不再读这个网址" aria-label={`删除${s.name}`} onClick={() => void client.connection.call('games/source/remove', { game: game.id, source: s.id }).then(onChanged, () => {})}><Icon name="close" /></button>}
+                </span>
+              ))}
+              <AddLink client={client} game={game} onAdded={onChanged} />
+            </div>
+            {game.refreshed !== undefined && <span className="muted small">{relativeTime(game.refreshed.at, now)}刷新</span>}
+            {game.refreshed !== undefined && !game.refreshed.ok && <span className="tone-error small">上次没读到：{game.refreshed.detail}</span>}
+          </section>
+        </aside>
+      </div>
     </div>
   )
 }
 
 /**
- * The version: its key art with the name set in serif at the foot of the
- * picture, and under it a strip with the version's span as a track — how far
- * through it is, and the time left at its end.
+ * The version: its key art as a banner across the page, the name set in serif
+ * at the foot of the picture, and under it the version's span as a track — how
+ * far through it is, and the time left at its end.
  */
 function VersionHero({ client, game, now, covers }: { client: AdgClient; game: GameInfo; now: number; covers: readonly (string | undefined)[] }) {
   const v = game.version
@@ -173,17 +187,15 @@ function VersionHero({ client, game, now, covers }: { client: AdgClient; game: G
   const through = span === undefined || span <= 0 ? undefined : Math.min(1, Math.max(0, (now - v!.startsAt!) / span))
   const day = (at: number) => new Date(at).toLocaleDateString('zh-CN', { timeZone: game.timezone, month: 'numeric', day: 'numeric' })
   return (
-    <section className="version-card">
-      <div className={`version-hero ${art === undefined ? 'no-art' : ''}`}>
-        {art !== undefined && <img className="version-art" src={art} alt="" />}
-        <div className="version-shade" />
-        <div className="version-caption">
-          <span className="version-kicker">{game.name}{v === undefined ? '' : <> · <b>{v.name}</b> 版本</>}</span>
-          <h2>{v?.title ?? game.name}</h2>
-        </div>
+    <section className={`version-hero ${art === undefined ? 'no-art' : ''}`}>
+      {art !== undefined && <img className="version-art" src={art} alt="" />}
+      <div className="version-shade" />
+      <div className="version-caption">
+        <span className="version-kicker">{game.name}{v === undefined ? '' : <> · <b>{v.name}</b> 版本</>}</span>
+        <h2>{v?.title ?? game.name}</h2>
       </div>
       <div className="version-strip">
-        {v === undefined && <span className="muted small">{game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}</span>}
+        {v === undefined && <span className="small version-none">{game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}</span>}
         {v !== undefined && through !== undefined && (
           <>
             <span className="version-end">{day(v.startsAt!)}</span>
@@ -233,8 +245,7 @@ function AddLink({ client, game, onAdded }: { client: AdgClient; game: GameInfo;
   )
 }
 
-function StatusCard({ client, game, running, soon, now, busy, onRead, onReadWeb, onUnfollow, openSession, openScripts }: {
-  client: AdgClient
+function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onUnfollow, openSession }: {
   game: GameInfo
   running: readonly Activity[]
   soon: readonly Activity[]
@@ -244,7 +255,6 @@ function StatusCard({ client, game, running, soon, now, busy, onRead, onReadWeb,
   onReadWeb: (source?: string) => void
   onUnfollow: () => void
   openSession: (id: string) => void
-  openScripts: () => void
 }) {
   const states = running.map(progressOf)
   const finished = states.filter(p => p.state === 'finished').length
@@ -253,32 +263,33 @@ function StatusCard({ client, game, running, soon, now, busy, onRead, onReadWeb,
   const reading = game.reading
   return (
     <section className="card status-card">
-      <div className="card-head">
-        <div><h3>我的状态</h3><p className="muted small">进度来自你在活动卡片里勾的，和 agent 进游戏读到的。</p></div>
-        <div className="game-actions">
-          <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title="agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历" onClick={() => onReadWeb()}>
-            <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : '让 agent 上网查活动'}
-          </button>
-          {game.followed === true
-            ? <button className="small-button" disabled={busy !== null} title="不再显示这个游戏" onClick={onUnfollow}>取消关注</button>
-            : <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
+      <h3>我的状态</h3>
+      <div className="status-figures">
+        <div className="status-figure"><strong>{running.length}</strong><span>进行中</span></div>
+        <div className={`status-figure ${soon.length > 0 ? 'warn' : ''}`}><strong>{soon.length}</strong><span>快结束未做完</span></div>
+      </div>
+      {running.length > 0 && (
+        <div className="status-bar" role="img" aria-label={`已做完 ${finished} 个，做了一部分 ${partial} 个，没记录 ${unknown} 个`}>
+          {finished > 0 && <span className="done" style={{ flexGrow: finished }} />}
+          {partial > 0 && <span className="partial" style={{ flexGrow: partial }} />}
+          {unknown > 0 && <span className="unknown" style={{ flexGrow: unknown }} />}
         </div>
-      </div>
-      <div className="status-stats">
-        <div className="stat"><strong>{running.length}</strong><span>进行中</span></div>
-        <div className={`stat ${soon.length > 0 ? 'warn' : ''}`}><strong>{soon.length}</strong><span>快结束未做完</span></div>
-        <div className="stat ok"><strong>{finished}</strong><span>已做完</span></div>
-        <div className="stat"><strong>{partial}</strong><span>做了一部分</span></div>
-        <div className="stat muted"><strong>{unknown}</strong><span>没记录</span></div>
-      </div>
-      {soon.length > 0 && (
-        <ul className="soon-list">
-          {soon.slice(0, 4).map(a => <li key={a.id}><span className="tone-warn">{countdown(a.endsAt!, now)}</span><span>{a.name}</span>{a.todo.length > 0 && <span className="muted small">还没做：{a.todo.slice(0, 3).join('、')}</span>}</li>)}
-        </ul>
       )}
+      <ul className="status-legend">
+        <li><i className="done" />已做完<b>{finished}</b></li>
+        <li><i className="partial" />做了一部分<b>{partial}</b></li>
+        <li><i className="unknown" />没记录<b>{unknown}</b></li>
+      </ul>
+      <p className="muted small">进度来自你在活动卡片里勾的，和 agent 进游戏读到的。</p>
+      <div className="game-actions">
+        {game.followed !== true && <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
+        <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title="agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历" onClick={() => onReadWeb()}>
+          <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : '让 agent 上网查活动'}
+        </button>
+        {game.followed === true && <button className="small-button" disabled={busy !== null} title="不再显示这个游戏" onClick={onUnfollow}>取消关注</button>}
+      </div>
       {reading !== undefined && <ReadingLine what="进游戏" reading={reading} now={now} openSession={openSession} />}
       {game.webReading !== undefined && <ReadingLine what="上网查" reading={game.webReading} now={now} openSession={openSession} />}
-      <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
     </section>
   )
 }
@@ -361,7 +372,7 @@ function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; g
 
   return (
     <div className="game-schedule-runs">
-      <div className="field-title">日程</div>
+      <h3>自动日程</h3>
       {game.scripts.length === 0 && <p className="muted small">还没有玩它的脚本。在<button className="link-button" onClick={openScripts}>脚本页</button>安装或导入后，名字或仓库里提到这个游戏的脚本会自动对上。</p>}
       {game.scripts.length === 0 && <MirrorTools client={client} game={game} />}
       {game.scripts.length > 0 && (
@@ -396,7 +407,7 @@ function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; g
   )
 }
 
-/** An event as a card on its picture: state, kind, name, time left, and how far along the user is. */
+/** An event as a card: its picture with its state and time left on it, under that its name, date, kind, and how far along the user is. */
 function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expanded }: {
   client: AdgClient
   activity: Activity
@@ -420,22 +431,18 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
   const big = target === undefined ? { value: '', unit: '', rest: '' } : split(target - now)
   return (
     <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''}`} onClick={onClick} aria-expanded={expanded}>
-      {art !== undefined && <img className={`sched-art ${a.cover?.startsWith('shot:') === true ? 'shot' : ''}`} src={art} alt="" title={a.cover?.startsWith('shot:') === true ? '没有活动图，用的是 agent 读这个活动时的游戏截图' : undefined} />}
-      <span className="sched-shade" />
-      <span className="sched-count" aria-label={target === undefined ? '时间未知' : `${!started ? '距开始' : '剩余'}${countdown(target, now)}`}>
-        {target === undefined ? <b>?</b> : <><b>{big.value}</b><small>{big.unit}</small>{big.rest !== '' && <em>{big.rest}</em>}</>}
-        <i>{!started ? '后开始' : shopOnly ? '商店' : '剩余'}</i>
+      <span className="sched-media">
+        {art !== undefined && <img className={`sched-art ${a.cover?.startsWith('shot:') === true ? 'shot' : ''}`} src={art} alt="" title={a.cover?.startsWith('shot:') === true ? '没有活动图，用的是 agent 读这个活动时的游戏截图' : undefined} />}
+        <span className="sched-shade" />
+        <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
+        <span className="sched-count" aria-label={target === undefined ? '时间未知' : `${!started ? '距开始' : '剩余'}${countdown(target, now)}`}>
+          {target === undefined ? <b>?</b> : <><b>{big.value}</b><small>{big.unit}</small>{big.rest !== '' && <em>{big.rest}</em>}</>}
+          <i>{!started ? '后开始' : shopOnly ? '商店' : '剩余'}</i>
+        </span>
+        {elapsed !== undefined && <span className="sched-elapsed" style={{ width: `${elapsed * 100}%` }} />}
       </span>
       <span className="sched-body">
-        <span className="sched-top">
-          <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
-          {a.kind !== undefined && <span className="sched-kind">{a.kind}</span>}
-          {a.own !== undefined && <span className="sched-kind" title={a.sources === undefined && a.screen === undefined ? '你自己添加的活动' : '你改过这个活动'}>{a.sources === undefined && a.screen === undefined ? '我添加的' : '我改过'}</span>}
-          {a.sources?.some(s => s.web) === true && <span className="sched-kind" title={`来源：${a.sources.map(s => s.name).join('、')}`}>{a.sources.every(s => s.web) ? '网页读到' : '数据站 + 网页'}</span>}
-          <span className="spacer" />
-          <ProgressPill progress={p} />
-        </span>
-        <span className="sched-name">{a.name}</span>
+        <span className="sched-name" title={a.name}>{a.name}</span>
         <span className="sched-when">
           {!started && a.startsAt !== undefined
             ? `${stamp(a.startsAt, game.timezone)} 开始 · ${zone}`
@@ -443,8 +450,16 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
               ? `${stamp(end, game.timezone)} ${shopOnly ? '商店关闭' : '结束'} · ${zone}`
               : `结束时间未知${a.screen?.remaining === undefined ? '' : `，游戏里显示「${a.screen.remaining}」`}`}
         </span>
+        {a.todo.length > 0 && p.state !== 'finished' && <span className="sched-todo" title={a.todo.join('、')}>还没做：{a.todo.slice(0, 3).join('、')}</span>}
+        <span className="sched-foot">
+          <span className="sched-kinds">
+            {a.kind !== undefined && <span className="sched-kind">{a.kind}</span>}
+            {a.own !== undefined && <span className="sched-kind" title={a.sources === undefined && a.screen === undefined ? '你自己添加的活动' : '你改过这个活动'}>{a.sources === undefined && a.screen === undefined ? '我添加的' : '我改过'}</span>}
+            {a.sources?.some(s => s.web) === true && <span className="sched-kind" title={`来源：${a.sources.map(s => s.name).join('、')}`}>{a.sources.every(s => s.web) ? '网页读到' : '数据站 + 网页'}</span>}
+          </span>
+          <ProgressPill progress={p} />
+        </span>
       </span>
-      {elapsed !== undefined && <span className="sched-elapsed" style={{ width: `${elapsed * 100}%` }} />}
     </button>
   )
 }
