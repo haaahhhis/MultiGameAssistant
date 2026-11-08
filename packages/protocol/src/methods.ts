@@ -268,6 +268,19 @@ export const ProviderProfile = z.object({
 })
 export type ProviderProfile = z.infer<typeof ProviderProfile>
 
+/** What the DeepSeek account holds, as its balance API reports it; amounts stay the API's decimal strings. */
+export const ProviderBalance = z.object({
+  /** False when the balance is too low for API calls. */
+  available: z.boolean(),
+  balances: z.array(z.object({
+    currency: z.string(),
+    total: z.string(),
+    granted: z.string(),
+    toppedUp: z.string(),
+  })),
+})
+export type ProviderBalance = z.infer<typeof ProviderBalance>
+
 /** Base64 characters per image (≈2.6 MB decoded); four fit in one 16 MiB frame. */
 export const MAX_IMAGE_BASE64 = 3_500_000
 
@@ -529,6 +542,12 @@ export const Requests = {
       apiKey: z.string().min(1).max(4096).optional(),
     }),
     result: z.object({ models: z.array(ProviderModel) }),
+  },
+  'providers/balance': {
+    capability: 'providers',
+    params: z.object({ provider: z.string().min(1) }),
+    /** Null when the route is not served by DeepSeek's own API or has no key; a failed query is an error, never a zero. */
+    result: z.object({ balance: ProviderBalance.nullable() }),
   },
   'providers/save': {
     capability: 'providers',

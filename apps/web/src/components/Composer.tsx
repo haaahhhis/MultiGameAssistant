@@ -7,6 +7,7 @@ import { ModelPicker } from './ModelPicker.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
 import { useSlash } from './SlashMenu.tsx'
 import { ContextMeter } from './ContextMeter.tsx'
+import { BalanceChip } from './BalanceChip.tsx'
 
 export function Composer({ client, session, running, disabled, initialPrompt, onInitialSent }: {
   client: AdgClient
@@ -177,6 +178,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
             <button type="button" className="full-access-chip" title="agent 做事不再请求确认，点这里修改" onClick={() => { location.hash = '#/settings/permissions' }}><Icon name="alert" />完全访问</button>
           )}
           <span className="spacer" />
+          <BalanceChip client={client} sessionId={session.id} running={running} />
           <ContextMeter context={context} />
           {running && (
             <label className="steer-toggle" title="把消息插入正在进行的轮次，而不是等下一轮">

@@ -330,6 +330,8 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 /* /压缩 in the composer, and the context meter beside the message box (ContextMeter.tsx) */
 .composer-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; padding: 6px 10px 6px 12px; border-radius: var(--r-md); background: var(--sunken); color: var(--text-2); }
 .composer-note .small-button { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+.balance-chip { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; cursor: default; }
+.balance-chip.low { color: var(--warn); }
 .context-meter { position: relative; display: inline-flex; flex: none; }
 .context-trigger { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: none; border-radius: var(--r-sm, 6px); background: transparent; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
 .context-trigger:hover, .context-trigger[aria-expanded="true"] { background: var(--sunken); color: var(--text-2); }

@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { ModelCatalog, ModelSelection } from '@adg/protocol'
+import type { ModelCatalog, ModelSelection, SessionModel } from '@adg/protocol'
 import { useModelCatalog, useStore } from '../hooks.ts'
 import { Icon } from './Icons.tsx'
 
@@ -18,6 +18,11 @@ const EFFORT: Readonly<Record<string, string>> = {
   off: '不思考', none: '不思考', minimal: '最少', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最大',
 }
 export const effortLabel = (id: string, name?: string) => EFFORT[id] ?? (name !== undefined && name !== id ? name : id)
+
+/** The model a session's next request uses: its own choice, else what it last used, else the default. */
+export function sessionSelection(catalog: ModelCatalog | null, known: SessionModel | undefined): ModelSelection | null {
+  return known?.next ?? known?.lastUsed ?? catalog?.default ?? null
+}
 
 function findModel(catalog: ModelCatalog | null, selection: ModelSelection | null): CatalogModel | undefined {
   if (catalog === null || selection === null) return undefined
@@ -57,7 +62,7 @@ export function ModelPicker({ client, sessionId, disabled, value, onChange }: {
   }, [open])
 
   const known = sessionId === undefined ? undefined : models.get(sessionId)
-  const current: ModelSelection | null = (sessionId === undefined ? value : known?.next ?? known?.lastUsed) ?? catalog?.default ?? null
+  const current = sessionId === undefined ? value ?? catalog?.default ?? null : sessionSelection(catalog, known)
   const model = findModel(catalog, current)
   const missing = current !== null && catalog !== null && model === undefined
 

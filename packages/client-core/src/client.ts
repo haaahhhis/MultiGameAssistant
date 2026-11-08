@@ -193,6 +193,12 @@ export class AdgClient {
     return models
   }
 
+  /** What the DeepSeek account behind a route holds; null when the route has none to ask about. */
+  async providerBalance(provider: string): Promise<RequestResult<'providers/balance'>['balance']> {
+    const { balance } = await this.connection.call('providers/balance', { provider })
+    return balance
+  }
+
   async saveProvider(params: RequestInput<'providers/save'>): Promise<RequestResult<'providers/save'>> {
     const result = await this.connection.call('providers/save', params)
     this.providersRevision.set(n => n + 1)

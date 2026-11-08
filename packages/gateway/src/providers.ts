@@ -11,8 +11,8 @@
 import type { SettingsForms, SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import {
-  ErrorCode, ProviderApi, RpcError,
-  type CredentialInfo, type ProviderModel, type ProviderProfile, type RequestParams, type RequestResult,
+  DEEPSEEK_API_KEY, ErrorCode, ProviderApi, RpcError,
+  type CredentialInfo, type ProviderBalance, type ProviderModel, type ProviderProfile, type RequestParams, type RequestResult,
 } from '@adg/protocol'
 import type { HostCredentials } from './credentials.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
@@ -25,6 +25,10 @@ export interface ProvidersDeps {
   readonly llm: HostLlm
   /** Read at call time: the credentials service may mount or unmount independently. */
   readonly credentials: () => HostCredentials | undefined
+  /** A credential's value, for the balance query; the controller above never hands one out. */
+  readonly secret: (ref: string) => Promise<string | undefined>
+  /** Stands in for the global fetch in tests. */
+  readonly fetch?: typeof fetch
   /** Settings namespace of the pi-ai adapter entry. */
   readonly namespace: string
   /** Called after every committed write. */
@@ -117,6 +121,36 @@ export async function addRetryPolicies(settings: ProvidersDeps['settings'], name
   return ops.length
 }
 
+/** dsh's own DeepSeek route and where its endpoint settings live (dsh-llm-deepseek-api-key). */
+const OFFICIAL_PROVIDER = 'deepseek-official'
+const OFFICIAL_NAMESPACE = 'llm-deepseek-api-key'
+const DEEPSEEK_ORIGIN = 'https://api.deepseek.com'
+/** DeepSeek's balance API. The only place a key goes for this query, so a relay's key never reaches DeepSeek. */
+const BALANCE_URL = `${DEEPSEEK_ORIGIN}/user/balance`
+const BALANCE_TIMEOUT_MS = 15_000
+
+const originOf = (url: string | undefined): string | undefined => {
+  try {
+    return url === undefined ? undefined : new URL(url).origin
+  } catch {
+    return undefined
+  }
+}
+
+/** Read the balance API's answer. @returns undefined for anything unexpected, so it can never read as an empty wallet. */
+export function toProviderBalance(body: unknown): ProviderBalance | undefined {
+  const { is_available: available, balance_infos: infos } = (body ?? {}) as { is_available?: unknown; balance_infos?: unknown }
+  if (typeof available !== 'boolean' || !Array.isArray(infos)) return undefined
+  const balances: ProviderBalance['balances'] = []
+  for (const info of infos as Record<string, unknown>[]) {
+    const currency = str(info?.currency)
+    const total = str(info?.total_balance)
+    if (currency === undefined || total === undefined) return undefined
+    balances.push({ currency, total, granted: str(info.granted_balance) ?? '0', toppedUp: str(info.topped_up_balance) ?? '0' })
+  }
+  return { available, balances }
+}
+
 /** The profile object written for a model: only the fields pi-ai's model schema accepts. */
 function storedModel(model: ProviderModel): Record<string, unknown> {
   return {
@@ -206,6 +240,44 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
     return { models: found.map(toProviderModel).filter(m => m !== undefined) }
   }
 
+  /** The credential to ask DeepSeek's balance with: only for a route that calls DeepSeek's own API with it. */
+  const balanceKeyRef = (provider: string): string | undefined => {
+    if (provider === OFFICIAL_PROVIDER) {
+      const config = settings.describe({ redactSecrets: true }).find(d => d.ns === OFFICIAL_NAMESPACE)?.value as StoredProfile | undefined
+      // Same precedence as the adapter: its setting, then the launch environment, then the public endpoint.
+      const baseURL = str(config?.baseURL) ?? str(process.env.DEEPSEEK_BASE_URL) ?? DEEPSEEK_ORIGIN
+      return originOf(baseURL) === DEEPSEEK_ORIGIN ? str(config?.apiKeyEnv) ?? DEEPSEEK_API_KEY : undefined
+    }
+    const profile = read().value[provider]
+    return originOf(str(profile?.baseURL)) === DEEPSEEK_ORIGIN ? str(profile?.apiKeyEnv) : undefined
+  }
+
+  const balance = async (params: RequestParams<'providers/balance'>, call: MethodContext): Promise<RequestResult<'providers/balance'>> => {
+    const ref = balanceKeyRef(params.provider)
+    const key = ref === undefined ? undefined : await deps.secret(ref)
+    if (key === undefined || key === '') return { balance: null }
+    const failed = (message: string) => new RpcError(ErrorCode.HostError, message, { code: 'BALANCE_UNAVAILABLE' })
+    let body: unknown
+    let status: number
+    try {
+      const response = await (deps.fetch ?? fetch)(BALANCE_URL, {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${key}` },
+        redirect: 'error',
+        signal: AbortSignal.any([call.signal, AbortSignal.timeout(BALANCE_TIMEOUT_MS)]),
+      })
+      status = response.status
+      body = response.ok ? await response.json().catch(() => undefined) : undefined
+    } catch (error) {
+      if (call.signal.aborted) throw error
+      throw failed('连不上 DeepSeek，查不到余额')
+    }
+    if (status === 401) throw failed('DeepSeek 拒绝了这个 API Key，查不到余额')
+    if (status < 200 || status >= 300) throw failed(`DeepSeek 没有返回余额（HTTP ${status}）`)
+    const parsed = toProviderBalance(body)
+    if (parsed === undefined) throw failed('DeepSeek 返回的余额看不懂')
+    return { balance: parsed }
+  }
+
   const save = async (params: RequestParams<'providers/save'>): Promise<RequestResult<'providers/save'>> => {
     const section = read()
     const existing = section.user[params.id]
@@ -278,6 +350,7 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
     methods: {
       'providers/list': () => list(),
       'providers/discover': (params, call) => discover(params as RequestParams<'providers/discover'>, call),
+      'providers/balance': (params, call) => balance(params as RequestParams<'providers/balance'>, call),
       'providers/save': params => save(params as RequestParams<'providers/save'>),
       'providers/remove': params => remove(params as RequestParams<'providers/remove'>),
     },

@@ -22,6 +22,7 @@ import type { WebSocket } from 'ws'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@deepseek-ai/dsh-api-settings-controller'
+import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-llm'
@@ -505,6 +506,7 @@ export class AdgGateway extends Service {
         settings: scoped.settings,
         llm: scoped.llm,
         credentials: () => scoped.get('credentialsController'),
+        secret: async ref => (await scoped.get('credentials')?.resolve(ref as CredentialRef))?.value,
         namespace: config.providersNamespace ?? 'llm-pi-ai',
         changed: providersChanged,
         defaultModel: () => {

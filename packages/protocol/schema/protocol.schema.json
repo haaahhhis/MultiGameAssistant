@@ -105,6 +105,9 @@
     "providers/discover": {
       "capability": "providers"
     },
+    "providers/balance": {
+      "capability": "providers"
+    },
     "providers/save": {
       "capability": "providers"
     },
@@ -445,6 +448,12 @@
       "capability": "games"
     },
     "games/activity/progress": {
+      "capability": "games"
+    },
+    "games/activity/save": {
+      "capability": "games"
+    },
+    "games/activity/reset": {
       "capability": "games"
     },
     "games/activity/remove": {
@@ -6106,6 +6115,77 @@
       ],
       "additionalProperties": false
     },
+    "providers/balance.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": false
+    },
+    "providers/balance.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "balance": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "balances": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "currency": {
+                        "type": "string"
+                      },
+                      "total": {
+                        "type": "string"
+                      },
+                      "granted": {
+                        "type": "string"
+                      },
+                      "toppedUp": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "currency",
+                      "total",
+                      "granted",
+                      "toppedUp"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "available",
+                "balances"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "balance"
+      ],
+      "additionalProperties": false
+    },
     "providers/save.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -6796,7 +6876,8 @@
                 "type": "string",
                 "enum": [
                   "nsis",
-                  "inno"
+                  "inno",
+                  "kachina"
                 ]
               },
               "version": {
@@ -10018,7 +10099,8 @@
                     "type": "string",
                     "enum": [
                       "nsis",
-                      "inno"
+                      "inno",
+                      "kachina"
                     ]
                   },
                   "dir": {
@@ -19359,6 +19441,9 @@
                   "evidence": {
                     "type": "boolean"
                   },
+                  "image": {
+                    "type": "string"
+                  },
                   "sessionId": {
                     "type": "string"
                   }
@@ -19398,6 +19483,34 @@
               },
               "mismatch": {
                 "type": "string"
+              },
+              "own": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "number"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "name",
+                        "startsAt",
+                        "endsAt",
+                        "kind",
+                        "description",
+                        "url",
+                        "cover"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "at",
+                  "fields"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -19741,8 +19854,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "type": "string",
-          "format": "uri"
+          "type": "string"
         }
       },
       "required": [
@@ -20123,6 +20235,9 @@
             "evidence": {
               "type": "boolean"
             },
+            "image": {
+              "type": "string"
+            },
             "sessionId": {
               "type": "string"
             }
@@ -20162,6 +20277,34 @@
         },
         "mismatch": {
           "type": "string"
+        },
+        "own": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "name",
+                  "startsAt",
+                  "endsAt",
+                  "kind",
+                  "description",
+                  "url",
+                  "cover"
+                ]
+              }
+            }
+          },
+          "required": [
+            "at",
+            "fields"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -20171,6 +20314,503 @@
         "todo",
         "done"
       ],
+      "additionalProperties": false
+    },
+    "games/activity/save.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        },
+        "activityId": {
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startsAt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endsAt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cover": {
+          "type": "null"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "mediaType": {
+              "type": "string",
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp",
+                "image/avif"
+              ]
+            },
+            "data": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 11200000,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "required": [
+            "mediaType",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "todo": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      },
+      "required": [
+        "game"
+      ],
+      "additionalProperties": false
+    },
+    "games/activity/save.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "game": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "startsAt": {
+          "type": "number"
+        },
+        "endsAt": {
+          "type": "number"
+        },
+        "shopEndsAt": {
+          "type": "number"
+        },
+        "url": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "site": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "at": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "source",
+            "name",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "web": {
+                "type": "boolean"
+              },
+              "endsAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "at",
+              "web"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "screen": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "remaining": {
+              "type": "string"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "evidence": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "todo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "done": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "progress": {
+          "type": "string"
+        },
+        "finished": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        "mismatch": {
+          "type": "string"
+        },
+        "own": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "name",
+                  "startsAt",
+                  "endsAt",
+                  "kind",
+                  "description",
+                  "url",
+                  "cover"
+                ]
+              }
+            }
+          },
+          "required": [
+            "at",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "game",
+        "name",
+        "todo",
+        "done"
+      ],
+      "additionalProperties": false
+    },
+    "games/activity/reset.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "activityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activityId"
+      ],
+      "additionalProperties": false
+    },
+    "games/activity/reset.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "activity": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "game": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "startsAt": {
+              "type": "number"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "shopEndsAt": {
+              "type": "number"
+            },
+            "url": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "cover": {
+              "type": "string"
+            },
+            "site": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "source",
+                "name",
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  },
+                  "web": {
+                    "type": "boolean"
+                  },
+                  "endsAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "at",
+                  "web"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "screen": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "number"
+                },
+                "remaining": {
+                  "type": "string"
+                },
+                "endsAt": {
+                  "type": "number"
+                },
+                "evidence": {
+                  "type": "boolean"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "evidence"
+              ],
+              "additionalProperties": false
+            },
+            "todo": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "done": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "progress": {
+              "type": "string"
+            },
+            "finished": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "mismatch": {
+              "type": "string"
+            },
+            "own": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "number"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "name",
+                      "startsAt",
+                      "endsAt",
+                      "kind",
+                      "description",
+                      "url",
+                      "cover"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "at",
+                "fields"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "game",
+            "name",
+            "todo",
+            "done"
+          ],
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     },
     "games/activity/remove.params": {
@@ -23452,7 +24092,8 @@
               "type": "string",
               "enum": [
                 "nsis",
-                "inno"
+                "inno",
+                "kachina"
               ]
             },
             "dir": {

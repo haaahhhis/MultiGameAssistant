@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { addRetryPolicies, deriveKeyRef, providersCapability, RETRY_POLICY, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
+import { addRetryPolicies, deriveKeyRef, providersCapability, RETRY_POLICY, toProviderBalance, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
 import type { MethodContext } from '../src/registry.ts'
 
 type Ops = { op: 'set' | 'unset'; path: readonly string[]; value?: unknown }[]
@@ -14,6 +14,8 @@ function fakeHost(initial: Record<string, unknown> = {}, active: readonly string
   const unset: string[] = []
   const discoverCalls: unknown[] = []
   let changed = 0
+  const requests: { url: string; authorization: string }[] = []
+  let balanceReply = (): Response => Response.json({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: '110.00', granted_balance: '10.00', topped_up_balance: '100.00' }] })
 
   const setPath = (root: Record<string, unknown>, path: readonly string[], value: unknown) => {
     let node = root
@@ -52,6 +54,11 @@ function fakeHost(initial: Record<string, unknown> = {}, active: readonly string
       set: async (ref: string, value: string) => { stored.set(ref, value) },
       unset: async (ref: string) => { unset.push(ref); stored.delete(ref) },
     }) as never,
+    secret: async ref => stored.get(ref),
+    fetch: (async (url: string, init: { headers: Record<string, string> }) => {
+      requests.push({ url, authorization: init.headers.Authorization! })
+      return balanceReply()
+    }) as never,
     changed: () => { changed += 1 },
     defaultModel: () => defaultModel,
   }
@@ -60,8 +67,9 @@ function fakeHost(initial: Record<string, unknown> = {}, active: readonly string
   const call = (method: string, params: unknown) =>
     capability.methods[method]!(params, { signal: new AbortController().signal } as MethodContext) as Promise<any>
   return {
-    call, writes, stored, unset, discoverCalls, user: () => user, changed: () => changed, settings: deps.settings,
+    call, writes, stored, unset, discoverCalls, requests, user: () => user, changed: () => changed, settings: deps.settings,
     setDefault: (value: typeof defaultModel) => { defaultModel = value },
+    setBalanceReply: (reply: () => Response) => { balanceReply = reply },
   }
 }
 
@@ -161,6 +169,66 @@ test('discover forwards the draft and normalizes candidates', async () => {
   assert.deepEqual(host.discoverCalls, [{ api: 'openai-completions', baseURL: 'https://gw/v1', apiKey: 'sk' }])
   assert.deepEqual(models, [{ id: 'm1', contextWindow: 128000, input: ['text', 'image'] }, { id: 'm2' }])
   assert.equal(toProviderModel({ name: 'no id' }), undefined)
+})
+
+test('the official route asks DeepSeek for its balance with its own key', async () => {
+  const host = fakeHost()
+  host.stored.set('DEEPSEEK_API_KEY', 'sk-official')
+  const { balance } = await host.call('providers/balance', { provider: 'deepseek-official' })
+  assert.deepEqual(balance, { available: true, balances: [{ currency: 'CNY', total: '110.00', granted: '10.00', toppedUp: '100.00' }] })
+  assert.deepEqual(host.requests, [{ url: 'https://api.deepseek.com/user/balance', authorization: 'Bearer sk-official' }])
+})
+
+test('no key means no balance and no request', async () => {
+  const host = fakeHost()
+  assert.deepEqual(await host.call('providers/balance', { provider: 'deepseek-official' }), { balance: null })
+  assert.deepEqual(host.requests, [])
+})
+
+test('a relay key is never sent to DeepSeek', async t => {
+  const host = fakeHost({
+    relay: { api: 'openai-completions', baseURL: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY', models: [{ id: 'x' }] },
+    lookalike: { api: 'openai-completions', baseURL: 'https://api.deepseek.com.evil.example/v1', apiKeyEnv: 'LOOKALIKE_API_KEY', models: [{ id: 'y' }] },
+  })
+  host.stored.set('RELAY_API_KEY', 'sk-relay').set('LOOKALIKE_API_KEY', 'sk-look').set('DEEPSEEK_API_KEY', 'sk-relayed')
+  assert.deepEqual(await host.call('providers/balance', { provider: 'relay' }), { balance: null })
+  assert.deepEqual(await host.call('providers/balance', { provider: 'lookalike' }), { balance: null })
+  assert.deepEqual(await host.call('providers/balance', { provider: 'unknown' }), { balance: null })
+  // The official route pointed elsewhere by the launch environment.
+  process.env.DEEPSEEK_BASE_URL = 'https://relay.example/anthropic'
+  t.after(() => { delete process.env.DEEPSEEK_BASE_URL })
+  assert.deepEqual(await host.call('providers/balance', { provider: 'deepseek-official' }), { balance: null })
+  assert.deepEqual(host.requests, [])
+})
+
+test('a custom route on DeepSeek\'s own API uses that route\'s key', async () => {
+  const host = fakeHost({ mine: { api: 'openai-completions', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'MINE_API_KEY', models: [{ id: 'x' }] } })
+  host.stored.set('MINE_API_KEY', 'sk-mine')
+  assert.equal((await host.call('providers/balance', { provider: 'mine' })).balance.balances[0].total, '110.00')
+  assert.deepEqual(host.requests, [{ url: 'https://api.deepseek.com/user/balance', authorization: 'Bearer sk-mine' }])
+})
+
+test('a failed balance query is an error without the key, never a zero', async () => {
+  const host = fakeHost()
+  host.stored.set('DEEPSEEK_API_KEY', 'sk-secret')
+  const ask = () => host.call('providers/balance', { provider: 'deepseek-official' })
+  const refused = (expected: RegExp) => (error: Error) => {
+    assert.match(error.message, expected)
+    assert.doesNotMatch(JSON.stringify({ message: error.message, ...error }), /sk-secret/)
+    return true
+  }
+  host.setBalanceReply(() => new Response('{}', { status: 401 }))
+  await assert.rejects(ask(), refused(/拒绝/))
+  host.setBalanceReply(() => new Response('busy', { status: 503 }))
+  await assert.rejects(ask(), refused(/503/))
+  host.setBalanceReply(() => Response.json({ balance_infos: [] }))
+  await assert.rejects(ask(), refused(/看不懂/))
+  host.setBalanceReply(() => new Response('<html>', { status: 200 }))
+  await assert.rejects(ask(), refused(/看不懂/))
+  host.setBalanceReply(() => { throw new Error('offline') })
+  await assert.rejects(ask(), refused(/连不上/))
+  assert.equal(toProviderBalance(null), undefined)
+  assert.equal(toProviderBalance({ is_available: true, balance_infos: [{ currency: 'CNY' }] }), undefined)
 })
 
 test('removing the route the default model points at resets the default', async () => {
