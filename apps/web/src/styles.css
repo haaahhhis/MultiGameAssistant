@@ -409,6 +409,10 @@ a.exchange-line:hover { border-color: var(--accent-line); background: var(--hove
 .quiet-reply { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
 .quiet-reply .ui-icon { width: 13px; height: 13px; }
 /* Two agents' exchange: their messages, and the person only watching */
+.exchange-thread { display: flex; flex-direction: column; gap: inherit; scroll-margin-top: 12px; }
+.exchange-thread-head { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0 2px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.exchange-thread:first-child .exchange-thread-head { border-top: none; }
+.exchange-thread.opened .exchange-thread-head { color: var(--text); }
 .exchange-msg { display: flex; flex-direction: column; gap: 6px; max-width: 760px; }
 .exchange-msg-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .exchange-msg-body { margin-left: 29px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px 14px 14px 14px; background: var(--raised); font-size: 13.5px; }

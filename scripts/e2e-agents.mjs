@@ -25,11 +25,13 @@ const newSince = body => {
   return messages.slice(last + 1).filter(m => m.role === 'user').map(m => textOf(m.content)).join('\n').replace(/（你和.{1,20}之前的来往，[\s\S]*?\n）/g, '')
 }
 const lastTool = body => (body.messages ?? []).findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
+const lastArgs = body => (body.messages ?? []).findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.arguments ?? ''
 
 const NAME = '小满'
 const STYLE = '稳重周到的管家'
-const seen = { child: [], lead: [], main: [], peer: [] }
+const seen = { child: [], lead: [], main: [], peer: [], heard: [] }
 let threadId
+let talkId
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
 
 const llm = await startFakeLlm({
@@ -62,6 +64,20 @@ const llm = await startFakeLlm({
       if (last?.role === 'tool' && lastTool(body) === 'subagent') return { text: '开了，等它。' }
       if (said.includes('was stopped')) seen.toldStopped = true
       return { text: '子任务被停了。' }
+    }
+    // 脚本, saying more than one thing: as it works, its conclusion, and later when a reminder comes.
+    if (system.includes('你的角色：脚本') && all.includes('E2E-TALK-TASK') && !all.includes('E2E-STOP-PARENT') && !said.includes('E2E-STYLE')) {
+      if (said.includes('E2E-TALK-TASK')) {
+        talkId = /线索是 (\S+)：/.exec(said)?.[1]
+        return call('agent_message', { thread: talkId, kind: 'update', text: 'E2E-FIRST' })
+      }
+      if (said.includes('E2E-REMIND')) {
+        seen.reminded = said
+        return call('agent_message', { thread: talkId, kind: 'update', text: 'E2E-SECOND' })
+      }
+      if (last?.role === 'tool' && lastTool(body) === 'agent_message' && lastArgs(body).includes('E2E-FIRST')) return call('schedule_create', { title: '补一句', prompt: 'E2E-REMIND 到点了', after_seconds: 3 })
+      if (last?.role === 'tool' && lastTool(body) === 'schedule_create') return { text: 'E2E-CONCLUDED 先做到这，后面的到点再说' }
+      return { text: '说完了。' }
     }
     // 游戏, asked by its colleague.
     if (system.includes('你的角色：游戏')) {
@@ -99,6 +115,11 @@ const llm = await startFakeLlm({
     }
     // 助手.
     seen.main.push(body)
+    if (said.includes('E2E-TALK ')) return call('agent_delegate', { agent: '脚本', task: 'E2E-TALK-TASK 边做边说，到点再补一句' })
+    if (said.includes('里告诉你')) {
+      seen.heard.push(said)
+      return { text: '（不用告诉用户）' }
+    }
     if (said.includes('E2E-IDLE')) {
       seen.idle = true
       return { text: '（助手）收到。' }
@@ -244,6 +265,24 @@ try {
   const peerTask = seen.peer.map(b => (b.messages ?? []).map(m => textOf(m.content)).find(t => t.includes('E2E-PEER'))).find(t => t !== undefined)
   if (peerTask === undefined || peerTask.includes('第 212 行报错')) fail(`游戏 was told about what others said: ${peerTask?.slice(0, 400)}`)
   step('a new thread comes with what those two agents said before, and nobody else\'s')
+
+  // Two agents talk as long as they have something to say, and it arrives as it is said.
+  const talkSince = Date.now()
+  await rpc('session/prompt', { sessionId: main, requestId: `e2e-talk-${talkSince}`, text: 'E2E-TALK 让脚本边做边说', mode: 'queue' })
+  await until('what 脚本 said while working to reach 助手', () => seen.heard.some(s => s.includes('E2E-FIRST')))
+  const talk = await until('the work to be handed back', async () => (await rpc('handoffs/list', { sessionId: scripts })).items.find(h => h.startedAt >= talkSince && h.by === '助手' && h.state === 'done'))
+  if (!talk.reply?.includes('E2E-CONCLUDED')) fail(`it concluded on: ${talk.reply}`)
+  if (seen.main.some(b => newSince(b).includes('E2E-CONCLUDED') && !seen.heard.some(s => s.includes('E2E-FIRST')))) fail('the conclusion arrived before what was said along the way')
+  step('what 脚本 said while working reached 助手 as a message, before its conclusion')
+  await until('助手 to get the conclusion', () => seen.main.some(b => newSince(b).includes('E2E-CONCLUDED')))
+  await until('what 脚本 said later to reach 助手', () => seen.heard.some(s => s.includes('E2E-SECOND')), 30_000)
+  if (!seen.reminded?.includes(talkId) || !seen.reminded.includes('agent_message')) fail(`the reminder did not say where its words go: ${seen.reminded}`)
+  step('a reminder set on the thread said where its words go; what 脚本 said after handing back still reached 助手')
+  const talked = (await rpc('handoffs/get', { id: talk.id }))
+  if ((talked.messages ?? []).map(m => m.text).join(' ') !== 'E2E-FIRST E2E-SECOND' || talked.state !== 'done' || !talked.reply?.includes('E2E-CONCLUDED')) fail(`the thread holds: ${JSON.stringify(talked)}`)
+  const pair = (await rpc('handoffs/between', { a: 'main', b: 'scripts' })).items
+  if (pair.at(-1)?.id !== talk.id || pair.length < 3 || !pair.some(h => h.id === thread.id)) fail(`the two agents' conversation is not all there: ${pair.map(h => h.id).join(' ')}`)
+  step('the thread keeps all of it, and the two agents\' threads read as one conversation', `${pair.length} threads`)
 
   // A message meant to go into a turn that has just ended is not lost.
   await rpc('session/prompt', { sessionId: main, requestId: `e2e-idle-${Date.now()}`, text: 'E2E-IDLE 你好', mode: 'steer' })

@@ -9,8 +9,9 @@
  * steps. 助手 hands out what the person asks for; a lead agent can also ask a
  * colleague directly.
  *
- * `agent_message`: say something in a thread that is going on, so a hand-off is
- * more than one question and one answer.
+ * `agent_message`: say something on a thread, as often as there is something to
+ * say and also after the work was handed back, so two agents are in a conversation
+ * and not one question and one answer.
  *
  * `agent_threads`: what is going on or went on between agents: for 助手, which
  * is not woken for what two lead agents say to each other, and for any agent
@@ -36,7 +37,7 @@ export const DELEGATOR = '助手'
 const TIMEOUT_MS = 2 * 60 * 60_000
 
 /** What the caller is told once the work is out: the shape OpenBot's message_bot found keeps a model from answering for the other. */
-export const HANDED = (agent: string) => `已交给「${agent}」。它在自己的对话里做，做完后它的回复会作为一条新消息发到这个对话里。现在用一句话说你交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。`
+export const HANDED = (agent: string) => `已交给「${agent}」。它在自己的对话里做，它做的过程中说的话和最后的结论都会作为新消息发到这个对话里。现在用一句话说你交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。`
 
 const Args = z.object({
   agent: z.string().trim().min(1).max(40),
@@ -71,7 +72,7 @@ export function delegateTool(deps: DelegateDeps): ToolDefinition {
     name: 'agent_delegate',
     description: [
       '把一件事交给另一个 agent 去做。可以交给谁、各自做什么，见系统提示里的「团队」。',
-      '交出去就返回，不等它做完：它在自己的对话里做，做完后它的回复会作为一条新消息发到这个对话里。',
+      '交出去就返回，不等它做完：它在自己的对话里做，做的过程中说的话和最后的结论都会作为新消息发到这个对话里。',
       'task 要写完整：对方看不到你的对话，只看到 task（要做什么、在哪个游戏或脚本、做到哪一步为止）。expecting 写你要它交回什么（可选）。',
       `几件互不相关的事可以同时交出去，一个对话同时最多 ${MAX_OUT} 件。它要用户审批或回答问题时会停下等用户。`,
     ].join(''),
@@ -136,15 +137,15 @@ export function messageTool(deps: { desk: () => HandOffDesk | undefined; agentOf
   return {
     name: 'agent_message',
     description: [
-      '在一条线索里和对方说话。线索的 id 写在交给你的事开头，或者对方发来的消息开头。',
-      'kind：question 问对方（对方回答后会作为新消息发到这里，所以问完就结束这一轮，不要猜答案）；answer 回答对方；update 说一声进展，对方不会被叫醒；done 交回结论，这件事到此结束。',
-      '不用 done 也可以：你这一轮的最后一段回复就是结论。要问的问清楚再做，比做错了再改省事。',
+      '在一条线索里和对方说话，说几次都行，每句都马上送到对方的对话里。线索的 id 写在交给你的事开头，或者对方发来的消息开头；agent_threads 也查得到。',
+      'kind：question 问对方（对方回答后会作为新消息发到这里，所以问完就结束这一轮，不要猜答案）；answer 回答对方；update 告诉对方一件事，不用它回；done 交回结论。',
+      '不用 done 也可以：你这一轮的最后一段回复就是结论。交回结论以后线索还在：之后还有话（比如定时提醒到了）照样发到这里，普通回复对方是看不到的。每句话都要对方花一轮去看，没有要紧的就不说。',
     ].join(''),
     parameters: {
       type: 'object',
       properties: {
         thread: { type: 'string', description: '线索的 id。' },
-        kind: { type: 'string', enum: ['question', 'answer', 'update', 'done'], description: '这句话是什么。' },
+        kind: { type: 'string', enum: ['question', 'answer', 'update', 'done'], description: 'question 问对方；answer 回答对方；update 告诉对方；done 交回结论。' },
         text: { type: 'string', description: '要说的话，写完整：对方看不到你的对话。' },
       },
       required: ['thread', 'kind', 'text'],

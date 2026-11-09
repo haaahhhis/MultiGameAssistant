@@ -34,7 +34,7 @@ import { addRetryPolicies, providersCapability } from './providers.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -199,7 +199,7 @@ interface SubagentService {
 const ROLE_CLOSING = [
   '这是你唯一的对话：用户直接找你说的话、别的 agent 和软件交给你的事（消息开头写着「（…交给你的事：…）」）都在这里，一件接一件。',
   '能用工具、命令行、读文件（配置、日志、版本号）或脚本自己的命令和设置做到、确认到的，就这样做；截图、看画面、点屏幕是最后的办法——只有画面上才看得到、别的办法都确认不了时才用，用之前先说为什么。',
-  '你每一轮最后一段回复就是这件事的结论：写清楚结果，以及需要用户做的事（没有就不写）。别人交给你的事，这段回复会原样交回给它。',
+  '你每一轮最后一段回复就是这件事的结论：写清楚结果，以及需要用户做的事（没有就不写）。别人交给你的事，这段回复会作为结论交回给它；在那之前、在那之后要让它知道的，用 agent_message 发到那条线索。',
 ].join('\n')
 
 /**
@@ -233,7 +233,7 @@ function mainDuty(roles: readonly { readonly name: string; readonly description:
     roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
     '查资料、读日志、比较几个方案这类做决定之前要看的东西，可以开自己的子 agent（subagent）去看；动手的事（截图点击、运行和安装脚本）还是交给主 agent。',
     '交出去的事在那个 agent 自己的对话里做，它看不到你和用户的对话，所以任务要写完整。交出去以后用一句话告诉用户交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。',
-    '它做的过程中可能回头问你（消息开头是「（「某 agent」在线索 … 里问你：…）」），这种消息会插进你正在做的事：它在等，先回答它。能答就用 agent_message 回答；要用户决定的，先用 kind: update 说一声、去问用户，有了结果再回答。',
+    '它做的过程中可能回头问你（消息开头是「（「某 agent」在线索 … 里问你：…）」），这种消息会插进你正在做的事：它在等，先回答它。能答就用 agent_message 回答；要用户决定的，先用 kind: update 说一声、去问用户，有了结果再回答。它也可能只是告诉你一件事（「… 里告诉你：…」），不用回它。你要补充或改主意，同样用 agent_message 发到那条线索，马上送到它那里。',
     '它做完后，回复会作为一条新消息发到这里，开头是「（「某 agent」交回了…）」或「（「某 agent」没有做完…）」。收到后用一两句话把要点告诉用户：结论、要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
     '软件自己也会把事交给 agent（比如监控发现脚本出了问题，交给干预处理），结果同样发到这里，你照样把要点告诉用户。主 agent 之间可以直接交流，不会叫醒你；要知道它们说了什么，用 agent_threads 看。用户也可以直接去某个 agent 的对话里找它，那些你看不到。',
   ].join('\n\n')
@@ -467,6 +467,15 @@ export class AdgGateway extends Service {
       this.agents.set(payload.agent.session.id, payload.agent)
       this.narrow(payload.agent)
     }) as never)
+    // A reminder set while working on a thread says where its words go: by the time it comes, the agent may not remember.
+    ctx.on('tools/execute' as never, ((exec: { name: string; agent?: { session: { id: string } }; arguments: { prompt?: unknown } }, next: () => unknown) => {
+      if (exec.name === 'schedule_create' && exec.agent !== undefined && typeof exec.arguments.prompt === 'string') {
+        const desk = this.handOffDesk as { reminderNote?(sessionId: string, prompt: string): string | undefined } | undefined
+        const noted = desk?.reminderNote?.(exec.agent.session.id, exec.arguments.prompt)
+        if (noted !== undefined) exec.arguments = { ...exec.arguments, prompt: noted }
+      }
+      return next()
+    }) as never)
     ctx.on('agent/disposed' as never, ((payload: { agent: LiveAgent }) => {
       if (this.agents.get(payload.agent.session.id) === payload.agent) this.agents.delete(payload.agent.session.id)
       this.narrowed.delete(payload.agent)
@@ -594,6 +603,11 @@ export class AdgGateway extends Service {
         'handoffs/list': async params => {
           await this.handOffs.loaded
           return { items: this.handOffs.of((params as RequestParams<'handoffs/list'>).sessionId) }
+        },
+        'handoffs/between': async params => {
+          await this.handOffs.loaded
+          const { a, b } = params as RequestParams<'handoffs/between'>
+          return { items: threadsBetween(this.handOffs.all(), a, b) }
         },
         'handoffs/get': async params => {
           await this.handOffs.loaded

@@ -160,7 +160,7 @@ export const AGENTS_CAPABILITY = 'agents'
 export const ThreadMessage = z.object({
   /** Who said it, by name. */
   from: z.string(),
-  /** `question` waits for an answer; `update` only informs; `done` is the conclusion. */
+  /** `question` waits for an answer; `update` only informs, and reaches the other side at once; `done` is the conclusion. */
   kind: z.enum(['question', 'answer', 'update', 'done']),
   text: z.string(),
   at: z.number(),
@@ -371,6 +371,12 @@ export const Requests = {
     result: Accepted,
   },
   /** One hand-off, for the page that shows what the two agents said. */
+  /** All that two agents have said to each other, oldest first: one conversation, whatever each thread was about. */
+  'handoffs/between': {
+    capability: AGENTS_CAPABILITY,
+    params: z.object({ a: z.string(), b: z.string() }),
+    result: z.object({ items: z.array(HandOff) }),
+  },
   'handoffs/get': {
     capability: AGENTS_CAPABILITY,
     params: z.object({ id: z.string() }),

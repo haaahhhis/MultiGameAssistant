@@ -130,7 +130,7 @@ export class HomeMirror {
     if (parseRelay(text) !== undefined) return undefined
     const said = parseThreadNote(text)
     if (said !== undefined) {
-      this.#deps.post({ text: `${said.from} → ${MAIN_NAME}：${said.kind === 'question' ? '问' : '答'}：${said.text}` })
+      this.#deps.post({ text: `${said.from} → ${MAIN_NAME}：${{ question: '问', answer: '答', update: '说' }[said.kind]}：${said.text}` })
       return undefined
     }
     const task = parseTask(text)
