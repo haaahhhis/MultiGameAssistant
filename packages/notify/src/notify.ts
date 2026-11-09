@@ -121,7 +121,8 @@ export interface Conversations {
   /** Send `text` (and PNG images) as a message in `sessionId` and resolve with the agent's final answer. */
   ask(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
   /** The same, resolving with the whole turn (what the agent said and did). Absent: the final answer only. */
-  converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<Reply>
+  /** @param options.insert - into the turn going on, if one is, rather than after it. */
+  converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean }): Promise<Reply>
   /**
    * The agent's one conversation (the gateway's `home`; `main`: 助手's), made when it has none;
    * `focus`: what its next work is about, whose skills it sees (the gateway's skill scope).
@@ -137,6 +138,8 @@ export interface Conversations {
   handOff(input: HandOffInput): Promise<Reply>
   /** Why this work may not be handed on (a chain coming back on itself, too deep, too long), in words for the agent asking. */
   handOffRefusal?(fromSession: string, to: string, fromAgent: string, toName?: string): string | undefined
+  /** Why this conversation's agent may not ask the person itself: it asks whoever handed it the work. */
+  askRefusal?(sessionId: string): string | undefined
   /** The hand-offs under way, for saying something in one. */
   readonly desk?: HandOffDesk
   /**
@@ -420,7 +423,7 @@ export class Notify {
     prompt = `${channelNote(message_.actor.channel)}\n${prompt}`
     this.#origins.set(prompt.trim(), message_.actor)
     while (this.#origins.size > KEEP_ORIGINS) this.#origins.delete(this.#origins.keys().next().value!)
-    return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal) : textReply(await conversations.ask(sessionId, prompt, signal))
+    return conversations.converse !== undefined ? await conversations.converse(sessionId, prompt, signal, [], { insert: true }) : textReply(await conversations.ask(sessionId, prompt, signal))
   }
 
   /** The agent waits for this person's answer (a question, an approval): their next message is it, not one to queue. */

@@ -364,13 +364,13 @@ export const Requests = {
     params: z.object({ sessionId: z.string() }),
     result: z.object({ items: z.array(HandOff) }),
   },
-  /** One hand-off, for the page that shows what the two agents said. */
   /** Stop a sub-agent's current work (the parent's own turn goes on). */
   'subagents/stop': {
     capability: AGENTS_CAPABILITY,
     params: z.object({ sessionId: z.string() }),
     result: Accepted,
   },
+  /** One hand-off, for the page that shows what the two agents said. */
   'handoffs/get': {
     capability: AGENTS_CAPABILITY,
     params: z.object({ id: z.string() }),

@@ -21,7 +21,8 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   const { queue, context } = useStore(session.state)
   // What was typed here before switching away comes back (drafts.ts).
   const [text, setText] = useState(() => readDraft(session.id))
-  const [steer, setSteer] = useState(false)
+  // By default what is sent goes into the work under way: the person may have said the wrong thing, or changed their mind.
+  const [steer, setSteer] = useState(true)
   const [error, setError] = useState<string | null>(null)
   /** What /压缩 is doing or did. */
   const [note, setNote] = useState<string | null>(null)
@@ -167,7 +168,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           onChange={e => setText(e.target.value)}
           onKeyDown={onKeyDown}
           rows={Math.min(8, Math.max(2, text.split('\n').length))}
-          placeholder={disabled ? '未连接到 agent' : running ? '运行中：消息会排队到下一轮' : '继续追问，或描述下一步要做的事'}
+          placeholder={disabled ? '未连接到 agent' : running ? (steer ? '运行中：发出去会插进这一轮，改主意了直接说' : '运行中：消息会排队到下一轮') : '继续追问，或描述下一步要做的事'}
           disabled={disabled}
         />
         <div className="composer-actions">
@@ -181,7 +182,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           <BalanceChip client={client} sessionId={session.id} running={running} />
           <ContextMeter context={context} />
           {running && (
-            <label className="steer-toggle" title="把消息插入正在进行的轮次，而不是等下一轮">
+            <label className="steer-toggle" title="这一步做完 agent 就会看到；不勾选就等这一轮结束再发">
               <input type="checkbox" checked={steer} onChange={e => setSteer(e.target.checked)} />插入当前轮次
             </label>
           )}

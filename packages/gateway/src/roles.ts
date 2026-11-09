@@ -117,7 +117,7 @@ export function teamPrompt(self: TeamMember, main: TeamMember, leads: readonly T
       : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是${who(main)}：它和用户对话、分发任务、做决定。`,
     colleagues.length === 0 ? (isMain ? '现在没有其他主 agent。' : '现在没有其他同事。') : `${isMain ? '下面的主 agent' : '同事'}：\n${colleagues.map(line).join('\n')}`,
     '具体的活可以开子 agent 去做（subagent）：它是你开的，只对你负责，只把结果交回给你；你的上下文留给判断和汇总。几件互不相关的事可以同时开。子 agent 不能找用户审批，要审批的操作它会交回来，由你来做。',
-    isMain ? '' : `需要同事的那部分，用 agent_delegate 直接交给它，不用绕过「${main.name}」。交给你的事没说清楚时，用 agent_message 问交给你的一方，问清楚再做；做完用 agent_message 的 done 交回结论，或者把结论写在这一轮最后一段回复里。`,
+    isMain ? '' : `需要同事的那部分，用 agent_delegate 直接交给它，不用绕过「${main.name}」。交给你的事没说清楚时，用 agent_message 问交给你的一方，不要自己去问用户（要不要问用户由对方决定），问清楚再做；做完用 agent_message 的 done 交回结论，或者把结论写在这一轮最后一段回复里。`,
     '# 谁在和你说话',
     [
       '看消息的开头：',

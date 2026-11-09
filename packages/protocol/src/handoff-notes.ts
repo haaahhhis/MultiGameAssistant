@@ -84,7 +84,7 @@ const THREAD_WORDS = { question: '问你', answer: '回答了你' } as const
 export function threadMessage(input: { from: string; kind: 'question' | 'answer'; thread: string; title: string; text: string }): string {
   const head = `（「${input.from}」在线索 ${input.thread} 里${THREAD_WORDS[input.kind]}：${oneLine(input.title)}）`
   const tail = input.kind === 'question'
-    ? `（用 agent_message 回答：thread 填 ${input.thread}，kind 填 answer。你这一轮的最后一段回复也算回答。要等用户决定的话，先用 kind: update 说一声，等有了结果再回答。）`
+    ? `（对方在等：先回答它，再接着做手上的事。用 agent_message 回答：thread 填 ${input.thread}，kind 填 answer。你这一轮的最后一段回复也算回答。要等用户决定的话，先用 kind: update 说一声，等有了结果再回答。）`
     : '（接着做这件事。）'
   return `${head}\n\n${input.text.trim()}\n\n${tail}`
 }
