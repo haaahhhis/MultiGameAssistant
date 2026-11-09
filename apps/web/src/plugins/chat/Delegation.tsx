@@ -115,7 +115,7 @@ export function ThreadNoteLine({ client, note, handOffs }: { client: AdgClient; 
   const handOff = handOffs.find(h => h.id === note.thread)
   return (
     <div className="delegation task-line">
-      <ExchangeLine from={note.from} to={self} avatar={agent} title={note.text.split('\n')[0] ?? note.title} state={{ label: note.kind === 'question' ? '问' : '答', tone: note.kind === 'question' ? 'asked' : 'ok' }}
+      <ExchangeLine from={note.from} to={self} avatar={agent} title={note.text.split('\n')[0] ?? note.title} state={{ label: KIND_LABEL[note.kind], tone: note.kind === 'question' ? 'asked' : 'ok' }}
         href={handOff === undefined ? undefined : exchangeHref(handOff)} />
     </div>
   )
@@ -192,16 +192,45 @@ function useHandOff(client: AdgClient, id: string): { item: HandOff | null; erro
   return state
 }
 
+/** Everything two agents have said to each other, this thread's among it. Work the app handed on is only itself. */
+function useConversation(client: AdgClient, item: HandOff | null): readonly HandOff[] {
+  const asker = item?.chain?.at(-2)
+  const worker = item?.chain?.at(-1)
+  const [others, setOthers] = useState<readonly HandOff[]>([])
+  useEffect(() => {
+    if (asker === undefined || worker === undefined) return
+    let live = true
+    client.connection.call('handoffs/between', { a: asker, b: worker }).then(r => { if (live) setOthers(r.items) }).catch(() => {})
+    return () => { live = false }
+  }, [client, asker, worker])
+  useEffect(() => client.connection.on('handoffs/changed', ({ item: changed }) => {
+    const from = changed.chain?.at(-2)
+    const to = changed.chain?.at(-1)
+    if ((from === asker && to === worker) || (from === worker && to === asker)) setOthers(prev => (prev.some(h => h.id === changed.id) ? prev.map(h => (h.id === changed.id ? changed : h)) : [...prev, changed]))
+  }), [client, asker, worker])
+  if (item === null) return []
+  return others.some(h => h.id === item.id) ? others : [...others, item]
+}
+
 /**
- * Two agents' exchange (`#/h/<id>`): what one handed the other and what came
- * back, as messages. The person watches; the work itself, step by step, is
- * in the other agent's conversation.
+ * Two agents' conversation (`#/h/<id>`): all they have said to each other, each
+ * piece of work one stretch of it, with the one you came from in view. The
+ * person watches; the work itself, step by step, is in the agent's conversation.
  */
 export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: string; onClose: () => void }) {
   const { item, error } = useHandOff(client, id)
   const [pane, setPane] = useState<OpenTask | null>(null)
   const from = useAgent(client, item?.by ?? '')
   const to = useAgent(client, item?.to ?? '')
+  const threads = useConversation(client, item)
+  const opened = useRef<HTMLDivElement>(null)
+  // Once, when the one you came from is there to scroll to.
+  const scrolled = useRef(false)
+  useEffect(() => {
+    if (scrolled.current || threads.length < 2 || opened.current === null) return
+    scrolled.current = true
+    opened.current.scrollIntoView({ block: 'start' })
+  }, [threads.length])
   if (item === null) return <section className="main empty">{error ?? '正在打开…'}</section>
   const toName = to?.name ?? item.to
   const state = STATE[item.state]
@@ -227,15 +256,12 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
         <OpenSubTask.Provider value={setPane}>
         <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
         <div className="chat"><div className="chat-inner">
-          <ExchangeMessage who={item.by} agent={from}>
-            <Markdown text={item.task} />
-            {item.expecting !== undefined && <div className="delegation-expecting">要交回：{item.expecting}</div>}
-          </ExchangeMessage>
-          {(item.messages ?? []).map((m, i) => <ThreadLine key={i} client={client} message={m} />)}
-          <ThreadSubTasks client={client} session={item.toSession} from={item.startedAt} to={item.endedAt} onOpen={setPane} />
-          {item.state === 'running' || item.state === 'waiting'
-            ? <ExchangeMessage who={toName} agent={to}>{item.state === 'waiting' ? <div className="delegation-now"><span className="tool-spinner" role="img" aria-label="等回答" /><span>等{item.by}回答</span></div> : <Working client={client} handOff={item} name={toName} />}</ExchangeMessage>
-            : <ExchangeMessage who={toName} agent={to} failed={item.state === 'failed'}><Markdown text={item.reply ?? (item.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>}
+          {threads.map(thread => (
+            <div key={thread.id} ref={thread.id === item.id ? opened : undefined} className={`exchange-thread${threads.length > 1 && thread.id === item.id ? ' opened' : ''}`}>
+              {threads.length > 1 && <div className="exchange-thread-head"><span>{thread.title}</span><span>{new Date(thread.startedAt).toLocaleString()}</span></div>}
+              <ThreadBlock client={client} thread={thread} onOpen={setPane} />
+            </div>
+          ))}
         </div></div>
         {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={toName} trail={item.by === toName ? [] : [item.by]} onClose={() => setPane(null)} />}
         </div>
@@ -248,7 +274,31 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
   )
 }
 
-const KIND_LABEL: Readonly<Record<ThreadMessage['kind'], string>> = { question: '问', answer: '答', update: '进展', done: '结论' }
+/** One piece of work: what was handed over, what was said, the conclusion, and what was said after it. */
+function ThreadBlock({ client, thread, onOpen }: { client: AdgClient; thread: HandOff; onOpen: (task: OpenTask) => void }) {
+  const from = useAgent(client, thread.by)
+  const to = useAgent(client, thread.to)
+  const toName = to?.name ?? thread.to
+  const messages = thread.messages ?? []
+  const closed = thread.state !== 'running' && thread.state !== 'waiting'
+  const later = (m: ThreadMessage) => closed && thread.endedAt !== undefined && m.at > thread.endedAt
+  return (
+    <>
+      <ExchangeMessage who={thread.by} agent={from}>
+        <Markdown text={thread.task} />
+        {thread.expecting !== undefined && <div className="delegation-expecting">要交回：{thread.expecting}</div>}
+      </ExchangeMessage>
+      {messages.filter(m => !later(m)).map((m, i) => <ThreadLine key={i} client={client} message={m} />)}
+      <ThreadSubTasks client={client} session={thread.toSession} from={thread.startedAt} to={thread.endedAt} onOpen={onOpen} />
+      {closed
+        ? <ExchangeMessage who={toName} agent={to} failed={thread.state === 'failed'}><Markdown text={thread.reply ?? (thread.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>
+        : <ExchangeMessage who={toName} agent={to}>{thread.state === 'waiting' ? <div className="delegation-now"><span className="tool-spinner" role="img" aria-label="等回答" /><span>等{thread.by}回答</span></div> : <Working client={client} handOff={thread} name={toName} />}</ExchangeMessage>}
+      {messages.filter(later).map((m, i) => <ThreadLine key={i} client={client} message={m} />)}
+    </>
+  )
+}
+
+const KIND_LABEL: Readonly<Record<ThreadMessage['kind'], string>> = { question: '问', answer: '答', update: '说', done: '结论' }
 
 /** One thing said in the thread (`done` repeats as the conclusion below, so it is not drawn twice). */
 function ThreadLine({ client, message }: { client: AdgClient; message: ThreadMessage }) {

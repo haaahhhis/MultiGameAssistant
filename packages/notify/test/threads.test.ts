@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { parseRelay, parseTask, parseThreadNote, type HandOff } from '@adg/protocol'
+import { parseRelay, parseTask, parseThreadNote, reminderPrompts, type HandOff } from '@adg/protocol'
 import { createHandOffDesk, MAX_CHAIN_MESSAGES, MAX_THREAD_MESSAGES, pastBetween, type HandOffDesk } from '../src/handoff.ts'
 import type { HandOffInput } from '../src/notify.ts'
 import type { Reply } from '../src/reply.ts'
@@ -92,7 +92,7 @@ test('an asker that needs time says so, and its words are not taken for the answ
   const done = o.desk.handOff(handed())
   await tick()
   assert.equal(o.last('h1').state, 'waiting', 'still waiting')
-  assert.equal(o.said.filter(s => s.sessionId === 's-scripts').length, 1, 'the worker is not told yet')
+  assert.equal(parseThreadNote(o.said.filter(s => s.sessionId === 's-scripts').at(-1)!.text)?.kind, 'update', 'the worker is told to hold on, and that is not the answer')
   answer()
   await done
   assert.equal(o.last('h1').reply, '结论：今晚')
@@ -110,21 +110,124 @@ test('`done` is the conclusion, whatever else it says in that turn, and closes t
   await tick()
   assert.equal(o.last('h1').state, 'done')
   assert.equal(o.last('h1').reply, '结论：配置格式变了')
-  await assert.rejects(o.desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'question', text: '还有' }), /已经结束/)
 })
 
-test('an update is kept but wakes nobody', async () => {
+test('what the agent doing the work says reaches the asker as it is said, as often as it says it', async () => {
+  let atSecond = 0
   const o = office(async (_sessionId, message, desk) => {
     if (parseTask(message) !== undefined) {
-      await desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'update', text: '读了一半' })
-      return text('结论：好了')
+      await desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'update', text: '34154' })
+      await tick()
+      atSecond = o.said.length
+      await desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'update', text: '114514' })
+      return text('结论：两条都发了')
+    }
+    return text('（不用告诉用户）')
+  })
+  await o.desk.handOff(handed())
+  await tick()
+  assert.equal(atSecond, 2, 'the first arrived before the work went on')
+  const toAsker = o.said.filter(s => s.sessionId === 's-main')
+  assert.deepEqual(toAsker.slice(0, 2).map(s => parseThreadNote(s.text)?.text), ['34154', '114514'])
+  assert.equal(parseThreadNote(toAsker[0]!.text)?.kind, 'update')
+  assert.match(toAsker[0]!.text, /告诉用户/, '助手 is told what to do with it')
+  assert.equal(parseRelay(toAsker[2]!.text)?.reply, '结论：两条都发了')
+  assert.deepEqual(o.last('h1').messages!.map(m => m.text), ['34154', '114514'])
+})
+
+test('a lead that asked is told to go on with its own, not to tell the person', async () => {
+  const o = office(async (_sessionId, message, desk) => {
+    if (parseTask(message) !== undefined) {
+      await desk.message({ thread: 'h1', fromSession: 's-games', from: '游戏', kind: 'update', text: '读到一半' })
+      return text('结论')
+    }
+    return text('好的')
+  })
+  await o.desk.handOff(handed({ to: { id: 'games', name: '游戏' }, by: '脚本', from: { sessionId: 's-scripts', callId: 'h1', asker: '脚本', agent: 'scripts' } }))
+  await tick()
+  const told = o.said.find(s => s.sessionId === 's-scripts' && parseThreadNote(s.text) !== undefined)!.text
+  assert.match(told, /接着做你手上的事/)
+  assert.doesNotMatch(told, /告诉用户/)
+})
+
+test('the asker can add to the work while it goes on, and it reaches the agent doing it', async () => {
+  const o = office(async (sessionId, message, desk) => {
+    if (parseTask(message) !== undefined) {
+      await desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'update', text: '只看今天的' })
+      return text('结论：今天的看了')
     }
     return text('好的')
   })
   await o.desk.handOff(handed())
   await tick()
-  assert.equal(o.said.length, 2, 'the task and the conclusion')
-  assert.equal(o.last('h1').messages![0]!.text, '读了一半')
+  assert.equal(parseThreadNote(o.said.filter(s => s.sessionId === 's-scripts').at(-1)!.text)?.text, '只看今天的')
+})
+
+test('after the work is handed back the two can still talk on the thread', async () => {
+  const kept: HandOff[] = []
+  const said: { sessionId: string; text: string }[] = []
+  const homes: Record<string, string> = { main: 's-main', scripts: 's-scripts' }
+  const desk = createHandOffDesk({
+    home: async agent => homes[agent]!,
+    converse: async (sessionId, message) => { said.push({ sessionId, text: message }); return text(parseTask(message) === undefined ? '好的' : '34154') },
+    record: async item => { kept.push(item) },
+    threads: () => [...new Map(kept.map(h => [h.id, h])).values()],
+    now: () => (kept.length === 0 ? 1000 : 2000),
+  })
+  await desk.handOff(handed())
+  await tick()
+  said.length = 0
+  // The reminder it set comes: a turn nobody follows, so only the tool can carry its words back.
+  assert.match(await desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'update', text: '114514' }), /送到/)
+  await tick()
+  assert.equal(said.length, 1)
+  assert.equal(said[0]!.sessionId, 's-main')
+  const note = parseThreadNote(said[0]!.text)!
+  assert.equal(note.text, '114514')
+  assert.match(said[0]!.text, /交回了/, 'it says the work was handed back already')
+  const last = kept.at(-1)!
+  assert.equal(last.state, 'done', 'the thread stays as it ended')
+  assert.equal(last.reply, '34154', 'what was concluded stays what was concluded')
+  assert.deepEqual(last.messages!.map(m => `${m.from}:${m.kind}:${m.text}`), ['脚本:update:114514'])
+
+  // 助手 answers back the same way; a conversation replaced since is still the agent's.
+  homes.scripts = 's-scripts-new'
+  said.length = 0
+  await desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'question', text: '几点发的？' })
+  await tick()
+  assert.equal(said[0]!.sessionId, 's-scripts-new')
+  assert.match(said[0]!.text, /kind 填 answer/, 'a reply goes nowhere by itself, so it is told to use the tool')
+  await desk.message({ thread: 'h1', fromSession: 's-scripts-new', from: '脚本', kind: 'done', text: '20 点' })
+  assert.equal(kept.at(-1)!.messages!.at(-1)!.kind, 'update', 'a conclusion after the conclusion is only something said')
+
+  await assert.rejects(desk.message({ thread: 'h1', fromSession: 's-games', from: '游戏', kind: 'update', text: 'x' }), /不是你和对方之间的/)
+  await assert.rejects(desk.message({ thread: 'nope', fromSession: 's-main', from: '助手', kind: 'update', text: 'x' }), /没有线索/)
+  for (let i = kept.at(-1)!.messages!.length; i < MAX_THREAD_MESSAGES; i++) await desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'update', text: `${i}` })
+  await assert.rejects(desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'update', text: 'x' }), /够多了/, 'two agents cannot wake each other for ever')
+})
+
+test('a reminder set on a thread says where its words go, and one set off it says nothing', async () => {
+  let noted: string | undefined
+  const o = office(async (sessionId, message, desk) => {
+    if (parseTask(message) !== undefined) noted = desk.reminderNote(sessionId, '只回 114514')
+    return text('34154')
+  })
+  await o.desk.handOff(handed())
+  assert.match(noted!, /^只回 114514\n\n.*线索 h1.*agent_message/su)
+  assert.equal(o.desk.reminderNote('s-scripts', '别的提醒'), undefined, 'the thread is over: nothing to say it belongs to')
+  assert.equal(reminderPrompts(`[SCHEDULE REMINDER]\nreminder_prompt_json: ${JSON.stringify(noted)}`)![0], '只回 114514', 'the person sees what was asked for, not the note')
+})
+
+test('work the app handed on has nobody to tell, and is told so', async () => {
+  const told: string[] = []
+  const o = office(async (_sessionId, message, desk) => {
+    if (parseTask(message) !== undefined) told.push(await desk.message({ thread: parseTask(message)!.thread ?? '', fromSession: 's-scripts', from: '脚本', kind: 'update', text: '读了一半' }).catch(e => e.message as string))
+    return text('结论')
+  })
+  await o.desk.handOff(handed({ from: { sessionId: '', callId: 'h1', asker: '定时' }, by: '定时', relay: false }))
+  await tick()
+  assert.match(told[0]!, /记下了/)
+  assert.equal(o.said.length, 1, 'only the task')
 })
 
 test('someone outside the thread cannot speak in it, and only the worker concludes', async () => {

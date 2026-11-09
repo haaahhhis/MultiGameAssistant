@@ -27,7 +27,9 @@ export function isQuiet(text: string): boolean {
   return wordsOf(text) === wordsOf(QUIET)
 }
 
-const RETURNS = '（做完后你这一轮的最后一段回复会原样交回去：把结论写在那里。）'
+const RETURNS = '（你这一轮的最后一段回复会作为结论交回去。在那之前要让对方知道的，用 agent_message 的 update 说，马上送到，说几次都行；交回结论以后还有话，同样发到这条线索：你的普通回复对方看不到。）'
+/** What the same note said before: old messages still parse. */
+const RETURNS_BEFORE = '（做完后你这一轮的最后一段回复会原样交回去：把结论写在那里。）'
 
 const THREAD_LINE = /^（这件事的线索是 (\S+)：做的过程中要问清楚什么，用 agent_message 问，thread 填它；不要猜。）$/
 
@@ -61,7 +63,7 @@ export function parseTask(text: string): TaskNote | undefined {
   const mine = /^（你在软件里点的：(.*)）$/.exec(first)
   const theirs = mine === null ? /^（([^（）：]{1,20})交给你的事：(.*)）$/.exec(first) : null
   if (mine === null && theirs === null) return undefined
-  const returns = rest[0] === RETURNS
+  const returns = rest[0] === RETURNS || rest[0] === RETURNS_BEFORE
   const after = returns ? rest.slice(1) : rest
   const thread = THREAD_LINE.exec(after[0] ?? '')?.[1]
   const next = thread === undefined ? after : after.slice(1)
@@ -77,34 +79,47 @@ export function parseTask(text: string): TaskNote | undefined {
 
 export interface ThreadNote {
   readonly from: string
-  readonly kind: 'question' | 'answer'
+  readonly kind: 'question' | 'answer' | 'update'
   readonly thread: string
   readonly title: string
   readonly text: string
 }
 
-const THREAD_WORDS = { question: '问你', answer: '回答了你' } as const
+const THREAD_WORDS = { question: '问你', answer: '回答了你', update: '告诉你' } as const
+
+/** Whose message it is: the agent doing the work, 助手 who talks to the person, or a lead that asked. */
+export type ThreadReader = 'worker' | 'main' | 'lead'
+
+/** What the reader is to do with it. `closed`: the work was already handed back, so its reply goes nowhere by itself. */
+function threadTail(kind: ThreadNote['kind'], thread: string, reader: ThreadReader, closed: boolean): string {
+  const person = `看情况告诉用户：有用户该知道的，一两句话说要点；没有的话整段回复只写「${QUIET}」。`
+  if (closed) {
+    if (kind === 'question') return `（这件事已经交回了，这是后面的话。要回答的话用 agent_message：thread 填 ${thread}，kind 填 answer，你的普通回复对方看不到。）`
+    return reader === 'main' ? `（这件事已经交回了，这是后面补的话，不用回它。${person}）` : '（这件事已经交回了，这是后面补的话，不用回它。）'
+  }
+  if (kind === 'question') return `（对方在等：先回答它，再接着做手上的事。用 agent_message 回答：thread 填 ${thread}，kind 填 answer。你这一轮的最后一段回复也算回答。要等用户决定的话，先用 kind: update 说一声，等有了结果再回答。）`
+  if (kind === 'answer' || reader === 'worker') return '（接着做这件事。）'
+  return reader === 'main' ? `（它还在做，这是过程中告诉你的，不用回它。${person}）` : '（它还在做，这是过程中告诉你的，不用回它：接着做你手上的事。）'
+}
 
 /**
- * Something said in a thread while the work goes on: a question, or the answer
- * to one. A reply can be just the agent's next words, so a model that forgets
- * the tool still answers.
+ * Something said in a thread: a question, an answer, or just something the
+ * other side should know. A reply to a question can be just the agent's next
+ * words, so a model that forgets the tool still answers.
+ * @param input.reader - who reads it; `closed`: the work has been handed back already.
  */
-export function threadMessage(input: { from: string; kind: 'question' | 'answer'; thread: string; title: string; text: string }): string {
+export function threadMessage(input: { from: string; kind: ThreadNote['kind']; thread: string; title: string; text: string; reader?: ThreadReader; closed?: boolean }): string {
   const head = `（「${input.from}」在线索 ${input.thread} 里${THREAD_WORDS[input.kind]}：${oneLine(input.title)}）`
-  const tail = input.kind === 'question'
-    ? `（对方在等：先回答它，再接着做手上的事。用 agent_message 回答：thread 填 ${input.thread}，kind 填 answer。你这一轮的最后一段回复也算回答。要等用户决定的话，先用 kind: update 说一声，等有了结果再回答。）`
-    : '（接着做这件事。）'
-  return `${head}\n\n${input.text.trim()}\n\n${tail}`
+  return `${head}\n\n${input.text.trim()}\n\n${threadTail(input.kind, input.thread, input.reader ?? 'worker', input.closed === true)}`
 }
 
 export function parseThreadNote(text: string): ThreadNote | undefined {
   const [first = '', ...rest] = text.split('\n')
-  const head = /^（「([^」]+)」在线索 (\S+) 里(问你|回答了你)：(.*)）$/.exec(first)
+  const head = /^（「([^」]+)」在线索 (\S+) 里(问你|回答了你|告诉你)：(.*)）$/.exec(first)
   if (head === null) return undefined
   const body = rest.join('\n').trim()
   const end = body.lastIndexOf('\n\n（')
-  return { from: head[1]!, thread: head[2]!, kind: head[3] === '问你' ? 'question' : 'answer', title: head[4]!, text: (end === -1 ? body : body.slice(0, end)).trim() }
+  return { from: head[1]!, thread: head[2]!, kind: head[3] === '问你' ? 'question' : head[3] === '告诉你' ? 'update' : 'answer', title: head[4]!, text: (end === -1 ? body : body.slice(0, end)).trim() }
 }
 
 /**
@@ -123,6 +138,15 @@ export function relayMessage(input: { agent: string; asker: string; title: strin
       : `（告诉用户哪里没做成、为什么；需要的话换个说法再交一次，或者问用户。）`
   const asked = input.consulted !== undefined && input.consulted.length > 0 ? `\n\n（做这件事时它还问了：${input.consulted.join('、')}。）` : ''
   return `${head}\n\n${input.reply.trim()}${asked}\n\n${tail}`
+}
+
+/** The threads two agents have had, in either direction, oldest first. The app handing work on is not an agent. */
+export function threadsBetween<T extends { readonly chain?: readonly string[] | undefined }>(all: readonly T[], a: string, b: string): T[] {
+  return all.filter(h => {
+    const from = h.chain?.at(-2)
+    const to = h.chain?.at(-1)
+    return (from === a && to === b) || (from === b && to === a)
+  })
 }
 
 export interface RelayNote {
@@ -146,6 +170,17 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').replace(/[（）]/g, m => (m === '（' ? '(' : ')')).trim()
 }
 
+const REMINDER_NOTE = /\n\n（这是你在线索 \S+ 上定的提醒：[^）]*）$/
+
+/**
+ * A reminder an agent sets while working on a thread: when it comes, the turn
+ * it starts belongs to nobody the agent can answer by replying, and by then the
+ * agent may not remember why it set it.
+ */
+export function threadReminder(prompt: string, thread: string, by: string): string {
+  return `${prompt}\n\n（这是你在线索 ${thread} 上定的提醒：要让${by}知道的，到点后用 agent_message 发给它，thread 填 ${thread}，kind 填 update；你的普通回复它看不到。）`
+}
+
 /**
  * A reminder 助手 set for itself (dsh's schedule_create), as dsh delivers it
  * when due: `[SCHEDULE REMINDER]` with one prompt, or a batch of recurring
@@ -153,12 +188,12 @@ function oneLine(text: string): string {
  */
 export function reminderPrompts(text: string): string[] | undefined {
   const single = /^\[SCHEDULE REMINDER\]\n[\s\S]*?^reminder_prompt_json: (.*)$/m.exec(text)
-  if (single !== null) return [jsonString(single[1]!)]
+  if (single !== null) return [jsonString(single[1]!).replace(REMINDER_NOTE, '')]
   const batch = /^\[SCHEDULE REMINDER BATCH\]\n[\s\S]*?^reminders_json: (.*)$/m.exec(text)
   if (batch === null) return undefined
   try {
     const items = JSON.parse(batch[1]!) as { reminder_prompt?: unknown }[]
-    return items.map(item => String(item.reminder_prompt ?? '')).filter(p => p !== '')
+    return items.map(item => String(item.reminder_prompt ?? '').replace(REMINDER_NOTE, '')).filter(p => p !== '')
   } catch {
     return []
   }

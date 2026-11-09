@@ -6,16 +6,21 @@
  * its own conversation, so neither carries the other's tool calls in its context.
  *
  * A hand-off is a thread, not one question and one answer. While the work goes
- * on, either side can ask the other (`message`), and the agent doing it can
- * hand part of it on to a colleague. The thread closes when nobody owes anybody
- * anything: no answer outstanding, no thread opened from inside it still open,
- * and the agent has concluded, by saying `done` or else by its last words.
+ * on, either side can ask or tell the other (`message`), any number of times,
+ * and it arrives as it is said; the agent doing it can hand part of it on to a
+ * colleague. The thread closes when nobody owes anybody anything: no answer
+ * outstanding, no thread opened from inside it still open, and the agent has
+ * concluded, by saying `done` or else by its last words.
+ *
+ * Closed means the work was handed back, not that the two have finished talking:
+ * what is said on it later still reaches the other side (`late`). A reply does
+ * not, since a later turn of the agent may have nothing to do with this.
  *
  * Handing on makes chains, so a chain does not come back on itself (ask in the
  * thread instead), goes only so deep, and has a budget for what is said along it.
  */
 import { randomUUID } from 'node:crypto'
-import { isQuiet, relayMessage, taskMessage, threadMessage, type HandOff, type ThreadMessage } from '@adg/protocol'
+import { isQuiet, relayMessage, taskMessage, threadMessage, threadReminder, threadsBetween, type HandOff, type ThreadMessage, type ThreadReader } from '@adg/protocol'
 import type { HandOffInput } from './notify.ts'
 import { finalText, type Reply } from './reply.ts'
 
@@ -35,12 +40,7 @@ const PAST_CHARS = 120
  * remember, and sub-agents are not threads.
  */
 export function pastBetween(all: readonly HandOff[], a: string, b: string, name: (agentId: string) => string): string[] {
-  const between = all.filter(h => {
-    const chain = h.chain ?? []
-    const from = chain.at(-2)
-    const to = chain.at(-1)
-    return h.state !== 'running' && h.state !== 'waiting' && ((from === a && to === b) || (from === b && to === a))
-  })
+  const between = threadsBetween(all, a, b).filter(h => h.state !== 'running' && h.state !== 'waiting')
   return between.slice(-PAST_SHOWN).map(h => {
     const when = new Date(h.endedAt ?? h.startedAt)
     const said = (h.reply ?? '').replace(/\s+/g, ' ').trim()
@@ -108,6 +108,8 @@ export interface HandOffDesk {
   message(input: ThreadInput): Promise<string>
   /** @returns why this conversation's agent may not ask the person itself, in words for it; undefined when it may. */
   askRefusal(sessionId: string): string | undefined
+  /** A reminder this conversation's agent is setting, saying where its words go when it comes; undefined when it is not on a thread. */
+  reminderNote(sessionId: string, prompt: string): string | undefined
 }
 
 export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
@@ -132,6 +134,30 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
   const toWorker = (thread: Live, message: string): void => {
     thread.turns.push(deps.converse(thread.item.toSession, message, thread.signal, [], { insert: true }))
     thread.wake()
+  }
+
+  /** Who reads what the agent doing the work says: 助手 tells the person, a lead goes on with its own. */
+  const askerKind = (agent: string | undefined): ThreadReader => (agent === undefined || agent === MAIN ? 'main' : 'lead')
+
+  /**
+   * Something said on a thread already handed back: it goes to the other side's
+   * conversation, the one it has now, and that is all: no turn belongs to the thread.
+   */
+  const late = async ({ thread: id, fromSession, from, kind, text }: ThreadInput): Promise<string> => {
+    const item = deps.threads?.().find(h => h.id === id)
+    if (item === undefined) throw new Error(`没有线索 ${id}（可能太久以前，已经清掉了）。还有事就重新交一次`)
+    if ((item.messages ?? []).length >= MAX_THREAD_MESSAGES) throw new Error(`这条线索的来回已经够多了（${MAX_THREAD_MESSAGES} 条）：还有事就重新交一次`)
+    const askerAgent = item.chain?.at(-2)
+    const askerNow = askerAgent === undefined ? item.fromSession : await deps.home(askerAgent)
+    const workerNow = await deps.home(item.to)
+    const worker = fromSession === item.toSession || fromSession === workerNow
+    if (!worker && fromSession !== item.fromSession && fromSession !== askerNow) throw new Error(`线索 ${id} 不是你和对方之间的`)
+    if (worker && askerNow === '') throw new Error(`这件事是${item.by}交的，没有人在等消息：要告诉谁就重新交给它`)
+    const said = kind === 'done' ? 'update' : kind
+    await deps.record({ ...item, messages: [...(item.messages ?? []), { from, kind: said, text, at: now() }] })
+    const message = threadMessage({ from, kind: said, thread: id, title: item.title, text, reader: worker ? askerKind(askerAgent) : 'worker', closed: true })
+    void deps.converse(worker ? askerNow : workerNow, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), [], { insert: true }).catch(() => {})
+    return '已经送到对方那里了。'
   }
 
   /** The asking side's turn on a question: into what it is doing, since someone waits. Its words are the answer unless it answered or said it needs time. */
@@ -172,12 +198,18 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
       return `这件事是${thread.item.by}交给你的：要问清楚的用 agent_message 问它（thread 填 ${thread.item.id}，kind 填 question），要不要去问用户由它决定。不要猜，也不要自己问用户。`
     },
 
-    async message({ thread: id, fromSession, from, kind, text }) {
+    reminderNote(sessionId, prompt) {
+      const thread = workingOn(sessionId)
+      return thread === undefined || thread.item.fromSession === '' ? undefined : threadReminder(prompt, thread.item.id, thread.item.by)
+    },
+
+    async message(input) {
+      const { thread: id, fromSession, from, kind, text } = input
       const thread = live.get(id)
-      if (thread === undefined) throw new Error(`线索 ${id} 已经结束了，或者没有这条线索。还有事就重新交一次`)
+      if (thread === undefined) return late(input)
       const worker = fromSession === thread.item.toSession
       if (!worker && fromSession !== thread.item.fromSession) throw new Error(`线索 ${id} 不是你和对方之间的`)
-      if (kind !== 'update' && kind !== 'done') {
+      if (kind !== 'done') {
         if ((thread.item.messages ?? []).length >= MAX_THREAD_MESSAGES) throw new Error(`这条线索的来回已经够多了（${MAX_THREAD_MESSAGES} 条）：用手上的信息做个结论`)
         if (chainTop(thread).said >= MAX_CHAIN_MESSAGES) throw new Error(`这件事的来回已经够多了（${MAX_CHAIN_MESSAGES} 条）：用手上的信息做个结论`)
       }
@@ -190,10 +222,17 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
           thread.wake()
           return '结论已经交回去了。这一轮可以结束了。'
         case 'update':
-          // Told, not woken: each message that wakes an agent costs a turn.
-          if (!worker) thread.deferred = true
+          if (!worker) {
+            thread.deferred = true
+            await say(thread, from, 'update', text)
+            toWorker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }))
+            return '已经告诉它了。有结果要回答它的话，用 kind: answer。'
+          }
           await say(thread, from, 'update', text)
-          return worker ? '记下了，对方在线索里看得到。接着做。' : '记下了。有结果后用 kind: answer 回答它。'
+          // Work the app handed on has nobody waiting to be told.
+          if (thread.item.fromSession === '') return '记下了。接着做。'
+          toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
+          return '已经送到对方那里了。接着做。'
         case 'question':
           if (worker) {
             if (thread.item.fromSession === '') throw new Error(`这件事是${asker}交的，没有人等着回答：按你自己的判断做，把要问的写进结论`)
@@ -211,7 +250,7 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
             return '已经回答了。现在结束这一轮。'
           }
           await say(thread, from, 'answer', text)
-          toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }), false)
+          toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
           return '已经回答了。接着做。'
       }
     },

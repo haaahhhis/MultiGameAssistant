@@ -4,7 +4,7 @@ import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, parseThreadNote, relayMe
 
 test('work handed to an agent says who asked and what, and reads back the same', () => {
   const text = taskMessage('监控', 'MAA · 日常：出错', '先截图看看\n再决定', true)
-  assert.match(text, /^（监控交给你的事：MAA · 日常：出错）\n（做完后你这一轮的最后一段回复会原样交回去/)
+  assert.match(text, /^（监控交给你的事：MAA · 日常：出错）\n（你这一轮的最后一段回复会作为结论交回去/)
   assert.deepEqual(parseTask(text), { by: '监控', title: 'MAA · 日常：出错', returns: true, body: '先截图看看\n再决定' })
   assert.deepEqual(parseTask(taskMessage(BY_YOU, '安装脚本：MAA', '装好它')), { by: BY_YOU, title: '安装脚本：MAA', returns: false, body: '装好它' })
   assert.equal(parseTask('帮我看看（监控交给你的事：x）'), undefined, "the person's own words are theirs")
