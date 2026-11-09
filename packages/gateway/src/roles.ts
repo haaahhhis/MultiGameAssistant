@@ -93,6 +93,8 @@ export interface TeamMember {
   readonly id: string
   readonly name: string
   readonly description: string
+  /** What the user named it: how the user may speak of it. Agents still address it by its id. */
+  readonly alias?: string | undefined
 }
 
 /**
@@ -104,14 +106,15 @@ export interface TeamMember {
  * @param leads - the lead agents, this one among them or not.
  */
 export function teamPrompt(self: TeamMember, main: TeamMember, leads: readonly TeamMember[]): string {
-  const line = (m: TeamMember) => `- 「${m.name}」（${m.id}）${m.description === '' ? '' : `：${m.description}`}`
+  const who = (m: TeamMember) => `「${m.name}」（${m.id}${m.alias === undefined ? '' : `，用户也叫它「${m.alias}」`}）`
+  const line = (m: TeamMember) => `- ${who(m)}${m.description === '' ? '' : `：${m.description}`}`
   const colleagues = leads.filter(m => m.id !== self.id)
   const isMain = self.id === main.id
   return [
     '# 团队',
     isMain
       ? `你是「${self.name}」（${self.id}），是最上级的 agent：和用户对话，把事分给下面的主 agent，汇总结果并做决定。`
-      : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是「${main.name}」（${main.id}）：它和用户对话、分发任务、做决定。`,
+      : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是${who(main)}：它和用户对话、分发任务、做决定。`,
     colleagues.length === 0 ? (isMain ? '现在没有其他主 agent。' : '现在没有其他同事。') : `${isMain ? '下面的主 agent' : '同事'}：\n${colleagues.map(line).join('\n')}`,
     '具体的活可以开子 agent 去做（subagent）：它是你开的，只对你负责，只把结果交回给你；你的上下文留给判断和汇总。几件互不相关的事可以同时开。子 agent 不能找用户审批，要审批的操作它会交回来，由你来做。',
     isMain ? '' : `需要同事的那部分，用 agent_delegate 直接交给它，不用绕过「${main.name}」。交给你的事没说清楚时，用 agent_message 问交给你的一方，问清楚再做；做完用 agent_message 的 done 交回结论，或者把结论写在这一轮最后一段回复里。`,

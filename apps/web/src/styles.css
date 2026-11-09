@@ -1667,3 +1667,10 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
   .subagent-pane { position: absolute; inset: 0; z-index: 4; width: auto; border-left: none; }
   .chat-split.with-pane > .chat-detail { display: none; }
 }
+
+/* 设置 → 回复风格: for whom. */
+.persona-scope { align-self: flex-start; flex-wrap: wrap; }
+.persona-scope button { position: relative; flex: none; padding: 0 14px; }
+.persona-own-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.persona-follow { align-self: flex-start; }
+.persona-follow button { flex: none; padding: 0 14px; }

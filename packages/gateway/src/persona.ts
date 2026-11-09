@@ -1,12 +1,14 @@
 /**
- * The reply style the user picked (persona@1), kept in `<dataDir>/persona.json`
- * and turned into one system-prompt section for every agent. Only the voice
- * changes: the section says so, so a playful persona does not loosen the
- * rules (approvals, no passwords, no spending).
+ * The reply style the user picked (persona@1), kept in `<dataDir>/persona.json`:
+ * one for all agents, and what an agent has of its own. It becomes one
+ * system-prompt section for each agent. Only the voice changes: the section
+ * says so, so a playful persona does not loosen the rules (approvals, no
+ * passwords, no spending), and the app's fixed marks stay as they are.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Persona, type PersonaStyle } from '@adg/protocol'
+import { z } from 'zod'
+import { Persona, PersonaSettings, QUIET, type PersonaOverride, type PersonaStyle } from '@adg/protocol'
 
 export const STYLE_TEXT: Readonly<Record<PersonaStyle, string>> = {
   default: '',
@@ -17,7 +19,7 @@ export const STYLE_TEXT: Readonly<Record<PersonaStyle, string>> = {
   butler: '像一位稳重周到的管家：礼貌、条理清楚，主动汇报进度和需要对方决定的事。',
 }
 
-export const DEFAULT_PERSONA: Persona = { style: 'default' }
+export const DEFAULT_PERSONA: PersonaSettings = { persona: { style: 'default' }, agents: {} }
 
 /** Where the agent works and what the app is called, for every agent: "本软件" means this. */
 export const IDENTITY_PROMPT = [
@@ -33,50 +35,85 @@ export const IDENTITY_PROMPT = [
   '每个脚本、每个游戏的专属技能只给正在处理它的会话用：开始操作、分析、诊断或编排某个脚本，或查看某个游戏之前，先用 skill_focus 说明是哪个（几个一起处理就一起写），它们的技能才会出现在技能列表里；换到别的脚本或游戏时再调用一次。不要把一个脚本或游戏的技能套用到另一个上。',
 ].join('\n')
 
-/**
- * The system-prompt text for a persona; empty when nothing is set.
- * @param options.named - whether the name is this agent's: one name for all of them would have them all call themselves the same.
- */
-export function personaPrompt(p: Persona, { named = true }: { named?: boolean } = {}): string {
+/** How one agent talks: its own where it has any, else what is set for all. */
+export function personaOf(settings: PersonaSettings, agentId: string): Persona & { name?: string } {
+  const own = Object.entries(settings.agents[agentId] ?? {}).filter(([, value]) => value !== undefined)
+  return { ...settings.persona, ...Object.fromEntries(own) }
+}
+
+/** The system-prompt text for a persona; empty when nothing is set. */
+export function personaPrompt(p: Persona & { name?: string | undefined }): string {
   const lines: string[] = []
-  if (named && p.name !== undefined && p.name.trim() !== '') lines.push(`你的名字是「${p.name.trim()}」，自称时用这个名字。`)
+  if (p.name !== undefined && p.name.trim() !== '') lines.push(`你的名字是「${p.name.trim()}」，自称时用这个名字。`)
   if (p.callUser !== undefined && p.callUser.trim() !== '') lines.push(`称呼用户为「${p.callUser.trim()}」。`)
   if (STYLE_TEXT[p.style] !== '') lines.push(STYLE_TEXT[p.style])
   if (p.custom !== undefined && p.custom.trim() !== '') lines.push(`用户对你说话方式的要求：${p.custom.trim()}`)
   if (lines.length === 0) return ''
+  lines.push(p.peerStyle === 'same'
+    ? '和其他 agent 说话时也用这个方式。'
+    : '上面是对用户说话的方式。和其他 agent 说话（agent_delegate、agent_message、交回去的结论）用平实的话，直接说事，不用人设和称呼：它们要读的是内容。')
+  lines.push(`软件约定的固定写法（比如「${QUIET}」这一句、线索编号、工具的参数）一字不差照写，不加语气词和表情。`)
   return ['# 回复风格', ...lines, '这些只影响你说话的方式，不改变做事的规则：确认、安全限制和不能做的事都照旧；在飞书里回复也一样。'].join('\n')
+}
+
+/** Blank fields are dropped, spaces trimmed: what is left out follows what is set for all. */
+function cleanFields<T extends PersonaOverride>(p: T): PersonaOverride {
+  return {
+    ...(p.style === undefined ? {} : { style: p.style }),
+    ...(p.name?.trim() ? { name: p.name.trim() } : {}),
+    ...(p.callUser?.trim() ? { callUser: p.callUser.trim() } : {}),
+    ...(p.custom?.trim() ? { custom: p.custom.trim() } : {}),
+    ...(p.peerStyle === undefined ? {} : { peerStyle: p.peerStyle }),
+  }
+}
+
+function clean(settings: PersonaSettings): PersonaSettings {
+  const { name: _name, ...rest } = cleanFields(settings.persona)
+  const agents = Object.entries(settings.agents).map(([id, own]) => [id, cleanFields(own)] as const).filter(([, own]) => Object.keys(own).length > 0)
+  return { persona: { ...rest, style: settings.persona.style }, agents: Object.fromEntries(agents) }
+}
+
+/**
+ * What the file holds. Before agents had their own it held one persona, whose
+ * name only 助手 ever used: that name is 助手's now.
+ */
+function parseFile(raw: unknown): PersonaSettings | undefined {
+  const now = PersonaSettings.safeParse(raw)
+  if (now.success) return clean(now.data)
+  const old = Persona.extend({ name: z.string().optional() }).safeParse(raw)
+  if (!old.success) return undefined
+  const { name, ...persona } = old.data
+  return clean({ persona, agents: name === undefined ? {} : { main: { name } } })
 }
 
 export class PersonaStore {
   readonly #file: string
-  #current: Persona = DEFAULT_PERSONA
+  #current: PersonaSettings = DEFAULT_PERSONA
 
   constructor(dataDir: string) {
     this.#file = join(dataDir, 'persona.json')
   }
 
-  get current(): Persona {
+  get current(): PersonaSettings {
     return this.#current
+  }
+
+  of(agentId: string): Persona & { name?: string } {
+    return personaOf(this.#current, agentId)
   }
 
   async load(): Promise<void> {
     try {
-      const parsed = Persona.safeParse(JSON.parse(await readFile(this.#file, 'utf8')))
-      if (parsed.success) this.#current = parsed.data
+      this.#current = parseFile(JSON.parse(await readFile(this.#file, 'utf8'))) ?? DEFAULT_PERSONA
     } catch { /* not set yet */ }
   }
 
-  async set(persona: Persona): Promise<Persona> {
-    const clean: Persona = {
-      style: persona.style,
-      ...(persona.name?.trim() ? { name: persona.name.trim() } : {}),
-      ...(persona.callUser?.trim() ? { callUser: persona.callUser.trim() } : {}),
-      ...(persona.custom?.trim() ? { custom: persona.custom.trim() } : {}),
-    }
+  async set(settings: PersonaSettings): Promise<PersonaSettings> {
+    const next = clean(settings)
     await mkdir(join(this.#file, '..'), { recursive: true })
-    await writeFile(`${this.#file}.tmp`, `${JSON.stringify(clean, null, 2)}\n`)
+    await writeFile(`${this.#file}.tmp`, `${JSON.stringify(next, null, 2)}\n`)
     await rename(`${this.#file}.tmp`, this.#file)
-    this.#current = clean
-    return clean
+    this.#current = next
+    return next
   }
 }

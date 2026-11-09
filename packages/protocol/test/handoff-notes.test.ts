@@ -28,6 +28,8 @@ test('助手 may leave the person out of a reply that came back by answering onl
   assert.match(relayMessage({ agent: '游戏', asker: '你', title: 'x', ok: true, reply: 'y' }), new RegExp(QUIET))
   assert.equal(isQuiet(`${QUIET}。`), true)
   assert.equal(isQuiet(`${QUIET}，不过活动快结束了`), false)
+  assert.equal(isQuiet(`${QUIET}～ ✨ (｡•̀ᴗ•́｡)`), true, 'a reply style may dress it up')
+  assert.equal(isQuiet('不用告诉用户！'), true)
 })
 
 test('a reminder 助手 set, as dsh delivers it, reads as what it was for; a batch of recurring ones too', () => {
