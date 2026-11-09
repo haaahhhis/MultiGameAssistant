@@ -16,7 +16,7 @@
  */
 import type { SessionController, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
 import { convertRecord } from '@adg/gateway'
-import { BY_YOU, isQuiet, parseRelay, parseTask, reminderLine, reminderPrompts, type HandOff } from '@adg/protocol'
+import { BY_YOU, isQuiet, parseRelay, parseTask, parseThreadNote, reminderLine, reminderPrompts, type HandOff } from '@adg/protocol'
 import { TurnReply, type ConversationEvent } from './conversations.ts'
 import { personWords, type Actor, type MirrorPost } from './notify.ts'
 import { finalText, replyMarkdown, type Reply } from './reply.ts'
@@ -115,7 +115,9 @@ export class HomeMirror {
 
   /** A hand-off (the gateway's); 助手's (from its conversation) become lines. */
   handOff(item: HandOff): void {
-    if (this.#home === undefined || item.fromSession !== this.#home || this.#seen.get(item.id) === item.state) return
+    // Waiting on an answer is the same work still going: its question comes over as a message of the conversation.
+    if (item.state === 'waiting' || this.#home === undefined || item.fromSession !== this.#home || this.#seen.get(item.id) === item.state) return
+    if (item.state === 'running' && this.#seen.has(item.id)) return
     this.#seen.set(item.id, item.state)
     while (this.#seen.size > KEEP_SEEN) this.#seen.delete(this.#seen.keys().next().value!)
     const to = this.#deps.agentName(item.to)
@@ -126,6 +128,11 @@ export class HomeMirror {
   #message(text: string): Actor | undefined {
     // A reply coming back: its line went out with the hand-off.
     if (parseRelay(text) !== undefined) return undefined
+    const said = parseThreadNote(text)
+    if (said !== undefined) {
+      this.#deps.post({ text: `${said.from} → ${MAIN_NAME}：${said.kind === 'question' ? '问' : '答'}：${said.text}` })
+      return undefined
+    }
     const task = parseTask(text)
     if (task !== undefined) {
       this.#deps.post({ text: task.by === BY_YOU ? `你（软件）点了：${task.title}` : `${task.by} → ${MAIN_NAME}：${task.title}` })

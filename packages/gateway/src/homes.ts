@@ -88,6 +88,11 @@ export class HandOffs {
     return this.#items.get(id)
   }
 
+  /** All that are kept, oldest first. */
+  all(): HandOff[] {
+    return [...this.#items.values()]
+  }
+
   /** Each hand-off as it starts and ends (a chat channel shows 助手's in its conversation). @returns a disposer. */
   onChange(listener: (item: HandOff) => void): () => void {
     this.#listeners.add(listener)
@@ -119,7 +124,7 @@ export class HandOffs {
       if (!Array.isArray(saved)) return
       for (const item of saved as HandOff[]) {
         if (typeof item?.id !== 'string') continue
-        this.#items.set(item.id, item.state === 'running' ? { ...item, state: 'failed', reply: '软件关闭时它还没做完，这一轮中断了', endedAt: item.startedAt } : item)
+        this.#items.set(item.id, item.state === 'running' || item.state === 'waiting' ? { ...item, state: 'failed', reply: '软件关闭时它还没做完，这一轮中断了', endedAt: item.startedAt } : item)
       }
     } catch {
       // none yet

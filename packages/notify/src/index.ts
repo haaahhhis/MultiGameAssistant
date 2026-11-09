@@ -16,7 +16,7 @@ import { NOTIFY_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { noticeActTool, noticesMessage } from './notices.ts'
 import { z } from 'zod'
 import { sessionConversations } from './conversations.ts'
-import { delegateTool } from './delegate.ts'
+import { delegateTool, messageTool, threadsTool } from './delegate.ts'
 import { MAIN } from './handoff.ts'
 import { HomeMirror } from './mirror.ts'
 import type { Reply } from './reply.ts'
@@ -118,8 +118,12 @@ export class AdgNotify extends Service {
         asked: request => notify.askApproval(request),
         resolved: (id, outcome) => notify.approvalResolved(id, outcome),
       })
-      // 助手 hands work to the role agents (delegate.ts); the gateway keeps the tool from them. What comes back reaches the chat apps through the mirror.
-      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => scoped.adgGateway.roles.list(), conversations })))
+      // Agents working together (delegate.ts); the gateway keeps these from sub-agents. What 助手 hands out and hears back reaches the chat apps through the mirror.
+      const agentOf = (sessionId: string) => scoped.adgGateway.agentOfSession(sessionId)
+      const agentName = (id: string) => (id === MAIN ? '助手' : scoped.adgGateway.roles.list().find(r => r.id === id)?.name ?? id)
+      scoped.adgGateway.agentPart('adg-notify agent_delegate', agent => agent.tools.register(delegateTool({ agents: () => [{ id: MAIN, name: '助手' }, ...scoped.adgGateway.roles.list()], conversations, agentOf })))
+      scoped.adgGateway.agentPart('adg-notify agent_message', agent => agent.tools.register(messageTool({ desk: () => conversations()?.desk, agentOf })))
+      scoped.adgGateway.agentPart('adg-notify agent_threads', agent => agent.tools.register(threadsTool({ list: () => scoped.adgGateway.handOffs.all(), name: agentName })))
       // The notices sent since 助手's last turn, told when its next one starts (notices.ts); notice_act answers them for the person.
       scoped.adgGateway.agentPart('adg-notify notice_act', agent => agent.tools.register(noticeActTool(notify, gateway.roles.list().find(r => r.id === MAIN)?.name ?? '助手')))
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone

@@ -10,7 +10,7 @@
 import type { SessionController, SessionFollowFrame, SessionRequestId, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
 import { convertRecord } from '@adg/gateway'
 import { summarizeToolArgs, type HandOff } from '@adg/protocol'
-import { handOff } from './handoff.ts'
+import { createHandOffDesk, type HandOffDesk } from './handoff.ts'
 import type { Conversations } from './notify.ts'
 import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
@@ -27,6 +27,8 @@ interface AppSessions {
   /** Resolves once the agent there is done, its sub-agents back and its reply to them given. */
   settled?(sessionId: string, signal: AbortSignal): Promise<void>
   stopSubAgents?(sessionId: string): void
+  /** The one desk the threads between agents are kept on (see below): the gateway only holds it. */
+  handOffDesk?: unknown
 }
 
 /** dsh's tools that start a sub-agent: a turn that used one is not the end of the work. */
@@ -87,9 +89,19 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     if (options.focus !== undefined) await focus?.(sessionId, options.focus)
     return sessionId
   }
+  // One desk for all the app's plugins, each with conversations of its own: a thread is between agents, not between plugins.
+  let own: HandOffDesk | undefined
+  const desk = (): HandOffDesk => {
+    const found = app?.()
+    const make = () => createHandOffDesk({ home, converse, record: item => gateway().handOffs.put(item) })
+    if (found === undefined) return own ??= make()
+    return (found.handOffDesk ??= make()) as HandOffDesk
+  }
   return {
     home,
-    handOff: input => handOff({ home, converse, record: item => gateway().handOffs.put(item) }, input),
+    get desk() { return desk() },
+    handOff: input => desk().handOff(input),
+    handOffRefusal: (fromSession, to, fromAgent) => desk().refusal(fromSession, to, fromAgent),
     async create(title, options = {}) {
       // A role agent's session: the model chosen for role agents, when there is one (设置 → 模型).
       const chosen = options.role === undefined ? undefined : app?.()?.roleModel(options.role)

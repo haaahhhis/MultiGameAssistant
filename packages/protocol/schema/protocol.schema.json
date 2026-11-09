@@ -453,6 +453,9 @@
     "games/activity/save": {
       "capability": "games"
     },
+    "games/activity/source": {
+      "capability": "games"
+    },
     "games/activity/reset": {
       "capability": "games"
     },
@@ -2200,6 +2203,48 @@
               "id": {
                 "type": "string"
               },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "question",
+                        "answer",
+                        "update",
+                        "done"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "kind",
+                    "text",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "chain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parent": {
+                "type": "string"
+              },
               "fromSession": {
                 "type": "string"
               },
@@ -2228,6 +2273,7 @@
                 "type": "string",
                 "enum": [
                   "running",
+                  "waiting",
                   "done",
                   "failed"
                 ]
@@ -2282,6 +2328,48 @@
         "id": {
           "type": "string"
         },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "question",
+                  "answer",
+                  "update",
+                  "done"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "from",
+              "kind",
+              "text",
+              "at"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "chain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "type": "string"
+        },
         "fromSession": {
           "type": "string"
         },
@@ -2310,6 +2398,7 @@
           "type": "string",
           "enum": [
             "running",
+            "waiting",
             "done",
             "failed"
           ]
@@ -19413,8 +19502,17 @@
                     "web": {
                       "type": "boolean"
                     },
+                    "startsAt": {
+                      "type": "number"
+                    },
                     "endsAt": {
                       "type": "number"
+                    },
+                    "shopEndsAt": {
+                      "type": "number"
+                    },
+                    "cover": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -19425,6 +19523,24 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "chosen": {
+                "type": "string"
+              },
+              "shown": {
+                "type": "object",
+                "properties": {
+                  "cover": {
+                    "type": "string"
+                  },
+                  "startsAt": {
+                    "type": "string"
+                  },
+                  "endsAt": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
               },
               "screen": {
                 "type": "object",
@@ -19504,6 +19620,15 @@
                         "cover"
                       ]
                     }
+                  },
+                  "startsAt": {
+                    "type": "number"
+                  },
+                  "endsAt": {
+                    "type": "number"
+                  },
+                  "cover": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -20207,8 +20332,17 @@
               "web": {
                 "type": "boolean"
               },
+              "startsAt": {
+                "type": "number"
+              },
               "endsAt": {
                 "type": "number"
+              },
+              "shopEndsAt": {
+                "type": "number"
+              },
+              "cover": {
+                "type": "string"
               }
             },
             "required": [
@@ -20219,6 +20353,24 @@
             ],
             "additionalProperties": false
           }
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "shown": {
+          "type": "object",
+          "properties": {
+            "cover": {
+              "type": "string"
+            },
+            "startsAt": {
+              "type": "string"
+            },
+            "endsAt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         },
         "screen": {
           "type": "object",
@@ -20298,6 +20450,15 @@
                   "cover"
                 ]
               }
+            },
+            "startsAt": {
+              "type": "number"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "cover": {
+              "type": "string"
             }
           },
           "required": [
@@ -20505,8 +20666,17 @@
               "web": {
                 "type": "boolean"
               },
+              "startsAt": {
+                "type": "number"
+              },
               "endsAt": {
                 "type": "number"
+              },
+              "shopEndsAt": {
+                "type": "number"
+              },
+              "cover": {
+                "type": "string"
               }
             },
             "required": [
@@ -20517,6 +20687,24 @@
             ],
             "additionalProperties": false
           }
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "shown": {
+          "type": "object",
+          "properties": {
+            "cover": {
+              "type": "string"
+            },
+            "startsAt": {
+              "type": "string"
+            },
+            "endsAt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         },
         "screen": {
           "type": "object",
@@ -20596,6 +20784,255 @@
                   "cover"
                 ]
               }
+            },
+            "startsAt": {
+              "type": "number"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "cover": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "game",
+        "name",
+        "todo",
+        "done"
+      ],
+      "additionalProperties": false
+    },
+    "games/activity/source.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "activityId": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "activityId",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "games/activity/source.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "game": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "startsAt": {
+          "type": "number"
+        },
+        "endsAt": {
+          "type": "number"
+        },
+        "shopEndsAt": {
+          "type": "number"
+        },
+        "url": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "site": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "at": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "source",
+            "name",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "web": {
+                "type": "boolean"
+              },
+              "startsAt": {
+                "type": "number"
+              },
+              "endsAt": {
+                "type": "number"
+              },
+              "shopEndsAt": {
+                "type": "number"
+              },
+              "cover": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "at",
+              "web"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "chosen": {
+          "type": "string"
+        },
+        "shown": {
+          "type": "object",
+          "properties": {
+            "cover": {
+              "type": "string"
+            },
+            "startsAt": {
+              "type": "string"
+            },
+            "endsAt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "screen": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "remaining": {
+              "type": "string"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "evidence": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "todo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "done": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "progress": {
+          "type": "string"
+        },
+        "finished": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        "mismatch": {
+          "type": "string"
+        },
+        "own": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "name",
+                  "startsAt",
+                  "endsAt",
+                  "kind",
+                  "description",
+                  "url",
+                  "cover"
+                ]
+              }
+            },
+            "startsAt": {
+              "type": "number"
+            },
+            "endsAt": {
+              "type": "number"
+            },
+            "cover": {
+              "type": "string"
             }
           },
           "required": [
@@ -20701,8 +21138,17 @@
                   "web": {
                     "type": "boolean"
                   },
+                  "startsAt": {
+                    "type": "number"
+                  },
                   "endsAt": {
                     "type": "number"
+                  },
+                  "shopEndsAt": {
+                    "type": "number"
+                  },
+                  "cover": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -20713,6 +21159,24 @@
                 ],
                 "additionalProperties": false
               }
+            },
+            "chosen": {
+              "type": "string"
+            },
+            "shown": {
+              "type": "object",
+              "properties": {
+                "cover": {
+                  "type": "string"
+                },
+                "startsAt": {
+                  "type": "string"
+                },
+                "endsAt": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
             },
             "screen": {
               "type": "object",
@@ -20792,6 +21256,15 @@
                       "cover"
                     ]
                   }
+                },
+                "startsAt": {
+                  "type": "number"
+                },
+                "endsAt": {
+                  "type": "number"
+                },
+                "cover": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -23887,6 +24360,48 @@
             "id": {
               "type": "string"
             },
+            "messages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "question",
+                      "answer",
+                      "update",
+                      "done"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "from",
+                  "kind",
+                  "text",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "chain": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parent": {
+              "type": "string"
+            },
             "fromSession": {
               "type": "string"
             },
@@ -23915,6 +24430,7 @@
               "type": "string",
               "enum": [
                 "running",
+                "waiting",
                 "done",
                 "failed"
               ]

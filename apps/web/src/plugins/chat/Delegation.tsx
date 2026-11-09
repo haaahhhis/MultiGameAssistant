@@ -1,6 +1,6 @@
-import { createContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { AdgClient, ChatItem } from '@adg/client-core'
-import { BY_YOU, type HandOff, type RelayNote, type TaskNote } from '@adg/protocol'
+import { BY_YOU, type HandOff, type RelayNote, type TaskNote, type ThreadMessage, type ThreadNote } from '@adg/protocol'
 import { MAIN, agentOf, useLastReplies, useRoles, type Agent } from '../../agents.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
@@ -20,6 +20,9 @@ export const DELEGATE_TOOL = 'agent_delegate'
 
 /** The hand-offs from and to the conversation on screen, for its rows. */
 export const HandOffsOf = createContext<readonly HandOff[]>([])
+
+/** The name of the agent whose conversation is on screen: the other end of what it says and is told. */
+export const ConversationAgent = createContext<string>(MAIN.name)
 
 export function exchangeHref(handOff: HandOff): string {
   return `#/h/${encodeURIComponent(handOff.id)}`
@@ -43,6 +46,7 @@ function useAgent(client: AdgClient, nameOrId: string): Agent | undefined {
 type State = { label: string; tone: string }
 const STATE: Readonly<Record<HandOff['state'], State>> = {
   running: { label: '进行中', tone: 'running' },
+  waiting: { label: '等回答', tone: 'running' },
   done: { label: '交回了', tone: 'ok' },
   failed: { label: '没做成', tone: 'failed' },
 }
@@ -63,16 +67,17 @@ function ExchangeLine({ from, to, avatar, title, state, href }: { from: string; 
     : <a className={`exchange-line tone-${state?.tone ?? ''}`} href={href} title="看它们说了什么">{body}</a>
 }
 
-/** Work 助手 handed on (agent_delegate), in 助手's conversation: one line; what was said is a click away. */
+/** Work this agent handed on (agent_delegate), in its conversation: one line; what was said is a click away. */
 export function DelegationCard({ client, item, handOffs }: { client: AdgClient; item: Extract<ChatItem, { kind: 'tool' }>; handOffs: readonly HandOff[] }) {
   const { agent: name, task } = useMemo(() => argsOf(item.arguments), [item.arguments])
   const agent = useAgent(client, name)
+  const self = useContext(ConversationAgent)
   const handOff = handOffs.find(h => h.callId === item.callId)
   const refused = item.status === 'error' || item.status === 'interrupted'
   const state = refused ? STATE.failed : handOff === undefined ? (item.status === 'running' ? STATE.running : undefined) : STATE[handOff.state]
   return (
     <div className="delegation">
-      <ExchangeLine from={MAIN.name} to={agent?.name ?? name} avatar={agent} title={handOff?.title ?? task.split('\n')[0] ?? ''} state={state}
+      <ExchangeLine from={self} to={agent?.name ?? name} avatar={agent} title={handOff?.title ?? task.split('\n')[0] ?? ''} state={state}
         href={handOff === undefined ? undefined : exchangeHref(handOff)} />
       {refused && <div className="delegation-failed"><Icon name="alert" />{item.result ?? item.error ?? '没有交出去'}</div>}
     </div>
@@ -84,7 +89,7 @@ export function HandOffStrip({ client, handOff }: { client: AdgClient; handOff: 
   const agent = useAgent(client, handOff.to)
   return (
     <div className="delegation app-handoff">
-      <ExchangeLine from={handOff.by} to={agent?.name ?? handOff.to} avatar={agent} title={handOff.title} state={STATE.running} href={exchangeHref(handOff)} />
+      <ExchangeLine from={handOff.by} to={agent?.name ?? handOff.to} avatar={agent} title={handOff.title} state={STATE[handOff.state]} href={exchangeHref(handOff)} />
     </div>
   )
 }
@@ -92,11 +97,25 @@ export function HandOffStrip({ client, handOff }: { client: AdgClient; handOff: 
 /** A reply that came back (`（「游戏」交回了…）`): one line from the agent; its words are in the exchange. */
 export function RelayMessage({ client, note, handOffs }: { client: AdgClient; note: RelayNote; handOffs: readonly HandOff[] }) {
   const agent = useAgent(client, note.agent)
+  const self = useContext(ConversationAgent)
   const handOff = handOffs.filter(h => h.state !== 'running' && h.title === note.title && (h.to === agent?.id || h.to === note.agent)).at(-1)
   const href = handOff !== undefined ? exchangeHref(handOff) : agent !== undefined ? `#/a/${encodeURIComponent(agent.id)}` : undefined
   return (
     <div className="delegation relay-line">
-      <ExchangeLine from={note.agent} to={MAIN.name} avatar={agent} title={note.title} state={note.ok ? STATE.done : { label: '没有做完', tone: 'failed' }} href={href} />
+      <ExchangeLine from={note.agent} to={self} avatar={agent} title={note.title} state={note.ok ? STATE.done : { label: '没有做完', tone: 'failed' }} href={href} />
+    </div>
+  )
+}
+
+/** Something said in a thread while the work goes on: a line from whoever said it; the thread opens from it. */
+export function ThreadNoteLine({ client, note, handOffs }: { client: AdgClient; note: ThreadNote; handOffs: readonly HandOff[] }) {
+  const agent = useAgent(client, note.from)
+  const self = useContext(ConversationAgent)
+  const handOff = handOffs.find(h => h.id === note.thread)
+  return (
+    <div className="delegation task-line">
+      <ExchangeLine from={note.from} to={self} avatar={agent} title={note.text.split('\n')[0] ?? note.title} state={{ label: note.kind === 'question' ? '问' : '答', tone: note.kind === 'question' ? 'asked' : 'ok' }}
+        href={handOff === undefined ? undefined : exchangeHref(handOff)} />
     </div>
   )
 }
@@ -208,8 +227,9 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
             <Markdown text={item.task} />
             {item.expecting !== undefined && <div className="delegation-expecting">要交回：{item.expecting}</div>}
           </ExchangeMessage>
-          {item.state === 'running'
-            ? <ExchangeMessage who={toName} agent={to}><Working client={client} handOff={item} name={toName} /></ExchangeMessage>
+          {(item.messages ?? []).map((m, i) => <ThreadLine key={i} client={client} message={m} />)}
+          {item.state === 'running' || item.state === 'waiting'
+            ? <ExchangeMessage who={toName} agent={to}>{item.state === 'waiting' ? <div className="delegation-now"><span className="tool-spinner" role="img" aria-label="等回答" /><span>等{item.by}回答</span></div> : <Working client={client} handOff={item} name={toName} />}</ExchangeMessage>
             : <ExchangeMessage who={toName} agent={to} failed={item.state === 'failed'}><Markdown text={item.reply ?? (item.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>}
         </div></div>
       </div>
@@ -218,6 +238,15 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
       </footer>
     </section>
   )
+}
+
+const KIND_LABEL: Readonly<Record<ThreadMessage['kind'], string>> = { question: '问', answer: '答', update: '进展', done: '结论' }
+
+/** One thing said in the thread (`done` repeats as the conclusion below, so it is not drawn twice). */
+function ThreadLine({ client, message }: { client: AdgClient; message: ThreadMessage }) {
+  const agent = useAgent(client, message.from)
+  if (message.kind === 'done') return null
+  return <ExchangeMessage who={`${message.from} · ${KIND_LABEL[message.kind]}`} agent={agent}><Markdown text={message.text} /></ExchangeMessage>
 }
 
 function ExchangeMessage({ who, agent, failed = false, children }: { who: string; agent: Agent | undefined; failed?: boolean; children: React.ReactNode }) {

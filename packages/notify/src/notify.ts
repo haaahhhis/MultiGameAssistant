@@ -31,7 +31,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { type ApprovalRequested, type ChannelStatus, type ChatNotice, type QuestionAnswerItem, type QuestionItem, type QuestionRequested } from '@adg/protocol'
-import { MAIN } from './handoff.ts'
+import { MAIN, type HandOffDesk } from './handoff.ts'
 import { textReply, type Reply } from './reply.ts'
 
 export interface NoticeAction {
@@ -135,6 +135,10 @@ export interface Conversations {
    * @throws what the turn threw (called off, timed out), after recording it.
    */
   handOff(input: HandOffInput): Promise<Reply>
+  /** Why this work may not be handed on (a chain coming back on itself, too deep, too long), in words for the agent asking. */
+  handOffRefusal?(fromSession: string, to: string, fromAgent: string): string | undefined
+  /** The hand-offs under way, for saying something in one. */
+  readonly desk?: HandOffDesk
   /**
    * A one-off session; `defaultModel`: use the default model (else the one last used in the UI);
    * `focus`: the scripts and games it is about; `role`: the role agent it belongs to, created with the
@@ -162,7 +166,7 @@ export interface HandOffInput {
    * The conversation that asked, where the reply goes back; `callId`: its agent_delegate call;
    * `asker`: `by` as that conversation's agent knows itself (the reply then says 你).
    */
-  readonly from?: { readonly sessionId: string; readonly callId?: string; readonly asker?: string }
+  readonly from?: { readonly sessionId: string; readonly callId?: string; readonly asker?: string; readonly agent?: string }
   readonly relay?: boolean
   /** The asking agent's turn on the reply, once over (a chat channel forwards it). */
   readonly relayed?: (reply: Reply) => void

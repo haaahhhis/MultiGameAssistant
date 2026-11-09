@@ -2,9 +2,9 @@ import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { useFollowTail } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { isQuiet, parseRelay, parseTask, splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
-import { DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage } from './Delegation.tsx'
+import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -49,7 +49,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   const agentName = roles.find(r => r.id === (item === undefined ? undefined : agentIdOf(item, roles)))?.name ?? MAIN.name
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
-  const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && h.state === 'running')
+  const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && (h.state === 'running' || h.state === 'waiting'))
   const scroller = useRef<HTMLDivElement>(null)
   const tail = useFollowTail(STICK_THRESHOLD)
   const stick = tail.following
@@ -77,6 +77,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   return (
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
+    <ConversationAgent.Provider value={agentName}>
     <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
       <div className="chat-inner">
         {state.hasMore && (
@@ -106,6 +107,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
         {readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
+    </ConversationAgent.Provider>
     </HandOffsOf.Provider>
     </ImageClient.Provider>
   )
@@ -220,6 +222,8 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       // Not the person's words: a reply another agent sent back, or work handed here (Delegation.tsx).
       const relay = item.pending === undefined ? parseRelay(item.text) : undefined
       if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} handOffs={handOffs} />
+      const thread = item.pending === undefined ? parseThreadNote(item.text) : undefined
+      if (thread !== undefined && client !== null) return <ThreadNoteLine client={client} note={thread} handOffs={handOffs} />
       const task = item.pending === undefined ? parseTask(item.text) : undefined
       if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
