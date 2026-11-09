@@ -45,6 +45,10 @@ const llm = await startFakeLlm({
       if (last?.role !== 'tool') return call('script_list', {})
       return { delayMs: Number(process.env.E2E_CHILD_DELAY ?? 3000), text: '子任务结果：第 212 行报错' }
     }
+    if (said.includes('E2E-STYLE')) {
+      seen.styled = body
+      return { text: '（脚本）好的。' }
+    }
     // A sub-agent that takes long enough to be stopped.
     if (said.includes('E2E-HANG') && !all.includes('E2E-STOP-PARENT')) {
       seen.hung = true
@@ -132,7 +136,7 @@ const until = async (what, check, ms = 60_000) => {
 
 try {
   await saveFakeProvider(rpc, `${llm.url}/v1`)
-  await rpc('persona/set', { persona: { style: 'butler', name: NAME } })
+  await rpc('persona/set', { persona: { style: 'butler' }, agents: { main: { name: NAME } } })
   const home = async agentId => {
     // A conversation of its own for this run: the fake model reads the history.
     await rpc('sessions/archive', { sessionId: (await rpc('agents/home', { agentId })).sessionId })
@@ -169,11 +173,11 @@ try {
   const leadSystem = systemOf(seen.lead[0])
   const mainSystem = systemOf(seen.main[0])
   for (const [who, text, wanted] of [
-    ['脚本', leadSystem, ['你是「脚本」（scripts）', '上级是「助手」（main）', '「游戏」（games）', '「干预」（intervene）', '没有任何标注：用户本人']],
+    ['脚本', leadSystem, ['你是「脚本」（scripts）', '上级是「助手」（main，用户也叫它「' + NAME + '」）', '「游戏」（games）', '「干预」（intervene）', '没有任何标注：用户本人']],
     ['助手', mainSystem, ['你是「助手」（main）', '最上级', '「脚本」（scripts）', '没有任何标注：用户本人']],
   ]) for (const part of wanted) if (!text.includes(part)) fail(`${who} was not told: ${part}`)
   if (childSystem.includes('# 团队')) fail('a sub-agent has no team of its own')
-  if (leadSystem.includes(NAME)) fail("脚本 was given the name that is 助手's")
+  if (leadSystem.includes(`你的名字是「${NAME}」`)) fail("脚本 was given the name that is 助手's")
   if (!mainSystem.includes(`你的名字是「${NAME}」`)) fail('助手 did not get its name')
   if (childSystem.includes('# 回复风格')) fail('a sub-agent got a reply style: its answer is data')
   if (!leadSystem.includes(STYLE) || !mainSystem.includes(STYLE)) fail('the reply style did not reach the agents')
@@ -231,12 +235,26 @@ try {
   await until('脚本 to be told it was stopped', () => seen.toldStopped === true, 15_000)
   step('the person stopped a sub-task; its parent was told and went on', hanging.id)
 
+  // The reply style: one for all, an agent's own over it, and nothing but the voice changes.
+  const before = seen.lead.at(-1)
+  const settings = await rpc('persona/set', { persona: { style: 'butler' }, agents: { main: { name: NAME }, scripts: { style: 'lively', callUser: '指挥官', peerStyle: 'same' } } })
+  if (!settings.prompts.main?.includes(STYLE) || !settings.prompts.main.includes(NAME) || settings.prompts.main.includes('指挥官')) fail(`助手 should follow the shared style: ${settings.prompts.main}`)
+  if (!settings.prompts.games?.includes('用平实的话')) fail('an agent should talk plainly to other agents by default')
+  await rpc('session/prompt', { sessionId: scripts, requestId: `e2e-style-${Date.now()}`, text: 'E2E-STYLE 你好', mode: 'queue' })
+  const styled = await until('脚本 to answer in its own style', () => seen.styled)
+  for (const part of ['语气轻松活泼', '称呼用户为「指挥官」', '和其他 agent 说话时也用这个方式']) if (!systemOf(styled).includes(part)) fail(`脚本's own style did not reach it: ${part}`)
+  if (systemOf(styled).includes(STYLE)) fail('脚本 kept the shared style over its own')
+  const voiceless = body => systemOf(body).replace(/# 回复风格[\s\S]*?(?=\n# |$)/, '')
+  if (JSON.stringify(toolsOf(styled)) !== JSON.stringify(toolsOf(before))) fail('the reply style changed what 脚本 can do')
+  if (voiceless(styled) !== voiceless(before)) fail(`the reply style changed more than the voice: ${voiceless(styled).length} against ${voiceless(before).length}`)
+  step('a style of its own reached 脚本, and changed nothing but the voice')
+
   console.log(`\nagents end-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)
   process.exitCode = 1
 } finally {
-  await rpc('persona/set', { persona: { style: 'default' } }).catch(() => {})
+  await rpc('persona/set', { persona: { style: 'default' }, agents: {} }).catch(() => {})
   await removeFakeProvider(rpc)
   gateway.close()
   await llm.close()

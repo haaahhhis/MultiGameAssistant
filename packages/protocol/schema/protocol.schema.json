@@ -22453,16 +22453,19 @@
                 "butler"
               ]
             },
-            "name": {
-              "type": "string",
-              "maxLength": 20
-            },
             "callUser": {
               "type": "string",
               "maxLength": 20
             },
             "custom": {
               "type": "string"
+            },
+            "peerStyle": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "same"
+              ]
             }
           },
           "required": [
@@ -22470,13 +22473,65 @@
           ],
           "additionalProperties": false
         },
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "style": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "concise",
+                  "patient",
+                  "lively",
+                  "buddy",
+                  "butler"
+                ]
+              },
+              "callUser": {
+                "type": "string",
+                "maxLength": 20
+              },
+              "custom": {
+                "type": "string"
+              },
+              "peerStyle": {
+                "type": "string",
+                "enum": [
+                  "plain",
+                  "same"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 20
+              }
+            },
+            "additionalProperties": false
+          }
+        },
         "prompt": {
           "type": "string"
+        },
+        "prompts": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "persona",
-        "prompt"
+        "agents",
+        "prompt",
+        "prompts"
       ],
       "additionalProperties": false
     },
@@ -22498,26 +22553,71 @@
                 "butler"
               ]
             },
-            "name": {
-              "type": "string",
-              "maxLength": 20
-            },
             "callUser": {
               "type": "string",
               "maxLength": 20
             },
             "custom": {
               "type": "string"
+            },
+            "peerStyle": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "same"
+              ]
             }
           },
           "required": [
             "style"
           ],
           "additionalProperties": false
+        },
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "style": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "concise",
+                  "patient",
+                  "lively",
+                  "buddy",
+                  "butler"
+                ]
+              },
+              "callUser": {
+                "type": "string",
+                "maxLength": 20
+              },
+              "custom": {
+                "type": "string"
+              },
+              "peerStyle": {
+                "type": "string",
+                "enum": [
+                  "plain",
+                  "same"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 20
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "required": [
-        "persona"
+        "persona",
+        "agents"
       ],
       "additionalProperties": false
     },
@@ -22539,16 +22639,19 @@
                 "butler"
               ]
             },
-            "name": {
-              "type": "string",
-              "maxLength": 20
-            },
             "callUser": {
               "type": "string",
               "maxLength": 20
             },
             "custom": {
               "type": "string"
+            },
+            "peerStyle": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "same"
+              ]
             }
           },
           "required": [
@@ -22556,13 +22659,65 @@
           ],
           "additionalProperties": false
         },
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "style": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "concise",
+                  "patient",
+                  "lively",
+                  "buddy",
+                  "butler"
+                ]
+              },
+              "callUser": {
+                "type": "string",
+                "maxLength": 20
+              },
+              "custom": {
+                "type": "string"
+              },
+              "peerStyle": {
+                "type": "string",
+                "enum": [
+                  "plain",
+                  "same"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 20
+              }
+            },
+            "additionalProperties": false
+          }
+        },
         "prompt": {
           "type": "string"
+        },
+        "prompts": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "persona",
-        "prompt"
+        "agents",
+        "prompt",
+        "prompts"
       ],
       "additionalProperties": false
     },

@@ -39,7 +39,7 @@ import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
 import { skillFocusTool } from './skill-focus-tool.ts'
-import { IDENTITY_PROMPT, PersonaStore, personaPrompt } from './persona.ts'
+import { IDENTITY_PROMPT, PersonaStore, personaOf, personaPrompt } from './persona.ts'
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
 import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
@@ -774,13 +774,20 @@ export class AdgGateway extends Service {
     if (config.dataDir !== undefined) {
       const persona = new PersonaStore(config.dataDir)
       const loaded = persona.load()
-      const answer = () => ({ persona: persona.current, prompt: personaPrompt(persona.current) })
+      const answer = () => {
+        const agents = [MAIN_AGENT.id, ...this.roles.list().map(role => role.id)]
+        return {
+          ...persona.current,
+          prompt: personaPrompt(persona.current.persona),
+          prompts: Object.fromEntries(agents.map(id => [id, personaPrompt(personaOf(persona.current, id))])),
+        }
+      }
       ctx.effect(() => this.registry.register({
         id: PERSONA_CAPABILITY,
         version: 1,
         methods: {
           'persona/get': async () => { await loaded; return answer() },
-          'persona/set': async params => { await loaded; await persona.set((params as RequestParams<'persona/set'>).persona); return answer() },
+          'persona/set': async params => { await loaded; await persona.set(params as RequestParams<'persona/set'>); return answer() },
         },
       }), 'adg-gateway capability persona')
       // Its section is each agent's own (narrow): after the harness's guidance, before the deployment suffix (10200).
@@ -1015,8 +1022,9 @@ Content-Length: 0
       // A sub-agent answers its parent alone, and its answer is data: no team, no reply style.
       if (spec.subAgentOf === undefined) {
         const persona = this.persona
-        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:team', order: 10_096, interpolate: false, text: () => teamPrompt(spec, MAIN_AGENT_MEMBER, this.roles.list()) }))
-        if (persona !== undefined) disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:persona', order: 10_100, interpolate: false, text: () => personaPrompt(persona.current, { named: spec === MAIN_AGENT }) }))
+        const known = (member: { readonly id: string; readonly name: string; readonly description: string }) => ({ ...member, alias: persona?.of(member.id).name })
+        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:team', order: 10_096, interpolate: false, text: () => teamPrompt(spec, known(MAIN_AGENT_MEMBER), this.roles.list().map(known)) }))
+        if (persona !== undefined) disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:persona', order: 10_100, interpolate: false, text: () => personaPrompt(persona.of(spec.id)) }))
       }
     } catch (error) {
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)

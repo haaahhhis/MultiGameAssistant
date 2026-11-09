@@ -19,9 +19,12 @@ export const BY_YOU = '你'
  */
 export const QUIET = '（不用告诉用户）'
 
-/** A reply that is only `QUIET` (give or take a full stop and spaces). */
+/** The mark is in Chinese: anything else around it (a kaomoji has letters of its own) is decoration. What this misses is shown to the person, which is the safe way to be wrong. */
+const wordsOf = (text: string) => text.replace(/[^\p{Script=Han}a-zA-Z0-9]/gu, '')
+
+/** A reply that is only `QUIET`: a reply style may dress it up with punctuation or an emoji, and it still means this. */
 export function isQuiet(text: string): boolean {
-  return text.replace(/[。.\s]/g, '') === QUIET
+  return wordsOf(text) === wordsOf(QUIET)
 }
 
 const RETURNS = '（做完后你这一轮的最后一段回复会原样交回去：把结论写在那里。）'
