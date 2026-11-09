@@ -13,6 +13,8 @@ test('the persona becomes one prompt section, nothing at all by default, and alw
   assert.match(text, /管家/)
   assert.match(text, /用户对你说话方式的要求：汇报时先说有没有失败/)
   assert.match(text, /不改变做事的规则/)
+  assert.doesNotMatch(personaPrompt({ style: 'butler', name: '小助' }, { named: false }), /小助/, 'the name is one agent\'s')
+  assert.equal(personaPrompt({ style: 'default', name: '小助' }, { named: false }), '', 'nothing left for the others')
   const dir = mkdtempSync(join(tmpdir(), 'adg-persona-'))
   const store = new PersonaStore(dir)
   await store.set({ style: 'lively', name: '  ', callUser: ' 指挥官 ' })
