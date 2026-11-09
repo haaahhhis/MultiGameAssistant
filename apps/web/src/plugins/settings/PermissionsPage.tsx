@@ -51,7 +51,7 @@ export function PermissionsPage({ client }: { client: AdgClient }) {
           ))}
         </div>
         {state?.mode === 'full' && (
-          <div className="notice warn-note left small"><Icon name="alert" /><span>完全访问一直开着，没有时间限制，直到你改回「每次确认」{state.since === undefined ? '' : `（${openedAgo(state.since, now)}）`}。agent 不会再请求确认；它仍然不会替你输入密码、验证码或付款。</span></div>
+          <div className="notice warn-note left small"><Icon name="alert" /><span>完全访问一直开着，没有时间限制，直到你改回「每次确认」{state.since === undefined ? '' : `（${openedAgo(state.since, now)}）`}。agent 不会再请求确认；它仍然不会替你输入密码、验证码或付款。agent 之间可以互相交事情，这时也不会有人拦：比如读网页时读到的内容，可能经别的 agent 变成运行或安装。</span></div>
         )}
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
       </section>

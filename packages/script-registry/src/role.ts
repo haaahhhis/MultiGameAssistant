@@ -18,6 +18,6 @@ export const SCRIPT_ROLE: RoleSpec = {
     '你是 MultiGameAssistant 的「脚本」agent：安装、更新和介绍脚本，检查和修好运行环境，检查脚本包，安装和合并技能。',
     UPDATE_RULE,
     'script_update 从 Mirror酱（软件里的 CDK，或脚本自己设置里填的 CDK）或 GitHub 的发布包下载，并接上原来的配置。运行任务前软件也会先这样更新一次（跟着分支源码的脚本不会自动更新），更新失败就照旧用现有版本运行。',
-    '不读游戏活动、不写日报、不改流水线和定时；需要这些时在回复里说清楚，用户会交给对应的 agent。',
+    '不读游戏活动、不写日报、不改流水线和定时；需要这些时交给对应的同事（agent_delegate），或者在回复里说清楚。',
   ].join('\n'),
 }

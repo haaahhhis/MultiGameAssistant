@@ -157,8 +157,24 @@ export const AGENTS_CAPABILITY = 'agents'
  * agent's conversation as a message, and that agent's reply comes back into
  * `fromSession` as a message. Only the messages cross; each keeps its own steps.
  */
+export const ThreadMessage = z.object({
+  /** Who said it, by name. */
+  from: z.string(),
+  /** `question` waits for an answer; `update` only informs; `done` is the conclusion. */
+  kind: z.enum(['question', 'answer', 'update', 'done']),
+  text: z.string(),
+  at: z.number(),
+})
+export type ThreadMessage = z.infer<typeof ThreadMessage>
+
 export const HandOff = z.object({
   id: z.string(),
+  /** What the two have said since the work was handed over (docs/design/agent-roles.md §14.3). */
+  messages: z.array(ThreadMessage).optional(),
+  /** The agents the work has passed through, first asker first (ids); a chain does not come back on itself. */
+  chain: z.array(z.string()).optional(),
+  /** The hand-off this one was opened from inside of. */
+  parent: z.string().optional(),
   /** The conversation that asked, where the reply goes back. */
   fromSession: z.string(),
   /** 助手's `agent_delegate` call that asked; absent: the app asked (`by`). */
@@ -171,7 +187,8 @@ export const HandOff = z.object({
   title: z.string(),
   task: z.string(),
   expecting: z.string().optional(),
-  state: z.enum(['running', 'done', 'failed']),
+  /** `waiting`: the agent doing it asked something and waits for the answer. */
+  state: z.enum(['running', 'waiting', 'done', 'failed']),
   /** Its reply; for a failure, why. */
   reply: z.string().optional(),
   startedAt: z.number(),

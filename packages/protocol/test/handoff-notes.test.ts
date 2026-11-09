@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, relayMessage, reminderLine, reminderPrompts, taskMessage } from '../src/handoff-notes.ts'
+import { BY_YOU, QUIET, isQuiet, parseRelay, parseTask, parseThreadNote, relayMessage, reminderLine, reminderPrompts, taskMessage, threadMessage } from '../src/handoff-notes.ts'
 
 test('work handed to an agent says who asked and what, and reads back the same', () => {
   const text = taskMessage('监控', 'MAA · 日常：出错', '先截图看看\n再决定', true)
@@ -37,4 +37,27 @@ test('a reminder 助手 set, as dsh delivers it, reads as what it was for; a bat
   const batch = ['[SCHEDULE REMINDER BATCH]', 'This is a scheduled message from the user', `reminders_json: ${JSON.stringify([{ schedule_id: 'a', occurrence_at: 'x', reminder_prompt: '喝水' }, { schedule_id: 'b', occurrence_at: 'x', reminder_prompt: '看日报' }])}`].join('\n')
   assert.equal(reminderLine(reminderPrompts(batch)!), '定时提醒：喝水；看日报')
   assert.equal(reminderPrompts('你好'), undefined)
+})
+
+test('a thread says where to go on talking, and what is said in it reads back', () => {
+  const task = parseTask(taskMessage('助手', '装 MAA', '把 MAA 装好', true, 'h-1'))!
+  assert.deepEqual({ thread: task.thread, returns: task.returns, body: task.body }, { thread: 'h-1', returns: true, body: '把 MAA 装好' })
+  assert.equal(parseTask(taskMessage('助手', '装 MAA', '把 MAA 装好'))?.thread, undefined, 'older messages have none')
+  const question = threadMessage({ from: '脚本', kind: 'question', thread: 'h-1', title: '装 MAA', text: '今晚装吗？' })
+  assert.deepEqual(parseThreadNote(question), { from: '脚本', kind: 'question', thread: 'h-1', title: '装 MAA', text: '今晚装吗？' })
+  assert.match(question, /agent_message/)
+  assert.equal(parseThreadNote(threadMessage({ from: '助手', kind: 'answer', thread: 'h-1', title: '装 MAA', text: '今晚' }))?.kind, 'answer')
+  assert.equal(parseThreadNote('（「脚本」交回了你交给它的事：装 MAA）'), undefined)
+  assert.equal(parseTask(question), undefined, 'not mistaken for work handed over')
+  assert.equal(parseRelay(question), undefined)
+})
+
+test('what comes back to a lead working on something is for that, not for telling the person', () => {
+  const toLead = relayMessage({ agent: '游戏', asker: '你', title: '哪个服', ok: true, reply: '国服', toLead: true })
+  assert.match(toLead, /接着做你手上的事/)
+  assert.doesNotMatch(toLead, /告诉用户/)
+  assert.equal(parseRelay(toLead)?.reply, '国服')
+  const toMain = relayMessage({ agent: '脚本', asker: '你', title: '装 MAA', ok: true, reply: '装好了', consulted: ['游戏'] })
+  assert.match(toMain, /还问了：游戏/)
+  assert.match(parseRelay(toMain)?.reply ?? '', /^装好了/)
 })

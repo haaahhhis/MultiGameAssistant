@@ -28,7 +28,8 @@ const lastTool = body => (body.messages ?? []).findLast(m => m.role === 'assista
 
 const NAME = '小满'
 const STYLE = '稳重周到的管家'
-const seen = { child: [], lead: [], main: [] }
+const seen = { child: [], lead: [], main: [], peer: [] }
+let threadId
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
 
 const llm = await startFakeLlm({
@@ -43,6 +44,29 @@ const llm = await startFakeLlm({
       seen.child.push(body)
       return { delayMs: 3000, text: '子任务结果：第 212 行报错' }
     }
+    const system = systemOf(body)
+    // 游戏, asked by its colleague.
+    if (system.includes('你的角色：游戏')) {
+      seen.peer.push(body)
+      return { text: '用户玩国服。' }
+    }
+    // 脚本, on the thread: tries to hand back up the chain, asks a colleague, asks 助手, concludes.
+    if (system.includes('你的角色：脚本') && all.includes('E2E-THREAD-TASK') && !said.includes('E2E-LEAD')) {
+      seen.lead.push(body)
+      if (said.includes('今晚装')) return { text: '结论：按国服今晚装好了。' }
+      if (said.includes('E2E-THREAD-TASK')) {
+        threadId = /线索是 (\S+)：/.exec(said)?.[1]
+        return call('agent_delegate', { agent: '助手', task: '你替我决定 E2E-BACK' })
+      }
+      if (last?.role === 'tool' && lastTool(body) === 'agent_delegate' && all.includes('E2E-BACK') && !all.includes('E2E-PEER')) {
+        return { toolCalls: [{ name: 'agent_delegate', arguments: { agent: '游戏', task: 'E2E-PEER 用户玩哪个服？', expecting: '服' } }] }
+      }
+      if (last?.role === 'tool' && lastTool(body) === 'agent_delegate') return { text: '问了游戏，等它回来。' }
+      if (said.includes('用户玩国服')) return call('agent_message', { thread: threadId, kind: 'question', text: 'E2E-QUESTION 现在装还是今晚装？' })
+      if (last?.role === 'tool' && lastTool(body) === 'agent_message') return { text: '问了助手，等它回答。' }
+      if (said.includes('今晚装')) return { text: '结论：按国服今晚装好了。' }
+      return { text: '（脚本）好的。' }
+    }
     // 脚本, as the lead.
     if (all.includes('E2E-LEAD') && !systemOf(body).includes('你的角色：助手')) {
       seen.lead.push(body)
@@ -55,6 +79,12 @@ const llm = await startFakeLlm({
     seen.main.push(body)
     if (last?.role === 'tool' && lastTool(body) === 'agent_delegate') return { text: '已经交给「脚本」了。' }
     if (said.includes('E2E-DELEGATE')) return call('agent_delegate', { agent: '脚本', task: 'E2E-LEAD 看看 MAA 为什么报错', expecting: '报错原因' })
+    if (said.includes('E2E-THREAD ')) return call('agent_delegate', { agent: '脚本', task: 'E2E-THREAD-TASK 装 MAA' })
+    if (said.includes('E2E-QUESTION')) {
+      const id = /在线索 (\S+) 里问你/.exec(said)?.[1]
+      return call('agent_message', { thread: id, kind: 'answer', text: '今晚装' })
+    }
+    if (last?.role === 'tool' && lastTool(body) === 'agent_message') return { text: '回答了。' }
     if (/^（「[^」]+」(交回了|没有做完)/.test(said)) return { text: `（助手转述）${said.split('\n\n')[1] ?? ''}` }
     return { text: '（助手）好的。' }
   },
@@ -91,12 +121,15 @@ try {
   await saveFakeProvider(rpc, `${llm.url}/v1`)
   await rpc('persona/set', { persona: { style: 'butler', name: NAME } })
   const home = async agentId => {
+    // A conversation of its own for this run: the fake model reads the history.
+    await rpc('sessions/archive', { sessionId: (await rpc('agents/home', { agentId })).sessionId })
     const { sessionId } = await rpc('agents/home', { agentId })
     await until(`the fake model route for ${agentId}`, () => rpc('session/selectModel', { sessionId, provider: FAKE_PROVIDER, model: FAKE_MODEL }).then(() => true, () => false))
     return sessionId
   }
   const main = await home('main')
   const scripts = await home('scripts')
+  await home('games')
 
   const since = Date.now()
   await rpc('session/prompt', { sessionId: main, requestId: `e2e-${since}`, text: 'E2E-DELEGATE 帮我看看 MAA', mode: 'queue' })
@@ -140,6 +173,30 @@ try {
 
   await until('助手 to get the conclusion', () => seen.main.some(b => newSince(b).includes('结论：第 212 行报错')))
   step('助手 was given the conclusion')
+
+  // Layer 2: more than one question and one answer, and leads talking directly.
+  const threadSince = Date.now()
+  await rpc('session/prompt', { sessionId: main, requestId: `e2e-t-${threadSince}`, text: 'E2E-THREAD 让脚本装 MAA', mode: 'queue' })
+  const thread = await until('the thread to close', async () => (await rpc('handoffs/list', { sessionId: scripts })).items.find(h => h.startedAt >= threadSince && h.by === '助手' && h.state !== 'running' && h.state !== 'waiting'), 90_000)
+  if (thread.state !== 'done') fail(`the thread ended as ${thread.state}: ${thread.reply}`)
+  const kinds = (thread.messages ?? []).map(m => `${m.from}:${m.kind}`).join(' ')
+  if (kinds !== '脚本:question 助手:answer') fail(`the thread went: ${kinds}; ${JSON.stringify(thread).slice(0, 700)}; all: ${JSON.stringify((await rpc("handoffs/list", { sessionId: scripts })).items.filter(h => h.startedAt >= threadSince).map(h => [h.id, h.by, h.to, h.state, h.reply])).slice(0, 700)}; 脚本 was asked: ${seen.lead.slice(-6).map(b => JSON.stringify(b.messages?.at(-1)).slice(0, 160)).join(" | ")}`)
+  if (!thread.reply?.includes('按国服今晚装好了')) fail(`it concluded without what it heard: ${thread.reply}`)
+  step('脚本 asked 助手 mid-way, was answered, and went on', kinds)
+
+  const peer = (await rpc('handoffs/list', { sessionId: scripts })).items.find(h => h.startedAt >= threadSince && h.by === '脚本')
+  if (peer?.to !== 'games' || peer.state !== 'done') fail(`脚本 did not ask 游戏 directly: ${JSON.stringify(peer)}`)
+  if (peer.parent !== thread.id || peer.chain?.join('>') !== 'main>scripts>games') fail(`the chain is wrong: ${JSON.stringify(peer)}`)
+  if (seen.main.some(b => newSince(b).includes('E2E-PEER'))) fail('助手 was woken for what two leads said to each other')
+  step('脚本 asked 游戏 directly, on the chain, without waking 助手', peer.chain.join(' → '))
+
+  const told = await until('助手 to hear how it ended', () => seen.main.find(b => newSince(b).includes('按国服今晚装好了')))
+  if (!newSince(told).includes('还问了：游戏')) fail('助手 was not told who it asked')
+  step('助手 heard the conclusion, and who was consulted')
+
+  const back = seen.lead.find(b => { const m = b.messages?.at(-1); return m?.role === 'tool' && textOf(m.content).includes('绕回去了') })
+  if (back === undefined) fail('脚本 was not told that handing back to 助手 comes back on itself')
+  step('handing back up the chain is refused, with what to do instead')
 
   console.log(`\nagents end-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {
