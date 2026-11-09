@@ -55,6 +55,17 @@ test('focus survives a restart; the first skill of a name wins and its disposer 
   assert.equal(second.ownerOf('maa-daily')?.scripts?.[0], 'maa', 'the duplicate did not replace or remove the first')
 })
 
+test('a sub-agent works on what its parent is working on, until it says otherwise', async () => {
+  const scope = new SkillScope(undefined, quiet)
+  scope.inheritFrom(sessionId => (sessionId === 'child' ? 'lead' : undefined))
+  await scope.setFocus('lead', { scripts: ['maa'] })
+  assert.deepEqual(scope.focusOf('child')?.scripts, ['maa'])
+  assert.deepEqual(scope.focusOf('other')?.scripts, [], 'nobody else\'s')
+  await scope.setFocus('child', { scripts: ['other-script'] })
+  assert.deepEqual(scope.focusOf('child')?.scripts, ['other-script'])
+  assert.deepEqual(scope.focusOf('lead')?.scripts, ['maa'], 'and its own focus does not move its parent\'s')
+})
+
 test('skills a user invokes by name are read like dsh reads them', () => {
   const user = (text: string) => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
   assert.deepEqual(invokedSkills([user('/maa-daily 跑一下'), user('再用 /game-arknights'), { source: { kind: 'assistant' }, content: [{ type: 'text', text: '/m7-daily' }] }, user('a/b not-a-skill')]), ['maa-daily', 'game-arknights'])

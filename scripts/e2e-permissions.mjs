@@ -125,8 +125,9 @@ try {
   await rpc('permissions/set', { mode: 'ask' })
   await rpc('permissions/area/set', { area: 'shell', policy: 'allow' })
   const areaAsked = []
-  waitFor(m => m.method === 'approval/requested' && m.params.sessionId === games, 'an approval', 300_000).then(p => areaAsked.push(p), () => {})
-  await promptGames('再运行一条命令')
+  // In a conversation of its own: an agent's one conversation has no commands, its sub-agents do.
+  waitFor(m => m.method === 'approval/requested' && m.params.sessionId === sessionId, 'an approval', 300_000).then(p => areaAsked.push(p), () => {})
+  await prompt('再运行一条命令')
   if (!(await waitUntil(() => areaAsked.length > 0 || llm.requests.some(r => JSON.stringify(r.messages?.at(-1) ?? {}).includes('area-allow-ok')), 120_000))) fail('the allowed command never ran')
   if (areaAsked.length > 0) fail('an area set to allow still asked')
   step('允许: the escalated command ran without asking under 每次确认')

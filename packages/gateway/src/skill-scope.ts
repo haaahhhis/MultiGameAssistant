@@ -73,6 +73,7 @@ export class SkillScope {
   readonly #focus = new Map<string, Focus>()
   /** The sessions that see the app's skills at all (a dsh shared with other work: the app's own); unset: every one. */
   #only: ((sessionId: string) => boolean) | undefined
+  #parentOf: (sessionId: string) => string | undefined = () => undefined
   readonly #file: string | undefined
   #invalidate: () => void = () => {}
   #relations: (scriptId: string) => ScriptRelations = () => ({ aliases: [], games: [] })
@@ -101,6 +102,11 @@ export class SkillScope {
       },
       get: async ({ locator }) => definition(locator as ScopedSkillInput),
     }
+  }
+
+  /** A sub-agent works on what its parent is working on, until it says otherwise. */
+  inheritFrom(parentOf: (sessionId: string) => string | undefined): void {
+    this.#parentOf = parentOf
   }
 
   /** Show the app's skills only to some sessions; lists without a session still show them all. */
@@ -143,7 +149,8 @@ export class SkillScope {
   /** A session's focus; undefined: no session (everything shows). A session never focused shows the general skills only. */
   focusOf(sessionId: string | undefined): Focus | undefined {
     if (sessionId === undefined) return undefined
-    return this.#focus.get(sessionId) ?? { scripts: [], games: [] }
+    const parent = this.#parentOf(sessionId)
+    return this.#focus.get(sessionId) ?? (parent === undefined ? undefined : this.#focus.get(parent)) ?? { scripts: [], games: [] }
   }
 
   /**

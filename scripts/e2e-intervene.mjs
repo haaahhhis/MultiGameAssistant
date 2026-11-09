@@ -72,14 +72,35 @@ logs:
 writeFileSync(join(packDir, 'SKILL.md'), `---\nname: ${ID}\ndescription: M5 端到端检查用的假脚本。\n---\n\n# 假脚本\n`)
 
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
+const textOf = content => (typeof content === 'string' ? content : Array.isArray(content) ? content.map(p => p.text ?? '').join('') : '')
+/** 干预 itself decides; looking at the screen is its sub-agent's. */
+const looked = { tools: undefined, result: undefined, leadTools: undefined }
 const llm = await startFakeLlm({
   models: [FAKE_MODEL],
-  replies: [
-    call('intervention_done', { result: 'retry', summary: '识别失败是界面没加载完，重新运行一次' }), { text: '已处理。' },
-    call('screen_capture', { target: 'desktop' }), call('intervention_done', { result: 'give-up', summary: '要输入验证码，需要你来' }), { text: '交给用户。' },
-  ],
-  fallback: { text: '好的。' },
-  scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
+  respond: body => {
+    if (!Array.isArray(body.tools) || body.tools.length === 0) return { text: '好的。' }
+    const messages = body.messages ?? []
+    const last = messages.at(-1)
+    const said = messages.slice(messages.findLastIndex(m => m.role === 'assistant') + 1).filter(m => m.role === 'user').map(m => textOf(m.content)).join('\n')
+    const lastTool = messages.findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
+    if (JSON.stringify(messages).includes('E2E-LOOK') && !messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('').includes('# 团队')) {
+      looked.tools ??= body.tools.map(t => t.function?.name ?? t.name)
+      // A screenshot comes back as a tool result and the picture after it.
+      const shot = messages.findLast(m => m.role === 'tool')
+      if (shot === undefined) return call('screen_capture', { target: 'desktop' })
+      looked.result = JSON.stringify(shot.content).slice(0, 300)
+      return { text: '子任务结果：画面上要输入验证码' }
+    }
+    if (said.includes('处理不了的任务')) {
+      looked.leadTools = body.tools.map(t => t.function?.name ?? t.name)
+      return call('subagent', { description: '看画面', prompt: 'E2E-LOOK 截一张图看看画面上是什么' })
+    }
+    if (said.includes('会出错一次的任务')) return call('intervention_done', { result: 'retry', summary: '识别失败是界面没加载完，重新运行一次' })
+    if (last?.role === 'tool' && lastTool === 'subagent') return { text: '开了子 agent 去看，等它。' }
+    if (said.includes('要输入验证码')) return call('intervention_done', { result: 'give-up', summary: '要输入验证码，需要你来' })
+    if (last?.role === 'tool' && lastTool === 'intervention_done') return { text: '处理完了。' }
+    return { text: '好的。' }
+  },
 })
 const gateway = await connectGateway({ name: 'adg-e2e-intervene' })
 const { call: rpc } = gateway
@@ -125,8 +146,10 @@ try {
   const second = await rpc('runs/start', { scriptId: ID, taskId: 'stuck' })
   const iv2 = await until('the second intervention to end', async () => (await rpc('intervene/list', {})).items.find(i => i.runId === second.id && i.state !== 'running'), 90_000)
   if (iv2.state !== 'gave-up' || !iv2.paused) fail(`intervention ${iv2.state} paused=${iv2.paused}: ${iv2.summary}`)
-  const captured = llm.requests.some(r => JSON.stringify(r.messages ?? []).includes('screen_capture'))
-  if (!captured) fail('screen_capture was never called')
+  if (looked.leadTools?.includes('screen_capture')) fail('干预 looks at the screen itself: that is its sub-agent\'s')
+  if (!looked.tools?.includes('screen_capture')) fail(`干预's sub-agent cannot look at the screen; tools: ${JSON.stringify(looked.tools)}`)
+  if (looked.tools.includes('intervention_done')) fail('concluding is 干预\'s, not its sub-agent\'s')
+  if (looked.result === undefined || /Error|先用|不能/.test(looked.result)) fail(`the sub-agent's screenshot: ${looked.result}`)
   const frozen = ticks()
   await delay(1000)
   if (ticks() - frozen > 1) fail(`the script kept running while paused (${ticks() - frozen} ticks)`)

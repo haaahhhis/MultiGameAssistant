@@ -48,6 +48,12 @@ const llm = await startFakeLlm({
       if (last?.role !== 'tool') return call('script_list', {})
       return { delayMs: Number(process.env.E2E_CHILD_DELAY ?? 3000), text: '子任务结果：第 212 行报错' }
     }
+    // A sub-agent doing something the person must approve.
+    if (all.includes('E2E-APPROVE-CHILD') && !systemOf(body).includes('# 团队')) {
+      if (last?.role !== 'tool') return call('script_stop', { run_id: 'E2E-NONE' })
+      seen.childApproval = textOf(last.content)
+      return { text: '子任务结果：被拒绝了' }
+    }
     if (said.includes('E2E-STYLE')) {
       seen.styled = body
       return { text: '（脚本）好的。' }
@@ -58,6 +64,9 @@ const llm = await startFakeLlm({
       return { delayMs: 20_000, text: '不该走到这里' }
     }
     const system = systemOf(body)
+    // 脚本, opening a sub-agent that needs an approval.
+    if (system.includes('你的角色：脚本') && said.includes('E2E-APPROVE ')) return call('subagent', { description: '要批准的子任务', prompt: 'E2E-APPROVE-CHILD 停一下那个任务' })
+    if (system.includes('你的角色：脚本') && last?.role === 'tool' && lastTool(body) === 'subagent' && lastArgs(body).includes('E2E-APPROVE-CHILD')) return { text: '开了。' }
     // 脚本, opening the sub-agent the person then stops.
     if (system.includes('你的角色：脚本') && all.includes('E2E-STOP-PARENT')) {
       if (said.includes('E2E-STOP-PARENT')) return call('subagent', { description: '会被停下的子任务', prompt: 'E2E-HANG 等着' })
@@ -125,12 +134,13 @@ const llm = await startFakeLlm({
       return { text: '（助手）收到。' }
     }
     // Busy with something else when 脚本's question comes.
-    if (last?.role === 'tool' && lastTool(body) === 'agent_delegate' && all.includes('E2E-THREAD-TASK') && !all.includes('E2E-SLOW')) {
-      return call('pwsh', { description: 'E2E-SLOW wait', command: 'Start-Sleep -Seconds 25; echo E2E-SLOW-DONE' })
+    if (last?.role === 'tool' && lastTool(body) === 'agent_delegate' && all.includes('E2E-THREAD-TASK') && !seen.busy) {
+      seen.busy = true
+      return { delayMs: 25_000, ...call('agent_threads', { id: 'E2E-SLOW' }) }
     }
     if (said.includes('E2E-QUESTION')) {
       const since = (body.messages ?? []).slice((body.messages ?? []).findLastIndex(m => m.role === 'assistant') + 1)
-      seen.cutIn = since.some(m => m.role === 'tool' && textOf(m.content).includes('E2E-SLOW-DONE'))
+      seen.cutIn = since.some(m => m.role === 'tool' && textOf(m.content).includes('E2E-SLOW'))
     }
     if (last?.role === 'tool' && lastTool(body) === 'agent_delegate') return { text: '已经交给「脚本」了。' }
     if (said.includes('E2E-DELEGATE')) return call('agent_delegate', { agent: '脚本', task: 'E2E-LEAD 看看 MAA 为什么报错', expecting: '报错原因' })
@@ -206,6 +216,14 @@ try {
   if (leadTools.includes('subagent_fork') || mainTools.includes('subagent_fork')) fail('nobody forks: an agent has one long conversation')
   if (mainTools.includes('screen_tap')) fail('助手 does not do the work itself')
   step('助手 and 脚本 can open sub-agents; nobody can fork')
+
+  // The concrete work is the sub-agents': not in an agent's one conversation, where it would pile up.
+  for (const [who, list] of [['脚本', leadTools], ['助手', mainTools]]) for (const tool of ['pwsh', 'write', 'edit', 'workflow', 'script_run', 'screen_tap', 'screen_capture']) if (list.includes(tool)) fail(`${who}'s own conversation holds ${tool}; tools: ${JSON.stringify(list)}`)
+  if (!leadTools.includes('script_list') || !leadTools.includes('read')) fail(`脚本 can no longer look things up; tools: ${JSON.stringify(leadTools)}`)
+  for (const tool of ['pwsh', 'write', 'edit', 'script_run']) if (!childTools.includes(tool)) fail(`脚本's sub-agent has no ${tool}; tools: ${tools}`)
+  for (const [who, text] of [['脚本', systemOf(seen.lead[0])], ['助手', systemOf(seen.main[0])]]) if (!text.includes('具体的活都由子 agent 做')) fail(`${who} was not told the work goes to sub-agents`)
+  if (!childSystem.includes('脚本') || !childSystem.includes('截图、看画面、点屏幕是最后的办法')) fail('the sub-agent does not work to its parent\'s duty and rules')
+  step('commands, files, screens, running and installing are not in an agent\'s own conversation; its sub-agent has them')
 
   // Identity: each knows who it is and who else there is; a sub-agent knows only whose it is; the name is 助手's.
   const leadSystem = systemOf(seen.lead[0])
@@ -289,9 +307,26 @@ try {
   await until('a message inserted after the turn ended to be answered', () => seen.idle === true, 30_000)
   step('inserted just after the turn ended, a message still starts one')
 
+  // What a sub-agent needs approved reaches the person where they are.
+  const area = (await rpc('permissions/get', {})).areas?.run ?? 'default'
+  await rpc('permissions/area/set', { area: 'run', policy: 'ask' })
+  try {
+    const asked = gateway.waitFor(m => m.method === 'approval/requested' && m.params.toolName === 'script_stop', 'a sub-agent\'s approval', 45_000)
+    await rpc('session/prompt', { sessionId: scripts, requestId: `e2e-approve-${Date.now()}`, text: 'E2E-APPROVE 开一个子任务', mode: 'queue' })
+    const request = await asked
+    if (request.sessionId !== scripts) fail(`the approval went to ${request.sessionId}, not 脚本's conversation ${scripts}`)
+    if (!String(request.reason ?? '').includes('子 agent')) fail(`the card does not say it is a sub-agent's: ${request.reason}`)
+    await rpc('approval/respond', { approvalId: request.approvalId, decision: 'reject' })
+    await until('the sub-agent to hear the answer', () => seen.childApproval !== undefined)
+    if (!seen.childApproval.includes('拒绝')) fail(`the sub-agent was told: ${seen.childApproval}`)
+    step('a sub-agent\'s approval came up in its parent\'s conversation, and the answer went back to it')
+  } finally {
+    await rpc('permissions/area/set', { area: 'run', policy: area })
+  }
+
   // The third layer: a sub-task is its parent's, and the person can stop it without stopping the parent.
   const children = async () => (await rpc('sessions/list', { limit: 200 })).items.filter(i => i.origin === 'subagent' && i.parentId === scripts)
-  const [done] = await children()
+  const done = (await children()).find(i => i.title?.includes('E2E-CHILD'))
   if (done === undefined) fail('the sub-agent of 脚本 is not among the sessions')
   const opened = await rpc('session/open', { sessionId: done.id })
   await rpc('session/close', { subscriptionId: opened.subscriptionId })
