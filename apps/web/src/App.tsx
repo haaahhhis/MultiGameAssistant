@@ -6,6 +6,7 @@ import { NavRail, type RailTarget } from './components/NavRail.tsx'
 import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { AgentHistory, useHasEarlier } from './components/SessionList.tsx'
+import { useShowEarlier } from './preferences.ts'
 import { AgentSchedule, ScheduleOverview } from './components/AgentSchedule.tsx'
 import { HandOffPage } from './plugins/chat/Delegation.tsx'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, useHome, useRoles } from './agents.ts'
@@ -65,6 +66,9 @@ export function App({ client }: { client: AdgClient }) {
     setRoute(pages.some(p => p.id === START_PAGE) ? { kind: 'page', id: START_PAGE } : { kind: 'home' })
   }, [route, status.state, pages])
 
+  // The switch is off while the address still says 以前的对话: the agent's conversation instead.
+  const showEarlier = useShowEarlier()
+  const agentRouteTab = route.kind === 'agent' && (route.tab !== 'history' || showEarlier) ? route.tab : undefined
   const openSession = (id: string) => setRoute({ kind: 'session', id })
   const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
@@ -92,7 +96,7 @@ export function App({ client }: { client: AdgClient }) {
     : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />
   const agentTabs = tabAgent === undefined ? null : (
     <AgentTabs client={client} agentId={tabAgent} pages={pages.filter(p => ownerOf(p) === tabAgent)}
-      current={route.kind === 'agent' && route.tab !== undefined ? route.tab : route.kind === 'session' ? 'history' : shown.kind === 'page' ? shown.id : 'chat'}
+      current={agentRouteTab !== undefined ? agentRouteTab : route.kind === 'session' ? 'history' : shown.kind === 'page' ? shown.id : 'chat'}
       onTab={tab => agentTab(tabAgent, tab)} />
   )
 
@@ -107,8 +111,8 @@ export function App({ client }: { client: AdgClient }) {
         <div className="agent-area">
           {agentTabs}
           {pageOwner !== undefined ? pageView
-            : route.kind === 'agent' && route.tab === 'schedule' ? <AgentSchedule key={route.id} client={client} agentId={route.id} />
-            : route.kind === 'agent' && route.tab === 'history' ? <AgentHistory key={route.id} client={client} agentId={route.id} onSelect={openSession} />
+            : route.kind === 'agent' && agentRouteTab === 'schedule' ? <AgentSchedule key={route.id} client={client} agentId={route.id} />
+            : route.kind === 'agent' && agentRouteTab === 'history' ? <AgentHistory key={route.id} client={client} agentId={route.id} onSelect={openSession} />
             : route.kind === 'session' ? <SessionView key={route.id} client={client} sessionId={route.id} onAgent={openAgent} reminder={reminder} />
             : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} onAgent={openAgent} reminder={reminder} />}
         </div>
@@ -136,7 +140,8 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
   const capabilities = useStore(client.capabilities)
   const role = roles.find(r => r.id === agentId)
   const agent = role === undefined ? MAIN : agentOf(role)
-  const earlier = useHasEarlier(client, agentId) || current === 'history'
+  const hasEarlier = useHasEarlier(client, agentId)
+  const earlier = useShowEarlier() && (hasEarlier || current === 'history')
   const tabs = [
     { id: 'chat', title: '对话', icon: 'chat' as const },
     ...(capabilities.has('pipelines') ? [{ id: 'schedule', title: '定时', icon: 'calendar' as const }] : []),

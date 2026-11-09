@@ -11,8 +11,6 @@
 .game-tab.add { color: var(--muted); font-weight: 400; }
 .game-tab-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; line-height: 18px; text-align: center; color: #fff; background: var(--warn); }
 .game-tabs-divider { width: 1px; height: 18px; margin: 0 4px; background: var(--border); }
-/* Holds the page and, over its side, an event's details. */
-.games-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .games-body { --pad-top: 16px; flex: 1; min-height: 0; overflow-y: auto; padding: var(--pad-top) 20px 40px; display: flex; flex-direction: column; gap: 16px; background: var(--page); }
 .game-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--game, var(--faint)); }
 .game-view, .games-overview { width: 100%; max-width: 1680px; margin-inline: auto; }
@@ -109,7 +107,6 @@
 .schedule-item { display: flex; flex-direction: column; min-width: 0; border-radius: 12px; }
 .sched-card { position: relative; overflow: hidden; display: flex; flex-direction: column; flex: 1; width: 100%; padding: 0; border: 1px solid var(--border); border-radius: 12px; text-align: left; font-weight: 400; color: var(--text); cursor: pointer; background: var(--raised); box-shadow: var(--shadow-1); transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
 .sched-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-pop); background: var(--raised); }
-.sched-card.selected { border-color: var(--game, var(--accent)); box-shadow: 0 0 0 1px var(--game, var(--accent)), var(--shadow-pop); }
 .sched-media { position: relative; display: block; flex: none; width: 100%; aspect-ratio: 2 / 1; overflow: hidden; color: #fff; isolation: isolate; background: linear-gradient(135deg, color-mix(in srgb, var(--game) 60%, #15151a), #15151a 80%); }
 /* Some covers are long posters; their title is at the top. */
 .sched-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0; z-index: -2; animation: fade-in .35s var(--ease) both; }
@@ -319,33 +316,55 @@ button.source-open { border: none; border-left: 1px solid var(--border); border-
 .activity-image-pick small { font-size: 11px; }
 .activity-editor-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
-/* An event's details (ActivityPanel.tsx): over the side of the page, so the board under it never moves. */
-.activity-panel { position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: 420px; max-width: 100%; background: var(--raised); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgb(0 0 0 / .14); outline: none; animation: panel-in .18s var(--ease) both; }
-@keyframes panel-in { from { transform: translateX(18px); opacity: 0; } }
-.activity-scrim { display: none; }
-.panel-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
-.panel-media { position: relative; flex: none; }
-.panel-media-open { display: block; width: 100%; padding: 0; border: none; border-radius: 0; background: none; cursor: zoom-in; }
-.panel-media-open:disabled { cursor: default; opacity: 1; }
+/* 全部活动: an event's details open under its row. */
+.ov-detail { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 10px; padding: 8px 18px 16px; max-width: 760px; }
+.ov-item.open .ov-detail { max-width: none; padding-left: 84px; background: var(--sunken); }
+.ov-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.activity-dates { display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.activity-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fact-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; font-weight: 400; color: var(--text); background: var(--sunken); cursor: pointer; }
+.fact-chip:hover:not(:disabled) { border-color: var(--border-strong); }
+.fact-chip:disabled { cursor: default; opacity: 1; }
+.fact-chip small { font-size: 11px; color: var(--muted); }
+.fact-chip.web { border-color: var(--accent-line); }
+.fact-chip.own { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.fact-chip .fact-main { color: var(--ok); }
+.fact-chip.on, .fact-chip.on:hover:not(:disabled) { border-color: var(--game, var(--accent)); box-shadow: inset 0 0 0 1px var(--game, var(--accent)); background: color-mix(in srgb, var(--game, var(--accent)) 10%, var(--raised)); }
+@media (max-width: 860px) {
+  .ov-item.open .ov-detail { padding-left: 14px; }
+}
+
+/* A game's page: an event's details in a window at the centre of the screen. It keeps one size, so nothing in it or under it moves. */
+.activity-scrim { position: fixed; z-index: 900; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(8 8 12 / .46); animation: fade-in .14s var(--ease) both; }
+.activity-dialog { display: flex; flex-direction: column; width: min(860px, 100%); height: min(640px, 100%); min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-xl); background: var(--raised); box-shadow: 0 24px 70px rgb(0 0 0 / .35); outline: none; animation: dialog-in .16s var(--ease) both; }
+@keyframes dialog-in { from { transform: scale(.975); opacity: 0; } }
+.dialog-head { flex: none; display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 10px 12px 10px 18px; border-bottom: 1px solid var(--border); }
+.dialog-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dialog-title h3 { margin: 0; font-size: 15.5px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-meta { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); }
+.dialog-game { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dialog-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: none; border-radius: var(--r-md); color: var(--muted); background: none; cursor: pointer; }
+.dialog-close:hover { color: var(--text); background: var(--hover); }
+.dialog-close .ui-icon { width: 15px; height: 15px; }
+.dialog-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 340px minmax(0, 1fr); }
+.dialog-col { min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
+.dialog-col.side { border-right: 1px solid var(--border); background: var(--sunken); }
+.dialog-media { flex: none; display: block; width: 100%; padding: 0; border: none; border-radius: 0; background: none; cursor: zoom-in; }
+.dialog-media:disabled { cursor: default; opacity: 1; }
 /* Sharp here: this is the one place to actually read it. */
-.panel-media .sched-art.shot { filter: none; transform: none; }
-.panel-close { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%; color: #fff; background: rgb(12 12 16 / .55); backdrop-filter: blur(8px); cursor: pointer; }
-.panel-close:hover { background: rgb(12 12 16 / .78); }
-.panel-close .ui-icon { width: 14px; height: 14px; }
-.panel-section { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
-.panel-title { gap: 6px; border-top: none; }
-.panel-title h3 { margin: 0; font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; }
-.panel-meta { display: flex; align-items: center; gap: 8px; min-height: 22px; font-size: 12px; color: var(--muted); }
-.panel-game { display: inline-flex; align-items: center; gap: 6px; }
-.panel-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 0; }
-.panel-dates.with-shop { grid-template-columns: 1fr 1fr 1fr; }
-.panel-dates div { min-width: 0; padding: 7px 10px; border-radius: var(--r-md); background: var(--sunken); }
-.panel-dates dt { font-size: 11px; color: var(--muted); }
-.panel-dates dd { margin: 1px 0 0; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.panel-section-head { display: flex; align-items: center; gap: 8px; height: 22px; }
-.panel-section-head h4 { margin: 0; font-size: 13px; font-weight: 600; }
-.panel-section-head .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.panel-hint { margin: 0; line-height: 1.55; }
+.dialog-media .sched-art.shot { filter: none; transform: none; }
+.dialog-facts { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; }
+.dialog-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
+.dialog-dates div { min-width: 0; padding: 7px 10px; border-radius: var(--r-md); background: var(--raised); box-shadow: inset 0 0 0 1px var(--border); }
+.dialog-dates div.wide { grid-column: 1 / -1; }
+.dialog-dates dt { font-size: 11px; color: var(--muted); }
+.dialog-dates dd { margin: 1px 0 0; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dialog-section { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
+.dialog-section:first-child { border-top: none; }
+.dialog-section-head { display: flex; align-items: center; gap: 8px; height: 22px; }
+.dialog-section-head h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.dialog-section-head .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dialog-hint { margin: 0; line-height: 1.55; }
 .source-rows { display: flex; flex-direction: column; gap: 6px; }
 .source-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 50px; padding: 6px 10px 6px 6px; border: 1px solid var(--border); border-radius: var(--r-md); background: none; color: var(--text); font-weight: 400; text-align: left; cursor: pointer; transition: border-color .12s var(--ease), background .12s var(--ease); }
 .source-row:hover:not(:disabled) { border-color: var(--border-strong); background: var(--hover); }
@@ -357,25 +376,34 @@ button.source-open { border: none; border-left: 1px solid var(--border); border-
 .source-row-name { display: flex; align-items: center; gap: 6px; min-width: 0; height: 18px; line-height: 18px; font-size: 12.5px; }
 .source-row-name b { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .source-row-name small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
-.source-row-name .ui-icon { flex: none; align-self: center; width: 13px; height: 13px; color: var(--game, var(--accent)); }
+.source-row-name .ui-icon { flex: none; width: 13px; height: 13px; color: var(--game, var(--accent)); }
 .source-row-dates { display: flex; flex-direction: column; font-size: 11.5px; line-height: 16px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .source-row-dates em { font-style: normal; color: var(--muted); }
 /* A fixed column, so a badge moving to another row re-wraps nothing and no row changes height. */
 .source-row-uses { flex: none; width: 52px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .source-row-uses i { padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-style: normal; line-height: 16px; white-space: nowrap; color: var(--text-2); background: var(--sunken); }
-.panel-links { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-.panel-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--border); background: var(--raised); }
-.activity-panel .activity-editor { padding: 16px 18px; }
-.ov-row[aria-expanded="true"] { background: color-mix(in srgb, var(--game, var(--accent)) 9%, transparent); box-shadow: inset 2px 0 0 var(--game, var(--accent)); }
-@media (prefers-reduced-motion: reduce) { .activity-panel { animation: none; } }
-@media (max-width: 1080px) {
-  /* The panel covers most of the page here: dim what is behind it, and a click there closes it. */
-  .activity-scrim { display: block; position: absolute; z-index: 19; inset: 0; background: rgb(0 0 0 / .28); }
+.dialog-links { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.dialog-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--border); }
+.dialog-form { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.activity-dialog .activity-editor { padding: 18px 20px; }
+@media (min-width: 721px) {
+  .activity-dialog .activity-editor-body { flex-direction: row; align-items: flex-start; gap: 16px; }
+  .activity-dialog .activity-editor-image { flex: none; width: 240px; }
+  .activity-dialog .activity-image-pick { height: 136px; }
+  .activity-dialog .activity-editor-fields { flex: 1; }
 }
-@media (max-width: 640px) {
-  .activity-panel { width: 100%; border-left: none; }
+@media (prefers-reduced-motion: reduce) { .activity-scrim, .activity-dialog { animation: none; } }
+@media (max-width: 720px) {
+  /* One column, scrolled as one. */
+  .activity-scrim { padding: 12px; }
+  .activity-dialog { height: 100%; }
+  .dialog-cols { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  .dialog-col { overflow: visible; }
+  .dialog-col.side { border-right: none; }
+  .dialog-col.main .dialog-section:first-child { border-top: 1px solid var(--border); }
+}
+@media (max-width: 420px) {
   .source-row { gap: 8px; }
   .source-thumb { width: 38px; }
-  .panel-section { padding-inline: 14px; }
-  .panel-foot { padding-inline: 14px; }
+  .dialog-section, .dialog-facts, .dialog-foot { padding-inline: 14px; }
 }

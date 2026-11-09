@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { useSettingsPages } from '../hooks.ts'
+import { setShowEarlier, useShowEarlier } from '../preferences.ts'
 import { setTheme, useTheme, type ThemePreference } from '../theme.ts'
 import { Icon, type IconName } from './Icons.tsx'
 
@@ -11,6 +12,7 @@ const THEMES: readonly [ThemePreference, string][] = [['light', '浅色'], ['dar
 export function SettingsView({ client, onClose, section, onSection }: { client: AdgClient; onClose: () => void; section?: string | undefined; onSection?: (id: string) => void }) {
   const pages = useSettingsPages(client)
   const theme = useTheme()
+  const showEarlier = useShowEarlier()
   const [picked, setPicked] = useState<string | null>(null)
   const selected = picked ?? section ?? null
   const setSelected = (id: string) => { setPicked(id); onSection?.(id) }
@@ -35,6 +37,9 @@ export function SettingsView({ client, onClose, section, onSection }: { client: 
               <button key={value} role="radio" aria-checked={theme === value} className={theme === value ? 'active' : ''} onClick={() => setTheme(value)}>{label}</button>
             ))}
           </div>
+          <label className="check-label settings-toggle" title="关了之后不显示这个按钮；对话记录不会删除。没有以前的对话时，开着也不显示">
+            <input type="checkbox" checked={showEarlier} onChange={e => setShowEarlier(e.target.checked)} />显示「以前的对话」
+          </label>
         </div>
       </aside>
       <section className="main settings">
