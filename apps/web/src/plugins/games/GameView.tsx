@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { Activity, GameInfo, MirrorSearchItem, Pipeline, PipelineSummary } from '@adg/protocol'
+import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type MirrorSearchItem, type Pipeline, type PipelineSummary } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { useFirstImage, useRemoteImage } from './images.ts'
-import { ActivityDetail, ProgressPill, progressOf } from './Overview.tsx'
-import { ActivityEditor } from './ActivityEditor.tsx'
+import { ProgressPill, progressOf } from './Overview.tsx'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -37,7 +36,7 @@ function stamp(at: number, timeZone: string): string {
 }
 
 /** "UTC+8" for the game's zone. */
-function zoneLabel(timeZone: string, at: number): string {
+export function zoneLabel(timeZone: string, at: number): string {
   const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' }).formatToParts(new Date(at)).find(x => x.type === 'timeZoneName')?.value ?? ''
   return name.replace('GMT', 'UTC') || timeZone
 }
@@ -48,7 +47,7 @@ function zoneLabel(timeZone: string, at: number): string {
  * stands (progress, the agent's last look), the pipelines that play it on a
  * timetable, and where its data comes from.
  */
-export function GameView({ client, game, activities, color, now, soonDays, busy, onRefresh, onRead, onReadWeb, onUnfollow, onChanged, openSession, openScripts }: {
+export function GameView({ client, game, activities, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onUnfollow, onChanged, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   activities: readonly Activity[]
@@ -56,6 +55,12 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   now: number
   soonDays: number
   busy: string | null
+  /** The event whose details are open in the panel. */
+  open: string | null
+  /** The panel is adding a new event. */
+  adding: boolean
+  onOpen: (id: string) => void
+  onAdd: () => void
   onRefresh: () => void
   onRead: () => void
   /** The agent reads the web: one source of the game pack, or all it cannot read itself. */
@@ -65,8 +70,6 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   openSession: (id: string) => void
   openScripts: () => void
 }) {
-  const [open, setOpen] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
   const [showFinished, setShowFinished] = useState(false)
   const live = activities.filter(a => Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
   const byEnd = (a: Activity, b: Activity) => (a.endsAt ?? Infinity) - (b.endsAt ?? Infinity)
@@ -85,16 +88,10 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
     { key: 'upcoming', title: '即将开始', hint: '按开始时间', rows: upcoming },
   ]
   const card = (a: Activity) => (
-    <div key={a.id} className={`schedule-item ${open === a.id ? 'open' : ''}`}>
-      <ScheduleCard client={client} activity={a} game={game} now={now} soonDays={soonDays} onClick={() => setOpen(o => (o === a.id ? null : a.id))} expanded={open === a.id} />
-      {open === a.id && <ActivityDetail client={client} activity={a} game={game} onChanged={onChanged} openSession={openSession} />}
+    <div key={a.id} className="schedule-item">
+      <ScheduleCard client={client} activity={a} game={game} now={now} soonDays={soonDays} onClick={() => onOpen(a.id)} expanded={open === a.id} />
     </div>
   )
-  // An open card takes a whole row of the grid, which can move it: keep it on screen.
-  const events = useRef<HTMLElement>(null)
-  useEffect(() => {
-    if (open !== null) events.current?.querySelector('.schedule-item.open')?.scrollIntoView({ block: 'nearest' })
-  }, [open])
 
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
@@ -108,25 +105,20 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
               <div className="pool-list">{game.pools!.map(p => <PoolCard key={`${p.name}-${p.endsAt}`} client={client} pool={p} game={game} now={now} />)}</div>
             </section>
           )}
-          <section className="game-section game-events" aria-label="活动日程" ref={events}>
+          <section className="game-section game-events" aria-label="活动日程">
             <div className="game-section-head">
               <h3>活动日程</h3>
               <span className="count">{live.length}</span>
               <span className="spacer" />
               <span className="muted small">{game.sources.find(s => s.auto)?.name ?? '数据站'}</span>
-              <button className="icon-button" title="自己添加一个活动" aria-label="添加活动" aria-pressed={adding} onClick={() => setAdding(a => !a)}>
+              <button className="icon-button" title="自己添加一个活动" aria-label="添加活动" aria-pressed={adding} onClick={onAdd}>
                 <Icon name="plus" />
               </button>
               <button className="icon-button" title={auto ? '刷新数据站（不用模型）' : '这个游戏没有能自动读的数据站'} disabled={busy !== null || !auto} onClick={onRefresh}>
                 <Icon name="refresh" />
               </button>
             </div>
-            {adding && (
-              <div className="schedule-item open adding">
-                <ActivityEditor client={client} game={game} onCancel={() => setAdding(false)} onDone={saved => { setAdding(false); setOpen(saved.id); onChanged() }} />
-              </div>
-            )}
-            {live.length === 0 && !adding && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新，或点「+」自己添加。' : '这个游戏没有能自动读的数据站：让 agent 进游戏读一次，或点「+」自己添加。'}</p>}
+            {live.length === 0 && <p className="muted small schedule-empty">{auto ? '还没有活动。点右上角刷新，或点「+」自己添加。' : '这个游戏没有能自动读的数据站：让 agent 进游戏读一次，或点「+」自己添加。'}</p>}
             {groups.filter(g => g.rows.length > 0).map(g => (
               <section key={g.key} className={`schedule-group ${g.tone ?? ''}`}>
                 <div className="schedule-group-title"><span>{g.title}</span><span className="count">{g.rows.length}</span><span className="muted small">{g.hint}</span></div>
@@ -407,6 +399,37 @@ function GameSchedule({ client, game, now, openScripts }: { client: AdgClient; g
   )
 }
 
+/** Where an event stands in time: what its countdown counts to, and whether it is ending soon. */
+function timing(a: Activity, now: number, soonDays: number) {
+  const started = (a.startsAt ?? 0) <= now
+  const shopOnly = started && a.endsAt !== undefined && a.endsAt <= now
+  const end = shopOnly ? a.shopEndsAt : a.endsAt
+  const soon = started && end !== undefined && end - now < soonDays * DAY && progressOf(a).state !== 'finished'
+  return { started, shopOnly, end, soon, target: !started ? a.startsAt : end }
+}
+
+/** An event's picture, with its state and time left on it: on its card, and at the top of its details. */
+export function ActivityMedia({ activity: a, art, now, soonDays }: { activity: Activity; art: string | undefined; now: number; soonDays: number }) {
+  const { started, shopOnly, end, soon, target } = timing(a, now, soonDays)
+  const span = a.startsAt !== undefined && end !== undefined ? end - a.startsAt : undefined
+  const elapsed = span === undefined || span <= 0 || !started ? undefined : Math.min(1, Math.max(0, (now - a.startsAt!) / span))
+  const tag = progressOf(a).state === 'finished' ? ['done', '已做完'] : !started ? ['upcoming', '即将开始'] : shopOnly ? ['shop', '商店开放'] : ['live', '进行中']
+  const big = target === undefined ? { value: '', unit: '', rest: '' } : split(target - now)
+  const shot = a.cover?.startsWith('shot:') === true
+  return (
+    <span className={`sched-media ${soon ? 'soon' : ''}`}>
+      {art !== undefined && <img key={a.cover} className={`sched-art ${shot ? 'shot' : ''}`} src={art} alt="" title={shot ? '没有别的活动图，用的是 agent 读这个活动时的游戏截图' : undefined} />}
+      <span className="sched-shade" />
+      <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
+      <span className="sched-count" aria-label={target === undefined ? '时间未知' : `${!started ? '距开始' : '剩余'}${countdown(target, now)}`}>
+        {target === undefined ? <b>?</b> : <><b>{big.value}</b><small>{big.unit}</small>{big.rest !== '' && <em>{big.rest}</em>}</>}
+        <i>{!started ? '后开始' : shopOnly ? '商店' : '剩余'}</i>
+      </span>
+      {elapsed !== undefined && <span className="sched-elapsed" style={{ width: `${elapsed * 100}%` }} />}
+    </span>
+  )
+}
+
 /** An event as a card: its picture with its state and time left on it, under that its name, date, kind, and how far along the user is. */
 function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expanded }: {
   client: AdgClient
@@ -419,28 +442,12 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
 }) {
   const art = useRemoteImage(client, a.cover)
   const p = progressOf(a)
-  const started = (a.startsAt ?? 0) <= now
-  const shopOnly = started && a.endsAt !== undefined && a.endsAt <= now
-  const end = shopOnly ? a.shopEndsAt : a.endsAt
-  const soon = started && end !== undefined && end - now < soonDays * DAY && p.state !== 'finished'
-  const span = a.startsAt !== undefined && end !== undefined ? end - a.startsAt : undefined
-  const elapsed = span === undefined || span <= 0 || !started ? undefined : Math.min(1, Math.max(0, (now - a.startsAt!) / span))
-  const tag = p.state === 'finished' ? ['done', '已做完'] : !started ? ['upcoming', '即将开始'] : shopOnly ? ['shop', '商店开放'] : ['live', '进行中']
+  const { started, shopOnly, end, soon } = timing(a, now, soonDays)
   const zone = zoneLabel(game.timezone, now)
-  const target = !started ? a.startsAt : end
-  const big = target === undefined ? { value: '', unit: '', rest: '' } : split(target - now)
+  const chosenName = a.chosen === undefined ? undefined : a.chosen === OWN_SOURCE ? '我设的' : a.chosen === SCREEN_SOURCE ? '游戏画面' : a.sources?.find(s => s.id === a.chosen)?.name
   return (
-    <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''}`} onClick={onClick} aria-expanded={expanded}>
-      <span className="sched-media">
-        {art !== undefined && <img className={`sched-art ${a.cover?.startsWith('shot:') === true ? 'shot' : ''}`} src={art} alt="" title={a.cover?.startsWith('shot:') === true ? '没有活动图，用的是 agent 读这个活动时的游戏截图' : undefined} />}
-        <span className="sched-shade" />
-        <span className={`sched-tag ${tag[0]}`}>{tag[1]}</span>
-        <span className="sched-count" aria-label={target === undefined ? '时间未知' : `${!started ? '距开始' : '剩余'}${countdown(target, now)}`}>
-          {target === undefined ? <b>?</b> : <><b>{big.value}</b><small>{big.unit}</small>{big.rest !== '' && <em>{big.rest}</em>}</>}
-          <i>{!started ? '后开始' : shopOnly ? '商店' : '剩余'}</i>
-        </span>
-        {elapsed !== undefined && <span className="sched-elapsed" style={{ width: `${elapsed * 100}%` }} />}
-      </span>
+    <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''} ${expanded ? 'selected' : ''}`} onClick={onClick} aria-expanded={expanded}>
+      <ActivityMedia activity={a} art={art} now={now} soonDays={soonDays} />
       <span className="sched-body">
         <span className="sched-name" title={a.name}>{a.name}</span>
         <span className="sched-when">
@@ -454,6 +461,7 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
         <span className="sched-foot">
           <span className="sched-kinds">
             {a.kind !== undefined && <span className="sched-kind">{a.kind}</span>}
+            {chosenName !== undefined && <span className="sched-kind" title={`你选了用「${chosenName}」的图片和时间`}>用 {chosenName}</span>}
             {a.own !== undefined && <span className="sched-kind" title={a.sources === undefined && a.screen === undefined ? '你自己添加的活动' : '你改过这个活动'}>{a.sources === undefined && a.screen === undefined ? '我添加的' : '我改过'}</span>}
             {a.sources?.some(s => s.web) === true && <span className="sched-kind" title={`来源：${a.sources.map(s => s.name).join('、')}`}>{a.sources.every(s => s.web) ? '网页读到' : '数据站 + 网页'}</span>}
           </span>
