@@ -23,6 +23,18 @@ export function SessionView({ client, sessionId, reminder, initialPrompt, onInit
   return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} />
 }
 
+/**
+ * An earlier conversation (any but an agent's one conversation) can only be
+ * read. One that has been working while on screen is not earlier yet: a job
+ * just started from a page, where the agent may stop to ask something. It
+ * becomes read-only the next time it is opened.
+ */
+function useReadOnly(item: { home?: string | undefined; blank?: boolean | undefined } | undefined, active: boolean): boolean {
+  const [wasActive, setWasActive] = useState(false)
+  if (active && !wasActive) setWasActive(true)
+  return item !== undefined && item.home === undefined && item.blank !== true && !active && !wasActive
+}
+
 function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
   session: NonNullable<ReturnType<typeof useSessionHandle>>
@@ -45,6 +57,7 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const [tab, setTab] = useState(() => readTab())
   const active = views.find(v => v.id === tab) ?? views[0]
   useEffect(() => writeTab(tab), [tab])
+  const readOnly = useReadOnly(item, state.running || state.queue.length > 0 || initialPrompt !== undefined)
 
   return (
     <section className="main">
@@ -91,11 +104,21 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
       <div className="view">
         {active === undefined
           ? <div className="empty">当前连接没有提供可用的视图插件。</div>
-          : <active.component client={client} session={session} state={state} />}
+          : <active.component client={client} session={session} state={state} readOnly={readOnly} />}
       </div>
-      {reminder}
-      <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
-        initialPrompt={initialPrompt} onInitialSent={onInitialSent} />
+      {readOnly ? (
+        <div className="session-readonly">
+          <Icon name="archive" />
+          <span>这是以前的对话，只能查看，不能继续。</span>
+          {onAgent !== undefined && <button type="button" className="small-button" onClick={() => onAgent(agentId)}>回到「{agent.name}」的对话</button>}
+        </div>
+      ) : (
+        <>
+          {reminder}
+          <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
+            initialPrompt={initialPrompt} onInitialSent={onInitialSent} />
+        </>
+      )}
     </section>
   )
 }
@@ -118,6 +141,8 @@ function PoppedSession({ client, session, view }: {
   view: ReturnType<typeof useSessionViews>[number]
 }) {
   const state = useStore(session.state)
+  const item = useStore(client.sessions).items.find(i => i.id === session.id)
+  const readOnly = useReadOnly(item, state.running || state.queue.length > 0)
   useEffect(() => { document.title = `${view.title} · ${state.title ?? '会话'}` }, [view.title, state.title])
   return (
     <div className="popped">
@@ -129,7 +154,7 @@ function PoppedSession({ client, session, view }: {
           </div>
         </header>
         {state.error !== null && <div className="banner error">{state.error}</div>}
-        <div className="view"><view.component client={client} session={session} state={state} /></div>
+        <div className="view"><view.component client={client} session={session} state={state} readOnly={readOnly} /></div>
       </section>
     </div>
   )

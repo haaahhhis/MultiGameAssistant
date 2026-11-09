@@ -13,6 +13,8 @@ export interface SessionViewProps {
   readonly client: AdgClient
   readonly session: SessionHandle
   readonly state: SessionState
+  /** An earlier conversation, only to be read: offer nothing that sends it a message. */
+  readonly readOnly?: boolean
 }
 
 export interface SessionViewContribution {

@@ -32,7 +32,7 @@ type Row =
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
-export function ChatView({ client, session, state }: SessionViewProps) {
+export function ChatView({ client, session, state, readOnly }: SessionViewProps) {
   const items = useMemo(
     () => buildChat(state.events, state.live, state.pending),
     // `version` covers in-place live delta appends.
@@ -103,7 +103,7 @@ export function ChatView({ client, session, state }: SessionViewProps) {
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
         {appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
-        {!state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
+        {readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
     </HandOffsOf.Provider>

@@ -55,9 +55,9 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   now: number
   soonDays: number
   busy: string | null
-  /** The event whose details are open in the panel. */
+  /** The event whose details are open in the window. */
   open: string | null
-  /** The panel is adding a new event. */
+  /** The window is adding a new event. */
   adding: boolean
   onOpen: (id: string) => void
   onAdd: () => void
@@ -446,7 +446,7 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
   const zone = zoneLabel(game.timezone, now)
   const chosenName = a.chosen === undefined ? undefined : a.chosen === OWN_SOURCE ? '我设的' : a.chosen === SCREEN_SOURCE ? '游戏画面' : a.sources?.find(s => s.id === a.chosen)?.name
   return (
-    <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''} ${expanded ? 'selected' : ''}`} onClick={onClick} aria-expanded={expanded}>
+    <button className={`sched-card ${art === undefined ? 'no-art' : ''} ${soon ? 'soon' : ''}`} onClick={onClick} aria-expanded={expanded}>
       <ActivityMedia activity={a} art={art} now={now} soonDays={soonDays} />
       <span className="sched-body">
         <span className="sched-name" title={a.name}>{a.name}</span>
