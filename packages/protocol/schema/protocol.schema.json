@@ -24,6 +24,9 @@
     "handoffs/list": {
       "capability": "agents"
     },
+    "subagents/stop": {
+      "capability": "agents"
+    },
     "handoffs/get": {
       "capability": "agents"
     },
@@ -2305,6 +2308,33 @@
       },
       "required": [
         "items"
+      ],
+      "additionalProperties": false
+    },
+    "subagents/stop.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "subagents/stop.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "accepted"
       ],
       "additionalProperties": false
     },

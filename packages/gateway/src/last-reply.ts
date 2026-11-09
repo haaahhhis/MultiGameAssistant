@@ -26,11 +26,14 @@ export class LastReplies {
     this.#sessions = sessions
   }
 
-  /** @param updatedAt - the session's last change: a newer one reads it again. */
-  async of(sessionId: string, updatedAt: number, signal: AbortSignal, running = false): Promise<string | null> {
+  /**
+   * @param updatedAt - the session's last change: a newer one reads it again.
+   * @param parent - a sub-agent's parent: dsh reads a sub-agent only through it.
+   */
+  async of(sessionId: string, updatedAt: number, signal: AbortSignal, running = false, parent?: string): Promise<string | null> {
     const kept = this.#cache.get(sessionId)
     if (!running && kept !== undefined && kept.at >= updatedAt) return kept.text
-    const text = await this.#read(sessionId, signal)
+    const text = await this.#read(sessionId, signal, parent)
     this.#cache.delete(sessionId)
     if (running) return text
     this.#cache.set(sessionId, { at: updatedAt, text })
@@ -38,12 +41,15 @@ export class LastReplies {
     return text
   }
 
-  async #read(sessionId: string, signal: AbortSignal): Promise<string | null> {
+  async #read(sessionId: string, signal: AbortSignal, parent: string | undefined): Promise<string | null> {
     const controller = new AbortController()
     const stop = () => controller.abort()
     signal.addEventListener('abort', stop, { once: true })
     try {
-      const iterator = this.#sessions.follow({ address: { kind: 'session', sessionId: sessionId as SessionId }, maxMessages: READ_BACK }, controller.signal)[Symbol.asyncIterator]()
+      const address = parent === undefined
+        ? { kind: 'session' as const, sessionId: sessionId as SessionId }
+        : { kind: 'subagent' as const, parentSessionId: parent as SessionId, childSessionId: sessionId as SessionId, mode: 'unknown' as const }
+      const iterator = this.#sessions.follow({ address, maxMessages: READ_BACK }, controller.signal)[Symbol.asyncIterator]()
       const first = await iterator.next()
       if (first.done === true || first.value.type !== 'snapshot') return null
       return lastReply(convertRecords(first.value.records))

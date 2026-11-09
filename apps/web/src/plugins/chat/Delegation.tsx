@@ -5,6 +5,7 @@ import { MAIN, agentOf, useLastReplies, useRoles, type Agent } from '../../agent
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { useStore } from '../../hooks.ts'
+import { OpenSubTask, SubAgentPane, ThreadSubTasks, type OpenTask } from './SubTasks.tsx'
 
 /**
  * What agents say to each other (docs/design/agent-roles.md §10, §11). In
@@ -198,6 +199,7 @@ function useHandOff(client: AdgClient, id: string): { item: HandOff | null; erro
  */
 export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: string; onClose: () => void }) {
   const { item, error } = useHandOff(client, id)
+  const [pane, setPane] = useState<OpenTask | null>(null)
   const from = useAgent(client, item?.by ?? '')
   const to = useAgent(client, item?.to ?? '')
   if (item === null) return <section className="main empty">{error ?? '正在打开…'}</section>
@@ -222,16 +224,22 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
         </div>
       </header>
       <div className="view">
+        <OpenSubTask.Provider value={setPane}>
+        <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
         <div className="chat"><div className="chat-inner">
           <ExchangeMessage who={item.by} agent={from}>
             <Markdown text={item.task} />
             {item.expecting !== undefined && <div className="delegation-expecting">要交回：{item.expecting}</div>}
           </ExchangeMessage>
           {(item.messages ?? []).map((m, i) => <ThreadLine key={i} client={client} message={m} />)}
+          <ThreadSubTasks client={client} session={item.toSession} from={item.startedAt} to={item.endedAt} onOpen={setPane} />
           {item.state === 'running' || item.state === 'waiting'
             ? <ExchangeMessage who={toName} agent={to}>{item.state === 'waiting' ? <div className="delegation-now"><span className="tool-spinner" role="img" aria-label="等回答" /><span>等{item.by}回答</span></div> : <Working client={client} handOff={item} name={toName} />}</ExchangeMessage>
             : <ExchangeMessage who={toName} agent={to} failed={item.state === 'failed'}><Markdown text={item.reply ?? (item.state === 'failed' ? '没有做完' : '它没有留下回复')} /></ExchangeMessage>}
         </div></div>
+        {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={toName} trail={item.by === toName ? [] : [item.by]} onClose={() => setPane(null)} />}
+        </div>
+        </OpenSubTask.Provider>
       </div>
       <footer className="exchange-footer">
         <button className="small-button" onClick={onClose}><Icon name="close" />关闭</button>

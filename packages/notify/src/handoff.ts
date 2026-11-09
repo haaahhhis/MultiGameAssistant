@@ -77,7 +77,7 @@ export interface HandOffDesk {
   /** @throws what the turn threw (called off, timed out), after recording it and sending the reply back. */
   handOff(input: HandOffInput): Promise<Reply>
   /** @returns why this work may not be handed on, in words for the agent asking; undefined when it may. */
-  refusal(fromSession: string, to: string, fromAgent: string): string | undefined
+  refusal(fromSession: string, to: string, fromAgent: string, toName?: string): string | undefined
   /** Say something in a thread. @returns what the speaker is told. @throws why it could not be said. */
   message(input: ThreadInput): Promise<string>
 }
@@ -126,12 +126,12 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
   }
 
   return {
-    refusal(fromSession, to, fromAgent) {
+    refusal(fromSession, to, fromAgent, toName = to) {
       const parent = workingOn(fromSession)
       if (parent === undefined) return to === fromAgent ? '不能交给自己' : undefined
       const chain = parent.item.chain ?? []
       if (to === fromAgent) return '不能交给自己'
-      if (chain.includes(to)) return `「${to}」正在等你这条线的结果，再交给它就绕回去了：在线索 ${parent.item.id} 里用 agent_message 直接问它`
+      if (chain.includes(to)) return `「${toName}」正在等你这条线的结果，再交给它就绕回去了：在线索 ${parent.item.id} 里用 agent_message 直接问它`
       if (chain.length > MAX_HOPS) return `这件事已经转了 ${MAX_HOPS} 手，不能再往下交了：用你手上的信息做完，在结论里说清楚缺什么`
       if (chainTop(parent).said >= MAX_CHAIN_MESSAGES) return `这件事的来回已经够多了（${MAX_CHAIN_MESSAGES} 条）：用你手上的信息做完，在结论里说清楚缺什么`
       return undefined

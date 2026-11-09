@@ -101,7 +101,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     home,
     get desk() { return desk() },
     handOff: input => desk().handOff(input),
-    handOffRefusal: (fromSession, to, fromAgent) => desk().refusal(fromSession, to, fromAgent),
+    handOffRefusal: (fromSession, to, fromAgent, toName) => desk().refusal(fromSession, to, fromAgent, toName),
     async create(title, options = {}) {
       // A role agent's session: the model chosen for role agents, when there is one (设置 → 模型).
       const chosen = options.role === undefined ? undefined : app?.()?.roleModel(options.role)

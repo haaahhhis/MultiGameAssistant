@@ -99,7 +99,7 @@ export function delegateTool(deps: DelegateDeps): ToolDefinition {
       const conversations = deps.conversations()
       if (conversations === undefined) throw new Error('agent 服务还没有准备好')
       if ((out.get(parent) ?? 0) >= MAX_OUT) throw new Error(`这个对话已经有 ${MAX_OUT} 件事在别的 agent 那里，等其中一件回来再交`)
-      const refusal = conversations.handOffRefusal?.(parent, agent.id, caller?.id ?? '')
+      const refusal = conversations.handOffRefusal?.(parent, agent.id, caller?.id ?? '', agent.name)
       if (refusal !== undefined) throw new Error(refusal)
       out.set(parent, (out.get(parent) ?? 0) + 1)
       const line = task.split('\n').find(l => l.trim() !== '')!.trim()

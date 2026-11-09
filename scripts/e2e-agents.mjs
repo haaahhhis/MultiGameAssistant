@@ -40,11 +40,24 @@ const llm = await startFakeLlm({
     const said = newSince(body)
     const last = (body.messages ?? []).at(-1)
     // The sub-agent: its only task is the words below.
-    if (said.includes('E2E-CHILD') && !all.includes('E2E-LEAD')) {
+    if (all.includes('E2E-CHILD') && !all.includes('E2E-LEAD')) {
       seen.child.push(body)
-      return { delayMs: 3000, text: '子任务结果：第 212 行报错' }
+      if (last?.role !== 'tool') return call('script_list', {})
+      return { delayMs: Number(process.env.E2E_CHILD_DELAY ?? 3000), text: '子任务结果：第 212 行报错' }
+    }
+    // A sub-agent that takes long enough to be stopped.
+    if (said.includes('E2E-HANG') && !all.includes('E2E-STOP-PARENT')) {
+      seen.hung = true
+      return { delayMs: 20_000, text: '不该走到这里' }
     }
     const system = systemOf(body)
+    // 脚本, opening the sub-agent the person then stops.
+    if (system.includes('你的角色：脚本') && all.includes('E2E-STOP-PARENT')) {
+      if (said.includes('E2E-STOP-PARENT')) return call('subagent', { description: '会被停下的子任务', prompt: 'E2E-HANG 等着' })
+      if (last?.role === 'tool' && lastTool(body) === 'subagent') return { text: '开了，等它。' }
+      if (said.includes('was stopped')) seen.toldStopped = true
+      return { text: '子任务被停了。' }
+    }
     // 游戏, asked by its colleague.
     if (system.includes('你的角色：游戏')) {
       seen.peer.push(body)
@@ -197,6 +210,26 @@ try {
   const back = seen.lead.find(b => { const m = b.messages?.at(-1); return m?.role === 'tool' && textOf(m.content).includes('绕回去了') })
   if (back === undefined) fail('脚本 was not told that handing back to 助手 comes back on itself')
   step('handing back up the chain is refused, with what to do instead')
+
+  // The third layer: a sub-task is its parent's, and the person can stop it without stopping the parent.
+  const children = async () => (await rpc('sessions/list', { limit: 200 })).items.filter(i => i.origin === 'subagent' && i.parentId === scripts)
+  const [done] = await children()
+  if (done === undefined) fail('the sub-agent of 脚本 is not among the sessions')
+  const opened = await rpc('session/open', { sessionId: done.id })
+  await rpc('session/close', { subscriptionId: opened.subscriptionId })
+  if (!opened.events.some(e => e.type === 'user/message')) fail('the sub-agent\'s conversation opened empty')
+  const page = await rpc('session/history', { sessionId: done.id, throughSeq: opened.cursor, beforeSeq: opened.events[0].seq })
+  if (page.events === undefined) fail('the sub-agent\'s history could not be read')
+  const [reply] = (await rpc('sessions/lastReplies', { sessionIds: [done.id] })).items
+  if (!reply?.text?.includes('第 212 行报错')) fail(`the sub-agent's answer could not be read: ${JSON.stringify(reply)}`)
+  step('a sub-agent\'s conversation and answer can be read', reply.text)
+  await rpc('session/prompt', { sessionId: scripts, requestId: `e2e-stop-${Date.now()}`, text: 'E2E-STOP-PARENT 开一个子任务', mode: 'queue' })
+  await until('the sub-agent to start on it', () => seen.hung === true)
+  const hanging = await until('the sub-agent to show as running', async () => (await children()).find(i => i.running))
+  await rpc('subagents/stop', { sessionId: hanging.id })
+  await until('the sub-agent to stop', async () => (await children()).every(i => !i.running), 15_000)
+  await until('脚本 to be told it was stopped', () => seen.toldStopped === true, 15_000)
+  step('the person stopped a sub-task; its parent was told and went on', hanging.id)
 
   console.log(`\nagents end-to-end OK (${steps.length} steps); the fake model served ${llm.requests.length} requests`)
 } catch (error) {
