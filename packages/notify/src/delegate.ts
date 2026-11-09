@@ -28,7 +28,7 @@ import type { Conversations } from './notify.ts'
 import type { Reply } from './reply.ts'
 
 /** Pieces of work one conversation may have out at once. */
-export const MAX_OUT = 3
+export const MAX_OUT = 4
 
 /** Who asks, when the asking agent cannot be told (a client without the gateway). */
 export const DELEGATOR = '助手'
