@@ -2,7 +2,7 @@ import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { useFollowTail } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { BY_YOU, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
@@ -12,6 +12,7 @@ import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
 import { SkillOffer } from './SkillOffer.tsx'
 import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
+import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentOf, SubAgentPane, SubTaskCard, SUBAGENT_TOOL, taskWords, useChatDetail, type ChatDetail, type OpenTask } from './SubTasks.tsx'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 80
@@ -27,26 +28,39 @@ type Row =
   | { readonly kind: 'process'; readonly id: string; readonly items: readonly ChatItem[]; readonly header: TurnHeader | null }
   /** Work 助手 handed to another agent (agent_delegate): what it asked and what came back, never folded. */
   | { readonly kind: 'delegation'; readonly item: ToolItem; readonly header: TurnHeader | null }
+  /** A sub-agent this agent opened: its card, never folded (SubTasks.tsx). */
+  | { readonly kind: 'subtask'; readonly item: ToolItem; readonly header: TurnHeader | null }
   /** Something the app told the person through the chat apps, between 助手's turns (SentNotices.tsx). */
   | { readonly kind: 'sent'; readonly item: SentItem }
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
 export function ChatView({ client, session, state, readOnly }: SessionViewProps) {
-  const items = useMemo(
+  const built = useMemo(
     () => buildChat(state.events, state.live, state.pending),
     // `version` covers in-place live delta appends.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.events, state.live, state.pending, state.version],
   )
+  // dsh's note that a sub-agent ended is for the model: its card says so.
+  const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
+  const settled = useMemo(() => settledTasks(built), [built])
   // 助手's one conversation has the notices sent to the chat apps in it.
   const home = useHome(client, MAIN_AGENT)
   const notices = useSentNotices(client, home.sessionId === session.id)
   const from = state.hasMore ? (state.events[0]?.time ?? 0) : 0
-  const rows = useMemo(() => groupRows(withNotices(items, notices, from, startsTurn)), [items, notices, from])
+  const allRows = useMemo(() => groupRows(withNotices(items, notices, from, startsTurn)), [items, notices, from])
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
-  const agentName = roles.find(r => r.id === (item === undefined ? undefined : agentIdOf(item, roles)))?.name ?? MAIN.name
+  const agentId = item === undefined ? MAIN_AGENT : agentIdOf(item, roles)
+  // A sub-agent's conversation, beside its parent's, is named for it and shown whole.
+  const subAgentOf = useContext(SubAgentOf)
+  const paneName = useContext(ConversationAgent)
+  const agentName = subAgentOf !== null ? paneName : roles.find(r => r.id === agentId)?.name ?? MAIN.name
+  const [detail, setDetail] = useChatDetail(agentId)
+  const level: ChatDetail = subAgentOf === null ? detail : 3
+  const rows = useMemo(() => atDetail(allRows, level), [allRows, level])
+  const [pane, setPane] = useState<OpenTask | null>(null)
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
   const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && (h.state === 'running' || h.state === 'waiting'))
@@ -78,6 +92,10 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
     <ConversationAgent.Provider value={agentName}>
+    <OpenSubTask.Provider value={setPane}>
+    <SettledTasks.Provider value={settled}>
+    <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
+    {subAgentOf === null && allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
     <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
       <div className="chat-inner">
         {state.hasMore && (
@@ -99,6 +117,8 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
           : row.kind === 'delegation'
             ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
+          : row.kind === 'subtask'
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} compact={level < 3} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
@@ -107,10 +127,52 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
         {readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
+    {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={agentName} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => setPane(null)} />}
+    </div>
+    </SettledTasks.Provider>
+    </OpenSubTask.Provider>
     </ConversationAgent.Provider>
     </HandOffsOf.Provider>
     </ImageClient.Provider>
   )
+}
+
+/** Which layer of what agents say a row is (docs/design/agent-roles.md §14): 1 to the person, 2 between agents and the steps, 3 a sub-task. */
+function layerOf(row: Row): 1 | 2 | 3 {
+  switch (row.kind) {
+    case 'subtask': return 3
+    case 'delegation': case 'process': return 2
+    // A step waiting for the person's approval is the person's business.
+    case 'tools': return row.tools.some(tool => tool.approval === 'asked') ? 1 : 2
+    case 'sent': return 1
+    case 'item': {
+      if (row.item.kind !== 'user' || row.item.pending !== undefined) return 1
+      const task = parseTask(row.item.text)
+      return parseRelay(row.item.text) !== undefined || parseThreadNote(row.item.text) !== undefined || (task !== undefined && task.by !== BY_YOU) ? 2 : 1
+    }
+  }
+}
+
+/**
+ * The rows a level shows; it only filters. 协作 keeps sub-tasks, as a line
+ * each: work going on stays in sight. A row taken away hands on its turn's header.
+ */
+function atDetail(rows: readonly Row[], level: ChatDetail): readonly Row[] {
+  if (level > 1) return rows
+  const shown: Row[] = []
+  let carried: TurnHeader | null = null
+  for (const row of rows) {
+    if (row.kind === 'sent') shown.push(row)
+    else if (layerOf(row) > 1) carried = row.header ?? carried
+    else if (row.kind === 'item' && row.item.kind === 'user') {
+      carried = null
+      shown.push(row)
+    } else if (carried !== null && row.header === null && !(row.kind === 'item' && (row.item.kind === 'notice' || row.item.kind === 'context'))) {
+      shown.push({ ...row, header: carried })
+      carried = null
+    } else shown.push(row)
+  }
+  return shown
 }
 
 /**
@@ -149,6 +211,7 @@ function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
   }
   const plain = (item: ChatItem) => {
     if (item.kind === 'tool' && item.name === DELEGATE_TOOL) rows.push({ kind: 'delegation', item, header: header() })
+    else if (item.kind === 'tool' && item.name === SUBAGENT_TOOL) rows.push({ kind: 'subtask', item, header: header() })
     else if (item.kind === 'tool') {
       const last = rows.at(-1)
       if (last?.kind === 'tools') rows[rows.length - 1] = { ...last, tools: [...last.tools, item] }
@@ -169,7 +232,7 @@ function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
   }
   for (let i = 0; i < reply; i++) {
     const item = turn[i]!
-    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && (item.approval === 'asked' || item.name === DELEGATE_TOOL))) {
+    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && (item.approval === 'asked' || item.name === DELEGATE_TOOL || item.name === SUBAGENT_TOOL))) {
       fold()
       plain(item)
     } else steps.push(item)
@@ -217,8 +280,11 @@ function personText(text: string): { text: string; channel?: string } {
 const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
   const client = useContext(ImageClient)
   const handOffs = useContext(HandOffsOf)
+  const subAgentOf = useContext(SubAgentOf)
   switch (item.kind) {
     case 'user': {
+      // In a sub-agent's conversation, whoever speaks to it is the agent that opened it.
+      if (subAgentOf !== null) return <div className="msg user delegated"><div className="msg-from">{subAgentOf}交给的事</div><div className="bubble"><Markdown text={taskWords(item.text)} /></div></div>
       // Not the person's words: a reply another agent sent back, or work handed here (Delegation.tsx).
       const relay = item.pending === undefined ? parseRelay(item.text) : undefined
       if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} handOffs={handOffs} />

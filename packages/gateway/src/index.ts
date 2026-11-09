@@ -192,7 +192,7 @@ interface LiveAgent {
 /** The slice of dsh's subagent service a hand-off needs. */
 interface SubagentService {
   waitForChildren(parent: LiveAgent): Promise<boolean>
-  interrupt(targetSessionId: string, authority: LiveAgent): void
+  interrupt(targetSessionId: string, authority: { kind: 'user'; parentSessionId: string }): void
 }
 
 /** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
@@ -587,6 +587,10 @@ export class AdgGateway extends Service {
             throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
           }
         },
+        'subagents/stop': params => {
+          this.stopSubAgent((params as RequestParams<'subagents/stop'>).sessionId)
+          return { accepted: true }
+        },
         'handoffs/list': async params => {
           await this.handOffs.loaded
           return { items: this.handOffs.of((params as RequestParams<'handoffs/list'>).sessionId) }
@@ -951,7 +955,10 @@ Content-Length: 0
 
   /** Is this one of the app's sessions? Every session is, unless the dsh is shared (Config.shared). */
   isOwn(sessionId: string): boolean {
-    return !this.shared || this.own.has(sessionId)
+    if (!this.shared || this.own.has(sessionId)) return true
+    // A sub-agent is its parent's.
+    const parent = this.agents.get(sessionId)?.session.header?.parentSession
+    return parent !== undefined && this.own.has(parent)
   }
 
   /** What a new session of the app's is created with besides its folder: its agent preset when the dsh is shared. */
@@ -1068,14 +1075,18 @@ Content-Length: 0
     }
   }
 
+  /** Stop one sub-agent, on behalf of the agent that opened it. */
+  stopSubAgent(sessionId: string): void {
+    const parent = this.agents.get(sessionId)?.session.header?.parentSession
+    if (parent === undefined) return
+    ;((this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined)?.interrupt(sessionId, { kind: 'user', parentSessionId: parent })
+  }
+
   /** Stop the sub-agents working under this session's agent (a hand-off called off stops them with it). */
   stopSubAgents(sessionId: string): void {
-    const subagents = (this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined
-    const parent = this.agents.get(sessionId)
-    if (subagents === undefined || parent === undefined) return
     for (const agent of this.agents.values()) {
       if (agent.session.header?.parentSession !== sessionId || agent.session.header.origin !== 'subagent') continue
-      try { subagents.interrupt(agent.session.id, parent) } catch (error) { this.log.warn(`stopping sub-agent ${agent.session.id}: ${error instanceof Error ? error.message : String(error)}`) }
+      try { this.stopSubAgent(agent.session.id) } catch (error) { this.log.warn(`stopping sub-agent ${agent.session.id}: ${error instanceof Error ? error.message : String(error)}`) }
     }
   }
 

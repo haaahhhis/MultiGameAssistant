@@ -1628,3 +1628,42 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .draft-docs { margin: 4px 0 8px; }
 .draft-docs ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); }
 .draft-docs code { font-size: 11px; }
+
+/* Agents' layers (docs/design/agent-roles.md §14.5): sub-tasks, the pane beside the conversation, how much to show. */
+.chat-split { position: relative; display: flex; flex: 1; width: 100%; min-height: 0; }
+.chat-split > .chat { flex: 1; min-width: 0; }
+.chat-detail { position: absolute; top: 8px; right: 18px; z-index: 3; margin: 0; background: var(--sunken); }
+.chat-detail button { flex: none; height: 24px; padding: 0 10px; font-size: 12px; }
+.chat-split.with-pane > .chat-detail { right: calc(min(46%, 560px) + 18px); }
+.subtask { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); font-size: 13px; }
+.subtask.tone-running { border-color: var(--accent-line); }
+.subtask.tone-failed { border-color: color-mix(in srgb, var(--error) 45%, var(--border)); }
+.subtask-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.subtask-head > .ui-icon, .subtask-line > .ui-icon:first-child { flex-shrink: 0; width: 15px; height: 15px; color: var(--muted); }
+.subtask-label { min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.subtask-open { flex-shrink: 0; margin-left: auto; font-size: 12px; }
+.subtask-steps { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--border); list-style: none; font-size: 12px; }
+.subtask-steps li { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.subtask-steps li .ui-icon { flex-shrink: 0; width: 13px; height: 13px; color: var(--muted); }
+.subtask-steps li.failed .ui-icon { color: var(--error); }
+.subtask-step-name { flex-shrink: 0; font-size: 12px; font-weight: 500; }
+.subtask-step-args { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.subtask-answer { padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; }
+.subtask-fold { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; color: var(--muted); font-size: 12px; }
+.subtask-fold .ui-icon { width: 12px; height: 12px; }
+.subtask-line { text-align: left; cursor: pointer; }
+.thread-subtasks { gap: 6px; }
+.subagent-pane { display: flex; flex-direction: column; flex: none; width: min(46%, 560px); min-width: 0; border-left: 1px solid var(--border); background: var(--page); }
+.subagent-pane-head { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.subagent-trail { display: flex; flex: 1; align-items: center; gap: 4px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.subagent-trail > span { flex-shrink: 0; }
+.subagent-trail-sep { margin-left: 4px; color: var(--faint); }
+.subagent-trail strong { min-width: 0; overflow: hidden; color: var(--text); font-weight: 500; text-overflow: ellipsis; }
+.subagent-pane-head .icon-button { width: 28px; height: 28px; }
+.subagent-pane-head .small-button .ui-icon { width: 13px; height: 13px; }
+.subagent-pane-body { display: flex; flex: 1; min-height: 0; }
+.subagent-pane-body .chat-inner { padding: 20px 16px; }
+@media (max-width: 760px) {
+  .subagent-pane { position: absolute; inset: 0; z-index: 4; width: auto; border-left: none; }
+  .chat-split.with-pane > .chat-detail { display: none; }
+}

@@ -136,7 +136,7 @@ export interface Conversations {
    */
   handOff(input: HandOffInput): Promise<Reply>
   /** Why this work may not be handed on (a chain coming back on itself, too deep, too long), in words for the agent asking. */
-  handOffRefusal?(fromSession: string, to: string, fromAgent: string): string | undefined
+  handOffRefusal?(fromSession: string, to: string, fromAgent: string, toName?: string): string | undefined
   /** The hand-offs under way, for saying something in one. */
   readonly desk?: HandOffDesk
   /**

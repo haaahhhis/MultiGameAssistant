@@ -159,6 +159,19 @@ const DEFAULT_OPEN_MESSAGES = 60
 export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[] {
   const { sessions } = deps
 
+  /** A sub-agent is its parent's: where instances share a home, it goes with the parent. */
+  const owned = (item: SessionSummary): boolean =>
+    deps.isOwn === undefined || deps.isOwn(item.sessionId) || (item.parentSessionId !== undefined && deps.isOwn(item.parentSessionId))
+
+  /** How dsh addresses a session: a sub-agent only through its parent. */
+  const addressOf = async (sessionId: string, signal: AbortSignal) => {
+    const { items } = await sessions.list({}, signal)
+    const parent = items.find(item => item.sessionId === sessionId && item.origin === 'subagent')?.parentSessionId
+    return parent === undefined
+      ? { kind: 'session' as const, sessionId: sid(sessionId) }
+      : { kind: 'subagent' as const, parentSessionId: parent, childSessionId: sid(sessionId), mode: 'unknown' as const }
+  }
+
   const core: CapabilityRegistration = {
     id: '$core',
     version: 1,
@@ -178,7 +191,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
     methods: handlers({
       'sessions/list': async (_params: RequestParams<'sessions/list'>, call: MethodContext) => {
         const value = await sessions.list({}, call.signal)
-        return { items: value.items.filter(item => deps.isOwn?.(item.sessionId) ?? true).map(item => toSessionItem(item, deps.roleOf, deps.requestedByOf, deps.homeOf)) }
+        return { items: value.items.filter(owned).map(item => toSessionItem(item, deps.roleOf, deps.requestedByOf, deps.homeOf)) }
       },
       'roles/list': () => ({ items: deps.roles?.() ?? [] }),
       'sessions/create': async (params: RequestParams<'sessions/create'>) => {
@@ -197,10 +210,10 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         if (replies === undefined || params.sessionIds.length === 0) return { items: [] }
         const { items } = await sessions.list({}, call.signal)
         const summaries = new Map(items.map(s => [String(s.sessionId), s]))
-        const wanted = params.sessionIds.filter(id => summaries.has(id) && (deps.isOwn?.(id) ?? true))
+        const wanted = params.sessionIds.filter(id => { const s = summaries.get(id); return s !== undefined && owned(s) })
         return { items: await Promise.all(wanted.map(async sessionId => {
           const summary = summaries.get(sessionId)!
-          return { sessionId, text: await replies.of(sessionId, summary.updatedAt, call.signal, summary.running) }
+          return { sessionId, text: await replies.of(sessionId, summary.updatedAt, call.signal, summary.running, summary.origin === 'subagent' ? summary.parentSessionId : undefined) }
         })) }
       },
       'sessions/rename': async (params: RequestParams<'sessions/rename'>) => {
@@ -210,8 +223,9 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
       'session/open': async (params: RequestParams<'session/open'>, call: MethodContext) => {
         const subscription = call.peer.openSubscription('sub')
         // The follow stream outlives this request: it stops on session/close or disconnect.
+        const address = await addressOf(params.sessionId, call.signal)
         const iterator = sessions.follow({
-          address: { kind: 'session', sessionId: sid(params.sessionId) },
+          address,
           assistantStream: true,
           maxMessages: params.maxMessages ?? DEFAULT_OPEN_MESSAGES,
         }, subscription.signal)[Symbol.asyncIterator]()
@@ -254,7 +268,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
       },
       'session/history': async (params: RequestParams<'session/history'>, call: MethodContext) => {
         const page = await sessions.page({
-          address: { kind: 'session', sessionId: sid(params.sessionId) },
+          address: await addressOf(params.sessionId, call.signal),
           throughSeq: params.throughSeq,
           beforeSeq: params.beforeSeq,
           maxMessages: params.maxMessages ?? DEFAULT_OPEN_MESSAGES,
