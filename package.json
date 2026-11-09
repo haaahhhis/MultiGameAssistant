@@ -33,6 +33,7 @@
     "e2e:permissions": "node scripts/e2e-permissions.mjs",
     "e2e:questions": "node scripts/e2e-questions.mjs",
     "e2e:steer": "node scripts/e2e-steer.mjs",
+    "e2e:agents": "node scripts/e2e-agents.mjs",
     "package:desktop": "node scripts/package-desktop.mjs",
     "package:plugin": "node scripts/package-plugin.mjs",
     "release": "node scripts/release.mjs",

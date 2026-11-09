@@ -49,7 +49,7 @@ import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel 
 import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
-import { keeps, RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
+import { hiddenTools, RoleModel, SessionRoles, subAgentSpec, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -184,8 +184,15 @@ interface PresetService {
 
 /** The slice of a dsh agent (dsh-agent runtime-types) a role narrows: its session, and its own scope. */
 interface LiveAgent {
-  readonly session: { readonly id: string }
+  readonly session: { readonly id: string; readonly seq?: number; readonly header?: { readonly parentSession?: string; readonly origin?: string } }
   readonly ctx: Context
+  whenIdle?(): Promise<void>
+}
+
+/** The slice of dsh's subagent service a hand-off needs. */
+interface SubagentService {
+  waitForChildren(parent: LiveAgent): Promise<boolean>
+  interrupt(targetSessionId: string, authority: LiveAgent): void
 }
 
 /** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
@@ -280,6 +287,7 @@ export class AdgGateway extends Service {
   /** Live agents by session, and what narrows each to its role (`narrow`). */
   private readonly agents = new Map<string, LiveAgent>()
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly dispose: () => void }>()
+  private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
   private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
@@ -955,7 +963,7 @@ Content-Length: 0
   role(spec: RoleSpec): () => void {
     const dispose = this.roles.register(spec)
     // Its sessions' agents already running (resumed before the plugin loaded, or the role changed) get narrowed now.
-    for (const agent of this.agents.values()) if (this.roles.tagged(agent.session.id) === spec.id) this.narrow(agent)
+    for (const agent of this.agents.values()) if (this.roles.tagged(agent.session.id) === spec.id || agent.session.header?.origin === 'subagent') this.narrow(agent)
     return () => {
       dispose()
       // Taken back: its agents still running get their tools back (or the role that replaced it).
@@ -971,8 +979,7 @@ Content-Length: 0
    * (MAIN_AGENT); a shared dsh's other chats are left as they are.
    */
   private narrow(agent: LiveAgent): void {
-    const role = this.roles.tagged(agent.session.id)
-    const spec = role === undefined ? (this.isOwn(agent.session.id) ? MAIN_AGENT : undefined) : this.roles.spec(role)
+    const spec = this.specOf(agent.session.id)
     const held = this.narrowed.get(agent)
     if (held?.spec === spec) return
     held?.dispose()
@@ -981,14 +988,17 @@ Content-Length: 0
     const disposers: (() => void)[] = []
     try {
       const tools = agent.ctx.tools
-      const visible = new Set(tools.schemas(agent).map(schema => schema.name))
-      const deny = [...this.parts.tools].filter(name => visible.has(name) && !keeps(spec.tools, name))
-      if (deny.length > 0) disposers.push(tools.restrict({ deny }))
+      // dsh refuses a mask naming a tool registered on the agent's own scope (`subagent` is): those are refused when called.
+      const refused = new Set<string>()
+      for (const name of hiddenTools(spec, this.parts.tools, tools.schemas(agent).map(schema => schema.name))) {
+        try { disposers.push(tools.restrict({ deny: [name] })) } catch { refused.add(name) }
+      }
+      if (refused.size > 0) disposers.push(tools.guard(exec => (refused.has(exec.name) ? `${spec.name}不能用 ${exec.name}` : undefined)))
     } catch (error) {
       this.log.warn(`tools of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
     try {
-      const duty = [spec.duty, ROLE_CLOSING].filter(text => text !== undefined && text !== '').join('\n\n')
+      const duty = [spec.duty, spec.subAgentOf === undefined ? ROLE_CLOSING : undefined].filter(text => text !== undefined && text !== '').join('\n\n')
       const text = spec === MAIN_AGENT ? () => mainDuty(this.roles.list()) : () => duty
       // After the app's identity, before the reply style.
       disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text }))
@@ -996,6 +1006,62 @@ Content-Length: 0
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
     this.narrowed.set(agent, { spec, dispose: () => { for (const dispose of disposers) dispose() } })
+  }
+
+  /**
+   * What an agent in this session is: its role, 助手 for the app's other
+   * sessions, and for a sub-agent, its parent's made into a sub-agent's.
+   * A shared dsh's other chats, and their sub-agents, are nothing of ours.
+   */
+  private specOf(sessionId: string): RoleSpec | undefined {
+    const header = this.agents.get(sessionId)?.session.header
+    if (header?.origin === 'subagent' && header.parentSession !== undefined) {
+      const parent = this.specOf(header.parentSession)
+      if (parent === undefined) return undefined
+      if (parent.subAgentOf !== undefined) return parent
+      let child = this.subAgentSpecs.get(parent)
+      if (child === undefined) this.subAgentSpecs.set(parent, child = subAgentSpec(parent))
+      return child
+    }
+    const role = this.roles.tagged(sessionId)
+    return role === undefined ? (this.isOwn(sessionId) ? MAIN_AGENT : undefined) : this.roles.spec(role)
+  }
+
+  /**
+   * Resolves once the agent is done with what it has running: idle, with no
+   * sub-agent still working and no reply to one still to come. A parent waiting
+   * on sub-agents ends its turn, so a turn's end does not say the work is over.
+   * The check is dsh's own for a host waiting on an agent: idle, children
+   * joined, and nothing new in the session across that.
+   */
+  async settled(sessionId: string, signal: AbortSignal): Promise<void> {
+    const subagents = (this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined
+    const stopped = new Promise<void>(resolve => {
+      if (signal.aborted) resolve()
+      else signal.addEventListener('abort', () => resolve(), { once: true })
+    })
+    for (;;) {
+      if (signal.aborted) return
+      const agent = this.agents.get(sessionId)
+      if (agent === undefined) return
+      await Promise.race([agent.whenIdle?.(), stopped])
+      if (signal.aborted) return
+      const before = agent.session.seq
+      const joined = await Promise.race([subagents?.waitForChildren(agent) ?? false, stopped.then(() => false)])
+      await Promise.race([agent.whenIdle?.(), stopped])
+      if (!joined && agent.session.seq === before) return
+    }
+  }
+
+  /** Stop the sub-agents working under this session's agent (a hand-off called off stops them with it). */
+  stopSubAgents(sessionId: string): void {
+    const subagents = (this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined
+    const parent = this.agents.get(sessionId)
+    if (subagents === undefined || parent === undefined) return
+    for (const agent of this.agents.values()) {
+      if (agent.session.header?.parentSession !== sessionId || agent.session.header.origin !== 'subagent') continue
+      try { subagents.interrupt(agent.session.id, parent) } catch (error) { this.log.warn(`stopping sub-agent ${agent.session.id}: ${error instanceof Error ? error.message : String(error)}`) }
+    }
   }
 
   /** dsh's schedule service (schedule_create's reminders), when loaded. */

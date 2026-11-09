@@ -3,10 +3,27 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { keeps, RoleModel, SessionRoles } from '../src/roles.ts'
+import { hiddenTools, keeps, RoleModel, SessionRoles, subAgentSpec } from '../src/roles.ts'
 
 const INTERVENE = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
 const GAMES = { id: 'games', name: '游戏', description: '读游戏活动和资讯', order: 20, titles: ['游戏信息', '日报'] }
+
+test('an agent keeps what its role names of the app tools; dsh tools stay, but nobody forks', () => {
+  const spec = { tools: ['script_*', 'agent_delegate'] }
+  const app = new Set(['script_run', 'screen_click', 'agent_delegate'])
+  assert.deepEqual(hiddenTools(spec, app, ['script_run', 'screen_click', 'agent_delegate', 'read', 'subagent', 'subagent_fork']), ['screen_click', 'subagent_fork'])
+})
+
+test("a sub-agent has its parent's tools for the work, and none for working with others", () => {
+  const scripts = { id: 'scripts', name: '脚本', description: '', order: 30, tools: ['script_*', 'agent_delegate', 'notice_act'] }
+  const child = subAgentSpec(scripts)
+  const app = new Set(['script_run', 'screen_click', 'agent_delegate', 'notice_act'])
+  const hidden = hiddenTools(child, app, ['script_run', 'screen_click', 'agent_delegate', 'notice_act', 'read', 'send_message', 'subagent', 'subagent_fork', 'ask_user_question', 'schedule_create'])
+  assert.deepEqual(hidden.toSorted(), ['agent_delegate', 'ask_user_question', 'notice_act', 'schedule_create', 'screen_click', 'subagent', 'subagent_fork'])
+  assert.equal(child.subAgentOf, '脚本')
+  assert.match(child.duty ?? '', /「脚本」的子 agent/)
+  assert.doesNotMatch(child.duty ?? '', /助手/, 'it is not told it is the main agent')
+})
 
 test('roles are listed in order, without their title prefixes, and leave with their plugin', () => {
   let changes = 0
