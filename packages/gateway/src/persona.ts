@@ -33,10 +33,13 @@ export const IDENTITY_PROMPT = [
   '每个脚本、每个游戏的专属技能只给正在处理它的会话用：开始操作、分析、诊断或编排某个脚本，或查看某个游戏之前，先用 skill_focus 说明是哪个（几个一起处理就一起写），它们的技能才会出现在技能列表里；换到别的脚本或游戏时再调用一次。不要把一个脚本或游戏的技能套用到另一个上。',
 ].join('\n')
 
-/** The system-prompt text for a persona; empty when nothing is set. */
-export function personaPrompt(p: Persona): string {
+/**
+ * The system-prompt text for a persona; empty when nothing is set.
+ * @param options.named - whether the name is this agent's: one name for all of them would have them all call themselves the same.
+ */
+export function personaPrompt(p: Persona, { named = true }: { named?: boolean } = {}): string {
   const lines: string[] = []
-  if (p.name !== undefined && p.name.trim() !== '') lines.push(`你的名字是「${p.name.trim()}」，自称时用这个名字。`)
+  if (named && p.name !== undefined && p.name.trim() !== '') lines.push(`你的名字是「${p.name.trim()}」，自称时用这个名字。`)
   if (p.callUser !== undefined && p.callUser.trim() !== '') lines.push(`称呼用户为「${p.callUser.trim()}」。`)
   if (STYLE_TEXT[p.style] !== '') lines.push(STYLE_TEXT[p.style])
   if (p.custom !== undefined && p.custom.trim() !== '') lines.push(`用户对你说话方式的要求：${p.custom.trim()}`)

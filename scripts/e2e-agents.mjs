@@ -26,6 +26,8 @@ const newSince = body => {
 }
 const lastTool = body => (body.messages ?? []).findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
 
+const NAME = '小满'
+const STYLE = '稳重周到的管家'
 const seen = { child: [], lead: [], main: [] }
 const call = (name, args) => ({ toolCalls: [{ name, arguments: args }] })
 
@@ -87,6 +89,7 @@ const until = async (what, check, ms = 60_000) => {
 
 try {
   await saveFakeProvider(rpc, `${llm.url}/v1`)
+  await rpc('persona/set', { persona: { style: 'butler', name: NAME } })
   const home = async agentId => {
     const { sessionId } = await rpc('agents/home', { agentId })
     await until(`the fake model route for ${agentId}`, () => rpc('session/selectModel', { sessionId, provider: FAKE_PROVIDER, model: FAKE_MODEL }).then(() => true, () => false))
@@ -116,6 +119,20 @@ try {
   if (mainTools.includes('screen_tap')) fail('助手 does not do the work itself')
   step('助手 and 脚本 can open sub-agents; nobody can fork')
 
+  // Identity: each knows who it is and who else there is; a sub-agent knows only whose it is; the name is 助手's.
+  const leadSystem = systemOf(seen.lead[0])
+  const mainSystem = systemOf(seen.main[0])
+  for (const [who, text, wanted] of [
+    ['脚本', leadSystem, ['你是「脚本」（scripts）', '上级是「助手」（main）', '「游戏」（games）', '「干预」（intervene）', '没有任何标注：用户本人']],
+    ['助手', mainSystem, ['你是「助手」（main）', '最上级', '「脚本」（scripts）', '没有任何标注：用户本人']],
+  ]) for (const part of wanted) if (!text.includes(part)) fail(`${who} was not told: ${part}`)
+  if (childSystem.includes('# 团队')) fail('a sub-agent has no team of its own')
+  if (leadSystem.includes(NAME)) fail("脚本 was given the name that is 助手's")
+  if (!mainSystem.includes(`你的名字是「${NAME}」`)) fail('助手 did not get its name')
+  if (childSystem.includes('# 回复风格')) fail('a sub-agent got a reply style: its answer is data')
+  if (!leadSystem.includes(STYLE) || !mainSystem.includes(STYLE)) fail('the reply style did not reach the agents')
+  step('each knows who it is and who else there is; the name is 助手\'s; a sub-agent has neither')
+
   const settled = await until('the hand-off to settle', async () => (await rpc('handoffs/list', { sessionId: scripts })).items.find(h => h.startedAt >= since && h.state !== 'running'), 60_000)
   if (settled.state !== 'done') fail(`the hand-off ended as ${settled.state}: ${settled.reply}`)
   if (!settled.reply?.includes('结论')) fail(`the hand-off settled before the sub-agent came back; 助手 was given: ${settled.reply}`)
@@ -129,6 +146,7 @@ try {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)
   process.exitCode = 1
 } finally {
+  await rpc('persona/set', { persona: { style: 'default' } }).catch(() => {})
   await removeFakeProvider(rpc)
   gateway.close()
   await llm.close()

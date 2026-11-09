@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { hiddenTools, keeps, RoleModel, SessionRoles, subAgentSpec } from '../src/roles.ts'
+import { hiddenTools, keeps, RoleModel, SessionRoles, subAgentSpec, teamPrompt } from '../src/roles.ts'
 
 const INTERVENE = { id: 'intervene', name: '干预', description: '脚本出错、卡住时处理', order: 10, titles: ['干预'] }
 const GAMES = { id: 'games', name: '游戏', description: '读游戏活动和资讯', order: 20, titles: ['游戏信息', '日报'] }
@@ -23,6 +23,23 @@ test("a sub-agent has its parent's tools for the work, and none for working with
   assert.equal(child.subAgentOf, '脚本')
   assert.match(child.duty ?? '', /「脚本」的子 agent/)
   assert.doesNotMatch(child.duty ?? '', /助手/, 'it is not told it is the main agent')
+})
+
+test('an agent is told who it is, who else there is, and how to tell who is talking', () => {
+  const main = { id: 'main', name: '助手', description: '和用户对话' }
+  const scripts = { id: 'scripts', name: '脚本', description: '安装脚本' }
+  const games = { id: 'games', name: '游戏', description: '读活动' }
+  const lead = teamPrompt(scripts, main, [scripts, games])
+  assert.match(lead, /你是「脚本」（scripts）/)
+  assert.match(lead, /上级是「助手」（main）/)
+  assert.match(lead, /同事：\n- 「游戏」（games）：读活动/)
+  assert.doesNotMatch(lead, /- 「脚本」/, 'not its own colleague')
+  assert.match(lead, /没有任何标注：用户本人/)
+  assert.match(lead, /不等于用户同意/)
+  const top = teamPrompt(main, main, [scripts, games])
+  assert.match(top, /最上级/)
+  assert.match(top, /下面的主 agent：\n- 「脚本」（scripts）：安装脚本\n- 「游戏」/)
+  assert.match(teamPrompt(scripts, main, [scripts]), /现在没有其他同事/)
 })
 
 test('roles are listed in order, without their title prefixes, and leave with their plugin', () => {

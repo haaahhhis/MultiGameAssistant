@@ -49,7 +49,7 @@ import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel 
 import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
-import { hiddenTools, RoleModel, SessionRoles, subAgentSpec, type RoleSpec } from './roles.ts'
+import { hiddenTools, RoleModel, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -222,6 +222,9 @@ const MAIN_AGENT: RoleSpec = {
   ],
 }
 
+/** 助手 as the others know it. */
+const MAIN_AGENT_MEMBER = { id: MAIN_AGENT.id, name: MAIN_AGENT.name, description: '和用户对话，分发任务，做决定' }
+
 /** The main agent's duty, with who it can hand work to; read when the prompt is built, since the roster changes. */
 function mainDuty(roles: readonly { readonly name: string; readonly description: string }[]): string {
   return [
@@ -288,6 +291,7 @@ export class AdgGateway extends Service {
   private readonly agents = new Map<string, LiveAgent>()
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly dispose: () => void }>()
   private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
+  private persona: PersonaStore | undefined
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
   private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
@@ -771,13 +775,8 @@ export class AdgGateway extends Service {
           'persona/set': async params => { await loaded; await persona.set((params as RequestParams<'persona/set'>).persona); return answer() },
         },
       }), 'adg-gateway capability persona')
-      this.agentPart('adg-gateway persona section', agent => agent.systemPrompt.section({
-        name: 'adg:persona',
-        // After the harness's own guidance, before the deployment suffix (10200).
-        order: 10_100,
-        interpolate: false,
-        text: () => personaPrompt(persona.current),
-      }))
+      // Its section is each agent's own (narrow): after the harness's guidance, before the deployment suffix (10200).
+      this.persona = persona
     }
 
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
@@ -1002,6 +1001,12 @@ Content-Length: 0
       const text = spec === MAIN_AGENT ? () => mainDuty(this.roles.list()) : () => duty
       // After the app's identity, before the reply style.
       disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text }))
+      // A sub-agent answers its parent alone, and its answer is data: no team, no reply style.
+      if (spec.subAgentOf === undefined) {
+        const persona = this.persona
+        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:team', order: 10_096, interpolate: false, text: () => teamPrompt(spec, MAIN_AGENT_MEMBER, this.roles.list()) }))
+        if (persona !== undefined) disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:persona', order: 10_100, interpolate: false, text: () => personaPrompt(persona.current, { named: spec === MAIN_AGENT }) }))
+      }
     } catch (error) {
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
