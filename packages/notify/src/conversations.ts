@@ -24,7 +24,16 @@ interface AppSessions {
   roleModel(role: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
   home(agentId: string): Promise<string>
   readonly handOffs: { put(item: HandOff): Promise<void> }
+  /** Resolves once the agent there is done, its sub-agents back and its reply to them given. */
+  settled?(sessionId: string, signal: AbortSignal): Promise<void>
+  stopSubAgents?(sessionId: string): void
 }
+
+/** dsh's tools that start a sub-agent: a turn that used one is not the end of the work. */
+const SUB_AGENT_TOOLS: ReadonlySet<string> = new Set(['subagent', 'subagent_fork'])
+
+/** How long the events of a settled agent get to arrive after it is known to be done. */
+const QUIET_MS = 250
 
 /**
  * @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir).
@@ -42,7 +51,12 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     // running then is someone else's.
     const abort = () => {
       controller.abort(signal.reason)
-      void Promise.resolve().then(async () => { if (turn.started) sessions.cancel?.({ sessionId: sessionId as SessionId }); else await unqueue(sessions, sessionId, requestId) }).catch(() => {})
+      void Promise.resolve().then(async () => {
+        if (turn.started) {
+          sessions.cancel?.({ sessionId: sessionId as SessionId })
+          app?.()?.stopSubAgents?.(sessionId)
+        } else await unqueue(sessions, sessionId, requestId)
+      }).catch(() => {})
     }
     signal.addEventListener('abort', abort, { once: true })
     try {
@@ -56,7 +70,8 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
         content: [{ type: 'text', text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }, controller.signal)
-      return await turnReply(iterator, requestId, text, turn)
+      const settled = app?.()?.settled
+      return await workReply(iterator, requestId, text, turn, settled === undefined ? undefined : () => settled.call(app!(), sessionId, controller.signal))
     } finally {
       signal.removeEventListener('abort', abort)
       controller.abort()
@@ -196,20 +211,70 @@ export class TurnReply {
   }
 }
 
-/** Read events until the turn our message started ends (see {@link TurnReply}). */
-async function turnReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }): Promise<Reply> {
+/**
+ * Read events until the work our message started is over (see {@link TurnReply}):
+ * the end of its turn, or, when that turn opened sub-agents, the end of the
+ * turns they wake once the agent is done (`settled`). The reply is all of it,
+ * so its last words are what the agent concluded. A message from someone else
+ * taking a turn in between is that turn's, not this work's.
+ */
+export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }, settled: (() => Promise<void>) | undefined): Promise<Reply> {
   let mine = false
-  const reply = new TurnReply()
-  for (;;) {
-    const next = await iterator.next()
-    if (next.done === true) break
-    if (next.value.type !== 'event') continue
-    const event = convertRecord(next.value)
-    if (event === null) continue
+  let other = false
+  let opened = false
+  let cut = false
+  const turns: Reply[] = []
+  let reply = new TurnReply()
+  const take = (frame: SessionFollowFrame): boolean => {
+    if (frame.type !== 'event') return false
+    const event = convertRecord(frame)
+    if (event === null) return false
     if (event.type === 'user/message') {
       const body = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
-      if (event.requestId === requestId || (event.requestId === undefined && body.trim() === text.trim())) mine = turn.started = true
-    } else if (mine && reply.add(event)) break
+      if (event.requestId === requestId || (event.requestId === undefined && !mine && body.trim() === text.trim())) mine = turn.started = true
+      else if (mine && turns.length > 0) other = event.requestId !== undefined
+      return false
+    }
+    if (!mine || other) {
+      if (event.type === 'turn/end') other = false
+      return false
+    }
+    if (event.type === 'tool/call' && SUB_AGENT_TOOLS.has(event.name)) opened = true
+    if (event.type === 'turn/end' && event.reason.kind !== 'completed' && event.reason.kind !== 'stop') cut = true
+    if (!reply.add(event)) return false
+    turns.push(reply.reply)
+    reply = new TurnReply()
+    return true
   }
-  return reply.reply
+  // Until our turn ends.
+  for (;;) {
+    const next = await iterator.next()
+    if (next.done === true) return joined(turns, reply)
+    if (take(next.value)) break
+  }
+  if (!opened || settled === undefined || cut) return joined(turns, reply)
+  // Then whatever its sub-agents wake, until the agent is done. Events may trail that a little.
+  let done = false
+  const finished = settled().then(() => { done = true })
+  let pending: Promise<IteratorResult<SessionFollowFrame>> | undefined
+  for (;;) {
+    pending ??= iterator.next()
+    const raced = await Promise.race(done
+      ? [pending, new Promise<null>(resolve => setTimeout(() => resolve(null), QUIET_MS))]
+      : [pending, finished.then(() => undefined)])
+    if (raced === null) break
+    if (raced === undefined) continue
+    pending = undefined
+    if (raced.done === true) break
+    take(raced.value)
+  }
+  return joined(turns, reply)
+}
+
+/** Several turns as one reply; how the last of them ended is how the work ended. */
+function joined(turns: readonly Reply[], unfinished: TurnReply): Reply {
+  const open = unfinished.reply
+  const all = open.blocks.length > 0 ? [...turns, open] : turns
+  const ended = all.at(-1)?.ended
+  return { blocks: all.flatMap(r => r.blocks), ...(ended === undefined ? {} : { ended }) }
 }

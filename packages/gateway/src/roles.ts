@@ -30,11 +30,59 @@ export interface RoleSpec extends Role {
   readonly tools?: readonly string[]
   /** What its agent is for and where its work stops, as a section of its system prompt. */
   readonly duty?: string
+  /** Any tools, dsh's included, it must not see (`schedule_*` for a family): what `tools` cannot say, as that names only the app's. */
+  readonly hide?: readonly string[]
+  /** The agent whose sub-agent this is, by name (`subAgentSpec`). */
+  readonly subAgentOf?: string
 }
 
 /** Does a role's `tools` keep this tool? */
 export function keeps(tools: readonly string[] | undefined, name: string): boolean {
-  return tools === undefined || tools.some(pattern => pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern)
+  return tools === undefined || matches(tools, name)
+}
+
+function matches(patterns: readonly string[], name: string): boolean {
+  return patterns.some(pattern => pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern)
+}
+
+/** No agent has it: a fork copies the whole conversation, and an agent's one conversation is long. */
+const NOBODY = ['subagent_fork']
+
+/** What goes between agents and to the person: a sub-agent only does its part and answers its parent. */
+const COORDINATION = ['agent_delegate', 'agent_message', 'agent_threads', 'notice_act', 'ask_user_question', 'exit_plan_mode', 'subagent', 'list_agents', 'interrupt_agent', 'schedule_*', 'create_goal', 'update_goal', 'get_goal']
+
+/**
+ * What to hide from an agent under this spec, among the tools it can see now.
+ * @param appTools - the app's own tools, the ones `spec.tools` chooses among; dsh's stay unless `hide` names them.
+ */
+export function hiddenTools(spec: Pick<RoleSpec, 'tools' | 'hide'>, appTools: ReadonlySet<string>, visible: Iterable<string>): string[] {
+  const hide = [...NOBODY, ...(spec.hide ?? [])]
+  return [...visible].filter(name => matches(hide, name) || (appTools.has(name) && !keeps(spec.tools, name)))
+}
+
+/**
+ * A sub-agent of an agent under `parent` (dsh's `subagent` tool): the same
+ * agent run again on one part of the work, as OpenBot has it. So it has that
+ * agent's tools, without what is for working with others: it answers its
+ * parent alone, cannot reach the person, and approvals are dsh's to refuse.
+ */
+export function subAgentSpec(parent: RoleSpec): RoleSpec {
+  const name = parent.name
+  return {
+    id: `${parent.id}:sub`,
+    name: `${name}的子 agent`,
+    description: '',
+    order: parent.order,
+    ...(parent.tools === undefined ? {} : { tools: parent.tools }),
+    hide: [...(parent.hide ?? []), ...COORDINATION],
+    subAgentOf: name,
+    duty: [
+      `# 你的角色：「${name}」的子 agent`,
+      `你是「${name}」开的子 agent，只做它交给你的这一件事。它的任务就是你收到的第一条消息；你看不到它和别人的对话。`,
+      `你的回复只有「${name}」读，用户看不到：用工具把事做完，最后一段回复写结果，写它要的东西，不寒暄。`,
+      `你问不了用户，也不能交给别的 agent。需要用户审批的操作会被自动拒绝：不要换个办法绕过去，把没做成的和原因写进回复，由「${name}」去处理。`,
+    ].join('\n'),
+  }
 }
 
 const MAX_KEPT = 5000
