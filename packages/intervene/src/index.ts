@@ -104,6 +104,7 @@ export class AdgIntervene extends Service {
         const parts = run.resources.flatMap(r => r.startsWith('adb:') ? [`模拟器 ${r.slice(4)}（target=emulator）`] : r === 'desktop' ? ['桌面（target=desktop；用 window_list 找到游戏窗口后也可以 target=window 只截这个窗口）'] : [])
         return parts.length > 0 ? parts.join('；') : '没有（这个任务不用模拟器也不用桌面，只能截图查看、更新或重新运行脚本）'
       },
+      parentOf: sessionId => ctx.get('adgGateway')?.parentSession(sessionId),
       onChange: item => ctx.get('adgGateway')?.broadcast('intervene/changed', item),
       settle: async (incidentId, action) => {
         // The monitor depends on this plugin, so it is looked up by name, not imported.
@@ -142,7 +143,9 @@ export class AdgIntervene extends Service {
           if (approval === undefined || exec.agent === undefined) return false
           return (await approval.request({ agent: exec.agent, toolName: exec.name, callId: exec.callId, reason, signal: exec.signal })) === 'allowed-once'
         },
-        sendToSession: async (sessionId, title, png) => {
+        sendToSession: async (session, title, png) => {
+          // A sub-agent's picture goes where its parent is talking.
+          const sessionId = gateway.adgGateway.parentSession(session) ?? session
           const notify = ctx.get('adgNotify')
           if (notify === undefined) return false
           return notify.sendToSession(sessionId, { id: `shot:${Date.now()}`, scope: 'intervene', title: `截图：${title}`, text: new Date().toLocaleString('zh-CN', { hour12: false }), severity: 'info', image: png })

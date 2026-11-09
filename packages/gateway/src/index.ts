@@ -49,7 +49,7 @@ import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel 
 import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
-import { hiddenTools, RoleModel, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
+import { handsOn, HANDS_ON_REFUSAL, hiddenTools, RoleModel, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -231,7 +231,7 @@ function mainDuty(roles: readonly { readonly name: string; readonly description:
     '# 你的角色：助手',
     '你是用户的助手：和用户对话，弄清要做什么，安排谁来做。截图点击、运行和安装脚本、读游戏这些具体的事交给对应的 agent（agent_delegate），你自己不做。',
     roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
-    '查资料、读日志、比较几个方案这类做决定之前要看的东西，可以开自己的子 agent（subagent）去看；动手的事（截图点击、运行和安装脚本）还是交给主 agent。',
+    '运行命令、改文件这些工具不在你的对话里：用户要的这类事（整理文件、导出记录、查系统），还有查资料、读日志、比较几个方案，都开自己的子 agent（subagent）去做，它把结果交回来，你告诉用户。截图点击、运行和安装脚本这些交给对应的主 agent。',
     '交出去的事在那个 agent 自己的对话里做，它看不到你和用户的对话，所以任务要写完整。交出去以后用一句话告诉用户交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。',
     '它做的过程中可能回头问你（消息开头是「（「某 agent」在线索 … 里问你：…）」），这种消息会插进你正在做的事：它在等，先回答它。能答就用 agent_message 回答；要用户决定的，先用 kind: update 说一声、去问用户，有了结果再回答。它也可能只是告诉你一件事（「… 里告诉你：…」），不用回它。你要补充或改主意，同样用 agent_message 发到那条线索，马上送到它那里。',
     '它做完后，回复会作为一条新消息发到这里，开头是「（「某 agent」交回了…）」或「（「某 agent」没有做完…）」。收到后用一两句话把要点告诉用户：结论、要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
@@ -293,7 +293,7 @@ export class AdgGateway extends Service {
   private presetOf: (sessionId: string) => void = () => {}
   /** Live agents by session, and what narrows each to its role (`narrow`). */
   private readonly agents = new Map<string, LiveAgent>()
-  private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly dispose: () => void }>()
+  private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly home: boolean; readonly dispose: () => void }>()
   private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private persona: PersonaStore | undefined
   private readonly log: ReturnType<Context['logger']>
@@ -315,6 +315,7 @@ export class AdgGateway extends Service {
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
+    this.skillScope.inheritFrom(sessionId => this.parentSession(sessionId))
     if (this.shared) this.skillScope.limitTo(sessionId => this.isOwn(sessionId))
     this.sockets = createSockets(socket => this.accept(socket, config.validateResults ?? false, log))
     this.instances = new Instances({
@@ -376,6 +377,9 @@ export class AdgGateway extends Service {
     ctx.on('approval/request', (request, next) => {
       // Another chat in a shared dsh: dsh's own page answers it, as it would without this app.
       if (!this.isOwn(request.agent.session.id)) return next()
+      // A sub-agent's goes to the person where they are: its parent's conversation. Nobody has the sub-agent's open.
+      const parent = this.parentSession(request.agent.session.id)
+      const asker = parent ?? request.agent.session.id
       // An area's own setting (设置 → 权限) comes before the mode: allowed, refused, or asked even under full access.
       const policy = this.permissions.policyFor(request.toolName)
       if (request.callId !== undefined && this.approvedCalls.has(request.callId)) return Promise.resolve('allowed-once' as const)
@@ -391,13 +395,14 @@ export class AdgGateway extends Service {
         this.broadcast('permissions/changed', this.permissions.state())
         return Promise.resolve('allowed-once' as const)
       }
-      if (!this.hasClients() && !this.approvals.hasActiveAnswerer(request.agent.session.id)) return next()
+      if (!this.hasClients() && !this.approvals.hasActiveAnswerer(asker)) return next()
+      const said = (text: string) => (parent === undefined ? text : `子 agent 要做：${text}`)
       return this.approvals.ask({
-        sessionId: request.agent.session.id,
+        sessionId: asker,
         toolName: request.toolName,
         ...(request.callId === undefined ? {} : { callId: request.callId }),
-        ...(request.reason === undefined ? {} : { reason: request.reason }),
-        ...(request.displayReason === undefined ? {} : { displayReason: request.displayReason }),
+        ...(request.reason === undefined ? (parent === undefined ? {} : { reason: said(request.toolName) }) : { reason: said(request.reason) }),
+        ...(request.displayReason === undefined ? {} : { displayReason: Object.fromEntries(Object.entries(request.displayReason).map(([lang, text]) => [lang, said(String(text))])) }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       })
     }, true)
@@ -1012,7 +1017,9 @@ Content-Length: 0
   private narrow(agent: LiveAgent): void {
     const spec = this.specOf(agent.session.id)
     const held = this.narrowed.get(agent)
-    if (held?.spec === spec) return
+    // Its one conversation is for deciding and summing up. Another of its sessions is a one-off: nothing to keep clear.
+    const home = this.homes.agentOf(agent.session.id) !== undefined
+    if (held?.spec === spec && held?.home === home) return
     held?.dispose()
     this.narrowed.delete(agent)
     if (spec === undefined) return
@@ -1021,10 +1028,10 @@ Content-Length: 0
       const tools = agent.ctx.tools
       // dsh refuses a mask naming a tool registered on the agent's own scope (`subagent` is): those are refused when called.
       const refused = new Set<string>()
-      for (const name of hiddenTools(spec, this.parts.tools, tools.schemas(agent).map(schema => schema.name))) {
+      for (const name of hiddenTools(spec, this.parts.tools, tools.schemas(agent).map(schema => schema.name), home)) {
         try { disposers.push(tools.restrict({ deny: [name] })) } catch { refused.add(name) }
       }
-      if (refused.size > 0) disposers.push(tools.guard(exec => (refused.has(exec.name) ? `${spec.name}不能用 ${exec.name}` : undefined)))
+      if (refused.size > 0) disposers.push(tools.guard(exec => (!refused.has(exec.name) ? undefined : home && handsOn(exec.name) ? HANDS_ON_REFUSAL(exec.name) : `${spec.name}不能用 ${exec.name}`)))
       // Handed work by another agent, it asks that agent: a question put to the person from here is one 助手 never hears of.
       if (spec.subAgentOf === undefined) {
         disposers.push(tools.guard(exec => (exec.name === 'ask_user_question' ? (this.handOffDesk as { askRefusal?(sessionId: string): string | undefined } | undefined)?.askRefusal?.(agent.session.id) : undefined)))
@@ -1047,7 +1054,13 @@ Content-Length: 0
     } catch (error) {
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
-    this.narrowed.set(agent, { spec, dispose: () => { for (const dispose of disposers) dispose() } })
+    this.narrowed.set(agent, { spec, home, dispose: () => { for (const dispose of disposers) dispose() } })
+  }
+
+  /** The conversation that opened this sub-agent; undefined for any other session. */
+  parentSession(sessionId: string): string | undefined {
+    const header = this.agents.get(sessionId)?.session.header
+    return header?.origin === 'subagent' ? header.parentSession : undefined
   }
 
   /** The agent working in a session, as other agents address it. A sub-agent is nobody to them. */
@@ -1177,6 +1190,9 @@ Content-Length: 0
       if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
     }
     await sessions.rename({ sessionId: created.sessionId, title: role?.name ?? MAIN_AGENT.name }).catch(() => {})
+    // Its agent may be there already, and it has just become that agent's one conversation.
+    const live = this.agents.get(sessionId)
+    if (live !== undefined) this.narrow(live)
     this.broadcast('sessions/changed', { kind: 'upsert', item: { id: sessionId, home: agentId } })
     this.log.info(`${role?.name ?? MAIN_AGENT.name}'s conversation: ${sessionId}${kept === undefined ? '' : ` (the one before, ${kept}, is gone)`}`)
     return sessionId

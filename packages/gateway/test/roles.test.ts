@@ -14,6 +14,21 @@ test('an agent keeps what its role names of the app tools; dsh tools stay, but n
   assert.deepEqual(hiddenTools(spec, app, ['script_run', 'screen_click', 'agent_delegate', 'read', 'subagent', 'subagent_fork']), ['screen_click', 'subagent_fork'])
 })
 
+test("the concrete work is not in an agent's one conversation; its sub-agents have it", () => {
+  const scripts = { id: 'scripts', name: '脚本', description: '', order: 30, tools: ['script_*', 'screen_*', 'pipeline_*'], duty: '# 你的角色：脚本\n只管脚本' }
+  const app = new Set(['script_run', 'script_install', 'script_list', 'screen_capture', 'screen_tap', 'pipeline_run', 'pipeline_status'])
+  const visible = [...app, 'pwsh', 'write', 'edit', 'workflow', 'read', 'grep', 'web_search', 'subagent', 'agent_message']
+  const hidden = hiddenTools(scripts, app, visible, true)
+  for (const tool of ['pwsh', 'write', 'edit', 'workflow', 'screen_capture', 'screen_tap', 'script_run', 'script_install']) assert.ok(hidden.includes(tool), `${tool} is hands-on`)
+  for (const tool of ['read', 'grep', 'web_search', 'script_list', 'pipeline_run', 'pipeline_status', 'subagent', 'agent_message']) assert.ok(!hidden.includes(tool), `${tool} stays`)
+  assert.deepEqual(hiddenTools(scripts, app, visible), [], 'another of its sessions is a one-off')
+  const child = subAgentSpec(scripts)
+  for (const tool of ['pwsh', 'write', 'screen_tap', 'script_run']) assert.ok(!hiddenTools(child, app, visible).includes(tool), `its sub-agent has ${tool}`)
+  assert.match(child.duty ?? '', /只管脚本/, 'it works to its parent\'s duty')
+  assert.doesNotMatch(child.duty ?? '', /你的角色：脚本/, 'without being told it is its parent')
+  assert.ok(hiddenTools(child, app, ['intervention_done']).includes('intervention_done'), 'concluding is its parent\'s')
+})
+
 test("a sub-agent has its parent's tools for the work, and none for working with others", () => {
   const scripts = { id: 'scripts', name: '脚本', description: '', order: 30, tools: ['script_*', 'agent_delegate', 'notice_act'] }
   const child = subAgentSpec(scripts)

@@ -95,13 +95,27 @@ const llm = await startFakeLlm({
   models: [FAKE_MODEL],
   replies: [
     call('monitor_incidents', { status: 'all' }), { text: '刚才「会出错的任务」遇到了不认识的界面，已经按你的要求停止了；「会断线的任务」断线后自动重跑成功。' },
-    call(SHELL, { description: 'Print hi', command: 'echo hi', sandbox_permissions: 'danger-full-access', justification: 'e2e：在飞书里确认' }), { text: '命令已经运行，输出 hi。' },
     call(SHELL, { description: 'Print ui-1', command: 'echo ui-1', sandbox_permissions: 'danger-full-access', justification: 'e2e：只在界面里确认' }), { text: '运行了 ui-1。' },
     call(SHELL, { description: 'Print ui-2', command: 'echo ui-2', sandbox_permissions: 'danger-full-access', justification: 'e2e：也发到飞书' }), { text: '运行了 ui-2。' },
     call('ask_user_question', { questions: [{ id: 'close', question: '活动看完了，要不要把游戏关掉？', options: [{ label: '关掉游戏 (Recommended)' }, { label: '先开着' }] }] }), { text: '好的，游戏先开着。' },
   ],
   fallback: { text: '好的。' },
   scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
+  // A command from Feishu: 助手's conversation has none, so its sub-agent runs it, and asks.
+  respond: body => {
+    if (!Array.isArray(body.tools) || body.tools.length === 0) return undefined
+    const messages = body.messages ?? []
+    const all = JSON.stringify(messages)
+    if (!all.includes('E2E-FEISHU')) {
+      const said = JSON.stringify(messages.at(-1) ?? {})
+      return said.includes('运行 echo hi') ? call('subagent', { description: '运行命令', prompt: 'E2E-FEISHU 运行 echo hi' }) : undefined
+    }
+    const system = messages.filter(m => m.role === 'system').map(m => JSON.stringify(m.content)).join('')
+    const toolDone = messages.at(-1)?.role === 'tool'
+    if (!system.includes('# 团队')) return toolDone ? { text: '子任务结果：输出 hi' } : call(SHELL, { description: 'Print hi', command: 'echo hi', sandbox_permissions: 'danger-full-access', justification: 'e2e：在飞书里确认' })
+    if (toolDone && JSON.stringify(messages.at(-2) ?? {}).includes('subagent')) return { text: '开了子 agent 去运行。' }
+    return JSON.stringify(messages.at(-1) ?? {}).includes('输出 hi') ? { text: '命令已经运行，输出 hi。' } : undefined
+  },
 })
 const feishu = await startFakeFeishu({ appId: APP_ID, appSecret: 'secret-ok', port: FEISHU_PORT })
 const gateway = await connectGateway({ name: 'adg-e2e-monitor' })
@@ -197,7 +211,7 @@ try {
   const allowed = await feishu.clickCard({ openId: USER, value: { kind: 'approval', id: approvalId, decision: 'allow-once' }, messageId: approvalCard.id })
   if (allowed?.toast?.type !== 'success') fail(`approval click answered ${JSON.stringify(allowed)}`)
   await feishu.waitForMessage(m => m.kind === 'reply' && m.text.includes('输出 hi'), 120_000)
-  step('an approval went to Feishu as a card and was answered there', allowed.toast.content)
+  step("a sub-agent's approval went to Feishu as a card and was answered there", allowed.toast.content)
 
   // 6. a session in the app keeps its approvals to itself, unless 「软件里的会话」 is on
   const seen = new Set()

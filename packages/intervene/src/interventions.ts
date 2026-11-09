@@ -36,6 +36,8 @@ export interface InterventionDeps {
    */
   readonly settle?: (incidentId: string, action: 'retry' | 'resume' | 'resolve') => Promise<boolean>
   readonly conversations: () => Conversations | undefined
+  /** The conversation that opened this sub-agent: its work on an intervention is that intervention's. */
+  readonly parentOf?: (sessionId: string) => string | undefined
   /** Why the agent cannot look at screenshots now (no image-capable model), if so. */
   readonly visionProblem: () => Promise<string | undefined>
   /** Where the agent can act, in words, for the prompt (e.g. "模拟器 127.0.0.1:16384（target=emulator）"). */
@@ -135,7 +137,7 @@ export class Interventions {
 
   /** The intervention a session is doing, for the screen tools' permissions: the first still going (its turn is the one running). */
   forSession(sessionId: string | undefined): Active | undefined {
-    const ids = sessionId === undefined ? undefined : this.#bySession.get(sessionId)
+    const ids = sessionId === undefined ? undefined : this.#bySession.get(this.#deps.parentOf?.(sessionId) ?? sessionId)
     for (const id of ids ?? []) {
       const active = this.#active.get(id)
       if (active !== undefined) return active

@@ -17,7 +17,7 @@
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { ModelSelection, Role } from '@adg/protocol'
+import { AGENT_AREAS, type ModelSelection, type Role } from '@adg/protocol'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 export interface RoleSpec extends Role {
@@ -52,22 +52,45 @@ const NOBODY = ['subagent_fork']
 const TOGETHER: readonly string[] = ['agent_delegate', 'agent_message', 'agent_threads']
 
 /** What goes between agents and to the person: a sub-agent only does its part and answers its parent. */
-const COORDINATION = ['agent_delegate', 'agent_message', 'agent_threads', 'notice_act', 'ask_user_question', 'exit_plan_mode', 'subagent', 'list_agents', 'interrupt_agent', 'schedule_*', 'create_goal', 'update_goal', 'get_goal']
+const COORDINATION = ['agent_delegate', 'agent_message', 'agent_threads', 'notice_act', 'ask_user_question', 'exit_plan_mode', 'subagent', 'list_agents', 'interrupt_agent', 'schedule_*', 'create_goal', 'update_goal', 'get_goal', 'intervention_done']
+
+/**
+ * The concrete work: commands, files, the screen, running and installing. Not
+ * in an agent's one conversation, which is for deciding and summing up and
+ * would fill up with it: sub-agents do it (docs/design/agent-roles.md §14.10).
+ * Looking things up stays, and so does starting a pipeline, one call that runs elsewhere.
+ */
+const HANDS_ON: readonly string[] = [
+  ...AGENT_AREAS.filter(area => ['run', 'scripts-config', 'scripts-install', 'screen', 'games', 'shell'].includes(area.id)).flatMap(area => area.tools).filter(tool => tool !== 'pipeline_run'),
+  // Screenshots are not in an area (they change nothing), and they weigh the most.
+  'screen_*',
+  // Runs a program that calls the tools: the same work, by another door.
+  'workflow',
+]
+
+/** Why an agent's own conversation refuses a tool, in words for it. */
+export const HANDS_ON_REFUSAL = (tool: string) => `${tool} 这类具体操作不在你的对话里做：用 subagent 开一个子 agent 去做，把任务写完整（它看不到你的对话），它只把结果交回来。要用户批准的操作，它做的时候同样会请用户批准。`
+
+export function handsOn(tool: string): boolean {
+  return matches(HANDS_ON, tool)
+}
 
 /**
  * What to hide from an agent under this spec, among the tools it can see now.
  * @param appTools - the app's own tools, the ones `spec.tools` chooses among; dsh's stay unless `hide` names them.
+ * @param home - this is the agent's one conversation: the concrete work is its sub-agents'.
  */
-export function hiddenTools(spec: Pick<RoleSpec, 'tools' | 'hide'>, appTools: ReadonlySet<string>, visible: Iterable<string>): string[] {
-  const hide = [...NOBODY, ...(spec.hide ?? [])]
+export function hiddenTools(spec: Pick<RoleSpec, 'tools' | 'hide'>, appTools: ReadonlySet<string>, visible: Iterable<string>, home = false): string[] {
+  const hide = [...NOBODY, ...(spec.hide ?? []), ...(home ? HANDS_ON : [])]
   return [...visible].filter(name => matches(hide, name) || (appTools.has(name) && !keeps(spec.tools, name) && !TOGETHER.includes(name)))
 }
 
 /**
  * A sub-agent of an agent under `parent` (dsh's `subagent` tool): the same
  * agent run again on one part of the work, as OpenBot has it. So it has that
- * agent's tools, without what is for working with others: it answers its
- * parent alone, cannot reach the person, and approvals are dsh's to refuse.
+ * agent's tools and works to its duty, without what is for working with others:
+ * it answers its parent alone. It is who does the concrete work, so an approval
+ * it needs goes to the person, in its parent's conversation (the gateway).
  */
 export function subAgentSpec(parent: RoleSpec): RoleSpec {
   const name = parent.name
@@ -83,7 +106,9 @@ export function subAgentSpec(parent: RoleSpec): RoleSpec {
       `# 你的角色：「${name}」的子 agent`,
       `你是「${name}」开的子 agent，只做它交给你的这一件事。它的任务就是你收到的第一条消息；你看不到它和别人的对话。`,
       `你的回复只有「${name}」读，用户看不到：用工具把事做完，最后一段回复写结果，写它要的东西，不寒暄。`,
-      `你问不了用户，也不能交给别的 agent。需要用户审批的操作会被自动拒绝：不要换个办法绕过去，把没做成的和原因写进回复，由「${name}」去处理。`,
+      `你问不了用户，也不能交给别的 agent：缺什么就写进回复，由「${name}」去问。需要用户批准的操作会请用户批准，等结果就是；被拒绝了不要换个办法绕过去，把没做成的和原因写进回复。`,
+      '能用工具、命令行、读文件（配置、日志、版本号）或脚本自己的命令和设置做到、确认到的，就这样做；截图、看画面、点屏幕是最后的办法。',
+      ...(parent.duty === undefined ? [] : [`下面是「${name}」的职责，你在这个范围里做事；收尾和对外说明由它来做：`, parent.duty.replace(/^# .*\n/, '')]),
     ].join('\n'),
   }
 }
@@ -116,7 +141,7 @@ export function teamPrompt(self: TeamMember, main: TeamMember, leads: readonly T
       ? `你是「${self.name}」（${self.id}），是最上级的 agent：和用户对话，把事分给下面的主 agent，汇总结果并做决定。`
       : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是${who(main)}：它和用户对话、分发任务、做决定。`,
     colleagues.length === 0 ? (isMain ? '现在没有其他主 agent。' : '现在没有其他同事。') : `${isMain ? '下面的主 agent' : '同事'}：\n${colleagues.map(line).join('\n')}`,
-    '具体的活可以开子 agent 去做（subagent）：它是你开的，只对你负责，只把结果交回给你；你的上下文留给判断和汇总。几件互不相关的事可以同时开。子 agent 不能找用户审批，要审批的操作它会交回来，由你来做。',
+    '具体的活都由子 agent 做（subagent）：运行命令、改文件、截图点击、运行和安装脚本、启动游戏，这些工具不在你的对话里，只有子 agent 有；别处提到这些工具，也是让子 agent 去用。你的对话留给判断和汇总：要做什么就开一个子 agent，把任务写完整（它看不到你的对话），结果交回后由你判断、汇总。查状态、读一下文件这种看一眼的事可以自己来。几件互不相关的事可以同时开。子 agent 只对你负责，只把结果交回给你；它要用户批准的操作，会在你的对话里请用户批准。',
     isMain ? '' : `需要同事的那部分，用 agent_delegate 直接交给它，不用绕过「${main.name}」。交给你的事没说清楚时，用 agent_message 问交给你的一方，不要自己去问用户（要不要问用户由对方决定），问清楚再做；做完用 agent_message 的 done 交回结论，或者把结论写在这一轮最后一段回复里。`,
     '和其他 agent 说话不是一问一答：做的过程中要让对方知道的，用 agent_message 的 update，马上送到它的对话里，说几次都行；一件事交回结论以后还有话（比如定时提醒到了），同样用 agent_message 发到那条线索，你的普通回复对方看不到。',
     '和其他 agent 以前说过的事不只在这个对话里：对话被压缩或换过，agent_threads（with 填对方）也能看到你们以前的来往，别的 agent 交给你事时也会附上最近几条。接着以前的事找它之前先看一眼，不要让它从头来。',
