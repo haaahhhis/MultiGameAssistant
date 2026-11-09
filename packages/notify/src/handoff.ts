@@ -25,6 +25,30 @@ export const MAIN = 'main'
 /** How long the conversation that asked gets to take in the reply. */
 const RELAY_TIMEOUT_MS = 20 * 60_000
 
+/** Earlier exchanges a new one is handed with; the rest is a look-up away. */
+const PAST_SHOWN = 5
+const PAST_CHARS = 120
+
+/**
+ * The exchanges between these two agents before this one, as lines, oldest
+ * first. Between agents only: work the app handed on has no other agent to
+ * remember, and sub-agents are not threads.
+ */
+export function pastBetween(all: readonly HandOff[], a: string, b: string, name: (agentId: string) => string): string[] {
+  const between = all.filter(h => {
+    const chain = h.chain ?? []
+    const from = chain.at(-2)
+    const to = chain.at(-1)
+    return h.state !== 'running' && h.state !== 'waiting' && ((from === a && to === b) || (from === b && to === a))
+  })
+  return between.slice(-PAST_SHOWN).map(h => {
+    const when = new Date(h.endedAt ?? h.startedAt)
+    const said = (h.reply ?? '').replace(/\s+/g, ' ').trim()
+    const end = said === '' ? '' : `：${said.length > PAST_CHARS ? `${said.slice(0, PAST_CHARS)}…` : said}`
+    return `- ${when.getMonth() + 1}-${when.getDate()} ${h.by}交给${name(h.to)}「${h.title}」${h.state === 'failed' ? '（没做成）' : ''}${end}（线索 ${h.id}）`
+  })
+}
+
 /** Messages one thread may carry; then it is time to conclude. */
 export const MAX_THREAD_MESSAGES = 10
 /** Agents a piece of work may pass through below whoever first asked. */
@@ -39,6 +63,8 @@ export interface HandOffDeps {
   converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean }): Promise<Reply>
   /** Keep it (the gateway's \`handOffs\`), as it starts and as it ends. */
   record(item: HandOff): Promise<void>
+  /** All that are kept, oldest first: what agents said to each other before survives their conversations. */
+  threads?(): readonly HandOff[]
   readonly now?: () => number
 }
 
@@ -228,7 +254,9 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
       })
       stopped.catch(() => {})
       await deps.record(item)
-      thread.turns.push(deps.converse(toSession, taskMessage(input.by, input.title, body, relay, id), signal, input.images))
+      const asker = input.from?.agent
+      const past = asker === undefined || deps.threads === undefined ? [] : pastBetween(deps.threads(), asker, input.to.id, agent => (agent === input.to.id ? input.to.name : input.by))
+      thread.turns.push(deps.converse(toSession, taskMessage(input.by, input.title, body, relay, id, { who: `「${input.by}」`, lines: past }), signal, input.images))
 
       let reply: Reply | undefined
       let failure: string | undefined

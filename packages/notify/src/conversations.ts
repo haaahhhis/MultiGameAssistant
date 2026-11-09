@@ -23,7 +23,7 @@ interface AppSessions {
   tagSession(sessionId: string, role: string, by?: string): Promise<void>
   roleModel(role: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
   home(agentId: string): Promise<string>
-  readonly handOffs: { put(item: HandOff): Promise<void> }
+  readonly handOffs: { put(item: HandOff): Promise<void>; all(): readonly HandOff[] }
   /** Resolves once the agent there is done, its sub-agents back and its reply to them given. */
   settled?(sessionId: string, signal: AbortSignal): Promise<void>
   stopSubAgents?(sessionId: string): void
@@ -93,7 +93,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
   let own: HandOffDesk | undefined
   const desk = (): HandOffDesk => {
     const found = app?.()
-    const make = () => createHandOffDesk({ home, converse, record: item => gateway().handOffs.put(item) })
+    const make = () => createHandOffDesk({ home, converse, record: item => gateway().handOffs.put(item), threads: () => gateway().handOffs.all() })
     if (found === undefined) return own ??= make()
     return (found.handOffDesk ??= make()) as HandOffDesk
   }
