@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { parseRelay, parseTask, parseThreadNote, type HandOff } from '@adg/protocol'
-import { createHandOffDesk, MAX_CHAIN_MESSAGES, MAX_THREAD_MESSAGES, type HandOffDesk } from '../src/handoff.ts'
+import { createHandOffDesk, MAX_CHAIN_MESSAGES, MAX_THREAD_MESSAGES, pastBetween, type HandOffDesk } from '../src/handoff.ts'
 import type { HandOffInput } from '../src/notify.ts'
 import type { Reply } from '../src/reply.ts'
 
@@ -292,4 +292,42 @@ test('an agent handed work by another asks that agent, not the person; what the 
   during = 'unset'
   await desk.handOff(handed({ from: undefined, by: '监控', relay: false }))
   assert.equal(during, undefined)
+})
+
+test('a new thread comes with what those two said before, kept outside their conversations; not what others said', async () => {
+  const kept: HandOff[] = []
+  const handed_: string[] = []
+  const desk: HandOffDesk = createHandOffDesk({
+    home: async agent => `s-${agent}`,
+    converse: async (sessionId, message) => {
+      if (parseTask(message) !== undefined) handed_.push(message)
+      return text(`结论 ${handed_.length}`)
+    },
+    record: async item => { kept.splice(kept.findIndex(h => h.id === item.id) >>> 0, 1, item) },
+    threads: () => kept,
+    now: () => 1000,
+  })
+  await desk.handOff(handed({ title: '看日志', from: { sessionId: 's-main', callId: 't1', asker: '助手', agent: 'main' } }))
+  assert.doesNotMatch(handed_[0]!, /之前的来往/, 'nothing yet')
+  await desk.handOff(handed({ title: '装 MAA', from: { sessionId: 's-main', callId: 't2', asker: '助手', agent: 'main' } }))
+  assert.match(handed_[1]!, /你和「助手」之前的来往/)
+  assert.match(handed_[1]!, /「看日志」：结论 1（线索 t1）/)
+  await desk.handOff(handed({ title: '问游戏', by: '脚本', to: { id: 'games', name: '游戏' }, from: { sessionId: 's-scripts', callId: 't3', asker: '脚本', agent: 'scripts' } }))
+  assert.doesNotMatch(handed_[2]!, /之前的来往/, 'between 助手 and 脚本, not 游戏\'s')
+  // The other way round is the same two agents.
+  await desk.handOff(handed({ title: '回问脚本', by: '游戏', to: { id: 'scripts', name: '脚本' }, from: { sessionId: 's-games', callId: 't4', asker: '游戏', agent: 'games' } }))
+  assert.match(handed_[3]!, /「问游戏」/)
+  assert.doesNotMatch(handed_[3]!, /看日志/)
+})
+
+test('only the latest few come along, and what the app handed on is no exchange between agents', () => {
+  const thread = (id: string, chain: string[], over: Partial<HandOff> = {}): HandOff => ({ id, fromSession: 's', by: '助手', to: chain.at(-1)!, toSession: 't', title: id, task: 'x', chain, state: 'done', startedAt: 1, reply: 'r', ...over })
+  const name = (id: string) => id
+  const lines = pastBetween([...Array.from({ length: 7 }, (_, i) => thread(`t${i}`, ['main', 'scripts'])), thread('app', ['scripts']), thread('now', ['main', 'scripts'], { state: 'running' })], 'main', 'scripts', name)
+  assert.equal(lines.length, 5)
+  assert.match(lines[0]!, /t2/)
+  assert.match(lines[4]!, /t6/)
+  assert.equal(lines.some(l => l.includes('app') || l.includes('now')), false)
+  assert.match(pastBetween([thread('long', ['main', 'scripts'], { reply: 'a'.repeat(400) })], 'main', 'scripts', name)[0]!, /a{120}…/)
+  assert.match(pastBetween([thread('bad', ['main', 'scripts'], { state: 'failed' })], 'main', 'scripts', name)[0]!, /没做成/)
 })

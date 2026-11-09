@@ -22,7 +22,7 @@ const systemOf = body => (body.messages ?? []).filter(m => m.role === 'system').
 const newSince = body => {
   const messages = body.messages ?? []
   const last = messages.findLastIndex(m => m.role === 'assistant')
-  return messages.slice(last + 1).filter(m => m.role === 'user').map(m => textOf(m.content)).join('\n')
+  return messages.slice(last + 1).filter(m => m.role === 'user').map(m => textOf(m.content)).join('\n').replace(/（你和.{1,20}之前的来往，[\s\S]*?\n）/g, '')
 }
 const lastTool = body => (body.messages ?? []).findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
 
@@ -36,7 +36,8 @@ const llm = await startFakeLlm({
   models: [FAKE_MODEL],
   respond: body => {
     if (!Array.isArray(body.tools) || body.tools.length === 0) return { text: '模拟会话' }
-    const all = JSON.stringify(body.messages ?? [])
+    // What an earlier run of this script said comes along as history: that is not this run's work.
+    const all = JSON.stringify(body.messages ?? []).replace(/（你和.{1,20}之前的来往，.*?\\n）/g, '')
     const said = newSince(body)
     const last = (body.messages ?? []).at(-1)
     // The sub-agent: its only task is the words below.
@@ -236,6 +237,13 @@ try {
   const back = seen.lead.find(b => { const m = b.messages?.at(-1); return m?.role === 'tool' && textOf(m.content).includes('绕回去了') })
   if (back === undefined) fail('脚本 was not told that handing back to 助手 comes back on itself')
   step('handing back up the chain is refused, with what to do instead')
+
+  // What two agents said before reaches the next thing one hands the other, and only theirs.
+  const threadTask = seen.lead.map(b => (b.messages ?? []).map(m => textOf(m.content)).find(t => t.startsWith('（助手交给你的事：E2E-THREAD-TASK'))).find(t => t !== undefined)
+  if (!threadTask?.includes('你和「助手」之前的来往') || !threadTask.includes('第 212 行报错')) fail(`脚本 was not reminded of what it and 助手 said before: ${threadTask?.slice(0, 400)}`)
+  const peerTask = seen.peer.map(b => (b.messages ?? []).map(m => textOf(m.content)).find(t => t.includes('E2E-PEER'))).find(t => t !== undefined)
+  if (peerTask === undefined || peerTask.includes('第 212 行报错')) fail(`游戏 was told about what others said: ${peerTask?.slice(0, 400)}`)
+  step('a new thread comes with what those two agents said before, and nobody else\'s')
 
   // A message meant to go into a turn that has just ended is not lost.
   await rpc('session/prompt', { sessionId: main, requestId: `e2e-idle-${Date.now()}`, text: 'E2E-IDLE 你好', mode: 'steer' })

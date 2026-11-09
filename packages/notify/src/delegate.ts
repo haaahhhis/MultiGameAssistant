@@ -12,8 +12,9 @@
  * `agent_message`: say something in a thread that is going on, so a hand-off is
  * more than one question and one answer.
  *
- * `agent_threads`: what is going on or went on between agents, for 助手, which
- * is not woken for what two lead agents say to each other.
+ * `agent_threads`: what is going on or went on between agents: for 助手, which
+ * is not woken for what two lead agents say to each other, and for any agent
+ * going back to a colleague, since this outlives their conversations.
  *
  * Sub-agents have none of these: the gateway hides them.
  */
@@ -167,17 +168,20 @@ export function messageTool(deps: { desk: () => HandOffDesk | undefined; agentOf
   }
 }
 
-const ThreadsArgs = z.object({ id: z.string().trim().min(1).nullish() })
+const ThreadsArgs = z.object({ id: z.string().trim().min(1).nullish(), with: z.string().trim().min(1).nullish() })
 
 /** `agent_threads`: what agents have been saying to each other. */
 export function threadsTool(deps: { list: () => readonly HandOff[]; name: (agentId: string) => string }): ToolDefinition {
   const line = (h: HandOff) => `${h.id} [${h.state}] ${h.by} → ${deps.name(h.to)}：${h.title}${h.reply === undefined ? '' : `｜${h.reply.replace(/\s+/g, ' ').slice(0, 120)}`}`
   return {
     name: 'agent_threads',
-    description: '看 agent 之间的线索：不带 id 列出最近的（谁交给谁、什么事、做到哪了、结论的开头）；带 id 看一条的完整往来。主 agent 之间直接说的话不会叫醒你，要知道就用这个。',
+    description: '看 agent 之间的线索，包括以前的：对话被压缩或换过也还在。不带 id 列出最近的（谁交给谁、什么事、做到哪了、结论的开头），with 只看和某个 agent 有关的；带 id 看一条的完整往来。接着以前的事找同事之前先看一眼；主 agent 之间直接说的话不会叫醒你，要知道也用这个。',
     parameters: {
       type: 'object',
-      properties: { id: { type: 'string', description: '线索的 id（可选）。' } },
+      properties: {
+        id: { type: 'string', description: '线索的 id（可选）。' },
+        with: { type: 'string', description: '只看和这个 agent 有关的：名字或 id（可选）。' },
+      },
       additionalProperties: false,
     },
     output: { schema: {}, render: (_args, value): ContentBlock[] => [{ type: 'text', text: String(value) }] },
@@ -186,7 +190,11 @@ export function threadsTool(deps: { list: () => readonly HandOff[]; name: (agent
       const parsed = ThreadsArgs.safeParse(args ?? {})
       if (!parsed.success) throw new Error('参数无效')
       const all = deps.list()
-      if (parsed.data.id == null) return (all.slice(-20).reverse().map(line).join('\n') || '（还没有线索）') as never
+      if (parsed.data.id == null) {
+        const who = parsed.data.with
+        const about = who == null ? all : all.filter(h => h.by === who || h.to === who || h.by === deps.name(who) || deps.name(h.to) === who)
+        return (about.slice(-20).reverse().map(line).join('\n') || (who == null ? '（还没有线索）' : `（和「${who}」还没有线索）`)) as never
+      }
       const found = all.find(h => h.id === parsed.data.id)
       if (found === undefined) throw new Error(`没有线索 ${parsed.data.id}`)
       return [

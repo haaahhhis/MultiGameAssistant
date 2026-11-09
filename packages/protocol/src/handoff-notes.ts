@@ -31,13 +31,20 @@ const RETURNS = '（做完后你这一轮的最后一段回复会原样交回去
 
 const THREAD_LINE = /^（这件事的线索是 (\S+)：做的过程中要问清楚什么，用 agent_message 问，thread 填它；不要猜。）$/
 
+const PAST_HEAD = (who: string) => `（你和${who}之前的来往，从旧到新。可能已经过时；要看完整的，用 agent_threads 带 id：`
+const PAST_LINE = /^（你和.{1,20}之前的来往，/
+const PAST_END = '）'
+
 /**
  * What an agent is handed: its note, then the work. `returns`: its reply goes
- * back to whoever asked; `thread`: where the two can go on talking about it.
+ * back to whoever asked; `thread`: where the two can go on talking about it;
+ * `past`: what these two said to each other before, since neither conversation
+ * is sure to still hold it (compacted, or a new one started).
  */
-export function taskMessage(by: string, title: string, body: string, returns = false, thread?: string): string {
+export function taskMessage(by: string, title: string, body: string, returns = false, thread?: string, past?: { who: string; lines: readonly string[] }): string {
   const head = by === BY_YOU ? `（你在软件里点的：${oneLine(title)}）` : `（${by}交给你的事：${oneLine(title)}）`
   const notes = [...(returns ? [RETURNS] : []), ...(thread === undefined ? [] : [`（这件事的线索是 ${thread}：做的过程中要问清楚什么，用 agent_message 问，thread 填它；不要猜。）`])]
+  if (past !== undefined && past.lines.length > 0) notes.push([PAST_HEAD(past.who), ...past.lines, PAST_END].join('\n'))
   return `${head}\n${notes.map(n => `${n}\n`).join('')}\n${body}`
 }
 
@@ -57,12 +64,14 @@ export function parseTask(text: string): TaskNote | undefined {
   const returns = rest[0] === RETURNS
   const after = returns ? rest.slice(1) : rest
   const thread = THREAD_LINE.exec(after[0] ?? '')?.[1]
+  const next = thread === undefined ? after : after.slice(1)
+  const pastEnd = PAST_LINE.test(next[0] ?? '') ? next.indexOf(PAST_END) : -1
   return {
     by: mine !== null ? BY_YOU : theirs![1]!,
     title: mine !== null ? mine[1]! : theirs![2]!,
     returns,
     ...(thread === undefined ? {} : { thread }),
-    body: (thread === undefined ? after : after.slice(1)).join('\n').trim(),
+    body: next.slice(pastEnd + 1).join('\n').trim(),
   }
 }
 

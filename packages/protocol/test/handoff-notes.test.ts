@@ -63,3 +63,14 @@ test('what comes back to a lead working on something is for that, not for tellin
   assert.match(toMain, /还问了：游戏/)
   assert.match(parseRelay(toMain)?.reply ?? '', /^装好了/)
 })
+
+test('a task can carry what the two said before, and still reads back as the task', () => {
+  const message = taskMessage('助手', '装 MAA', '把 MAA 装好', true, 't1', { who: '「助手」', lines: ['- 11-9 助手交给脚本「看日志」：第 212 行（线索 t0）', '- 11-9 脚本交给助手「选服」：国服（线索 t00）'] })
+  assert.match(message, /你和「助手」之前的来往/)
+  assert.match(message, /第 212 行/)
+  const note = parseTask(message)
+  assert.equal(note?.body, '把 MAA 装好')
+  assert.equal(note?.thread, 't1')
+  assert.equal(note?.returns, true)
+  assert.doesNotMatch(taskMessage('助手', 'x', 'y', true, 't1', { who: '「助手」', lines: [] }), /之前的来往/)
+})
