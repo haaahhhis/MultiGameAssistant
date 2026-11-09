@@ -249,3 +249,47 @@ test('calling off the first thread stops what was opened from inside it', async 
   await assert.rejects(outer, /超时了/)
   assert.equal(innerSignal?.aborted, true)
 })
+
+test('what is said in a thread goes into the work under way; the work itself waits its turn', async () => {
+  const sent: { sessionId: string; insert: boolean; text: string }[] = []
+  const desk: HandOffDesk = createHandOffDesk({
+    home: async agent => `s-${agent}`,
+    converse: async (sessionId, message, _signal, _images, options) => {
+      sent.push({ sessionId, insert: options?.insert === true, text: message })
+      if (sessionId === 's-scripts' && parseTask(message) !== undefined) {
+        await desk.message({ thread: parseTask(message)!.thread!, fromSession: 's-scripts', from: '脚本', kind: 'question', text: '装哪个？' })
+        return text('问了')
+      }
+      if (sessionId === 's-scripts') return text('结论')
+      return text('MAA')
+    },
+    record: async () => {},
+    now: () => 1000,
+  })
+  await desk.handOff(handed())
+  await tick()
+  assert.equal(sent.find(m => parseTask(m.text) !== undefined)?.insert, false, 'new work does not cut in')
+  assert.equal(sent.find(m => parseThreadNote(m.text)?.kind === 'question')?.insert, true, 'a question does: someone waits')
+  assert.equal(sent.find(m => parseThreadNote(m.text)?.kind === 'answer')?.insert, true)
+})
+
+test('an agent handed work by another asks that agent, not the person; what the app hands on has only the person to ask', async () => {
+  let during: string | undefined
+  const desk: HandOffDesk = createHandOffDesk({
+    home: async agent => `s-${agent}`,
+    converse: async sessionId => {
+      if (sessionId === 's-scripts') during = desk.askRefusal('s-scripts')
+      return text('好了')
+    },
+    record: async () => {},
+    now: () => 1000,
+  })
+  await desk.handOff(handed())
+  assert.match(during ?? '', /助手/)
+  assert.match(during ?? '', /agent_message/)
+  assert.match(during ?? '', /h1/)
+  assert.equal(desk.askRefusal('s-scripts'), undefined, 'the work is over: the person may be asked again')
+  during = 'unset'
+  await desk.handOff(handed({ from: undefined, by: '监控', relay: false }))
+  assert.equal(during, undefined)
+})

@@ -233,7 +233,7 @@ function mainDuty(roles: readonly { readonly name: string; readonly description:
     roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
     '查资料、读日志、比较几个方案这类做决定之前要看的东西，可以开自己的子 agent（subagent）去看；动手的事（截图点击、运行和安装脚本）还是交给主 agent。',
     '交出去的事在那个 agent 自己的对话里做，它看不到你和用户的对话，所以任务要写完整。交出去以后用一句话告诉用户交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。',
-    '它做的过程中可能回头问你（消息开头是「（「某 agent」在线索 … 里问你：…）」）。能答就用 agent_message 回答；要用户决定的，先用 kind: update 说一声、去问用户，有了结果再回答。',
+    '它做的过程中可能回头问你（消息开头是「（「某 agent」在线索 … 里问你：…）」），这种消息会插进你正在做的事：它在等，先回答它。能答就用 agent_message 回答；要用户决定的，先用 kind: update 说一声、去问用户，有了结果再回答。',
     '它做完后，回复会作为一条新消息发到这里，开头是「（「某 agent」交回了…）」或「（「某 agent」没有做完…）」。收到后用一两句话把要点告诉用户：结论、要用户做的事。没做成就直说：没做成、当时请它做什么、你接下来能做什么。',
     '软件自己也会把事交给 agent（比如监控发现脚本出了问题，交给干预处理），结果同样发到这里，你照样把要点告诉用户。主 agent 之间可以直接交流，不会叫醒你；要知道它们说了什么，用 agent_threads 看。用户也可以直接去某个 agent 的对话里找它，那些你看不到。',
   ].join('\n\n')
@@ -1011,6 +1011,10 @@ Content-Length: 0
         try { disposers.push(tools.restrict({ deny: [name] })) } catch { refused.add(name) }
       }
       if (refused.size > 0) disposers.push(tools.guard(exec => (refused.has(exec.name) ? `${spec.name}不能用 ${exec.name}` : undefined)))
+      // Handed work by another agent, it asks that agent: a question put to the person from here is one 助手 never hears of.
+      if (spec.subAgentOf === undefined) {
+        disposers.push(tools.guard(exec => (exec.name === 'ask_user_question' ? (this.handOffDesk as { askRefusal?(sessionId: string): string | undefined } | undefined)?.askRefusal?.(agent.session.id) : undefined)))
+      }
     } catch (error) {
       this.log.warn(`tools of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }

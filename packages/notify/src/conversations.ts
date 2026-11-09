@@ -43,7 +43,7 @@ const QUIET_MS = 250
  * @param app - the gateway, for a new conversation's agent preset, to count it as the app's (a dsh shared with other work), and to put it under its role agent with that role's model.
  */
 export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations {
-  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<Reply> => {
+  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = [], options: { insert?: boolean } = {}): Promise<Reply> => {
     const controller = new AbortController()
     const requestId = `notify-${crypto.randomUUID()}`
     const turn = { started: false }
@@ -68,7 +68,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
       await sessions.prompt({
         requestId: requestId as SessionRequestId,
         sessionId: sessionId as SessionId,
-        mode: 'queue',
+        mode: options.insert === true && await running(sessions, sessionId, controller.signal) ? 'steer' : 'queue',
         content: [{ type: 'text', text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }, controller.signal)
@@ -102,6 +102,7 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     get desk() { return desk() },
     handOff: input => desk().handOff(input),
     handOffRefusal: (fromSession, to, fromAgent, toName) => desk().refusal(fromSession, to, fromAgent, toName),
+    askRefusal: sessionId => desk().askRefusal(sessionId),
     async create(title, options = {}) {
       // A role agent's session: the model chosen for role agents, when there is one (设置 → 模型).
       const chosen = options.role === undefined ? undefined : app?.()?.roleModel(options.role)
@@ -125,6 +126,12 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     },
     converse,
   }
+}
+
+/** Whether the conversation has a turn going for a message to go into. */
+async function running(sessions: Sessions, sessionId: string, signal: AbortSignal): Promise<boolean> {
+  const { items } = await sessions.list({}, signal)
+  return items.find(s => s.sessionId === sessionId)?.running === true
 }
 
 /** Take a message that has not been started yet back out of the conversation's queue. */

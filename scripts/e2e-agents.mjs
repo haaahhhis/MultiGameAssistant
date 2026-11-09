@@ -73,6 +73,10 @@ const llm = await startFakeLlm({
       if (said.includes('今晚装')) return { text: '结论：按国服今晚装好了。' }
       if (said.includes('E2E-THREAD-TASK')) {
         threadId = /线索是 (\S+)：/.exec(said)?.[1]
+        return call('ask_user_question', { questions: [{ id: 'q', question: 'E2E-ASK 现在装吗？', header: '确认', options: [{ label: '装', description: '' }, { label: '不装', description: '' }] }] })
+      }
+      if (last?.role === 'tool' && lastTool(body) === 'ask_user_question') {
+        seen.askRefused = textOf(last.content)
         return call('agent_delegate', { agent: '助手', task: '你替我决定 E2E-BACK' })
       }
       if (last?.role === 'tool' && lastTool(body) === 'agent_delegate' && all.includes('E2E-BACK') && !all.includes('E2E-PEER')) {
@@ -94,6 +98,18 @@ const llm = await startFakeLlm({
     }
     // 助手.
     seen.main.push(body)
+    if (said.includes('E2E-IDLE')) {
+      seen.idle = true
+      return { text: '（助手）收到。' }
+    }
+    // Busy with something else when 脚本's question comes.
+    if (last?.role === 'tool' && lastTool(body) === 'agent_delegate' && all.includes('E2E-THREAD-TASK') && !all.includes('E2E-SLOW')) {
+      return call('pwsh', { description: 'E2E-SLOW wait', command: 'Start-Sleep -Seconds 25; echo E2E-SLOW-DONE' })
+    }
+    if (said.includes('E2E-QUESTION')) {
+      const since = (body.messages ?? []).slice((body.messages ?? []).findLastIndex(m => m.role === 'assistant') + 1)
+      seen.cutIn = since.some(m => m.role === 'tool' && textOf(m.content).includes('E2E-SLOW-DONE'))
+    }
     if (last?.role === 'tool' && lastTool(body) === 'agent_delegate') return { text: '已经交给「脚本」了。' }
     if (said.includes('E2E-DELEGATE')) return call('agent_delegate', { agent: '脚本', task: 'E2E-LEAD 看看 MAA 为什么报错', expecting: '报错原因' })
     if (said.includes('E2E-THREAD ')) return call('agent_delegate', { agent: '脚本', task: 'E2E-THREAD-TASK 装 MAA' })
@@ -211,9 +227,20 @@ try {
   if (!newSince(told).includes('还问了：游戏')) fail('助手 was not told who it asked')
   step('助手 heard the conclusion, and who was consulted')
 
+  if (seen.cutIn !== true) fail('脚本\'s question waited for 助手\'s turn to end instead of going into it')
+  step('脚本\'s question went into the turn 助手 was busy with')
+
+  if (!seen.askRefused?.includes('agent_message')) fail(`脚本 could ask the person itself, on work 助手 handed it: ${seen.askRefused}`)
+  step('on work another agent handed it, 脚本 is sent back to the thread instead of asking the person')
+
   const back = seen.lead.find(b => { const m = b.messages?.at(-1); return m?.role === 'tool' && textOf(m.content).includes('绕回去了') })
   if (back === undefined) fail('脚本 was not told that handing back to 助手 comes back on itself')
   step('handing back up the chain is refused, with what to do instead')
+
+  // A message meant to go into a turn that has just ended is not lost.
+  await rpc('session/prompt', { sessionId: main, requestId: `e2e-idle-${Date.now()}`, text: 'E2E-IDLE 你好', mode: 'steer' })
+  await until('a message inserted after the turn ended to be answered', () => seen.idle === true, 30_000)
+  step('inserted just after the turn ended, a message still starts one')
 
   // The third layer: a sub-task is its parent's, and the person can stop it without stopping the parent.
   const children = async () => (await rpc('sessions/list', { limit: 200 })).items.filter(i => i.origin === 'subagent' && i.parentId === scripts)

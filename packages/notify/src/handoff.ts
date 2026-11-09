@@ -36,7 +36,7 @@ export interface HandOffDeps {
   /** The agent's one conversation (the gateway's \`home\`), its focus set. */
   home(agent: string, options?: { focus?: { scripts?: string[]; games?: string[] } }): Promise<string>
   /** A message in a conversation, resolving with the turn it starts (see conversations.ts). */
-  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<Reply>
+  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean }): Promise<Reply>
   /** Keep it (the gateway's \`handOffs\`), as it starts and as it ends. */
   record(item: HandOff): Promise<void>
   readonly now?: () => number
@@ -80,6 +80,8 @@ export interface HandOffDesk {
   refusal(fromSession: string, to: string, fromAgent: string, toName?: string): string | undefined
   /** Say something in a thread. @returns what the speaker is told. @throws why it could not be said. */
   message(input: ThreadInput): Promise<string>
+  /** @returns why this conversation's agent may not ask the person itself, in words for it; undefined when it may. */
+  askRefusal(sessionId: string): string | undefined
 }
 
 export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
@@ -102,13 +104,13 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
 
   /** Hand the agent doing the work something to go on with: its turn belongs to the thread. */
   const toWorker = (thread: Live, message: string): void => {
-    thread.turns.push(deps.converse(thread.item.toSession, message, thread.signal))
+    thread.turns.push(deps.converse(thread.item.toSession, message, thread.signal, [], { insert: true }))
     thread.wake()
   }
 
-  /** The asking side's turn on a question. Its words are the answer unless it answered or said it needs time. */
+  /** The asking side's turn on a question: into what it is doing, since someone waits. Its words are the answer unless it answered or said it needs time. */
   const toAsker = (thread: Live, message: string, asked: boolean): void => {
-    void deps.converse(thread.item.fromSession, message, AbortSignal.any([thread.signal, AbortSignal.timeout(RELAY_TIMEOUT_MS)])).then(answer => {
+    void deps.converse(thread.item.fromSession, message, AbortSignal.any([thread.signal, AbortSignal.timeout(RELAY_TIMEOUT_MS)]), [], { insert: true }).then(answer => {
       if (!asked || !thread.awaiting || thread.deferred || !live.has(thread.item.id)) return
       const said = finalText(answer).trim()
       void answered(thread, thread.item.by, said === '' || isQuiet(said) ? '（它没有回答：按你自己的判断接着做。）' : said)
@@ -135,6 +137,13 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
       if (chain.length > MAX_HOPS) return `这件事已经转了 ${MAX_HOPS} 手，不能再往下交了：用你手上的信息做完，在结论里说清楚缺什么`
       if (chainTop(parent).said >= MAX_CHAIN_MESSAGES) return `这件事的来回已经够多了（${MAX_CHAIN_MESSAGES} 条）：用你手上的信息做完，在结论里说清楚缺什么`
       return undefined
+    },
+
+    askRefusal(sessionId) {
+      // Work the app handed on has nobody to ask but the person; an agent's has that agent, who talks to the person if it needs to.
+      const thread = workingOn(sessionId)
+      if (thread?.item.callId === undefined || thread.item.fromSession === '') return undefined
+      return `这件事是${thread.item.by}交给你的：要问清楚的用 agent_message 问它（thread 填 ${thread.item.id}，kind 填 question），要不要去问用户由它决定。不要猜，也不要自己问用户。`
     },
 
     async message({ thread: id, fromSession, from, kind, text }) {
