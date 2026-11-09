@@ -52,7 +52,7 @@ test(`one conversation has at most ${MAX_OUT} pieces of work out at once, counte
   const fake = fakeConversations()
   const tool = delegateTool({ agents: () => AGENTS, conversations: () => fake.conversations })
   for (let i = 0; i < MAX_OUT; i++) await tool.execute({ agent: '游戏', task: `第 ${i} 件` }, exec('m', `c${i}`))
-  await assert.rejects(tool.execute({ agent: '游戏', task: '再一件' }, exec('m', 'cx')), /已经有 3 件事/)
+  await assert.rejects(tool.execute({ agent: '游戏', task: '再一件' }, exec('m', 'cx')), new RegExp(`已经有 ${MAX_OUT} 件事`))
   await tool.execute({ agent: '游戏', task: '别的对话' }, exec('other', 'c'))
   fake.release()
   await new Promise(resolve => setImmediate(resolve))

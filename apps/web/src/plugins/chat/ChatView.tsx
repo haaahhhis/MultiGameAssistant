@@ -6,6 +6,7 @@ import { BY_YOU, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, su
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
+import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
@@ -60,6 +61,16 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   const [detail, setDetail] = useChatDetail(agentId)
   const level: ChatDetail = subAgentOf === null ? detail : 3
   const rows = useMemo(() => atDetail(allRows, level), [allRows, level])
+  // A time line before what comes after a pause, as chat apps have.
+  const timeLines = useMemo(() => {
+    let before: number | undefined
+    return rows.map(row => {
+      const at = timeOf(row)
+      const line = needsTime(at, before) ? at : undefined
+      if (at !== undefined) before = at
+      return line
+    })
+  }, [rows])
   const [pane, setPane] = useState<OpenTask | null>(null)
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
@@ -111,7 +122,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
             <p>一个问题、一段代码，或一个还不成熟的想法。<br />在下方写下来，让对话开始。</p>
           </div>
         )}
-        {rows.map((row, index) => row.kind === 'sent'
+        {rows.map((row, index) => <TimedRow key={rowKey(row)} at={timeLines[index]}>{row.kind === 'sent'
           ? <SentNotice key={row.item.id} client={client} notice={row.item.notice} />
           : row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
@@ -121,7 +132,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
             ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} compact={level < 3} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
-            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>)}
+            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
         {appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
         {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
         {readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
@@ -135,6 +146,25 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     </HandOffsOf.Provider>
     </ImageClient.Provider>
   )
+}
+
+function rowKey(row: Row): string {
+  return row.kind === 'sent' ? row.item.id : row.kind === 'tools' || row.kind === 'process' ? row.id : row.item.id
+}
+
+/** When a row was said or done; a reminder's line has no time of its own. */
+function timeOf(row: Row): number | undefined {
+  const of = (item: ChatItem) => ('time' in item ? item.time : undefined)
+  switch (row.kind) {
+    case 'sent': return row.item.notice.at
+    case 'tools': return row.tools[0]?.time
+    case 'process': return row.items.map(of).find(t => t !== undefined)
+    default: return of(row.item)
+  }
+}
+
+function TimedRow({ at, children }: { at: number | undefined; children: ReactNode }) {
+  return <>{at !== undefined && <TimeDivider at={at} />}{children}</>
 }
 
 /** Which layer of what agents say a row is (docs/design/agent-roles.md §14): 1 to the person, 2 between agents and the steps, 3 a sub-task. */
@@ -294,7 +324,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
       return (
-        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
+        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`} title={fullTime(item.time)}>
           {said.channel !== undefined && <div className="msg-from">来自{said.channel}</div>}
           <div className="bubble">
             <UserText text={said.text} />
@@ -319,7 +349,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       // 助手 read a reply that came back and found nothing the person needs to hear.
       if (!item.live && isQuiet(item.text)) return <div className="quiet-reply"><Icon name="check" />看过了，没有要告诉你的</div>
       return (
-        <div className={`msg assistant ${item.live ? 'live' : ''}`}>
+        <div className={`msg assistant ${item.live ? 'live' : ''}`} title={item.live ? undefined : fullTime(item.time)}>
           {item.reasoning.trim() !== '' && (
             <details className="reasoning" open={item.live && item.text === ''}>
               <summary><Icon name="chevron" />{item.live && item.text === '' ? <span className="shimmer">正在思考…</span> : '思考过程'}</summary>
