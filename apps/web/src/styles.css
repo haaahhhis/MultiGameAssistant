@@ -408,14 +408,11 @@ a.exchange-line:hover { border-color: var(--accent-line); background: var(--hove
 /* 助手 read what came back and had nothing for you */
 .quiet-reply { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
 .quiet-reply .ui-icon { width: 13px; height: 13px; }
-/* Two agents' exchange: their messages, and the person only watching */
-.exchange-thread-head { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0 2px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; scroll-margin-top: 12px; }
-.chat-inner > .exchange-thread-head:first-child { border-top: none; }
-.exchange-thread-head.opened { color: var(--text); }
+/* Two agents' exchange: each message under who said it, in the main chat's bubble */
 .exchange-msg { display: flex; flex-direction: column; gap: 6px; max-width: 760px; }
 .exchange-msg-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
-.exchange-msg-body { margin-left: 29px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px 14px 14px 14px; background: var(--raised); font-size: 13.5px; }
 .exchange-msg.failed .exchange-msg-body { border-color: color-mix(in srgb, var(--error) 45%, var(--border)); }
+.exchange-msg-body { margin-left: 29px; padding: 11px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--user-bubble); box-shadow: var(--shadow-1); font-size: 13.5px; line-height: 1.75; word-break: break-word; }
 .exchange-aside:empty { display: none; }
 .exchange-footer { display: flex; flex-shrink: 0; justify-content: center; padding: 0 16px 14px; }
 .exchange-footer .ui-icon { width: 13px; height: 13px; }
