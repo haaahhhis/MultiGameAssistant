@@ -40,10 +40,11 @@ export function App({ client }: { client: AdgClient }) {
     replacing.current = false
     if (route.kind !== 'handoff' && route.kind !== 'window') beforeExchange.current = route
   }, [route])
-  // Two agents' chat opens over the page that was on screen, which stays as it was underneath:
-  // taking it away and opening it again when the chat closes is what made the conversation flash.
+  // Two agents' exchange takes the place of the page that was on screen, which stays there, hidden,
+  // as it was: taking it away and opening it again when the exchange closed is what made the chat flash.
   const exchange = route.kind === 'handoff' ? route : null
-  const view: Route = exchange === null ? route : beforeExchange.current ?? { kind: 'agent', id: MAIN_AGENT }
+  const under = beforeExchange.current
+  const view: Route = exchange === null ? route : under !== null && under.kind !== 'settings' ? under : { kind: 'agent', id: MAIN_AGENT }
   // Back / forward, and in-app links (an agent reply's [编排页](#/p/pipelines/…)), change the address: follow it.
   useEffect(() => {
     const onHash = () => setRoute(readRoute())
@@ -109,22 +110,27 @@ export function App({ client }: { client: AdgClient }) {
       <NavRail client={client} pages={pages.filter(p => p.agent === undefined)} current={rail} onAgent={openAgent} onPage={openPage}
         onSchedule={() => setRoute({ kind: 'schedule' })} onSettings={() => openSettings()} />
       {view.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={view.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
-      {shown.kind === 'page' && pageOwner === undefined && (pageView
-        ?? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>)}
-      {tabAgent !== undefined && (
-        <div className="agent-area">
-          {agentTabs}
-          {pageOwner !== undefined ? pageView
-            : view.kind === 'agent' && agentRouteTab === 'schedule' ? <AgentSchedule key={view.id} client={client} agentId={view.id} />
-            : view.kind === 'agent' && agentRouteTab === 'history' ? <AgentHistory key={view.id} client={client} agentId={view.id} onSelect={openSession} />
-            : view.kind === 'session' ? <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
-            : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} onAgent={openAgent} reminder={reminder} />}
+      {view.kind !== 'settings' && (
+        // The main column; an exchange between two agents goes over what is there, in the same place.
+        <div className={`app-main ${exchange === null ? '' : 'under-exchange'}`}>
+          {shown.kind === 'page' && pageOwner === undefined && (pageView
+            ?? <section className="main empty">{status.state === 'open' ? '当前连接没有提供这个功能。' : '正在连接…'}</section>)}
+          {tabAgent !== undefined && (
+            <div className="agent-area">
+              {agentTabs}
+              {pageOwner !== undefined ? pageView
+                : view.kind === 'agent' && agentRouteTab === 'schedule' ? <AgentSchedule key={view.id} client={client} agentId={view.id} />
+                : view.kind === 'agent' && agentRouteTab === 'history' ? <AgentHistory key={view.id} client={client} agentId={view.id} onSelect={openSession} />
+                : view.kind === 'session' ? <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
+                : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} onAgent={openAgent} reminder={reminder} />}
+            </div>
+          )}
+          {view.kind === 'schedule' && <ScheduleOverview client={client} onAgent={id => setRoute({ kind: 'agent', id, tab: 'schedule' })} />}
+          {view.kind === 'session' && tabAgent === undefined && (
+            <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
+          )}
+          {exchange !== null && <HandOffPage key={exchange.id} client={client} id={exchange.id} onClose={() => setRoute(view)} />}
         </div>
-      )}
-      {exchange !== null && <HandOffPage key={exchange.id} client={client} id={exchange.id} onClose={() => setRoute(beforeExchange.current ?? { kind: 'agent', id: MAIN_AGENT })} />}
-      {view.kind === 'schedule' && <ScheduleOverview client={client} onAgent={id => setRoute({ kind: 'agent', id, tab: 'schedule' })} />}
-      {view.kind === 'session' && tabAgent === undefined && (
-        <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
       )}
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
       <UiSwitch />

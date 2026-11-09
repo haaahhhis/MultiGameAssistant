@@ -18,7 +18,6 @@ const paths = {
   chevron: 'm9 6 6 6-6 6',
   'chevron-down': 'm6 9 6 6 6-6',
   back: 'M19 12H5M11 6l-6 6 6 6',
-  swap: 'M4 9h15M15 5l4 4-4 4M20 15H5M9 11l-4 4 4 4',
   shield: 'M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6l-8-3ZM12 9v4M12 16.5v.01',
   terminal: 'M4 17l6-6-6-6M12 19h8',
   image: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM4 16l5-5 4 4 2-2 5 5M15 9.5v.01',

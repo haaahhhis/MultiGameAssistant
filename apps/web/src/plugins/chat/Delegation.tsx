@@ -4,7 +4,7 @@ import { BY_YOU, type HandOff, type RelayNote, type TaskNote, type ThreadMessage
 import { MAIN, agentOf, useLastReplies, useRoles, type Agent } from '../../agents.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
-import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
+import { fullTime, needsTime, timeLabel, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { OpenSubTask, SubAgentPane, ThreadSubTasks, type OpenTask } from './SubTasks.tsx'
 
@@ -223,7 +223,7 @@ function useConversation(client: AdgClient, item: HandOff | null): { threads: re
 
 /** One thing in two agents' chat: something one of them said, the sub-tasks a piece of work opened, or the work still going. */
 type Said =
-  | { readonly kind: 'said'; readonly key: string; readonly thread: string; readonly at: number; readonly who: string; readonly failed?: boolean; readonly body: React.ReactNode }
+  | { readonly kind: 'said'; readonly key: string; readonly thread: string; readonly at: number; readonly who: string; readonly label: string; readonly failed?: boolean; readonly body: React.ReactNode }
   | { readonly kind: 'aside'; readonly key: string; readonly thread: string; readonly at: number; readonly body: React.ReactNode }
 
 /**
@@ -237,24 +237,24 @@ function chatOf(client: AdgClient, threads: readonly HandOff[], nameOf: (nameOrI
     const by = nameOf(thread.by)
     const to = nameOf(thread.to)
     said.push({
-      kind: 'said', key: `${thread.id}:task`, thread: thread.id, at: thread.startedAt, who: by,
+      kind: 'said', key: `${thread.id}:task`, thread: thread.id, at: thread.startedAt, who: by, label: by,
       body: <><Markdown text={thread.task} />{thread.expecting !== undefined && <div className="delegation-expecting">要交回：{thread.expecting}</div>}</>,
     })
     said.push({ kind: 'aside', key: `${thread.id}:subtasks`, thread: thread.id, at: thread.startedAt + 1, body: <ThreadSubTasks client={client} session={thread.toSession} from={thread.startedAt} to={thread.endedAt} onOpen={onOpen} /> })
     ;(thread.messages ?? []).forEach((m, i) => {
       // `done` is the conclusion, drawn once below.
       if (m.kind === 'done') return
-      said.push({ kind: 'said', key: `${thread.id}:${i}`, thread: thread.id, at: m.at, who: nameOf(m.from), body: <Markdown text={m.text} /> })
+      said.push({ kind: 'said', key: `${thread.id}:${i}`, thread: thread.id, at: m.at, who: nameOf(m.from), label: `${nameOf(m.from)} · ${KIND_LABEL[m.kind]}`, body: <Markdown text={m.text} /> })
     })
     const closed = thread.state !== 'running' && thread.state !== 'waiting'
     if (closed) {
       said.push({
-        kind: 'said', key: `${thread.id}:reply`, thread: thread.id, at: thread.endedAt ?? thread.startedAt, who: to, failed: thread.state === 'failed',
+        kind: 'said', key: `${thread.id}:reply`, thread: thread.id, at: thread.endedAt ?? thread.startedAt, who: to, label: to, failed: thread.state === 'failed',
         body: <Markdown text={thread.reply ?? (thread.state === 'failed' ? '没有做完' : '它没有留下回复')} />,
       })
     } else {
       said.push({
-        kind: 'said', key: `${thread.id}:now`, thread: thread.id, at: Number.MAX_SAFE_INTEGER, who: to,
+        kind: 'said', key: `${thread.id}:now`, thread: thread.id, at: Number.MAX_SAFE_INTEGER, who: to, label: to,
         body: thread.state === 'waiting'
           ? <div className="delegation-now"><span className="tool-spinner" role="img" aria-label="等回答" /><span>等{by}回答</span></div>
           : <Working client={client} handOff={thread} name={to} />,
@@ -266,16 +266,18 @@ function chatOf(client: AdgClient, threads: readonly HandOff[], nameOf: (nameOrI
 }
 
 /**
- * Two agents' chat (`#/h/<id>`), over whatever was on screen: all they have
- * said to each other, every piece of work in one conversation, with the one
- * you came from in view. The person watches; the steps are in the agent's
- * conversation. It is a window over the page, so closing it leaves the page
- * as it was (the chat underneath is not opened again).
+ * Two agents' conversation (`#/h/<id>`): all they have said to each other,
+ * every piece of work in one stream in the order it was said, with the one you
+ * came from in view. The person watches; the work itself, step by step, is in
+ * the agent's conversation. It takes the place of the page that was on screen,
+ * which stays underneath as it was (App.tsx), so closing it does not open that again.
  */
 export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: string; onClose: () => void }) {
   const { item, error } = useHandOff(client, id)
   const [pane, setPane] = useState<OpenTask | null>(null)
   const roles = useRoles(client)
+  const from = useAgent(client, item?.by ?? '')
+  const to = useAgent(client, item?.to ?? '')
   const { threads, ready } = useConversation(client, item)
   const nameOf = (nameOrId: string) => roles.find(r => r.id === nameOrId)?.name ?? (nameOrId === MAIN.id ? MAIN.name : nameOrId)
   const agentNamed = (name: string): Agent | undefined => {
@@ -290,85 +292,79 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
     const el = scroller.current
     if (scrolled.current || el === null || item === null || !ready) return
     scrolled.current = true
-    // Where the piece of work you came from starts; the end when that is already in view.
     const first = el.querySelector<HTMLElement>(`[data-thread="${CSS.escape(item.id)}"]`)
-    el.scrollTop = first === null ? el.scrollHeight : el.scrollTop + first.getBoundingClientRect().top - el.getBoundingClientRect().top - 40
+    el.scrollTop = first === null ? el.scrollHeight : el.scrollTop + first.getBoundingClientRect().top - el.getBoundingClientRect().top - 12
   }, [item, threads, ready])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pane === null) onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, pane])
-
-  const a = item === null ? undefined : agentNamed(nameOf(item.chain?.at(-2) ?? item.by))
-  const b = item === null ? undefined : agentNamed(nameOf(item.chain?.at(-1) ?? item.to))
-  const aName = item === null ? '' : a?.name ?? nameOf(item.chain?.at(-2) ?? item.by)
-  const bName = item === null ? '' : b?.name ?? nameOf(item.chain?.at(-1) ?? item.to)
-
-  // Runs of one speaker, with a time line after a pause.
-  const runs: { key: string; at?: number; who?: string; items: Said[] }[] = []
+  if (item === null) return <section className="main empty exchange-page">{error ?? '正在打开…'}</section>
+  const toName = to?.name ?? item.to
+  const state = STATE[item.state]
+  // Each piece of work starts with its heading when there are several; a time line after a pause.
+  const several = threads.length > 1
+  const titles = new Map(threads.map(t => [t.id, t] as const))
+  const rows: React.ReactNode[] = []
   let before: number | undefined
   for (const s of said) {
     const at = s.at === Number.MAX_SAFE_INTEGER ? undefined : s.at
-    if (at !== undefined && needsTime(at, before)) runs.push({ key: `t:${s.key}`, at, items: [] })
+    const starts = s.key === `${s.thread}:task`
+    const thread = titles.get(s.thread)
+    if (several && starts && thread !== undefined) {
+      rows.push(
+        <div key={`head:${s.key}`} className={`exchange-thread-head ${s.thread === item.id ? 'opened' : ''}`} data-thread={s.thread}>
+          <span>{thread.title}</span><span>{timeLabel(thread.startedAt)}</span>
+        </div>,
+      )
+    } else if (at !== undefined && needsTime(at, before)) rows.push(<TimeDivider key={`t:${s.key}`} at={at} />)
     if (at !== undefined) before = at
-    const last = runs.at(-1)
-    if (s.kind === 'aside') runs.push({ key: s.key, items: [s] })
-    else if (last !== undefined && last.who === s.who && last.items.length > 0) last.items.push(s)
-    else runs.push({ key: s.key, who: s.who, items: [s] })
+    rows.push(s.kind === 'aside'
+      ? <div key={s.key} className="exchange-aside" data-thread={s.thread}>{s.body}</div>
+      : <ExchangeMessage key={s.key} who={s.label} agent={agentNamed(s.who)} failed={s.failed === true} thread={s.thread} at={at}>{s.body}</ExchangeMessage>)
   }
-
   return (
-    <div className="exchange-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-      <section className={`exchange-window ${pane === null ? '' : 'with-pane'}`} role="dialog" aria-modal="true" aria-label={`${aName} 和 ${bName} 的对话`}>
-        <header className="exchange-window-head">
-          <div className="exchange-pair">
-            <span className={`agent-avatar small agent-${a?.id ?? 'unknown'}`}><Icon name={a?.icon ?? 'calendar'} /></span>
-            <span>{aName}</span>
-            <Icon name="swap" className="exchange-pair-arrows" />
-            <span className={`agent-avatar small agent-${b?.id ?? 'unknown'}`}><Icon name={b?.icon ?? 'sparkles'} /></span>
-            <span>{bName}</span>
+    <section className="main exchange-page">
+      <header className="session-header">
+        <div className="session-heading">
+          <div className="breadcrumb agent-heading">
+            <span className={`agent-avatar small agent-${from?.id ?? 'unknown'}`}><Icon name={from?.icon ?? 'calendar'} /></span>
+            <span>{item.by}</span>
+            <Icon name="arrow" className="delegation-arrow" />
+            <span className={`agent-avatar small agent-${to?.id ?? 'unknown'}`}><Icon name={to?.icon ?? 'sparkles'} /></span>
+            <h1>{toName}</h1>
           </div>
-          {item !== null && <span className={`delegation-state tone-${STATE[item.state].tone}`}>{STATE[item.state].tone === 'running' && <span className="tool-spinner" aria-hidden />}{threads.length > 1 ? `${threads.length} 件事 · ` : ''}{STATE[item.state].label}</span>}
-          <button className="icon-button exchange-x" onClick={onClose} title="关闭聊天" aria-label="关闭聊天"><Icon name="close" /></button>
-        </header>
+          <div className="session-meta">
+            <span className={`delegation-state tone-${state.tone}`}>{state.label}</span>
+            <span>{item.title}</span>
+            <span>{new Date(item.startedAt).toLocaleString()}</span>
+          </div>
+        </div>
+      </header>
+      <div className="view">
         <OpenSubTask.Provider value={setPane}>
         <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
-          <div className="chat exchange-chat" ref={scroller}>
-            <div className="chat-inner">
-              {item === null && <div className="empty">{error ?? '正在打开…'}</div>}
-              {runs.map(run => run.at !== undefined && run.items.length === 0
-                ? <TimeDivider key={run.key} at={run.at} />
-                : run.who === undefined
-                  ? <div key={run.key} className="exchange-aside" data-thread={run.items[0]!.thread}>{run.items[0]!.body}</div>
-                  : <ExchangeRun key={run.key} who={run.who} agent={agentNamed(run.who)} items={run.items} />)}
-            </div>
-          </div>
-          {pane !== null && item !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={nameOf(item.to)} trail={item.by === nameOf(item.to) ? [] : [item.by]} onClose={() => setPane(null)} />}
+        <div className="chat" ref={scroller}><div className="chat-inner">{rows}</div></div>
+        {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={toName} trail={item.by === toName ? [] : [item.by]} onClose={() => setPane(null)} />}
         </div>
         </OpenSubTask.Provider>
-        <footer className="exchange-footer">
-          <button className="small-button" onClick={onClose}>关闭聊天</button>
-        </footer>
-      </section>
-    </div>
+      </div>
+      <footer className="exchange-footer">
+        <button className="small-button" onClick={onClose}><Icon name="close" />关闭</button>
+      </footer>
+    </section>
   )
 }
 
-/** What one agent said in a row: its name over the first, its avatar beside the last. */
-function ExchangeRun({ who, agent, items }: { who: string; agent: Agent | undefined; items: readonly Said[] }) {
+function ExchangeMessage({ who, agent, failed = false, thread, at, children }: { who: string; agent: Agent | undefined; failed?: boolean; thread?: string; at?: number | undefined; children: React.ReactNode }) {
   return (
-    <div className="exchange-run">
-      <div className="exchange-run-name">{who}</div>
-      <div className="exchange-run-body">
+    <div className={`exchange-msg ${failed ? 'failed' : ''}`} data-thread={thread} title={at === undefined ? undefined : fullTime(at)}>
+      <div className="exchange-msg-head">
         <span className={`agent-avatar small agent-${agent?.id ?? 'unknown'}`}><Icon name={agent?.icon ?? 'calendar'} /></span>
-        <div className="exchange-bubbles">
-          {items.map(s => (
-            <div key={s.key} data-thread={s.thread} className={`exchange-bubble ${s.kind === 'said' && s.failed === true ? 'failed' : ''}`}
-              title={s.at === Number.MAX_SAFE_INTEGER ? undefined : fullTime(s.at)}>{s.body}</div>
-          ))}
-        </div>
+        <strong>{who}</strong>
       </div>
+      <div className="exchange-msg-body">{children}</div>
     </div>
   )
 }
