@@ -14,7 +14,7 @@
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
-import { GamesSettings, type Activity, type GameInfo } from '@adg/protocol'
+import { GamesSettings, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
 import type { SitePool, SiteEvent, SiteVersion } from './sources.ts'
@@ -82,15 +82,32 @@ export interface OwnFields {
 /** Set a field (it beats the sources), `null` to take it back, absent to leave it. */
 export type OwnPatch = { [K in OwnField]?: OwnFields[K] | null | undefined } & { todo?: readonly string[] | undefined }
 
-interface Stored extends Activity {
+/** What a source can be chosen for: its picture and its dates. */
+const CHOSEN_FIELDS = ['cover', 'startsAt', 'endsAt', 'shopEndsAt'] as const
+type ChosenField = (typeof CHOSEN_FIELDS)[number]
+type Said = { [K in ChosenField]?: Stored[K] | undefined }
+
+interface Stored extends Omit<Activity, 'chosen'> {
   /** Every name it went by, for matching. */
   names: string[]
   /** What each source said, by source id, in the order they first said it. */
   facts: Record<string, Fact>
-  /** What the user wrote themselves: beats every source, and no refresh touches it. */
+  /** What the user wrote themselves: beats every source (but one they then chose), and no refresh touches it. */
   mine?: OwnFields & { at: number }
   /** The sources' name while the user's own name is shown. */
   baseName?: string
+  /**
+   * The source the user picked. `over`: what they wrote since, which still
+   * shows over it, so an edit never hides itself or moves what it left alone.
+   */
+  chosen?: { source: string; over: OwnField[] }
+}
+
+/** What one source (a data site or page, the user, the game screen) says on what a source can be chosen for. */
+function saidBy(item: Stored, source: string): Said | undefined {
+  if (source === OWN_SOURCE) return item.mine
+  if (source === SCREEN_SOURCE) return item.screen === undefined ? undefined : { endsAt: item.screen.endsAt, cover: item.screen.image }
+  return item.facts[source]
 }
 
 const StoredSchema = z.object({
@@ -174,7 +191,10 @@ export class Calendar {
   /** Every picture address a data site gave: the only ones the host will fetch. */
   pictures(): Set<string> {
     const out = new Set<string>()
-    for (const a of this.#items) if (a.cover !== undefined) out.add(a.cover)
+    for (const a of this.#items) {
+      // Every source's, not only the one shown: the user can switch to any of them.
+      for (const cover of [a.cover, a.mine?.cover, ...Object.values(a.facts).map(f => f.cover)]) if (cover !== undefined) out.add(cover)
+    }
     for (const v of Object.values(this.#saved.versions)) if (v.cover !== undefined) out.add(v.cover)
     for (const list of Object.values(this.#saved.pools)) for (const p of list) if (p.cover !== undefined) out.add(p.cover)
     return out
@@ -401,6 +421,13 @@ export class Calendar {
     }
     if (Object.keys(mine).length === 0) delete item.mine
     else item.mine = { ...mine, at: now }
+    if (item.chosen !== undefined) {
+      // What was just written shows even over the chosen source; what was left alone stays as it is.
+      const written = OWN_FIELDS.filter(key => patch[key] !== undefined && mine[key] !== undefined)
+      const taken = OWN_FIELDS.filter(key => patch[key] === null)
+      item.chosen.over = unique([...item.chosen.over, ...written]).filter(key => !taken.includes(key as OwnField)) as OwnField[]
+      if (item.chosen.source === OWN_SOURCE && item.mine === undefined) delete item.chosen
+    }
     if (mine.name !== undefined) item.names = unique([...item.names, mine.name])
     if (patch.todo !== undefined) item.todo = unique(patch.todo.map(t => t.trim()).filter(t => t !== '' && !item.done.includes(t)))
     if (!this.#sourced(item) && item.mine === undefined) {
@@ -422,6 +449,8 @@ export class Calendar {
     const item = this.#items.find(a => a.id === id)
     if (item === undefined) return undefined
     delete item.mine
+    if (item.chosen?.source === OWN_SOURCE) delete item.chosen
+    else if (item.chosen !== undefined) item.chosen.over = []
     if (!this.#sourced(item)) {
       this.#items = this.#items.filter(a => a !== item)
       await this.save()
@@ -430,6 +459,40 @@ export class Calendar {
     this.#derive(item, timeZone)
     await this.save()
     return this.#public(item)
+  }
+
+  /**
+   * The source an event's picture and dates come from (`null`: the default order).
+   * @returns the event; undefined when there is none with that id.
+   * @throws Error when that source says nothing about the event.
+   */
+  async chooseSource(id: string, source: string | null, timeZone: string): Promise<Activity | undefined> {
+    const item = this.#items.find(a => a.id === id)
+    if (item === undefined) return undefined
+    if (source === null) delete item.chosen
+    else if (saidBy(item, source) === undefined) throw new Error('这个活动没有这个来源')
+    else item.chosen = { source, over: [] }
+    this.#derive(item, timeZone)
+    await this.save()
+    return this.#public(item)
+  }
+
+  /** The screenshot the agent took of an event, as its own picture (the lowest rank). */
+  async setShot(id: string, shot: string, context: { now: number; timeZone: string; sessionId?: string | undefined }): Promise<Activity | undefined> {
+    const item = this.#items.find(a => a.id === id)
+    if (item === undefined) return undefined
+    item.screen = { ...item.screen, at: context.now, evidence: true, image: shot, ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }) }
+    this.#derive(item, context.timeZone)
+    await this.save()
+    return this.#public(item)
+  }
+
+  /** Work every event out again: a calendar saved by an older version shows what this one would. */
+  async rederive(timeZone: (game: string) => string): Promise<void> {
+    // Nothing read (an unreadable file starts empty): leave the file as it is.
+    if (this.#items.length === 0) return
+    for (const item of this.#items) if (this.#sourced(item) || item.mine !== undefined) this.#derive(item, timeZone(item.game))
+    await this.save()
   }
 
   /** The pictures the user added that an event still shows (`own:<file>`). */
@@ -504,26 +567,38 @@ export class Calendar {
    * The event as shown, from what its sources said: each detail from the
    * data sites first (the one that wrote last), then the web pages (the
    * newest reading); the end from the game screen when no source gives one.
+   * The picture goes by rank: what the user set, then what a source gives,
+   * then the agent's screenshot. A source the user chose comes before all of
+   * that for the picture and the dates, where it says anything.
    * Disagreements on the end are said: a web page against a data site, the
-   * screen against a data site (the data site counts).
+   * screen against a data site (the data site counts), unless the user chose.
    */
   #derive(item: Stored, timeZone: string): void {
     const ordered = Object.entries(item.facts)
       .map(([id, fact], index) => ({ id, fact, index }))
       .sort((a, b) => Number(a.fact.web) - Number(b.fact.web) || b.fact.at - a.fact.at || b.index - a.index)
     const first = <K extends keyof Fact>(key: K): Fact[K] | undefined => ordered.find(o => o.fact[key] !== undefined)?.fact[key]
+    const firstFrom = (key: keyof Fact): string | undefined => ordered.find(o => o.fact[key] !== undefined)?.id
     const set = <K extends 'startsAt' | 'endsAt' | 'shopEndsAt' | 'url' | 'cover' | 'description' | 'kind'>(key: K, value: Stored[K] | undefined) => {
       if (value === undefined) delete item[key]
       else item[key] = value
     }
+    const origin: NonNullable<Stored['shown']> = {}
+    /** A picture or date, and the source it is shown from. */
+    const put = <K extends 'startsAt' | 'endsAt' | 'cover'>(key: K, value: Stored[K] | undefined, from: string | undefined) => {
+      set(key, value)
+      if (value === undefined || from === undefined) delete origin[key]
+      else origin[key] = from
+    }
     const site = ordered.find(o => !o.fact.web)
     const primary = ordered[0]
     // A data site's dates come as a set (no start means none), a page's fill in only what is missing.
-    set('startsAt', site !== undefined ? site.fact.startsAt : first('startsAt'))
-    set('endsAt', first('endsAt') ?? item.screen?.endsAt)
+    put('startsAt', site !== undefined ? site.fact.startsAt : first('startsAt'), site !== undefined ? site.id : firstFrom('startsAt'))
+    if (first('endsAt') !== undefined) put('endsAt', first('endsAt'), firstFrom('endsAt'))
+    else put('endsAt', item.screen?.endsAt, SCREEN_SOURCE)
     set('shopEndsAt', site !== undefined ? site.fact.shopEndsAt : first('shopEndsAt'))
     set('url', first('url'))
-    set('cover', first('cover'))
+    put('cover', first('cover'), firstFrom('cover'))
     set('description', first('description'))
     set('kind', first('kind'))
     if (primary === undefined) delete item.site
@@ -538,12 +613,26 @@ export class Calendar {
       item.name = item.baseName
       delete item.baseName
     }
-    for (const key of ['startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'] as const) if (mine?.[key] !== undefined) set(key, mine[key])
+    for (const key of ['kind', 'description', 'url'] as const) if (mine?.[key] !== undefined) set(key, mine[key])
+    for (const key of ['startsAt', 'endsAt', 'cover'] as const) if (mine?.[key] !== undefined) put(key, mine[key], OWN_SOURCE)
     // No picture from any source or the user: the screenshot it was read from.
-    if (item.cover === undefined && item.screen?.image !== undefined) item.cover = item.screen.image
+    if (item.cover === undefined) put('cover', item.screen?.image, SCREEN_SOURCE)
+
+    // The source the user chose, for whatever it says; a source that has since gone is no choice.
+    const chosen = item.chosen
+    const said = chosen === undefined ? undefined : saidBy(item, chosen.source)
+    if (chosen !== undefined && said !== undefined) {
+      for (const key of CHOSEN_FIELDS) {
+        const value = said[key]
+        if (value === undefined || (key !== 'shopEndsAt' && chosen.over.includes(key) && mine?.[key] !== undefined)) continue
+        if (key === 'shopEndsAt') set(key, value as number)
+        else put(key, value as never, chosen.source)
+      }
+    }
+    item.shown = origin
 
     delete item.mismatch
-    if (mine?.endsAt !== undefined) return
+    if (mine?.endsAt !== undefined || said !== undefined) return
     const siteEnd = site?.fact.endsAt
     if (site === undefined || siteEnd === undefined) return
     const page = ordered.find(o => o.fact.web && o.fact.endsAt !== undefined)
@@ -570,10 +659,26 @@ export class Calendar {
   }
 
   #public(item: Stored): Activity {
-    const { names: _names, facts, mine, baseName: _baseName, ...activity } = item
-    const sources = Object.entries(facts).map(([id, f]) => ({ id, name: f.name, at: f.at, web: f.web, ...(f.endsAt === undefined ? {} : { endsAt: f.endsAt }) }))
-    const own = mine === undefined ? undefined : { at: mine.at, fields: OWN_FIELDS.filter(k => mine[k] !== undefined) }
-    return structuredClone({ ...activity, ...(sources.length === 0 ? {} : { sources }), ...(own === undefined ? {} : { own }) })
+    const { names: _names, facts, mine, baseName: _baseName, chosen, ...activity } = item
+    const sources = Object.entries(facts).map(([id, f]) => ({
+      id, name: f.name, at: f.at, web: f.web,
+      ...(f.startsAt === undefined ? {} : { startsAt: f.startsAt }),
+      ...(f.endsAt === undefined ? {} : { endsAt: f.endsAt }),
+      ...(f.shopEndsAt === undefined ? {} : { shopEndsAt: f.shopEndsAt }),
+      ...(f.cover === undefined ? {} : { cover: f.cover }),
+    }))
+    const own = mine === undefined ? undefined : {
+      at: mine.at, fields: OWN_FIELDS.filter(k => mine[k] !== undefined),
+      ...(mine.startsAt === undefined ? {} : { startsAt: mine.startsAt }),
+      ...(mine.endsAt === undefined ? {} : { endsAt: mine.endsAt }),
+      ...(mine.cover === undefined ? {} : { cover: mine.cover }),
+    }
+    return structuredClone({
+      ...activity,
+      ...(sources.length === 0 ? {} : { sources }),
+      ...(own === undefined ? {} : { own }),
+      ...(chosen === undefined || saidBy(item, chosen.source) === undefined ? {} : { chosen: chosen.source }),
+    })
   }
 }
 

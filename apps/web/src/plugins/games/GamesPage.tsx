@@ -1,16 +1,20 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { GameInfo, GamesSettings, RequestResult } from '@adg/protocol'
+import type { Activity, GameInfo, GamesSettings, RequestResult } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
+import { ActivityEditor } from './ActivityEditor.tsx'
+import { ActivityPanel, ActivityPanelBody } from './ActivityPanel.tsx'
 import { GameView, useGameColors } from './GameView.tsx'
 import { CatalogPicker, Overview, PALETTE, progressOf } from './Overview.tsx'
 import './games.css'
 
 type Listing = RequestResult<'games/list'>
+/** What the side panel shows: an event (as last saved, until the list has it), or a form for a new one. */
+type Panel = { kind: 'activity'; id: string; saved?: Activity } | { kind: 'add'; game: string }
 
 const DAY = 86_400_000
 
@@ -30,6 +34,9 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [catalogOpen, setCatalogOpen] = useState(false)
+  const [panel, setPanel] = useState<Panel | null>(null)
+  const closePanel = useCallback(() => setPanel(null), [])
+  const toggleActivity = (id: string) => setPanel(p => (p?.kind === 'activity' && p.id === id ? null : { kind: 'activity', id }))
 
   // A link to one game (#/p/games/<id>) selects it, also when the page is already open.
   useEffect(() => { if (arg !== undefined) setSelected(arg) }, [arg])
@@ -47,7 +54,7 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
   const current = showReport ? undefined : games.find(g => g.id === selected)
   // Nothing (or a game that is gone) selected: everything at a glance.
   const showOverview = !showReport && current === undefined
-  const select = (id: string) => { setSelected(id); setMessage(null); setError(null) }
+  const select = (id: string) => { setSelected(id); setPanel(null); setMessage(null); setError(null) }
 
   const act = async (key: string, fn: () => Promise<string | void>) => {
     setBusy(key)
@@ -101,6 +108,7 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
           <button className="small-button" disabled={busy !== null || games.length === 0} onClick={() => void refresh()}><Icon name="refresh" />{busy === 'refresh:' ? '刷新中…' : '刷新全部'}</button>
         </div>
       </header>
+      <div className="games-stage">
       <div className="games-body">
         {catalogOpen && (
           <section className="card">
@@ -113,13 +121,15 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
         {data !== null && games.length === 0 && <div className="empty"><Icon name="gamepad" /><p>没有游戏。点「更多游戏」关注几个。</p></div>}
         {data !== null && showOverview && games.length > 0 && (
           <Overview client={client} games={games} activities={data.activities} now={now} soonDays={data.settings.report.soonDays}
-            onOpenGame={select} onChanged={() => setRevision(r => r + 1)} />
+            open={panel?.kind === 'activity' ? panel.id : null} onOpen={toggleActivity} onOpenGame={select} />
         )}
         {data !== null && showReport && <ReportCard client={client} data={data} games={games} now={now} openSettings={openSettings} onChanged={() => setRevision(r => r + 1)} />}
         {data !== null && current !== undefined && (
           <GameView
             key={current.id} client={client} game={current} activities={data.activities.filter(a => a.game === current.id)}
             color={colors.get(current.id) ?? PALETTE[0]!} now={now} soonDays={data.settings.report.soonDays} busy={busy}
+            open={panel?.kind === 'activity' ? panel.id : null} adding={panel?.kind === 'add'}
+            onOpen={toggleActivity} onAdd={() => setPanel(p => (p?.kind === 'add' ? null : { kind: 'add', game: current.id }))}
             onRefresh={() => void refresh(current.id)}
             onRead={() => void act(`read:${current.id}`, async () => {
               const { sessionId } = await client.connection.call('games/read', { game: current.id })
@@ -139,6 +149,29 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
             openSession={openSession} openScripts={() => openPage('scripts')}
           />
         )}
+      </div>
+      {data !== null && panel !== null && (() => {
+        const changed = () => setRevision(r => r + 1)
+        if (panel.kind === 'add') {
+          const game = games.find(g => g.id === panel.game)
+          if (game === undefined) return null
+          return (
+            <ActivityPanel color={colors.get(game.id) ?? PALETTE[0]!} label="添加活动" onClose={closePanel}>
+              <div className="panel-scroll">
+                <ActivityEditor client={client} game={game} onCancel={closePanel} onDone={saved => { setPanel({ kind: 'activity', id: saved.id, saved }); changed() }} />
+              </div>
+            </ActivityPanel>
+          )
+        }
+        const activity = data.activities.find(a => a.id === panel.id) ?? panel.saved
+        if (activity === undefined) return null
+        return (
+          <ActivityPanel color={colors.get(activity.game) ?? PALETTE[0]!} label={`${activity.name}的详情`} onClose={closePanel}>
+            <ActivityPanelBody key={activity.id} client={client} activity={activity} game={games.find(g => g.id === activity.game)} now={now} soonDays={data.settings.report.soonDays}
+              onClose={closePanel} onChanged={changed} openSession={openSession} onOpenGame={current === undefined ? () => select(activity.game) : undefined} />
+          </ActivityPanel>
+        )
+      })()}
       </div>
     </section>
   )

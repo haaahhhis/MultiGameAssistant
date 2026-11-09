@@ -33,6 +33,8 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 
 - 新加：写 `game`、`name`，有时间就写 `starts_at` / `ends_at`（游戏服务器时间）。改已有的：先 `game_activities` 找到 `id`，只写要改的字段。
 - 图片 `image`：用户给的图片网址、本机图片文件路径，或 `screenshot`（这个对话最近一张截图，比如刚用 `screen_capture` 截的活动页）。
+- 活动图片分三级：用户设的 > 数据站和网页给的 > agent 的截图。`screenshot` 算 agent 的截图，有别的图时不显示；用户想让截图显示，用 `use_source`=screen。
+- 一个活动有多个来源时（`game_activities` 的 `sources`），用户说「用 PRTS 的时间」就写 `use_source`（来源 id、own、screen，或 default 恢复默认顺序）：图片和时间都跟着换。
 - 用户填的内容比数据站优先，刷新不会改掉。要恢复成来源的：`clear` 列出字段，或 `game_activity_remove`（what=mine）。用户要删掉才用 `game_activity_remove`（what=all）。
 
 ## 日报

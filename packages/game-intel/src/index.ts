@@ -126,6 +126,7 @@ export class AdgGameIntel extends Service {
       await calendar.load()
       await this.loadGames(log)
       await this.adoptEvidence().catch(error => log.warn(`old screenshots not converted: ${String(error)}`))
+      await calendar.rederive(game => this.timezone(game)).catch(error => log.warn(`calendar not worked out again: ${String(error)}`))
       daily.start()
     })()
     ctx.effect(() => () => this.daily.stop(), 'adg-game-intel daily report')
@@ -171,7 +172,16 @@ export class AdgGameIntel extends Service {
         add: async (manifest, guide) => { await this.ready; return this.addGame(manifest, guide) },
         saveActivity: async (game, id, patch, image, sessionId) => {
           await this.ready
+          // The agent's own screenshot ranks lowest, whoever asked for it: it is no picture of the user's.
+          if (image?.trim() === 'screenshot') {
+            const shot = await this.imageFrom(image, sessionId)
+            return this.saveAgentShot(await this.saveActivity(game, id, patch), shot, sessionId)
+          }
           return this.saveActivity(game, id, patch, image === undefined ? undefined : await this.imageFrom(image, sessionId))
+        },
+        chooseSource: async (id, source) => {
+          await this.ready
+          return this.chooseSource(id, source)
         },
         removeActivity: async (id, what) => {
           await this.ready
@@ -289,6 +299,11 @@ export class AdgGameIntel extends Service {
             const { game, activityId, image, todo, ...fields } = params as RequestParams<'games/activity/save'>
             return this.saveActivity(game, activityId, { ...fields, ...(todo === undefined ? {} : { todo }) }, image === undefined ? undefined : Buffer.from(image.data, 'base64'))
           },
+          'games/activity/source': async params => {
+            await this.ready
+            const { activityId, source } = params as RequestParams<'games/activity/source'>
+            return this.chooseSource(activityId, source)
+          },
           'games/activity/reset': async params => {
             await this.ready
             const activity = await this.resetActivity((params as RequestParams<'games/activity/reset'>).activityId)
@@ -402,12 +417,34 @@ export class AdgGameIntel extends Service {
     return activity
   }
 
+  private timezone(game: string): string {
+    return this.games.find(g => g.manifest.id === game)?.manifest.timezone ?? 'Asia/Shanghai'
+  }
+
+  /** Keep the agent's screenshot of an event as what it read from the screen: the lowest rank of picture. */
+  private async saveAgentShot(saved: Activity, bytes: Buffer, sessionId: string | undefined): Promise<Activity> {
+    const shot = await this.keepImage(bytes, 'shot')
+    const activity = await this.calendar.setShot(saved.id, shot, { now: this.clock.now(), timeZone: this.timezone(saved.game), sessionId })
+    await this.sweepImages()
+    this.changed(saved.game)
+    return activity ?? saved
+  }
+
+  /** Which source an event's picture and dates come from; `null`: the default order. */
+  async chooseSource(activityId: string, source: string | null): Promise<Activity> {
+    const before = this.calendar.get(activityId)
+    if (before === undefined) throw new Error('没有这个活动（可能已经结束被清掉了）')
+    const activity = await this.calendar.chooseSource(activityId, source, this.timezone(before.game))
+    if (activity === undefined) throw new Error('没有这个活动（可能已经结束被清掉了）')
+    this.changed(before.game)
+    return activity
+  }
+
   /** Take back what the user wrote on an event. @returns it as it is now; undefined when it went. */
   async resetActivity(activityId: string): Promise<Activity | undefined> {
     const before = this.calendar.get(activityId)
     if (before === undefined) throw new Error('没有这个活动（可能已经结束被清掉了）')
-    const timezone = this.games.find(g => g.manifest.id === before.game)?.manifest.timezone ?? 'Asia/Shanghai'
-    const activity = await this.calendar.resetOwn(activityId, timezone)
+    const activity = await this.calendar.resetOwn(activityId, this.timezone(before.game))
     await this.sweepImages()
     this.changed(before.game)
     return activity

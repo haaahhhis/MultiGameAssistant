@@ -24,12 +24,26 @@ export const Activity = z.object({
   kind: z.string().optional(),
   /** What it is about, from the data site. */
   description: z.string().optional(),
-  /** Its picture (an https address; fetch it with `games/image`). */
+  /**
+   * Its picture (fetch it with `games/image`). Unless the user chose a source
+   * (`chosen`), by rank: what the user set, then what a source gives (data
+   * sites, then web pages), then the screenshot the agent read it from.
+   */
   cover: z.string().optional(),
   /** The source whose dates are shown: a data site, else the newest web page the agent read. */
   site: z.object({ source: z.string(), name: z.string(), at: z.number() }).optional(),
-  /** Every source that lists it (data sites, web pages the agent read), with the end each gives. */
-  sources: z.array(z.object({ id: z.string(), name: z.string(), at: z.number(), web: z.boolean(), endsAt: z.number().optional() })).optional(),
+  /** Every source that lists it (data sites, web pages the agent read), with what each says. */
+  sources: z.array(z.object({
+    id: z.string(), name: z.string(), at: z.number(), web: z.boolean(),
+    startsAt: z.number().optional(), endsAt: z.number().optional(), shopEndsAt: z.number().optional(), cover: z.string().optional(),
+  })).optional(),
+  /**
+   * The source the user picked for the picture and the dates (`games/activity/source`):
+   * a source's id, `OWN_SOURCE` or `SCREEN_SOURCE`. Absent: the default order.
+   */
+  chosen: z.string().optional(),
+  /** Which source each shown value comes from, in the same ids as `chosen`. */
+  shown: z.object({ cover: z.string().optional(), startsAt: z.string().optional(), endsAt: z.string().optional() }).optional(),
   /** Read from the game screen by the agent. */
   screen: z.object({
     at: z.number(),
@@ -59,9 +73,18 @@ export const Activity = z.object({
    * those fields beat every source, and a refresh never changes or drops them.
    * An activity with no `sources` and no `screen` is one the user added.
    */
-  own: z.object({ at: z.number(), fields: z.array(z.enum(['name', 'startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'])) }).optional(),
+  own: z.object({
+    at: z.number(),
+    fields: z.array(z.enum(['name', 'startsAt', 'endsAt', 'kind', 'description', 'url', 'cover'])),
+    startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(),
+  }).optional(),
 })
 export type Activity = z.infer<typeof Activity>
+
+/** In `Activity.chosen` and `.shown`: what the user wrote themselves. */
+export const OWN_SOURCE = '@own'
+/** In `Activity.chosen` and `.shown`: what the agent read from the game screen. */
+export const SCREEN_SOURCE = '@screen'
 
 /** Base64 characters of a picture the user adds to an activity (≈8 MB decoded; fits one 16 MiB frame). */
 export const MAX_ACTIVITY_IMAGE_BASE64 = 11_200_000
@@ -301,6 +324,16 @@ export const GamesRequests = {
       image: ActivityImage.optional(),
       todo: z.array(z.string().min(1).max(80)).max(30).optional(),
     }),
+    result: Activity,
+  },
+  /**
+   * Which source an event's picture and dates come from: a source's id,
+   * `OWN_SOURCE` or `SCREEN_SOURCE`; `null` goes back to the default order.
+   * What that source does not say still comes from the default order.
+   */
+  'games/activity/source': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ activityId: z.string(), source: z.string().nullable() }),
     result: Activity,
   },
   /** Take back everything the user wrote on an event: the sources' word shows again; one only the user added goes. */

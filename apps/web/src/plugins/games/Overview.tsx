@@ -2,15 +2,10 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { Activity, GameInfo, RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
-import { ImageViewer } from '../../components/ImageViewer.tsx'
-import { relativeTime } from '../../components/SessionList.tsx'
-import { useNow } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
-import { ActivityEditor } from './ActivityEditor.tsx'
 import { useFirstImage, useRemoteImage } from './images.ts'
 
 const DAY = 86_400_000
-const OWN_FIELD_NAMES: Record<NonNullable<Activity['own']>['fields'][number], string> = { name: '名字', startsAt: '开始时间', endsAt: '结束时间', kind: '类型', description: '说明', url: '页面', cover: '图片' }
 /** The timeline shows from a couple of days back to four weeks ahead. */
 const BEFORE_DAYS = 2
 const AFTER_DAYS = 28
@@ -53,18 +48,19 @@ function leftText(end: number, now: number): string {
  * by when they end (grouped by urgency) or by game; each with how far along
  * the user is, and a checklist they can keep themselves.
  */
-export function Overview({ client, games, activities, now, soonDays, onOpenGame, onChanged }: {
+export function Overview({ client, games, activities, now, soonDays, open, onOpen, onOpenGame }: {
   client: AdgClient
   games: readonly GameInfo[]
   activities: readonly Activity[]
   now: number
   soonDays: number
+  /** The event whose details are open in the panel. */
+  open: string | null
+  onOpen: (id: string) => void
   onOpenGame: (id: string) => void
-  onChanged: () => void
 }) {
   const [shown, setShown] = useState<string[] | null>(() => load<string[] | null>(SHOWN_KEY, null))
   const [mode, setMode] = useState<Mode>(() => load<Mode>(MODE_KEY, 'time'))
-  const [open, setOpen] = useState<string | null>(null)
   useEffect(() => keep(SHOWN_KEY, shown), [shown])
   useEffect(() => keep(MODE_KEY, mode), [mode])
 
@@ -176,8 +172,7 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
               const game = games.find(g => g.id === a.game)
               return (
                 <ActivityRow key={a.id} client={client} activity={a} game={game} color={color.get(a.game) ?? PALETTE[0]!} showGame={mode === 'time'}
-                  now={now} soonDays={soonDays} x={x} open={open === a.id} onToggle={() => setOpen(o => (o === a.id ? null : a.id))}
-                  onOpenGame={() => onOpenGame(a.game)} onChanged={onChanged} />
+                  now={now} soonDays={soonDays} x={x} open={open === a.id} onToggle={() => onOpen(a.id)} />
               )
             })}
           </div>
@@ -228,7 +223,7 @@ function GameTile({ client, game, color, covers, now, running, soon, shown, onOp
   )
 }
 
-function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays, x, open, onToggle, onOpenGame, onChanged }: {
+function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays, x, open, onToggle }: {
   client: AdgClient
   activity: Activity
   game: GameInfo | undefined
@@ -239,8 +234,6 @@ function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays
   x: (t: number) => number
   open: boolean
   onToggle: () => void
-  onOpenGame: () => void
-  onChanged: () => void
 }) {
   const p = progressOf(a)
   const started = (a.startsAt ?? 0) <= now
@@ -277,7 +270,6 @@ function ActivityRow({ client, activity: a, game, color, showGame, now, soonDays
           <ProgressPill progress={p} />
         </div>
       </button>
-      {open && <ActivityDetail client={client} activity={a} game={game} onOpenGame={onOpenGame} onChanged={onChanged} />}
     </div>
   )
 }
@@ -289,126 +281,6 @@ export function ProgressPill({ progress: p }: { progress: ReturnType<typeof prog
     <span className="ov-progress partial" title={`做了 ${p.done} 项，还剩 ${p.total - p.done} 项`}>
       <span className="ov-ring" style={{ '--pct': `${(p.done / p.total) * 100}%` } as CSSProperties} />{p.done}/{p.total}
     </span>
-  )
-}
-
-/** The event's description and dates, and its checklist: tick, untick, add, or call the whole thing done. */
-/**
- * Where an activity's facts came from: each data site and web page keeps its own
- * record, so refreshing a data site never removes what the agent read from a page.
- */
-export function ActivitySources({ activity: a }: { activity: Activity }) {
-  const now = useNow(60_000)
-  const sources = a.sources ?? (a.site === undefined ? [] : [{ id: a.site.source, name: a.site.name, at: a.site.at, web: false }])
-  if (sources.length === 0 && a.screen === undefined && a.own === undefined) return null
-  // The user's own dates beat every source.
-  const primary = a.own?.fields.includes('endsAt') === true ? undefined : a.site?.name
-  return (
-    <div className="activity-sources">
-      <span className="muted small">来源</span>
-      {sources.map(s => (
-        <span key={s.id} className={`fact-chip ${s.web ? 'web' : 'site'}`} title={s.web ? '网页上读到的；刷新数据站不会删掉它' : '数据站，每次刷新更新'}>
-          {s.name}<small>{s.web ? '网页' : '数据站'} · {relativeTime(s.at, now)}</small>
-          {sources.length > 1 && s.name === primary && <small className="fact-main">时间以它为准</small>}
-        </span>
-      ))}
-      {a.screen !== undefined && <span className="fact-chip screen" title="agent 进游戏看到的剩余时间和进度">游戏画面<small>agent 看过 · {relativeTime(a.screen.at, now)}</small></span>}
-      {a.own !== undefined && (
-        <span className="fact-chip own" title={sources.length === 0 && a.screen === undefined ? '你自己添加的活动' : `你改过：${a.own.fields.map(f => OWN_FIELD_NAMES[f]).join('、')}；比来源优先，刷新不会改掉`}>
-          {sources.length === 0 && a.screen === undefined ? '我添加的' : '我改过'}<small>{sources.length === 0 && a.screen === undefined ? '' : `${a.own.fields.map(f => OWN_FIELD_NAMES[f]).join('、')} · `}{relativeTime(a.own.at, now)}</small>
-        </span>
-      )}
-    </div>
-  )
-}
-
-export function ActivityDetail({ client, activity: a, game, onOpenGame, onChanged, openSession }: {
-  client: AdgClient
-  activity: Activity
-  game: GameInfo | undefined
-  /** Absent: already on the game's own page. */
-  onOpenGame?: (() => void) | undefined
-  onChanged: () => void
-  openSession?: ((id: string) => void) | undefined
-}) {
-  const [shot, setShot] = useState<{ src: string; width: number; height: number } | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const tz = game?.timezone ?? 'Asia/Shanghai'
-  const fmt = (t: number) => new Date(t).toLocaleString('zh-CN', { timeZone: tz, hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  const save = async (patch: { todo?: string[]; done?: string[]; finished?: boolean }) => {
-    setBusy(true)
-    setError(null)
-    try {
-      await client.connection.call('games/activity/progress', { activityId: a.id, ...patch })
-      onChanged()
-    } catch (e) {
-      setError(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const tick = (item: string) => void save({ todo: a.todo.filter(t => t !== item), done: [...a.done, item] })
-  const untick = (item: string) => void save({ todo: [...a.todo, item], done: a.done.filter(t => t !== item) })
-  const add = () => {
-    const text = draft.trim()
-    if (text === '' || a.todo.includes(text) || a.done.includes(text)) return
-    setDraft('')
-    void save({ todo: [...a.todo, text] })
-  }
-  const sourced = a.sources !== undefined || a.screen !== undefined
-  const reset = () => {
-    setBusy(true)
-    setError(null)
-    client.connection.call('games/activity/reset', { activityId: a.id }).then(onChanged, e => setError(errorText(e))).finally(() => setBusy(false))
-  }
-  if (editing && game !== undefined) {
-    return <div className="ov-detail"><ActivityEditor client={client} game={game} activity={a} onDone={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} /></div>
-  }
-  return (
-    <div className="ov-detail">
-      {a.description !== undefined && <p className="ov-description">{a.description}</p>}
-      <div className="activity-dates muted small">
-        {a.startsAt !== undefined && <span>{fmt(a.startsAt)} 开始</span>}
-        {a.endsAt !== undefined && <span>{fmt(a.endsAt)} 结束</span>}
-        {a.shopEndsAt !== undefined && <span>商店开到 {fmt(a.shopEndsAt)}</span>}
-      </div>
-      <ActivitySources activity={a} />
-      <div className="ov-checklist" role="list" aria-label="要做的事">
-        {a.todo.map(t => (
-          <label key={`t${t}`} className="ov-check" role="listitem"><input type="checkbox" checked={false} disabled={busy} onChange={() => tick(t)} />{t}</label>
-        ))}
-        {a.done.map(t => (
-          <label key={`d${t}`} className="ov-check done" role="listitem"><input type="checkbox" checked disabled={busy} onChange={() => untick(t)} />{t}</label>
-        ))}
-        {a.todo.length + a.done.length === 0 && <p className="muted small">还没有要做的事。自己加几项（例如「活动商店换完」「剧情通关」），或者在游戏页让 agent 进游戏读一次。</p>}
-      </div>
-      <div className="ov-add">
-        <input className="text-input plain" value={draft} maxLength={80} placeholder="加一项要做的事，回车添加" disabled={busy}
-          onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }} />
-        <button className="small-button" disabled={busy || draft.trim() === ''} onClick={add}><Icon name="plus" />添加</button>
-      </div>
-      <div className="ov-detail-actions">
-        <label className="check-label"><input type="checkbox" checked={a.finished !== undefined} disabled={busy} onChange={e => void save({ finished: e.target.checked })} />这个活动我做完了</label>
-        <span className="spacer" />
-        {a.screen?.evidence === true && <button className="link-button small" onClick={() => void client.connection.call('games/evidence', { activityId: a.id }).then(r => {
-          const src = `data:${r.mediaType};base64,${r.data}`
-          const img = new Image()
-          img.onload = () => setShot({ src, width: img.naturalWidth, height: img.naturalHeight })
-          img.src = src
-        }, e => setError(errorText(e)))}>看游戏截图</button>}
-        {a.screen?.sessionId !== undefined && openSession !== undefined && <button className="link-button small" onClick={() => openSession(a.screen!.sessionId!)}>agent 的对话</button>}
-        {a.url !== undefined && <a className="link-button small" href={a.url} target="_blank" rel="noreferrer">活动页面</a>}
-        {onOpenGame !== undefined && <button className="link-button small" onClick={onOpenGame}>去{game?.name ?? '游戏'}</button>}
-        {game !== undefined && <button className="link-button small" disabled={busy} onClick={() => setEditing(true)}><Icon name="pencil" />编辑</button>}
-        {a.own !== undefined && sourced && <button className="link-button small muted" title="去掉你改过的名字、时间、图片等，恢复成来源的" disabled={busy} onClick={reset}>恢复来源的内容</button>}
-        <button className="link-button small muted" title="读错了或不关心" disabled={busy} onClick={() => void client.connection.call('games/activity/remove', { activityId: a.id }).then(onChanged, e => setError(errorText(e)))}>从日历去掉</button>
-      </div>
-      {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}
-      {shot !== null && <ImageViewer src={shot.src} width={shot.width} height={shot.height} name={`${a.name}.png`} onClose={() => setShot(null)} />}
-    </div>
   )
 }
 
