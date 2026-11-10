@@ -38,6 +38,8 @@ const MAX_SETUP_ONLY_FILES = 4
 /** What {@link ScriptLibrary.updateBeforeRun} did (the runner's `updateFirst`). */
 export type PreRunUpdate =
   | { readonly state: 'skipped' | 'current' }
+  /** A newer version, left for the user (settings: `ask` asks them, `off` does not). */
+  | { readonly state: 'available'; readonly version: string; readonly policy: 'ask' | 'off' }
   | { readonly state: 'updated'; readonly version: string }
   | { readonly state: 'failed'; readonly error: string }
 
@@ -517,17 +519,23 @@ export class ScriptLibrary {
   }
 
   /**
-   * Before a task runs: update when a newer version is out. Never throws —
-   * the run goes on with what it has. Left alone: a script without an update
+   * Before a task runs: update when a newer version is out and the settings
+   * say `auto`; otherwise only check, and leave the update to the user. Never
+   * throws — the run goes on with what it has. Left alone: a script without an update
    * channel, one following a branch's source (official releases only), or one another job is installing. A release that is a setup
    * program is left waiting for the agent and counts as not updated.
    */
   async updateBeforeRun(id: string, signal: AbortSignal): Promise<PreRunUpdate> {
-    const script = this.#script(id)
-    const channels = this.#channels(script)
-    if ((channels.github === undefined && channels.mirror === undefined) || this.#jobs.active(id) !== undefined) return { state: 'skipped' }
-    // Following a branch's source is pulling code: only when someone asks (script_update), never by itself before a run.
-    if (script.sourceBranch !== undefined) return { state: 'skipped' }
+    if (!this.#checkable(id)) return { state: 'skipped' }
+    const policy = this.#state.settings.autoUpdate
+    if (policy !== 'auto') {
+      try {
+        const check = await this.checkUpdate(id, AbortSignal.any([signal, AbortSignal.timeout(PRE_RUN_CHECK_MS)]))
+        return check.available ? { state: 'available', version: check.latest, policy } : { state: 'current' }
+      } catch {
+        return { state: 'skipped' }
+      }
+    }
     try {
       const started = await this.update(id, AbortSignal.any([signal, AbortSignal.timeout(PRE_RUN_CHECK_MS)]), { byAgent: true })
       if (started.upToDate) return { state: 'current' }
@@ -540,6 +548,31 @@ export class ScriptLibrary {
     } catch (error) {
       return { state: 'failed', error: signal.aborted ? '已停止' : errorText(error) }
     }
+  }
+
+  /**
+   * Check every script that can update on its own (see {@link updateBeforeRun}) for a newer version,
+   * one after another; what it finds is on each script (`update`). Never throws.
+   */
+  async checkUpdates(signal?: AbortSignal): Promise<void> {
+    for (const { id } of [...this.#state.scripts]) {
+      if (signal?.aborted === true) return
+      if (!this.#checkable(id)) continue
+      try {
+        await this.checkUpdate(id, signal)
+      } catch (error) {
+        this.#options.log.info(`update check for ${id} failed: ${errorText(error)}`)
+      }
+    }
+  }
+
+  /** It has an update channel, follows releases (not a branch's source), and nothing is installing it. */
+  #checkable(id: string): boolean {
+    const script = this.#script(id)
+    const channels = this.#channels(script)
+    if (channels.github === undefined && channels.mirror === undefined) return false
+    // Following a branch's source is pulling code: only when someone asks (script_update), never by itself.
+    return script.sourceBranch === undefined && this.#jobs.active(id) === undefined
   }
 
   /**

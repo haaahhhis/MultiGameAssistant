@@ -100,6 +100,7 @@ export const DEFAULT_SETTINGS: InstallSettings = {
   keepVersions: 3,
   includePrereleases: false,
   cdkRef: 'MIRRORCHYAN_CDK',
+  autoUpdate: 'ask',
 }
 
 const StateFile = z.object({

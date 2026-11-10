@@ -170,6 +170,36 @@ test('with a CDK a local import gets Mirror酱\'s incremental package from the v
   }
 })
 
+test('before a run the setting decides: ask and off only check, auto updates; a check of all scripts finds it too', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-pre-run-'))
+  const github = await startFakeGitHub({ repos: { 'Owner/Tool': [{ tag: 'v1.2.0', assets: [{ name: 'Tool-v1.2.0-win-x64.zip', content: makeZip({ 'Tool/': '', 'Tool/tool.exe': 'MZ 1.2.0', 'Tool/version.txt': 'v1.2.0' }) }] }] } })
+  const library = setup(root, { github: github.url })
+  await library.start()
+  try {
+    assert.equal((await library.settings()).autoUpdate, 'ask', 'asks by default')
+    const dir = userFolder(root)
+    await library.import({ path: dir })
+    await library.checkUpdates()
+    assert.equal(library.get('tool').update?.available, true, 'the check of all scripts')
+
+    const signal = new AbortController().signal
+    assert.deepEqual(await library.updateBeforeRun('tool', signal), { state: 'available', version: '1.2.0', policy: 'ask' })
+    await library.setSettings({ autoUpdate: 'off' })
+    assert.deepEqual(await library.updateBeforeRun('tool', signal), { state: 'available', version: '1.2.0', policy: 'off' })
+    assert.equal(readFileSync(join(dir, 'tool.exe'), 'utf8'), 'MZ 1.0.0', 'left as it was')
+
+    await library.setSettings({ autoUpdate: 'auto' })
+    assert.deepEqual(await library.updateBeforeRun('tool', signal), { state: 'updated', version: '1.2.0' })
+    assert.equal(readFileSync(join(dir, 'tool.exe'), 'utf8'), 'MZ 1.2.0')
+    await library.setSettings({ autoUpdate: 'ask' })
+    assert.deepEqual(await library.updateBeforeRun('tool', signal), { state: 'current' })
+  } finally {
+    library.dispose()
+    await github.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('a local import without a pack: no channel until the user names its repository', async () => {
   const root = mkdtempSync(join(tmpdir(), 'adg-local-source-'))
   const github = await startFakeGitHub({ repos: { 'Someone/Other': [{ tag: 'v2.0.0', assets: [{ name: 'Other-v2.0.0-win-x64.zip', content: makeZip({ 'other.exe': 'MZ 2' }) }] }] } })

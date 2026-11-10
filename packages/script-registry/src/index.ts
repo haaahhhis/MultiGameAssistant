@@ -29,6 +29,10 @@ import { setupHandOff } from './setup-handoff.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
 
+/** Look for newer versions of every script a little after the app starts, then every few hours. */
+const UPDATE_CHECK_FIRST_MS = 2 * 60_000
+const UPDATE_CHECK_EVERY_MS = 6 * 60 * 60_000
+
 export { OPTIMIZE_AFTER_RUNS, ScriptLibrary, type InstallRequest, type LibraryOptions, type PreRunUpdate } from './library.ts'
 export type { Optimizer } from './optimize.ts'
 export { loadPacks, packForRepo, type LoadedPack, type PackDir } from './packs.ts'
@@ -97,6 +101,15 @@ export class AdgScripts extends Service {
       error => log.error(`script library failed to load: ${error instanceof Error ? error.message : String(error)}`),
     )
     ctx.effect(() => () => library.dispose(), 'adg-scripts jobs')
+    ctx.effect(() => {
+      const stop = new AbortController()
+      const check = () => { void this.ready.then(() => library.checkUpdates(stop.signal), () => {}) }
+      const first = setTimeout(check, UPDATE_CHECK_FIRST_MS)
+      const every = setInterval(check, UPDATE_CHECK_EVERY_MS)
+      first.unref()
+      every.unref()
+      return () => { stop.abort(); clearTimeout(first); clearInterval(every) }
+    }, 'adg-scripts update checks')
 
     const approve: Approve = async (exec, reason) => {
       const approval = ctx.get('approval')

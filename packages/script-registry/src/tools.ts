@@ -118,6 +118,11 @@ const describeJob =(job: { phase: string; version?: string | undefined; error?: 
 export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefinition[] {
   const repo = { type: 'string', description: 'GitHub 仓库，格式 owner/repo，例如 MaaAssistantArknights/MaaAssistantArknights。' } as const
   const id = { type: 'string', description: '脚本库里的脚本 id（script_list 可查）。' } as const
+  const AUTO_UPDATE_NOTE = {
+    auto: '用户设置为自动更新：有新版本时运行前会自动更新，你也可以自己决定更新',
+    ask: '用户设置为先问再更新：有新版本时软件会弹出提示让用户决定；只在用户要求时更新',
+    off: '用户设置为不自动更新：只在用户要求时更新',
+  } as const
 
   return [
     tool({
@@ -129,8 +134,10 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
       title: () => '查看脚本库',
       execute: async () => {
         const { scripts, packs, toolsDir } = library.list()
+        const { autoUpdate } = await library.settings()
         return {
           toolsDir,
+          autoUpdate: AUTO_UPDATE_NOTE[autoUpdate],
           scripts: scripts.map(s => ({ id: s.id, name: s.name, source: s.source, version: s.source.kind === 'local' ? s.localVersion?.version ?? '（认不出）' : s.current, channels: s.channels, dir: s.dir, family: s.family, versions: s.versions.map(v => v.version), env: s.env === undefined ? undefined : { ok: s.env.ok, problems: s.env.items.filter(i => i.status !== 'ok' && i.status !== 'unsupported').map(i => `${i.label}: ${i.status}`) }, update: s.update })),
           availablePacks: packs.filter(p => !p.installed && p.error === undefined).map(p => ({ id: p.id, name: p.name, repo: p.repo, description: p.description })),
         }
@@ -232,7 +239,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.update,
-      description: '检查并更新脚本到最新发布版本（填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时从那里下载，否则从 GitHub）。安装的脚本：新版本装在旧版本旁边，配置文件带过去，旧版本保留用于回滚。本地导入的脚本：在它自己的目录里更新（会先请用户确认），被替换的文件先备份，已有的配置文件不动，可用 script_rollback 撤销；没有更新来源时用 repo 指定它的 GitHub 仓库。只更新官方发布，不修改脚本代码。',
+      description: '检查并更新脚本到最新发布版本（填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时从那里下载，否则从 GitHub）。安装的脚本：新版本装在旧版本旁边，配置文件带过去，旧版本保留用于回滚。本地导入的脚本：在它自己的目录里更新（会先请用户确认），被替换的文件先备份，已有的配置文件不动，可用 script_rollback 撤销；没有更新来源时用 repo 指定它的 GitHub 仓库。只更新官方发布，不修改脚本代码。用户在「设置 → 权限」把「脚本有新版本时」设为「自动更新」时可以自己决定更新；设为「先问我」或「不自动更新」时，只在用户要求时更新。',
       properties: {
         id,
         repo: { ...repo, description: '设置它的 GitHub 更新渠道（owner/repo）；省略则用已有的。从 GitHub 安装的脚本不能改。' },

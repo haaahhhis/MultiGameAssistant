@@ -27,6 +27,9 @@
     "subagents/stop": {
       "capability": "agents"
     },
+    "handoffs/between": {
+      "capability": "agents"
+    },
     "handoffs/get": {
       "capability": "agents"
     },
@@ -101,6 +104,12 @@
     },
     "credentials/unset": {
       "capability": "credentials"
+    },
+    "about/info": {
+      "capability": "about"
+    },
+    "about/checkUpdate": {
+      "capability": "about"
     },
     "providers/list": {
       "capability": "providers"
@@ -2335,6 +2344,140 @@
       },
       "required": [
         "accepted"
+      ],
+      "additionalProperties": false
+    },
+    "handoffs/between.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "string"
+        },
+        "b": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "a",
+        "b"
+      ],
+      "additionalProperties": false
+    },
+    "handoffs/between.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "question",
+                        "answer",
+                        "update",
+                        "done"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "kind",
+                    "text",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "chain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parent": {
+                "type": "string"
+              },
+              "fromSession": {
+                "type": "string"
+              },
+              "callId": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "toSession": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "expecting": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "waiting",
+                  "done",
+                  "failed"
+                ]
+              },
+              "reply": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
+              },
+              "endedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "fromSession",
+              "by",
+              "to",
+              "toSession",
+              "title",
+              "task",
+              "state",
+              "startedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
       ],
       "additionalProperties": false
     },
@@ -6001,6 +6144,78 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "about/info.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "about/info.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "edition": {
+          "type": "string",
+          "enum": [
+            "plugin",
+            "other"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "edition"
+      ],
+      "additionalProperties": false
+    },
+    "about/checkUpdate.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "about/checkUpdate.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": "string"
+        },
+        "latest": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "prerelease": {
+              "type": "boolean"
+            },
+            "notesUrl": {
+              "type": "string"
+            },
+            "onNpm": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "version",
+            "prerelease",
+            "notesUrl"
+          ],
+          "additionalProperties": false
+        },
+        "checkedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "current",
+        "checkedAt"
+      ],
       "additionalProperties": false
     },
     "providers/list.params": {
@@ -10314,6 +10529,14 @@
           "type": "string",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
+        "autoUpdate": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ask",
+            "off"
+          ]
+        },
         "tokenConfigured": {
           "type": "boolean"
         },
@@ -10329,6 +10552,7 @@
         "keepVersions",
         "includePrereleases",
         "cdkRef",
+        "autoUpdate",
         "tokenConfigured",
         "cdkConfigured"
       ],
@@ -10390,6 +10614,14 @@
         "cdkRef": {
           "type": "string",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "autoUpdate": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ask",
+            "off"
+          ]
         }
       },
       "additionalProperties": false
@@ -10424,6 +10656,14 @@
         "cdkRef": {
           "type": "string",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "autoUpdate": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ask",
+            "off"
+          ]
         }
       },
       "required": [
@@ -10433,7 +10673,8 @@
         "tokenRef",
         "keepVersions",
         "includePrereleases",
-        "cdkRef"
+        "cdkRef",
+        "autoUpdate"
       ],
       "additionalProperties": false
     },

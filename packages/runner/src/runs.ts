@@ -77,10 +77,15 @@ export interface RunnerOptions {
   readonly pollMs?: number
   /**
    * Bring the script up to date before a task runs (the script library's
-   * `updateBeforeRun`). Never throws: a failed update is reported on the run,
-   * which goes on with the version it has.
+   * `updateBeforeRun`, which follows the user's setting). Never throws: a failed
+   * update is reported on the run, which goes on with the version it has.
    */
-  readonly updateFirst?: (scriptId: string, signal: AbortSignal) => Promise<{ readonly state: 'skipped' | 'current' } | { readonly state: 'updated'; readonly version: string } | { readonly state: 'failed'; readonly error: string }>
+  readonly updateFirst?: (scriptId: string, signal: AbortSignal) => Promise<
+    | { readonly state: 'skipped' | 'current' }
+    | { readonly state: 'updated'; readonly version: string }
+    | { readonly state: 'available'; readonly version: string; readonly policy: 'ask' | 'off' }
+    | { readonly state: 'failed'; readonly error: string }
+  >
   /** Game start hooks, injected in tests. */
   readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'launchMaaEnd' | 'sleep'>
 }
@@ -601,6 +606,11 @@ export class Runner {
     const script = this.#options.library.get(scriptId)
     if (result.state === 'updated') this.#line(run, 'adg', `已更新到 ${result.version}`)
     else if (result.state === 'current') this.#line(run, 'adg', '已是最新版本')
+    else if (result.state === 'available') {
+      this.#line(run, 'adg', result.policy === 'ask'
+        ? `有新版本 ${result.version}：设置为先问你再更新，这次用现有版本运行`
+        : `有新版本 ${result.version}：设置为不自动更新，这次用现有版本运行`)
+    }
     else if (result.state === 'failed') {
       const text = `更新失败，先用现有版本${script.current === undefined ? '' : ` ${script.current} `}运行：${result.error}`
       run.info.warnings.push(text)

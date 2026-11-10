@@ -667,6 +667,24 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .update-actions { display: flex; flex-direction: column; gap: 8px; }
 .update-actions p { margin: 0; }
 .update-progress { display: flex; flex-direction: column; gap: 6px; }
+/* scripts (components/ScriptUpdates.tsx): a new version to ask about, and an install or update that went through */
+.script-update-progress { display: flex; align-items: center; gap: 8px; margin: 0; padding-left: 30px; }
+.done-card { position: relative; overflow: hidden; border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--ok) 12%, var(--raised)), var(--raised) 62%); animation: done-in .45s cubic-bezier(.2, 1.4, .4, 1) both; }
+.done-card .approval-head { align-items: center; }
+.done-card .approval-text { flex: 1; }
+.done-card .approval-title { color: var(--ok); font-size: 14px; }
+.done-line { font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.done-badge { position: relative; flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.done-badge::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--ok); animation: done-ring .9s ease-out .25s both; }
+.done-badge svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.done-badge circle { stroke-dasharray: 63; stroke-dashoffset: 63; animation: done-draw .5s ease-out .1s forwards; }
+.done-badge path { stroke-width: 2.4; stroke-dasharray: 16; stroke-dashoffset: 16; animation: done-draw .3s ease-out .5s forwards; }
+.done-timer { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: color-mix(in srgb, var(--ok) 55%, transparent); transform-origin: left; animation: done-timer linear forwards; }
+@keyframes done-in { from { opacity: 0; transform: translateY(14px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes done-draw { to { stroke-dashoffset: 0; } }
+@keyframes done-ring { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+@keyframes done-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .done-card, .done-badge::after, .done-badge circle, .done-badge path { animation: none; stroke-dashoffset: 0; } }
 .update-progress .progress { height: 6px; }
 .update-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .update-buttons button { height: 34px; padding: 0 14px; font-size: 13px; }

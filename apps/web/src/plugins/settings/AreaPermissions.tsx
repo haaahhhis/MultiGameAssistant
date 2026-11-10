@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { AGENT_AREAS, type AreaPolicy, type MonitorSettings, type PermissionsState } from '@adg/protocol'
+import { AGENT_AREAS, type AreaPolicy, type MonitorSettings, type PermissionsState, type ScriptUpdatePolicy } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
@@ -12,6 +12,12 @@ const POLICIES: readonly { policy: AreaPolicy; label: string; hint: string }[] =
   { policy: 'deny', label: '不允许', hint: 'agent 不能做，会告诉你被关掉了' },
 ]
 
+const AUTO_UPDATE: readonly { value: ScriptUpdatePolicy; label: string }[] = [
+  { value: 'auto', label: '自动更新' },
+  { value: 'ask', label: '先问我' },
+  { value: 'off', label: '不自动更新' },
+]
+
 const INTERVENE: readonly { value: MonitorSettings['intervene']; label: string }[] = [
   { value: 'act', label: '诊断并处理' },
   { value: 'diagnose', label: '只诊断' },
@@ -21,7 +27,8 @@ const INTERVENE: readonly { value: MonitorSettings['intervene']; label: string }
 /**
  * 设置 → 权限, by area: everything the agent can do on its own, each allowed
  * without asking, asked every time, or not allowed — on top of the mode above.
- * 主动干预 is the monitor's own setting (what happens when a script fails).
+ * 主动干预 is the monitor's own setting (what happens when a script fails);
+ * 脚本有新版本时 the script library's (`autoUpdate`).
  */
 export function AreaPermissions({ client, state, onState }: { client: AdgClient; state: PermissionsState; onState: (next: PermissionsState) => void }) {
   const capabilities = useStore(client.capabilities)
@@ -29,6 +36,14 @@ export function AreaPermissions({ client, state, onState }: { client: AdgClient;
   const [error, setError] = useState<string | null>(null)
   const [monitor, setMonitor] = useState<MonitorSettings | null>(null)
   const hasMonitor = capabilities.has('monitor')
+  const hasScripts = capabilities.has('scripts')
+  const [autoUpdate, setAutoUpdateState] = useState<ScriptUpdatePolicy | null>(null)
+  useEffect(() => {
+    if (!hasScripts) return
+    let live = true
+    client.connection.call('scripts/settings', {}).then(s => { if (live) setAutoUpdateState(s.autoUpdate) }).catch(() => {})
+    return () => { live = false }
+  }, [client, hasScripts])
   useEffect(() => {
     if (!hasMonitor) return
     let live = true
@@ -40,6 +55,11 @@ export function AreaPermissions({ client, state, onState }: { client: AdgClient;
     setBusy(area)
     setError(null)
     try { onState(await client.connection.call('permissions/area/set', { area, policy })) } catch (e) { setError(errorText(e)) } finally { setBusy(null) }
+  }
+  const setAutoUpdate = async (value: ScriptUpdatePolicy) => {
+    setBusy('autoUpdate')
+    setError(null)
+    try { setAutoUpdateState((await client.connection.call('scripts/settings/set', { autoUpdate: value })).autoUpdate) } catch (e) { setError(errorText(e)) } finally { setBusy(null) }
   }
   const setIntervene = async (value: MonitorSettings['intervene']) => {
     setBusy('intervene')
@@ -65,6 +85,19 @@ export function AreaPermissions({ client, state, onState }: { client: AdgClient;
             <div className="segmented-control area-choice" role="radiogroup" aria-label="主动干预">
               {INTERVENE.map(o => (
                 <button key={o.value} role="radio" aria-checked={monitor.intervene === o.value} className={monitor.intervene === o.value ? 'active' : ''} disabled={busy !== null} onClick={() => void setIntervene(o.value)}>{o.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {hasScripts && autoUpdate !== null && (
+          <div className="area-row">
+            <div className="area-text">
+              <strong>脚本有新版本时</strong>
+              <span className="muted small">运行前和每隔几小时检查一次：「自动更新」下次运行前先更新；「先问我」弹出提示，你点了才更新；「不自动更新」只在脚本页标出新版本。agent 也照这里来：只有「自动更新」时会自己决定更新。</span>
+            </div>
+            <div className="segmented-control area-choice" role="radiogroup" aria-label="脚本有新版本时">
+              {AUTO_UPDATE.map(o => (
+                <button key={o.value} role="radio" aria-checked={autoUpdate === o.value} className={autoUpdate === o.value ? 'active' : ''} disabled={busy !== null} onClick={() => void setAutoUpdate(o.value)}>{o.label}</button>
               ))}
             </div>
           </div>

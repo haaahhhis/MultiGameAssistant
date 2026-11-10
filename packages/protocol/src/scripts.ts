@@ -267,6 +267,14 @@ export const ScriptJob = z.object({
 })
 export type ScriptJob = z.infer<typeof ScriptJob>
 
+/**
+ * When a script has a newer version (found before a run, or by the check every few hours):
+ * `auto` updates it before its next run; `ask` asks the user first and runs the version it has;
+ * `off` only shows it on the script's page.
+ */
+export const ScriptUpdatePolicy = z.enum(['auto', 'ask', 'off'])
+export type ScriptUpdatePolicy = z.infer<typeof ScriptUpdatePolicy>
+
 export const InstallSettings = z.object({
   /** GitHub REST API base. */
   apiBase: z.url({ protocol: /^https?$/ }),
@@ -285,6 +293,8 @@ export const InstallSettings = z.object({
   includePrereleases: z.boolean(),
   /** Credential holding the user's Mirror酱 CDK: scripts published there update from it (incremental when possible). */
   cdkRef: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  /** What happens when a script has a newer version. */
+  autoUpdate: ScriptUpdatePolicy,
 })
 export type InstallSettings = z.infer<typeof InstallSettings>
 
