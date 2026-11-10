@@ -1,7 +1,7 @@
 /**
- * Scripts in the floating dock: a newer version waiting for the user's yes
- * (设置 → 权限 →「脚本有新版本时」set to 先问我), and a card that celebrates
- * an install or update that went through.
+ * Scripts: a newer version waiting for the user's yes (设置 → 权限 →
+ * 「脚本有新版本时」set to 先问我) on the chat's input box, and a card in the
+ * floating dock that celebrates an install or update that went through.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
@@ -19,18 +19,21 @@ function readLater(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(LATER_KEY) ?? '{}') as Record<string, string> } catch { return {} }
 }
 
+/** In the floating dock: installs and updates that went through. */
 export function ScriptDock({ client }: { client: AdgClient }) {
   const capabilities = useStore(client.capabilities)
   if (!capabilities.has('scripts')) return null
-  return (
-    <>
-      <ScriptDoneCards client={client} />
-      <ScriptUpdateCards client={client} />
-    </>
-  )
+  return <ScriptDoneCards client={client} />
 }
 
-function ScriptUpdateCards({ client }: { client: AdgClient }) {
+/** On the chat's input box: each script with a newer version to ask about. */
+export function ScriptUpdateNotes({ client }: { client: AdgClient }) {
+  const capabilities = useStore(client.capabilities)
+  if (!capabilities.has('scripts')) return null
+  return <UpdateNotes client={client} />
+}
+
+function UpdateNotes({ client }: { client: AdgClient }) {
   const { data } = useScriptList(client)
   const jobs = useScriptJobs(client)
   const [policy, setPolicy] = useState<ScriptUpdatePolicy | null>(null)
@@ -60,24 +63,22 @@ function ScriptUpdateCards({ client }: { client: AdgClient }) {
     const job = jobs.get(script.id)
     const running = isActive(job)
     const current = script.source.kind === 'local' ? script.localVersion?.version : script.current
+    const error = errors.get(script.id)
     return (
-      <div key={script.id} className="approval-card update-card" role="status">
-        <div className="approval-head">
-          <Icon name="download" />
-          <div className="approval-text">
-            <span className="approval-title">{script.name} 有新版本 {script.update!.latest}</span>
-            <span className="approval-tool">当前 {current ?? '（认不出的版本）'} · 要现在更新吗？</span>
-          </div>
-          {!running && <button className="ghost icon-button update-close" aria-label="以后再说" title="以后再说（有更新的版本时再问）" onClick={() => postpone(script.id, script.update!.latest)}><Icon name="close" /></button>}
-        </div>
-        {running && job.kind === 'update' && <p className="muted small script-update-progress"><span className="spinner" />{job.message ?? PHASE_LABEL[job.phase]}…</p>}
-        {errors.has(script.id) && <p className="error small">{errors.get(script.id)}</p>}
-        {!running && (
-          <div className="approval-actions">
-            <button className="ghost" onClick={() => postpone(script.id, script.update!.latest)}>以后再说</button>
-            <button className="primary" onClick={() => update(script.id)}>更新</button>
-          </div>
-        )}
+      <div key={script.id} className="reminder script-update-note" role="status">
+        <Icon name="download" />
+        <span>
+          <strong>{script.name}</strong> 有新版本 {script.update!.latest}（当前 {current ?? '认不出的版本'}），要现在更新吗？
+          {error !== undefined && <span className="error"> 没有更新成功：{error}</span>}
+        </span>
+        {running
+          ? <span className="script-update-progress muted"><span className="spinner" />{job.message ?? PHASE_LABEL[job.phase]}…</span>
+          : (
+            <>
+              <button type="button" className="ghost small-button" title="有更新的版本时再问" onClick={() => postpone(script.id, script.update!.latest)}>以后再说</button>
+              <button type="button" className="primary small-button" onClick={() => update(script.id)}>更新</button>
+            </>
+          )}
       </div>
     )
   })

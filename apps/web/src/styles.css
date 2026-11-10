@@ -668,7 +668,10 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .update-actions p { margin: 0; }
 .update-progress { display: flex; flex-direction: column; gap: 6px; }
 /* scripts (components/ScriptUpdates.tsx): a new version to ask about, and an install or update that went through */
-.script-update-progress { display: flex; align-items: center; gap: 8px; margin: 0; padding-left: 30px; }
+.reminder.script-update-note { border-color: color-mix(in srgb, var(--accent) 34%, var(--border-strong)); background: color-mix(in srgb, var(--accent) 8%, var(--sunken)); }
+.reminder.script-update-note > .ui-icon { color: var(--accent); }
+.script-update-note strong { color: var(--text); font-weight: 600; }
+.script-update-progress { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; }
 .done-card { position: relative; overflow: hidden; border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--ok) 12%, var(--raised)), var(--raised) 62%); animation: done-in .45s cubic-bezier(.2, 1.4, .4, 1) both; }
 .done-card .approval-head { align-items: center; }
 .done-card .approval-text { flex: 1; }
@@ -723,9 +726,13 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .welcome-header strong { font-weight: 500; color: var(--text); }
 .eyebrow { margin: 0; color: var(--accent); font-family: var(--mono); font-size: 11.5px; letter-spacing: .18em; font-weight: 500; }
 .welcome h1 { margin: 0; font-family: var(--serif); font-size: clamp(32px, 4vw, 46px); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
-.reminder { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 18px; background: color-mix(in srgb, var(--warn) 8%, var(--panel)); border-top: 1px solid color-mix(in srgb, var(--warn) 20%, var(--border)); font-size: 12.5px; line-height: 1.7; }
-.reminder > .ui-icon { width: 16px; height: 16px; color: var(--warn); flex-shrink: 0; }
-.reminder button { flex-shrink: 0; }
+/* no model yet (App.tsx ApiKeyReminder): grows out of the input box, like .composer-note */
+.reminder { display: flex; align-items: center; gap: 10px; max-width: calc(760px - 28px); margin: 0 auto; margin-inline: max(14px, calc((100% - 760px) / 2 + 14px)); padding: 6px 8px 6px 14px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border-strong)); border-bottom: none; border-radius: var(--r-lg) var(--r-lg) 0 0; background: color-mix(in srgb, var(--warn) 9%, var(--sunken)); color: var(--text-2); font-size: 12.5px; line-height: 1.6; }
+.reminder > span { flex: 1; min-width: 0; }
+.reminder > .ui-icon { width: 15px; height: 15px; color: var(--warn); flex-shrink: 0; }
+.reminder button { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12px; }
+/* several on the box: only the top one is rounded */
+.reminder + .reminder, .reminder + .composer-note { border-radius: 0; }
 .welcome .reminder { justify-content: flex-start; border: 1px solid color-mix(in srgb, var(--warn) 24%, var(--border)); border-radius: var(--r-lg); text-align: left; }
 .welcome .reminder > span { flex: 1; }
 .small-button { padding: 4px 11px; font-size: 12px; border-radius: 8px; white-space: nowrap; }

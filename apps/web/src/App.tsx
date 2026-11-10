@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
+import { ScriptUpdateNotes } from './components/ScriptUpdates.tsx'
 import { NavRail, type RailTarget } from './components/NavRail.tsx'
 import { PoppedView, SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
@@ -86,7 +87,7 @@ export function App({ client }: { client: AdgClient }) {
   const pageOwner = page === undefined ? undefined : ownerOf(page)
   const openAgent = (id: string) => setRoute({ kind: 'agent', id })
   const goHome = () => openAgent(MAIN_AGENT)
-  const reminder = <ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} />
+  const reminder = <><ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} /><ScriptUpdateNotes client={client} /></>
   // The agent in front, whose tabs show: its conversation or tab, an earlier conversation of its, a page it owns.
   const tabAgent = view.kind === 'home' ? MAIN_AGENT : view.kind === 'agent' ? view.id
     : view.kind === 'session' ? (selectedItem === undefined ? undefined : agentIdOf(selectedItem, roles)) : pageOwner

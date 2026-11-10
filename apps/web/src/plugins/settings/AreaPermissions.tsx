@@ -93,7 +93,7 @@ export function AreaPermissions({ client, state, onState }: { client: AdgClient;
           <div className="area-row">
             <div className="area-text">
               <strong>脚本有新版本时</strong>
-              <span className="muted small">运行前和每隔几小时检查一次：「自动更新」下次运行前先更新；「先问我」弹出提示，你点了才更新；「不自动更新」只在脚本页标出新版本。agent 也照这里来：只有「自动更新」时会自己决定更新。</span>
+              <span className="muted small">运行前和每隔几小时检查一次：「自动更新」下次运行前先更新；「先问我」在聊天输入框上方提示，你点了才更新；「不自动更新」只在脚本页标出新版本。agent 也照这里来：只有「自动更新」时会自己决定更新。</span>
             </div>
             <div className="segmented-control area-choice" role="radiogroup" aria-label="脚本有新版本时">
               {AUTO_UPDATE.map(o => (

@@ -618,9 +618,10 @@ export class ScriptLibrary {
     const { version, archive } = fetched
     if (archive === undefined && script !== undefined) {
       script.current = version
+      delete script.update
       await this.#save()
       this.#options.onChanged(scriptId)
-      ctl.phase('done', { message: `${version} 已安装，已切换为当前版本` })
+      ctl.phase('done', { message: `${version} 已安装，已切换为当前版本`, version })
       return version
     }
     const versionDir = join(this.toolsDir, scriptId, dirName(version))

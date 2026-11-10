@@ -114,9 +114,8 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
         </div>
       ) : (
         <>
-          {reminder}
           <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
-            initialPrompt={initialPrompt} onInitialSent={onInitialSent} />
+            initialPrompt={initialPrompt} onInitialSent={onInitialSent} reminder={reminder} />
         </>
       )}
     </section>

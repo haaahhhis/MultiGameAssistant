@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { localCommand, MAX_IMAGE_BASE64, type PromptImage, type QueuedPrompt } from '@adg/protocol'
 import type { SessionHandle, AdgClient } from '@adg/client-core'
 import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
@@ -9,13 +9,15 @@ import { useSlash } from './SlashMenu.tsx'
 import { ContextMeter } from './ContextMeter.tsx'
 import { BalanceChip } from './BalanceChip.tsx'
 
-export function Composer({ client, session, running, disabled, initialPrompt, onInitialSent }: {
+export function Composer({ client, session, running, disabled, initialPrompt, onInitialSent, reminder }: {
   client: AdgClient
   session: SessionHandle
   running: boolean
   disabled: boolean
   initialPrompt?: string | undefined
   onInitialSent?: (() => void) | undefined
+  /** Something to set up before the agent can answer (no model yet): on the input box, like the notes. */
+  reminder?: ReactNode
 }) {
   const capabilities = useStore(client.capabilities)
   const { queue, context } = useStore(session.state)
@@ -139,6 +141,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           ))}
         </div>
       )}
+      {reminder}
       {/* On the input box itself: it is about this conversation. */}
       {note !== null && (
         <div className="composer-note small" role="status">
