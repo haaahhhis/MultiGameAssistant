@@ -126,12 +126,6 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   return (
     <div className="composer">
       {error !== null && <div className="error small composer-error">{error}</div>}
-      {note !== null && (
-        <div className="composer-note small" role="status">
-          <span>{note}</span>
-          <button type="button" className="ghost small-button" onClick={() => setNote(null)}>知道了</button>
-        </div>
-      )}
       {queue.length > 0 && (
         <div className="queue" aria-label="等待发送的消息">
           {queue.map(item => (
@@ -143,6 +137,13 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
               <button type="button" className="small-button" title="撤回这条消息" onClick={() => withdraw(item)}>撤回</button>
             </div>
           ))}
+        </div>
+      )}
+      {/* On the input box itself: it is about this conversation. */}
+      {note !== null && (
+        <div className="composer-note small" role="status">
+          <span>{note}</span>
+          <button type="button" className="ghost small-button" onClick={() => setNote(null)}>知道了</button>
         </div>
       )}
       <div className="slash-anchor">
