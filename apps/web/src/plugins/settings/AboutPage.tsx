@@ -2,10 +2,14 @@
  * 「设置 → 关于」: which build this is, its license (AGPL-3.0-only) and where
  * its source is. AGPL section 13 asks a program people use over a network to
  * offer them its source; this is where the app does. The installed app also
- * checks for and installs updates here (components/Updates.tsx).
+ * checks for and installs updates here (components/Updates.tsx); the dsh plugin
+ * package shows its version and checks too, updated in dsh (gateway about.ts).
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { AdgClient } from '@adg/client-core'
+import type { RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
+import { useStore } from '../../hooks.ts'
 import { desktop } from '../../desktop.ts'
 import { UpdateActions, useUpdates } from '../../components/Updates.tsx'
 
@@ -13,8 +17,11 @@ const REPOSITORY = 'https://github.com/haaahhhis/MultiGameAssistant'
 
 type AppInfo = Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof desktop>>['appInfo']>>>
 
-export function AboutPage() {
+type HostAbout = RequestResult<'about/info'>
+
+export function AboutPage({ client }: { client: AdgClient }) {
   const [info, setInfo] = useState<AppInfo | null | undefined>(undefined)
+  const plugin = usePluginVersion(client, info === null)
   useEffect(() => {
     const appInfo = desktop()?.appInfo
     if (appInfo === undefined) { setInfo(null); return }
@@ -23,7 +30,7 @@ export function AboutPage() {
     return () => { live = false }
   }, [])
   const build = info === undefined ? '…'
-    : info === null ? '在浏览器里打开（版本见桌面版）'
+    : info === null ? (plugin === undefined ? '…' : plugin === null ? '在浏览器里打开（版本见桌面版）' : `${plugin}（dsh 插件版）`)
       : info.fromSource ? `从源码运行（${info.arch}）`
         : `${info.version ?? '未知版本'}（${info.arch}${info.commit === undefined ? '' : ` · ${info.commit}`}）`
 
@@ -42,7 +49,8 @@ export function AboutPage() {
 
       {info?.fromSource === true
         ? <section className="card about-card"><h3>更新</h3><p className="muted">从源码运行：在项目目录 git pull 后重新构建（pnpm install、pnpm build）。</p></section>
-        : info !== null && info !== undefined && <UpdateSection />}
+        : info !== null && info !== undefined ? <UpdateSection />
+          : typeof plugin === 'string' && <PluginUpdateSection client={client} />}
 
       <section className="card about-card">
         <h3>许可证</h3>
@@ -86,3 +94,87 @@ function UpdateSection() {
     </section>
   )
 }
+
+/** The dsh plugin package's version (about/info); null when this host is something else, undefined while asking. */
+function usePluginVersion(client: AdgClient, wanted: boolean): string | null | undefined {
+  const capabilities = useStore(client.capabilities)
+  const status = useStore(client.connection.status)
+  const [about, setAbout] = useState<HostAbout | null | undefined>(undefined)
+  const has = capabilities.has('about')
+  useEffect(() => {
+    if (!wanted || status.state !== 'open') return
+    if (!has) { setAbout(null); return }
+    let live = true
+    client.connection.call('about/info', {}).then(a => { if (live) setAbout(a) }, () => { if (live) setAbout(null) })
+    return () => { live = false }
+  }, [client, wanted, has, status.state])
+  if (!wanted) return null
+  return about === undefined ? undefined : about?.edition === 'plugin' ? about.version ?? null : null
+}
+
+const RELEASES = `${REPOSITORY}/releases`
+const PLUGIN_NAME = 'dsh-multigameassistant'
+
+/**
+ * The plugin package's update check: asked when the page opens and on the
+ * button. A plugin is updated in dsh by adding it again; by name when npm
+ * already serves the version (a release goes live there once approved), else by
+ * the release's own package link.
+ */
+function PluginUpdateSection({ client }: { client: AdgClient }) {
+  const [state, setState] = useState<{ checking: boolean; result?: RequestResult<'about/checkUpdate'>; error?: string }>({ checking: true })
+  const check = useCallback(() => {
+    setState(s => ({ ...s, checking: true }))
+    client.connection.call('about/checkUpdate', {}).then(
+      result => setState({ checking: false, result }),
+      e => setState(s => ({ checking: false, ...(s.result === undefined ? {} : { result: s.result }), error: e instanceof Error ? e.message : String(e) })),
+    )
+  }, [client])
+  useEffect(() => { check() }, [check])
+  const latest = state.result?.latest
+  const status = state.checking ? '正在检查…'
+    : state.error !== undefined ? state.error
+      : latest !== undefined ? `有新版本 ${latest.version}${latest.prerelease ? '（预发布版）' : ''}`
+        : state.result !== undefined ? `已经是最新版本（${new Date(state.result.checkedAt).toLocaleString()} 检查）`
+          : '还没有检查过'
+  const link = latest === undefined ? '' : `${RELEASES}/download/v${latest.version}/${PLUGIN_NAME}.tgz`
+  return (
+    <section className="card about-card">
+      <div className="card-head">
+        <div>
+          <h3>更新</h3>
+          <p className={state.error !== undefined && !state.checking ? 'error small' : 'muted small'}>
+            {status}{latest !== undefined && !state.checking && <> · <a href={latest.notesUrl || RELEASES} target="_blank" rel="noreferrer">查看更新内容</a></>}
+          </p>
+        </div>
+        <button className="small-button" disabled={state.checking} onClick={check}><Icon name="refresh" />检查更新</button>
+      </div>
+      {latest !== undefined && !state.checking && (
+        <div className="plugin-update">
+          {latest.onNpm !== false && (
+            <p>在 dsh 的「Plugins」→「Add plugin」里再填一次 <CopyCode text={PLUGIN_NAME} /> 安装（命令行的 dsh：<CopyCode text={`dsh plugin add ${PLUGIN_NAME}`} />）。{latest.onNpm === undefined && '没连上 npm，不知道那边有没有这个版本；装完版本没变的话，用下面的链接。'}</p>
+          )}
+          {latest.onNpm !== true && (
+            <p>{latest.onNpm === false && 'npm 上还没有这个版本（要等发布者批准）。'}在「Add plugin」里填这个链接安装：<CopyCode text={link} /></p>
+          )}
+          <p className="muted small">装好后刷新这个页面。你的数据、脚本和定时任务都在 dsh 的数据目录里，重新安装不会丢。</p>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** Text to paste somewhere else, with a button that copies it. */
+function CopyCode({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }, () => {})
+  }
+  return (
+    <span className="copy-code">
+      <code>{text}</code>
+      <button type="button" className="link-button" onClick={copy} title="复制">{copied ? <Icon name="check" /> : <Icon name="copy" />}</button>
+    </span>
+  )
+}
+

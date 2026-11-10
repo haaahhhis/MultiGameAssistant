@@ -728,6 +728,12 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .about-card p { margin: 0; font-size: 13.5px; line-height: 1.8; }
 .about-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 20px; margin: 0; font-size: 13.5px; }
 .about-facts dt { color: var(--muted); }
+/* The dsh plugin package's update: how to add it again in dsh */
+.plugin-update { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.copy-code { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; vertical-align: middle; }
+.copy-code code { overflow-wrap: anywhere; padding: 1px 6px; border-radius: 6px; background: var(--surface); font-family: var(--mono); font-size: 12.5px; }
+.copy-code .link-button { display: inline-flex; padding: 2px 4px; color: var(--muted); }
+.copy-code .ui-icon { width: 13px; height: 13px; }
 .about-facts dd { margin: 0; overflow-wrap: anywhere; }
 .card { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; background: var(--raised); box-shadow: var(--shadow-1); }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }

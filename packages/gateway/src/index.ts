@@ -31,6 +31,7 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
 import { addRetryPolicies, providersCapability } from './providers.ts'
+import { aboutCapability } from './about.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -332,6 +333,8 @@ export class AdgGateway extends Service {
       version: 1,
       methods: { 'instances/others': async () => { await this.instances.beat(); return { others: this.instances.others() } } },
     }), 'adg-gateway capability instances')
+    // 设置 → 关于 in the dsh plugin package: its version, and whether a newer one is out (about.ts).
+    ctx.effect(() => this.registry.register(aboutCapability()), 'adg-gateway capability about')
 
     this.approvals = new ApprovalBroker({
       broadcastRequested: request => this.broadcast('approval/requested', request),

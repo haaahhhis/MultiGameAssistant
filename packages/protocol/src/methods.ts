@@ -35,6 +35,7 @@ export const BuiltinCapability = {
   approval: 'approval',
   credentials: 'credentials',
   providers: 'providers',
+  about: 'about',
 } as const
 
 /** Credential reference name, e.g. `DEEPSEEK_API_KEY` (same grammar as dsh). */
@@ -546,6 +547,29 @@ export const Requests = {
     capability: 'credentials',
     params: z.object({ ref: CredentialRef }),
     result: Empty,
+  },
+  /**
+   * Which build serves this host, for 设置 → 关于: `plugin` is the dsh plugin package (dsh-multigameassistant),
+   * with its version; anything else (the desktop app, a checkout) says so through its own means.
+   */
+  'about/info': {
+    capability: 'about',
+    params: Empty,
+    result: z.object({ edition: z.enum(['plugin', 'other']), version: z.string().optional() }),
+  },
+  /**
+   * The plugin package's newest release on GitHub, if newer than this one (a pre-release only for a
+   * pre-release). `onNpm`: npm already serves it under the plugin's name (a release is live there only
+   * once approved); undefined when npm could not be asked. Only the plugin package checks here.
+   */
+  'about/checkUpdate': {
+    capability: 'about',
+    params: Empty,
+    result: z.object({
+      current: z.string(),
+      latest: z.object({ version: z.string(), prerelease: z.boolean(), notesUrl: z.string(), onNpm: z.boolean().optional() }).optional(),
+      checkedAt: z.number(),
+    }),
   },
   'providers/list': {
     capability: 'providers',
