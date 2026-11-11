@@ -25,6 +25,15 @@ const blank = (): Pipeline => ({
   powerAfter: 'none',
 })
 
+/** Most recently run first; never run ones after them, most recently changed first. */
+const byLastRun = (a: PipelineSummary, b: PipelineSummary) =>
+  (b.lastRun?.startedAt ?? -1) - (a.lastRun?.startedAt ?? -1) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.name.localeCompare(b.name, 'zh-CN')
+
+/** The pipeline open last time: the page opens it again (this browser only). */
+const LAST_KEY = 'adg.pipelines.last'
+const readLast = () => { try { return localStorage.getItem(LAST_KEY) } catch { return null } }
+const writeLast = (id: string) => { try { localStorage.setItem(LAST_KEY, id) } catch { /* not remembered then */ } }
+
 /** Pipelines: the list, the canvas editor, runs. */
 export function PipelinesPage({ client, openSettings, arg }: PageProps) {
   const status = useStore(client.connection.status)
@@ -62,8 +71,10 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
     let live = true
     client.connection.call('pipelines/list', {}).then(r => {
       if (!live) return
-      setList(r.items)
-      setSelected(id => id ?? r.items[0]?.id ?? null)
+      const items = [...r.items].sort(byLastRun)
+      setList(items)
+      const last = readLast()
+      setSelected(id => id ?? items.find(p => p.id === last)?.id ?? items[0]?.id ?? null)
     }).catch(e => { if (live) setError(errorText(e)) })
     return () => { live = false }
   }, [client, status.state, revision])
@@ -77,6 +88,7 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
       if (!live) return
       // Older pipelines get 开始 and 结束 on the canvas; they are saved with the next change.
       const p = withStartEnd(got)
+      writeLast(p.id)
       setPipeline(p)
       setSaved(JSON.stringify(p))
       setCheck(null)
@@ -295,7 +307,7 @@ function PipelineSide({ pipeline, check, runs, shownRun, onShowRun, others, onCh
       {tab === 'check' && (check === null ? <p className="muted small pad">加上步骤后会自动检查。</p> : <ChecksCard check={check} pipeline={pipeline} />)}
       {tab === 'runs' && <RunsList runs={runs} shown={shownRun} onShow={onShowRun} now={now} />}
       {tab === 'schedule' && <ScheduleCard pipeline={pipeline} others={others} onChange={onChange} startup={startup} onStartup={onStartup} />}
-      <p className="muted small pad">点画布上的节点或连线来修改它；选中后按 Delete 删除。</p>
+      <p className="muted small pad">点画布上的节点或连线来修改它；选中后按 Delete 删除。Ctrl+点击或按住 Shift 拖动可以选多个节点，Ctrl+C / Ctrl+V 复制粘贴，Ctrl+Z 撤销、Ctrl+Y 重做。</p>
     </div>
   )
 }

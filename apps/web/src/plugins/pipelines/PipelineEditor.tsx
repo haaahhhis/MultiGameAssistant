@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Background, Controls, Handle, Position, ReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { AdgClient } from '@adg/client-core'
@@ -84,12 +84,33 @@ function layout(pipeline: Pipeline): Map<string, { x: number; y: number }> {
 }
 
 let seq = 0
-const newId = (prefix: string, pipeline: Pipeline) => {
+const newId = (prefix: string, pipeline: Pipeline, taken: ReadonlySet<string> = new Set()) => {
   for (;;) {
     const id = `${prefix}${++seq}`
-    if (!pipeline.nodes.some(n => n.id === id)) return id
+    if (!taken.has(id) && !pipeline.nodes.some(n => n.id === id)) return id
   }
 }
+
+/**
+ * Every node keeps the place it is drawn at. Nodes without a position (agent
+ * drafts) are laid out by depth, so without this an edit that changes the
+ * depths (deleting a step in the middle) would pile what follows onto the
+ * first columns, as if it had been deleted too.
+ */
+function pinned(pipeline: Pipeline, positions: ReadonlyMap<string, { x: number; y: number }>): Pipeline {
+  if (pipeline.nodes.every(n => n.position !== undefined)) return pipeline
+  return { ...pipeline, nodes: pipeline.nodes.map(n => (n.position !== undefined || !positions.has(n.id) ? n : { ...n, position: positions.get(n.id)! })) }
+}
+
+/** The canvas's part of a pipeline: what undo restores (name, schedule and the like are left alone). */
+type Graph = Pick<Pipeline, 'nodes' | 'edges'>
+
+/** Copied steps (Ctrl+C), for pasting into this pipeline or another one. */
+let clipboard: { nodes: PipelineNode[]; edges: PipelineEdge[]; pasted: number } | null = null
+
+/** Where typing goes to the field, not to the canvas shortcuts. */
+const isEditable = (target: EventTarget | null) =>
+  target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null
 
 export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom, idle }: {
   client: AdgClient; pipeline: Pipeline; onChange: (p: Pipeline) => void; run: PipelineRun | undefined; check: PipelineCheck | null
@@ -101,8 +122,12 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
   const theme = useTheme()
   const [tasksRevision, setTasksRevision] = useState(0)
   const scripts = useScriptTasks(client, tasksRevision)
-  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  // Several nodes can be selected (Ctrl+click, Shift+drag) to copy or delete them together; one is edited in the inspector.
+  const [selectedNodes, setSelectedNodes] = useState<readonly string[]>([])
+  const selectedNode = selectedNodes.length === 1 ? selectedNodes[0]! : null
+  const setSelectedNode = (id: string | null) => setSelectedNodes(id === null ? [] : [id])
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null)
+  const root = useRef<HTMLDivElement>(null)
   // React Flow reports each node's rendered size; a controlled flow must hand it back, or nodes stay hidden and edges undrawn.
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({})
 
@@ -125,10 +150,10 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
     id: node.id,
     type: 'step',
     position: positions.get(node.id)!,
-    selected: node.id === selectedNode,
+    selected: selectedNodes.includes(node.id),
     ...(measured[node.id] === undefined ? {} : { measured: measured[node.id] }),
     data: { node, ...labelOf(node), state: run?.nodes[node.id], issue: check?.issues.find(i => i.nodeId === node.id && i.level === 'error')?.message },
-  })), [pipeline, positions, labelOf, run, check, selectedNode, measured])
+  })), [pipeline, positions, labelOf, run, check, selectedNodes, measured])
   const edges: Edge[] = useMemo(() => pipeline.edges.map((edge, index) => ({
     id: `e${index}`,
     source: edge.from,
@@ -139,30 +164,112 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
     className: `edge-${edge.when}`,
   })), [pipeline.edges, selectedEdge, run])
 
+  // Undo and redo (Ctrl+Z, Ctrl+Y): the canvas as it was before each change.
+  const history = useRef<{ past: Graph[]; future: Graph[]; group?: string | undefined; at: number }>({ past: [], future: [], at: 0 })
+  /** Apply a change from the canvas or the inspector. Changes of one `group` close together (a drag, typing in one field) undo as one. */
+  const commit = useCallback((next: Pipeline, group?: string) => {
+    const h = history.current
+    const now = Date.now()
+    if (group === undefined || group !== h.group || now - h.at > 1000) h.past = [...h.past.slice(-99), { nodes: pipeline.nodes, edges: pipeline.edges }]
+    h.future = []
+    h.group = group
+    h.at = now
+    onChange(pinned(next, positions))
+  }, [pipeline, positions, onChange])
+  const travel = (from: 'past' | 'future') => {
+    const h = history.current
+    const to = from === 'past' ? 'future' : 'past'
+    const graph = h[from].pop()
+    if (graph === undefined) return
+    h[to].push({ nodes: pipeline.nodes, edges: pipeline.edges })
+    h.group = undefined
+    onChange({ ...pipeline, ...graph })
+    setSelectedNodes(ids => ids.filter(id => graph.nodes.some(n => n.id === id)))
+    setSelectedEdge(null)
+  }
+
   const onNodesChange = useCallback((changes: NodeChange<StepNode>[]) => {
     let next = pipeline
+    let group: string | undefined
     const sizes: Record<string, { width: number; height: number }> = {}
+    const select = new Map<string, boolean>()
     for (const change of changes) {
       if (change.type === 'dimensions' && change.dimensions !== undefined) {
         sizes[change.id] = change.dimensions
+      } else if (change.type === 'select') {
+        select.set(change.id, change.selected)
       } else if (change.type === 'position' && change.position !== undefined) {
         next = { ...next, nodes: next.nodes.map(n => (n.id === change.id ? { ...n, position: { x: Math.round(change.position!.x), y: Math.round(change.position!.y) } } : n)) }
+        group = 'move'
       } else if (change.type === 'remove') {
         if (next.nodes.some(n => n.id === change.id && isMarker(n))) continue // 开始 and 结束 stay
         next = { ...next, nodes: next.nodes.filter(n => n.id !== change.id), edges: next.edges.filter(e => e.from !== change.id && e.to !== change.id) }
-        setSelectedNode(null)
+        select.set(change.id, false)
+        group = undefined
       }
     }
     if (Object.keys(sizes).length > 0) setMeasured(m => ({ ...m, ...sizes }))
-    if (next !== pipeline) onChange(next)
-  }, [pipeline, onChange])
+    if (select.size > 0) {
+      setSelectedNodes(ids => [...ids.filter(id => select.get(id) !== false), ...[...select].filter(([id, on]) => on && !ids.includes(id)).map(([id]) => id)])
+      if ([...select.values()].some(Boolean)) setSelectedEdge(null)
+    }
+    if (next !== pipeline) commit(next, group)
+  }, [pipeline, commit])
 
   const onConnect = useCallback((c: Connection) => {
     if (c.source === c.target || pipeline.edges.some(e => e.from === c.source && e.to === c.target)) return
     const target = pipeline.nodes.find(n => n.id === c.target)
     if (target?.kind === 'start' || pipeline.nodes.find(n => n.id === c.source)?.kind === 'end') return
-    onChange({ ...pipeline, edges: [...pipeline.edges, { from: c.source, to: c.target, when: target?.kind === 'end' ? 'always' : 'success' }] })
-  }, [pipeline, onChange])
+    commit({ ...pipeline, edges: [...pipeline.edges, { from: c.source, to: c.target, when: target?.kind === 'end' ? 'always' : 'success' }] })
+  }, [pipeline, commit])
+
+  /** Copy the selected steps (开始 and 结束 stay) and the links between them. */
+  const copy = (): boolean => {
+    const nodes = pipeline.nodes.filter(n => selectedNodes.includes(n.id) && !isMarker(n))
+    if (nodes.length === 0) return false
+    const ids = new Set(nodes.map(n => n.id))
+    clipboard = {
+      nodes: nodes.map(n => ({ ...n, position: positions.get(n.id) ?? { x: 40, y: 40 } })),
+      edges: pipeline.edges.filter(e => ids.has(e.from) && ids.has(e.to)),
+      pasted: 0,
+    }
+    return true
+  }
+  /** Paste copies a little below and to the right (further each time), selected, with new ids. */
+  const paste = () => {
+    if (clipboard === null || pipeline.nodes.length + clipboard.nodes.length > 60) return
+    const times = ++clipboard.pasted
+    const ids = new Map<string, string>()
+    for (const n of clipboard.nodes) ids.set(n.id, newId(n.id.replace(/\d+$/, '') || 'step', pipeline, new Set(ids.values())))
+    const nodes = clipboard.nodes.map(n => ({ ...n, id: ids.get(n.id)!, position: { x: (n.position?.x ?? 40) + 40 * times, y: (n.position?.y ?? 40) + 120 * times } }))
+    const edges = clipboard.edges.map(e => ({ ...e, from: ids.get(e.from)!, to: ids.get(e.to)! }))
+    commit({ ...pipeline, nodes: [...pipeline.nodes, ...nodes], edges: [...pipeline.edges, ...edges] })
+    setSelectedNodes(nodes.map(n => n.id))
+    setSelectedEdge(null)
+  }
+  const removeSelected = () => {
+    const ids = new Set(pipeline.nodes.filter(n => selectedNodes.includes(n.id) && !isMarker(n)).map(n => n.id))
+    if (ids.size === 0) return
+    commit({ ...pipeline, nodes: pipeline.nodes.filter(n => !ids.has(n.id)), edges: pipeline.edges.filter(e => !ids.has(e.from) && !ids.has(e.to)) })
+    setSelectedNodes([])
+  }
+
+  // Ctrl+C / Ctrl+V / Ctrl+Z (Ctrl+Y or Ctrl+Shift+Z redoes) while the canvas is on screen and no field has the focus.
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {})
+  keys.current = e => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || isEditable(e.target)) return
+    if (root.current === null || root.current.offsetParent === null) return
+    const key = e.key.toLowerCase()
+    if (key === 'z' && !e.shiftKey) { e.preventDefault(); travel('past') }
+    else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); travel('future') }
+    else if (key === 'c') { if ((window.getSelection()?.toString() ?? '') === '' && copy()) e.preventDefault() }
+    else if (key === 'v') { if (clipboard !== null) { e.preventDefault(); paste() } }
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keys.current(e)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
   // A new step is placed next to the selected one (or 开始) without links: the user draws them.
   const add = (node: PipelineNode) => {
@@ -179,17 +286,17 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
       ...pipeline.nodes.map(n => (n.kind === 'end' ? { ...n, position: { x: Math.max(positions.get(n.id)?.x ?? 0, x + 300), y: positions.get(n.id)?.y ?? y } } : n)),
       { ...node, position: { x, y } },
     ]
-    onChange({ ...pipeline, nodes })
+    commit({ ...pipeline, nodes })
     setSelectedNode(node.id)
     setSelectedEdge(null)
   }
 
   const node = pipeline.nodes.find(n => n.id === selectedNode)
   const edge = selectedEdge === null ? undefined : pipeline.edges[selectedEdge]
-  const replaceNode = (next: PipelineNode) => onChange({ ...pipeline, nodes: pipeline.nodes.map(n => (n.id === next.id ? next : n)) })
+  const replaceNode = (next: PipelineNode) => commit({ ...pipeline, nodes: pipeline.nodes.map(n => (n.id === next.id ? next : n)) }, `node:${next.id}`)
 
   return (
-    <div className="pipeline-editor">
+    <div className="pipeline-editor" ref={root}>
       <div className="pipeline-palette" aria-label="节点">
         <div className="sidebar-label">脚本任务</div>
         {scripts.length === 0 && <div className="muted small pad">脚本库里还没有带脚本包的脚本</div>}
@@ -219,7 +326,7 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onConnect={onConnect}
-          onNodeClick={(_e, n) => { setSelectedNode(n.id); setSelectedEdge(null) }}
+          onNodeClick={() => setSelectedEdge(null)}
           onEdgeClick={(_e, e) => { setSelectedEdge(Number(e.id.slice(1))); setSelectedNode(null) }}
           onPaneClick={() => { setSelectedNode(null); setSelectedEdge(null) }}
           deleteKeyCode={['Delete', 'Backspace']}
@@ -236,20 +343,27 @@ export function PipelineEditor({ client, pipeline, onChange, run, check, runFrom
 
       <aside className="pipeline-inspector">
         {node !== undefined && <NodeInspector client={client} node={node} pipeline={pipeline} run={run} scripts={scripts} onChange={replaceNode} onTasksChanged={() => setTasksRevision(r => r + 1)} runFrom={runFrom}
-          onRemove={() => { onChange({ ...pipeline, nodes: pipeline.nodes.filter(n => n.id !== node.id), edges: pipeline.edges.filter(e => e.from !== node.id && e.to !== node.id) }); setSelectedNode(null) }} />}
+          onRemove={removeSelected} />}
         {edge !== undefined && (
           <section className="inspector-section">
             <h4>连线</h4>
             <p className="muted small">「{pipeline.nodes.find(n => n.id === edge.from)?.title ?? edge.from}」→「{pipeline.nodes.find(n => n.id === edge.to)?.title ?? edge.to}」</p>
             <label className="field-label" htmlFor="edge-when">什么时候运行下一步</label>
             <Select id="edge-when" value={edge.when}
-              onChange={when => onChange({ ...pipeline, edges: pipeline.edges.map((x, i) => (i === selectedEdge ? { ...x, when: when as PipelineEdge['when'] } : x)) })}
+              onChange={when => commit({ ...pipeline, edges: pipeline.edges.map((x, i) => (i === selectedEdge ? { ...x, when: when as PipelineEdge['when'] } : x)) })}
               options={[{ value: 'success', label: '上一步成功后' }, { value: 'failure', label: '上一步失败后' }, { value: 'always', label: '上一步结束后', hint: '不管成败' }]} />
-            <button className="danger-outline small-button" onClick={() => { onChange({ ...pipeline, edges: pipeline.edges.filter((_x, i) => i !== selectedEdge) }); setSelectedEdge(null) }}>删除连线</button>
+            <button className="danger-outline small-button" onClick={() => { commit({ ...pipeline, edges: pipeline.edges.filter((_x, i) => i !== selectedEdge) }); setSelectedEdge(null) }}>删除连线</button>
           </section>
         )}
-        {node === undefined && edge === undefined && (idle ?? <p className="muted small pad">点一个节点或连线来修改。选中后按 Delete 也能删除。</p>)}
-        {(node !== undefined || edge !== undefined) && idle !== undefined && (
+        {selectedNodes.length > 1 && edge === undefined && (
+          <section className="inspector-section">
+            <h4>已选 {selectedNodes.length} 个节点</h4>
+            <p className="muted small">Ctrl+C 复制、Ctrl+V 粘贴（连同它们之间的连线），Delete 删除，Ctrl+Z 撤销。开始和结束不会被复制或删除。</p>
+            <button className="danger-outline small-button" onClick={removeSelected}>删除这些节点</button>
+          </section>
+        )}
+        {node === undefined && edge === undefined && selectedNodes.length <= 1 && (idle ?? <p className="muted small pad">点一个节点或连线来修改。选中后按 Delete 也能删除，Ctrl+C / Ctrl+V 复制粘贴，Ctrl+Z 撤销。</p>)}
+        {(node !== undefined || edge !== undefined || selectedNodes.length > 1) && idle !== undefined && (
           <button className="link-button small back-to-pipeline" onClick={() => { setSelectedNode(null); setSelectedEdge(null) }}>← 流水线设置</button>
         )}
       </aside>
