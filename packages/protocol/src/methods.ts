@@ -22,6 +22,7 @@ import { SkillsNotifications, SkillsRequests } from './skills.ts'
 import { SkillHubNotifications, SkillHubRequests } from './skillhub.ts'
 import { PersonaRequests } from './persona.ts'
 import { CompactionRequests } from './compaction.ts'
+import { MemoryNotifications, MemoryRequests } from './memory.ts'
 import { RunNotifications, RunRequests } from './runs.ts'
 import { ScriptNotifications, ScriptRequests } from './scripts.ts'
 
@@ -649,6 +650,7 @@ export const Requests = {
   ...SkillHubRequests,
   ...PersonaRequests,
   ...CompactionRequests,
+  ...MemoryRequests,
 } as const
 
 export const SessionsChanged = z.discriminatedUnion('kind', [
@@ -711,6 +713,7 @@ export const Notifications = {
   ...PermissionsNotifications,
   ...QuestionsNotifications,
   ...InstancesNotifications,
+  ...MemoryNotifications,
 } as const
 
 export type RequestMethod = keyof typeof Requests

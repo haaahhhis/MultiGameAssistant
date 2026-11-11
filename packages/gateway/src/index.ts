@@ -35,7 +35,7 @@ import { aboutCapability } from './about.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -44,6 +44,7 @@ import { IDENTITY_PROMPT, PersonaStore, personaOf, personaPrompt } from './perso
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
 import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
+import { MemoryStore, memoryPrompt, memoryTools } from './memory.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
@@ -223,6 +224,11 @@ const MAIN_AGENT: RoleSpec = {
   ],
 }
 
+/** Whose memory an agent reads: its own, or for a sub-agent (`<lead>:sub`, roles.ts subAgentSpec) its lead's. */
+function memoryOwnerOf(spec: RoleSpec): string {
+  return spec.subAgentOf === undefined ? spec.id : spec.id.replace(/:sub$/, '')
+}
+
 /** 助手 as the others know it. */
 const MAIN_AGENT_MEMBER = { id: MAIN_AGENT.id, name: MAIN_AGENT.name, description: '和用户对话，分发任务，做决定' }
 
@@ -297,6 +303,8 @@ export class AdgGateway extends Service {
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly home: boolean; readonly dispose: () => void }>()
   private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private persona: PersonaStore | undefined
+  /** Long-term memory (memory.ts): every agent's prompt carries what it may read. */
+  private memory: MemoryStore | undefined
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
   private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
@@ -816,6 +824,32 @@ export class AdgGateway extends Service {
       this.persona = persona
     }
 
+    // Long-term memory (memory@1): who the user is and what was done, across conversations. Each agent's prompt
+    // gets its part of it (narrow); the tools write it as the agents work; 设置 → 记忆 reads and changes it.
+    if (config.dataDir !== undefined) {
+      const memory = new MemoryStore(join(config.dataDir, 'memory.json'), () => this.broadcast('memory/changed', {}))
+      this.memory = memory
+      ctx.effect(() => this.registry.register({
+        id: MEMORY_CAPABILITY,
+        version: 1,
+        methods: {
+          'memory/list': async () => { await memory.loaded; return { items: memory.list() } },
+          'memory/add': async params => {
+            const { kind, scope, text } = params as RequestParams<'memory/add'>
+            try { return { item: await memory.add({ kind, scope, text, by: 'user' }) } } catch (error) { throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error)) }
+          },
+          'memory/update': async params => {
+            const { id, text, kind, scope } = params as RequestParams<'memory/update'>
+            try { return { item: await memory.update(id, { text, ...(kind === undefined ? {} : { kind }), ...(scope === undefined ? {} : { scope }) }, 'user') } } catch (error) { throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error)) }
+          },
+          'memory/remove': async params => ({ removed: await memory.remove((params as RequestParams<'memory/remove'>).id) }),
+        },
+      }), 'adg-gateway capability memory')
+      for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId) })) {
+        this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
+      }
+    }
+
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
     if (config.dataDir !== undefined) {
       const compaction = new CompactionStore(config.dataDir)
@@ -1047,6 +1081,13 @@ Content-Length: 0
       const text = spec === MAIN_AGENT ? () => mainDuty(this.roles.list()) : () => duty
       // After the app's identity, before the reply style.
       disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text }))
+      // What it remembers of the user (memory.ts): a sub-agent reads its lead's, and leaves the writing to it.
+      const memory = this.memory
+      if (memory !== undefined) {
+        const owner = memoryOwnerOf(spec)
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:memory', order: 10_098, interpolate: false, text: () => memoryPrompt(memory.visibleTo(owner), owner, { timeZone, ...(spec.subAgentOf === undefined ? {} : { lead: spec.subAgentOf }) }) }))
+      }
       // A sub-agent answers its parent alone, and its answer is data: no team, no reply style.
       if (spec.subAgentOf === undefined) {
         const persona = this.persona
@@ -1058,6 +1099,12 @@ Content-Length: 0
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
     this.narrowed.set(agent, { spec, home, dispose: () => { for (const dispose of disposers) dispose() } })
+  }
+
+  /** Whose memory an agent in this session reads and writes: its own agent's (a sub-agent's lead's); none for other chats. */
+  private memoryOwner(sessionId: string): string | undefined {
+    const spec = this.specOf(sessionId)
+    return spec === undefined ? undefined : memoryOwnerOf(spec)
   }
 
   /** The conversation that opened this sub-agent; undefined for any other session. */

@@ -5,7 +5,7 @@ import { setShowEarlier, useShowEarlier } from '../preferences.ts'
 import { setTheme, useTheme, type ThemePreference } from '../theme.ts'
 import { Icon, type IconName } from './Icons.tsx'
 
-const PAGE_ICONS: Record<string, IconName> = { 'api-keys': 'key', permissions: 'shield', plugins: 'plug', 'script-install': 'package', emulators: 'monitor', schedule: 'calendar', feishu: 'send', compaction: 'compress', about: 'info' }
+const PAGE_ICONS: Record<string, IconName> = { 'api-keys': 'key', permissions: 'shield', plugins: 'plug', 'script-install': 'package', emulators: 'monitor', schedule: 'calendar', feishu: 'send', compaction: 'compress', memory: 'archive', about: 'info' }
 const THEMES: readonly [ThemePreference, string][] = [['light', '浅色'], ['dark', '深色'], ['system', '跟随系统']]
 
 /** Settings take over the sidebar: categories on the left, the page in the main panel. */

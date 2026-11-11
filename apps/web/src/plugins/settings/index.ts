@@ -2,6 +2,7 @@ import type { UiPlugin } from '../../plugins.ts'
 import { AboutPage } from './AboutPage.tsx'
 import { ApiKeysPage } from './ApiKeysPage.tsx'
 import { CompactionPage } from './CompactionPage.tsx'
+import { MemoryPage } from './MemoryPage.tsx'
 import { PermissionsPage } from './PermissionsPage.tsx'
 import { PersonaPage } from './PersonaPage.tsx'
 
@@ -31,6 +32,13 @@ export const compactionPlugin: UiPlugin = {
   title: '对话压缩',
   requires: ['compaction'],
   settingsPages: [{ id: 'compaction', title: '对话压缩', order: 3, component: CompactionPage }],
+}
+
+export const memoryPlugin: UiPlugin = {
+  id: 'memory',
+  title: '记忆',
+  requires: ['memory'],
+  settingsPages: [{ id: 'memory', title: '记忆', order: 2.5, component: MemoryPage }],
 }
 
 /** Version, license and source: always there, nothing on the host needed. */

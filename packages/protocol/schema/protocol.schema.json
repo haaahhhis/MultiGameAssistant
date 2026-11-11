@@ -533,6 +533,18 @@
     },
     "compaction/set": {
       "capability": "compaction"
+    },
+    "memory/list": {
+      "capability": "memory"
+    },
+    "memory/add": {
+      "capability": "memory"
+    },
+    "memory/update": {
+      "capability": "memory"
+    },
+    "memory/remove": {
+      "capability": "memory"
     }
   },
   "notifications": [
@@ -577,7 +589,8 @@
     "permissions/changed",
     "question/requested",
     "question/resolved",
-    "instances/changed"
+    "instances/changed",
+    "memory/changed"
   ],
   "$defs": {
     "SessionEvent": {
@@ -23090,6 +23103,251 @@
       ],
       "additionalProperties": false
     },
+    "memory/list.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "memory/list.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "profile",
+                  "journal"
+                ]
+              },
+              "scope": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "scope",
+              "text",
+              "createdAt",
+              "updatedAt",
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "memory/add.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "profile",
+            "journal"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        }
+      },
+      "required": [
+        "kind",
+        "scope",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "memory/add.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "profile",
+                "journal"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "scope",
+            "text",
+            "createdAt",
+            "updatedAt",
+            "by"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "additionalProperties": false
+    },
+    "memory/update.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "profile",
+            "journal"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "memory/update.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "profile",
+                "journal"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "scope",
+            "text",
+            "createdAt",
+            "updatedAt",
+            "by"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "additionalProperties": false
+    },
+    "memory/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "memory/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "additionalProperties": false
+    },
     "sessions/changed.notification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -26068,6 +26326,12 @@
       "required": [
         "others"
       ],
+      "additionalProperties": false
+    },
+    "memory/changed.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
       "additionalProperties": false
     }
   }

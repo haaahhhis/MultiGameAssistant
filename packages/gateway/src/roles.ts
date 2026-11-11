@@ -51,8 +51,12 @@ const NOBODY = ['subagent_fork']
 /** What agents work together with: every lead has it, so a role need not name it. */
 const TOGETHER: readonly string[] = ['agent_delegate', 'agent_message', 'agent_threads']
 
+/** Long-term memory (memory.ts): every agent reads and writes it, whatever its tools; a sub-agent only reads. */
+export const MEMORY_TOOLS: readonly string[] = ['memory_save', 'memory_forget', 'memory_search']
+const ALWAYS: readonly string[] = [...TOGETHER, ...MEMORY_TOOLS]
+
 /** What goes between agents and to the person: a sub-agent only does its part and answers its parent. */
-const COORDINATION = ['agent_delegate', 'agent_message', 'agent_threads', 'notice_act', 'ask_user_question', 'exit_plan_mode', 'subagent', 'list_agents', 'interrupt_agent', 'schedule_*', 'create_goal', 'update_goal', 'get_goal', 'intervention_done']
+const COORDINATION = ['agent_delegate', 'agent_message', 'agent_threads', 'notice_act', 'ask_user_question', 'exit_plan_mode', 'subagent', 'list_agents', 'interrupt_agent', 'schedule_*', 'create_goal', 'update_goal', 'get_goal', 'intervention_done', 'memory_save', 'memory_forget']
 
 /**
  * The concrete work: commands, files, the screen, running and installing. Not
@@ -82,7 +86,7 @@ export function handsOn(tool: string): boolean {
  */
 export function hiddenTools(spec: Pick<RoleSpec, 'tools' | 'hide'>, appTools: ReadonlySet<string>, visible: Iterable<string>, home = false): string[] {
   const hide = [...NOBODY, ...(spec.hide ?? []), ...(home ? HANDS_ON : [])]
-  return [...visible].filter(name => matches(hide, name) || (appTools.has(name) && !keeps(spec.tools, name) && !TOGETHER.includes(name)))
+  return [...visible].filter(name => matches(hide, name) || (appTools.has(name) && !keeps(spec.tools, name) && !ALWAYS.includes(name)))
 }
 
 /**
