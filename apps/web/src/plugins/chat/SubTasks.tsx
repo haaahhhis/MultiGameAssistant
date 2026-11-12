@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useMemo, useState } from 'react'
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { summarizeToolArgs, type SessionItem } from '@adg/protocol'
 import { useLastReplies } from '../../agents.ts'
@@ -216,11 +216,11 @@ export function useChatDetail(agentId: string): [ChatDetail, (detail: ChatDetail
       return 2
     }
   }
-  const [detail, setDetail] = useState<ChatDetail>(read)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => setDetail(read()), [agentId])
+  // Read while rendering, not after: another agent's level is right in the first frame.
+  const [chosen, setChosen] = useState<{ agentId: string; detail: ChatDetail }>(() => ({ agentId, detail: read() }))
+  const detail = chosen.agentId === agentId ? chosen.detail : read()
   return [detail, next => {
-    setDetail(next)
+    setChosen({ agentId, detail: next })
     try { localStorage.setItem(DETAIL_KEY + agentId, String(next)) } catch { /* private mode: lasts until reload */ }
   }]
 }

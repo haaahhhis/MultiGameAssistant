@@ -2,7 +2,7 @@ import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { useFollowTail, useStayAtBottom } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
-import { BY_YOU, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
+import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
@@ -33,6 +33,8 @@ type Row =
   | { readonly kind: 'subtask'; readonly item: ToolItem; readonly header: TurnHeader | null }
   /** Something the app told the person through the chat apps, between 助手's turns (SentNotices.tsx). */
   | { readonly kind: 'sent'; readonly item: SentItem }
+const NO_NOTICES: readonly ChatNotice[] = []
+
 /** Shown above the first agent output of each turn. */
 type TurnHeader = { readonly model: string | undefined }
 
@@ -46,19 +48,26 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // dsh's note that a sub-agent ended is for the model: its card says so.
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
   const settled = useMemo(() => settledTasks(built), [built])
-  // 助手's one conversation has the notices sent to the chat apps in it.
-  const home = useHome(client, MAIN_AGENT)
-  const notices = useSentNotices(client, home.sessionId === session.id)
-  const from = state.hasMore ? (state.events[0]?.time ?? 0) : 0
-  const allRows = useMemo(() => groupRows(withNotices(items, notices, from, startsTurn)), [items, notices, from])
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
   const agentId = item === undefined ? MAIN_AGENT : agentIdOf(item, roles)
+  // 助手's one conversation has the notices sent to the chat apps in it. The list says so at once; asking the server is the fallback.
+  const home = useHome(client, MAIN_AGENT)
+  const sent = useSentNotices(client, item !== undefined ? item.home === MAIN_AGENT : home.sessionId === session.id)
+  // Nothing is drawn until the conversation and its notices are both in, so it shows whole, at its end,
+  // not the notices alone first (or the steps of a part) and then swapped for it. Once shown, it stays.
+  const [shown, setShown] = useState(false)
+  const ready = shown || (state.status === 'open' ? sent !== null : state.status !== 'opening')
+  if (ready && !shown) setShown(true)
+  const notices = ready && sent !== null ? sent : NO_NOTICES
+  const from = state.hasMore ? (state.events[0]?.time ?? 0) : 0
+  const allRows = useMemo(() => groupRows(withNotices(items, notices, from, startsTurn)), [items, notices, from])
   // A sub-agent's conversation, beside its parent's, is named for it and shown whole.
   const subAgentOf = useContext(SubAgentOf)
   const paneName = useContext(ConversationAgent)
   const agentName = subAgentOf !== null ? paneName : roles.find(r => r.id === agentId)?.name ?? MAIN.name
-  const [detail, setDetail] = useChatDetail(agentId)
+  // By the session's own role, not the roles list (it comes later): the level is right in the first frame.
+  const [detail, setDetail] = useChatDetail(item?.role ?? MAIN_AGENT)
   const level: ChatDetail = subAgentOf === null ? detail : 3
   const rows = useMemo(() => atDetail(allRows, level), [allRows, level])
   // A time line before what comes after a pause, as chat apps have.
@@ -87,7 +96,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   useLayoutEffect(() => {
     const el = scroller.current
     if (el !== null && stick.current) el.scrollTop = el.scrollHeight
-  }, [items, notices])
+  }, [items, notices, ready])
   // Later growth too (images, cards that load their details): opening a chat shows its end at once.
   useStayAtBottom(scroller, stick)
 
@@ -108,23 +117,23 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <OpenSubTask.Provider value={setPane}>
     <SettledTasks.Provider value={settled}>
     <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
-    {subAgentOf === null && allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
+    {ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
     <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
       <div className="chat-inner">
-        {state.hasMore && (
+        {ready && state.hasMore && (
           <button className="link-button load-older" disabled={state.loadingOlder} onClick={() => void session.loadOlder()}>
             {state.loadingOlder ? '加载中…' : '加载更早的消息'}
           </button>
         )}
-        {state.status === 'opening' && items.length === 0 && <div className="empty">正在打开会话…</div>}
-        {state.status !== 'opening' && items.length === 0 && (
+        {!ready && <div className="empty">正在打开会话…</div>}
+        {ready && state.status !== 'opening' && items.length === 0 && (
           <div className="empty chat-empty">
             <AdgMark size="lg" />
             <h2>今天，我们一起完成什么？</h2>
             <p>一个问题、一段代码，或一个还不成熟的想法。<br />在下方写下来，让对话开始。</p>
           </div>
         )}
-        {rows.map((row, index) => <TimedRow key={rowKey(row)} at={timeLines[index]}>{row.kind === 'sent'
+        {ready && rows.map((row, index) => <TimedRow key={rowKey(row)} at={timeLines[index]}>{row.kind === 'sent'
           ? <SentNotice key={row.item.id} client={client} notice={row.item.notice} />
           : row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
@@ -135,9 +144,9 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
-        {appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
-        {state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
-        {readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
+        {ready && appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
+        {ready && state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
+        {ready && readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
     {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={agentName} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => setPane(null)} />}

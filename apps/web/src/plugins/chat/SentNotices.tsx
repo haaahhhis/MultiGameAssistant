@@ -15,26 +15,30 @@ import { Icon } from '../../components/Icons.tsx'
 export type SentItem = { readonly kind: 'sent'; readonly id: string; readonly notice: ChatNotice }
 
 /** The notices, oldest first, kept current; none when `enabled` is false (not 助手's conversation). */
-export function useSentNotices(client: AdgClient, enabled: boolean): readonly ChatNotice[] {
+export function useSentNotices(client: AdgClient, enabled: boolean): readonly ChatNotice[] | null {
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
-  const [items, setItems] = useState<readonly ChatNotice[]>([])
+  // null until the first list came back (or failed).
+  const [items, setItems] = useState<readonly ChatNotice[] | null>(null)
   const on = enabled && capabilities.has('notify')
   useEffect(() => {
     if (!on || status.state !== 'open') return
     let live = true
-    client.connection.call('notify/notices', {}).then(r => { if (live) setItems(r.items) }).catch(() => {})
+    client.connection.call('notify/notices', {}).then(r => { if (live) setItems(r.items) }, () => { if (live) setItems(list => list ?? []) })
     return () => { live = false }
   }, [client, on, status.state])
   useEffect(() => {
     if (!on) return
     return client.connection.on('notify/notice', ({ item }) => setItems(list => {
+      if (list === null) return list
       const at = list.findIndex(n => n.id === item.id)
       return at < 0 ? [...list, item] : list.map(n => (n.id === item.id ? item : n))
     }))
   }, [client, on])
-  return on ? items : []
+  return on ? items : NONE
 }
+
+const NONE: readonly ChatNotice[] = []
 
 /**
  * The conversation with the notices in it: each before the first turn that started after it was sent
