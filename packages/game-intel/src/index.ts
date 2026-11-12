@@ -59,7 +59,7 @@ export const GAME_ROLE: RoleSpec = {
   order: 20,
   titles: ['游戏信息', '游戏资讯', '添加游戏', '日报'],
   // Games and their screens, and what scripts ran (for the daily report); no installing, runs or pipelines.
-  tools: ['game_*', 'screen_*', 'window_*', 'emulator_status', 'emulator_start', 'script_list', 'script_runs', 'system_info', 'skill_focus', 'skill_save'],
+  tools: ['game_*', 'screen_*', 'window_*', 'emulator_status', 'emulator_start', 'script_list', 'script_tasks', 'script_runs', 'system_info', 'skill_focus', 'skill_save'],
   duty: [
     '# 你的角色：游戏',
     '你是 MultiGameAssistant 的「游戏」agent：读游戏的活动、资讯和进度并记下来（game_record），写日报，添加游戏。',
