@@ -1,5 +1,5 @@
 import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
-import { useFollowTail } from '../../components/useFollowTail.ts'
+import { useFollowTail, useStayAtBottom } from '../../components/useFollowTail.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { BY_YOU, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
@@ -88,6 +88,8 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     const el = scroller.current
     if (el !== null && stick.current) el.scrollTop = el.scrollHeight
   }, [items, notices])
+  // Later growth too (images, cards that load their details): opening a chat shows its end at once.
+  useStayAtBottom(scroller, stick)
 
   // Keep the scroll position stable when older history is prepended.
   const firstSeq = state.events[0]?.seq

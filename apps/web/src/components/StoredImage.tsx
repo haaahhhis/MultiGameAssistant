@@ -35,7 +35,8 @@ export function StoredImage({ image }: { image: ChatImage }) {
   const label = image.name ?? `${image.width}×${image.height} 图片`
   if (!available) return <span className="stored-image missing">{label}（当前后端不支持显示图片）</span>
   if (error !== null) return <span className="stored-image missing">{label}没能加载：{error}</span>
-  if (src === null) return <span className="stored-image loading" style={{ aspectRatio: `${image.width} / ${image.height}` }} />
+  // The size the image will have (its border included), so loading it moves nothing around it.
+  if (src === null) return <span className="stored-image loading" style={{ width: image.width + 2, aspectRatio: `${image.width + 2} / ${image.height + 2}` }} />
   return (
     <>
       <button className="stored-image" onClick={() => setZoomed(true)} title="点击放大、标注、复制">
