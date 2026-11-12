@@ -3,6 +3,7 @@ import { useStore } from '../hooks.ts'
 import type { PageContribution } from '../plugins.ts'
 import { AdgMark, Icon, type IconName } from './Icons.tsx'
 import { useAgentStates, type AgentState } from './SessionList.tsx'
+import { openUpdateNotes, UpdateNotesHost, useAppUpdate } from './Updates.tsx'
 
 /** Which rail entry is current: an agent, a plugin page, every timed task, a new agent, or settings. */
 export type RailTarget =
@@ -17,7 +18,8 @@ export type RailTarget =
  * agent-roles.md §12). Pages come from UI plugins, so an area appears exactly
  * when the host serves the capabilities behind it; pages ordered below 0 come
  * before the agents. An agent shows whether it is working, whether something
- * came in, and what waits for you there.
+ * came in, and what waits for you there. A newer version of the app puts
+ * 「更新」 above 定时; it opens what the update brings (Updates.tsx).
  */
 export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, onSettings }: {
   client: AdgClient
@@ -31,6 +33,7 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
   const agents = useAgentStates(client, current.kind === 'agent' ? current.id : undefined)
+  const update = useAppUpdate(client)
   const pageItem = (page: PageContribution) => (
     <RailItem key={page.id} icon={page.icon} label={page.title} active={current.kind === 'page' && current.id === page.id} onClick={() => onPage(page.id)} />
   )
@@ -48,6 +51,9 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
         {pages.filter(page => page.order >= 0).map(pageItem)}
       </div>
       <div className="rail-footer">
+        {update !== null && (
+          <RailItem icon="download" label="更新" title={`MultiGameAssistant ${update.version} 可以更新了：点开看更新了什么`} active={false} onClick={openUpdateNotes} dot />
+        )}
         {capabilities.has('pipelines') && (
           <RailItem icon="calendar" label="定时" title="每个 agent 的定时任务，和按时运行的流水线" active={current.kind === 'schedule'} onClick={onSchedule} />
         )}
@@ -56,6 +62,7 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
           <span className="conn-dot" /><span className="sr-only">{connectionLabel(status.state, status.attempt, status.error)}</span>
         </span>
       </div>
+      <UpdateNotesHost client={client} />
     </nav>
   )
 }
@@ -77,18 +84,21 @@ function AgentItem({ state, active, onClick }: { state: AgentState; active: bool
   )
 }
 
-function RailItem({ icon, label, title = label, active, onClick, disabled = false }: {
+function RailItem({ icon, label, title = label, active, onClick, disabled = false, dot = false }: {
   icon: IconName
   label: string
   title?: string
   active: boolean
   onClick: () => void
   disabled?: boolean
+  /** Something new there. */
+  dot?: boolean
 }) {
   return (
-    <button className={`rail-item ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} onClick={onClick} title={title} disabled={disabled}>
+    <button className={`rail-item ${active ? 'active' : ''} ${dot ? 'rail-new' : ''}`} aria-current={active ? 'page' : undefined} onClick={onClick} title={title} disabled={disabled}>
       <Icon name={icon} />
       <span className="rail-label">{label}</span>
+      {dot && <span className="rail-unread" role="img" aria-label="有新版本" />}
     </button>
   )
 }

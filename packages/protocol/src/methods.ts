@@ -311,6 +311,19 @@ export const PromptImage = z.object({
 })
 export type PromptImage = z.infer<typeof PromptImage>
 
+/** One release's notes, as its GitHub Release page says (the 「下载」 section left out). */
+export const ReleaseNote = z.object({
+  version: z.string(),
+  /** The release's own title, when it has one. */
+  title: z.string().optional(),
+  publishedAt: z.string().optional(),
+  /** Its page on GitHub. */
+  url: z.string(),
+  /** Markdown. */
+  body: z.string(),
+})
+export type ReleaseNote = z.infer<typeof ReleaseNote>
+
 const Empty = z.object({})
 const Accepted = z.object({ accepted: z.literal(true) })
 
@@ -561,14 +574,15 @@ export const Requests = {
   /**
    * The plugin package's newest release on GitHub, if newer than this one (a pre-release only for a
    * pre-release). `onNpm`: npm already serves it under the plugin's name (a release is live there only
-   * once approved); undefined when npm could not be asked. Only the plugin package checks here.
+   * once approved); undefined when npm could not be asked. `notes`: what each release from this one up
+   * to it brings (its GitHub Release text), newest first. Only the plugin package checks here.
    */
   'about/checkUpdate': {
     capability: 'about',
     params: Empty,
     result: z.object({
       current: z.string(),
-      latest: z.object({ version: z.string(), prerelease: z.boolean(), notesUrl: z.string(), onNpm: z.boolean().optional() }).optional(),
+      latest: z.object({ version: z.string(), prerelease: z.boolean(), notesUrl: z.string(), onNpm: z.boolean().optional(), notes: z.array(ReleaseNote).optional() }).optional(),
       checkedAt: z.number(),
     }),
   },

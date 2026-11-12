@@ -58,7 +58,7 @@ export function pluginPatch(bundlePatch) {
     "    # The app's agent preset: its sessions run this one (the gateway creates them so).",
     appPreset.split('\n').map(line => line === '' ? line : `    ${line}`).join('\n'),
     '',
-  ].join('\n').replace(/name: '@adg\/gateway\/agent'/g, `name: '${NAME}/agent'`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`)
+  ].join('\n').replace(/name: '@adg\/gateway\/([a-z-]+)'/g, `name: '${NAME}/$1'`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`)
 }
 
 /**
@@ -88,6 +88,7 @@ export function pluginManifest({ version, plugins, peers }) {
       '.': './lib/index.js',
       ...Object.fromEntries(plugins.map(name => [`./${name}`, `./lib/${name}.js`])),
       './agent': './lib/agent.js',
+      './low-context': './lib/low-context.js',
       './client': './lib/client.js',
       './package.json': './package.json',
     },

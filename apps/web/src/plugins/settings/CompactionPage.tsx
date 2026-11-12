@@ -3,12 +3,15 @@
  * itself, and how full the model's context gets first. What compacting costs
  * is said up front: the agent keeps only the summary. dsh reads the settings
  * when the agent service starts, so a change waits for a restart; the desktop
- * app can restart the service from here.
+ * app can restart the service from here. Low-context mode (compacting all but
+ * the latest messages before each step) is read before every step: it needs no
+ * restart.
  */
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { DEFAULT_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD, MIN_COMPACTION_THRESHOLD, type CompactionSettings } from '@adg/protocol'
+import { DEFAULT_COMPACTION_THRESHOLD, DEFAULT_KEEP_MESSAGES, LOW_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD, MAX_KEEP_MESSAGES, MIN_COMPACTION_THRESHOLD, MIN_KEEP_MESSAGES, type CompactionSettings } from '@adg/protocol'
 import { confirm } from '../../components/Dialog.tsx'
+import { Select } from '../../components/Select.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
@@ -84,7 +87,10 @@ export function CompactionPage({ client }: { client: AdgClient }) {
             <span className="field-title">占满上下文的多少时压缩：<strong>{threshold ?? state.settings.threshold}%</strong>{(threshold ?? state.settings.threshold) === DEFAULT_COMPACTION_THRESHOLD ? '（默认）' : ''}</span>
             <input type="range" min={MIN_COMPACTION_THRESHOLD} max={MAX_COMPACTION_THRESHOLD} step={5} value={threshold ?? state.settings.threshold} disabled={!state.settings.auto}
               aria-label="压缩阈值（百分比）" onChange={e => setThreshold(Number(e.target.value))} />
-            <span className="muted small">调低：压缩得早，回复快、花费少，但记得的细节少；调高：记得的多，但更可能临时压缩一大段。</span>
+            <span className="muted small">调低：压缩得早，回复快、花费少，但记得的细节少；调高：记得的多，但更可能临时压缩一大段。100% 是到上下文快满时才压缩（会留出回复的空间）。</span>
+            {(threshold ?? state.settings.threshold) < LOW_COMPACTION_THRESHOLD && state.settings.auto && (
+              <span className="notice warn-box left small compaction-warn"><Icon name="alert" /><span>这么低时，光是系统提示和工具说明就可能接近这个用量，几乎每一步都会压缩一次，每次都要调用模型写摘要。想让上下文保持很短，用下面的「低上下文模式」更合适。</span></span>
+            )}
           </label>
           {!same(state.settings, state.applied) && (
             <div className="notice left">
@@ -94,6 +100,26 @@ export function CompactionPage({ client }: { client: AdgClient }) {
             </div>
           )}
           {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
+        </section>
+      )}
+      {state !== null && (
+        <section className="card">
+          <label className="check-label">
+            <input type="checkbox" checked={state.settings.lowContext} disabled={busy} onChange={e => void save({ ...state.settings, lowContext: e.target.checked })} />
+            低上下文模式
+          </label>
+          <p className="muted small">每一步开始前，把最近几条消息以外的对话压缩成摘要，超过一天的消息也压缩掉，让 agent 的上下文一直很短：回复更快、更省钱。只有被压缩的内容才会移出上下文，聊天记录还在；agent 需要时会用长期记忆和「查对话记录」工具找回以前的原话。改了马上生效，不用重启。</p>
+          <label className="field compaction-keep">
+            <span className="field-title">保留最近几条消息</span>
+            <Select
+              aria-label="保留最近几条消息"
+              value={String(state.settings.keepMessages)}
+              disabled={busy || !state.settings.lowContext}
+              options={Array.from({ length: MAX_KEEP_MESSAGES - MIN_KEEP_MESSAGES + 1 }, (_, i) => MIN_KEEP_MESSAGES + i).map(n => ({ value: String(n), label: `${n} 条${n === DEFAULT_KEEP_MESSAGES ? '（默认）' : ''}` }))}
+              onChange={n => void save({ ...state.settings, keepMessages: Number(n) })}
+            />
+            <span className="muted small">一条是你（或软件、别的 agent）发来的一条消息，连同 agent 对它的处理。多出 2 条以上才压缩一次，所以除了刚发来的这条，上下文里一般还有 {state.settings.keepMessages}–{state.settings.keepMessages + 2} 条。每次压缩都要调用一次模型写摘要。</span>
+          </label>
         </section>
       )}
       <section className="card">

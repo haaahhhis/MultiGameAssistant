@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { assetSha256, compareVersions, createUpdater, pickRelease } from '../../apps/desktop/updates.mjs'
+import { assetSha256, cleanNotes, compareVersions, createUpdater, pickRelease, releaseNotes } from '../../apps/desktop/updates.mjs'
 
 test('versions order by semantic versioning, pre-releases before their release', () => {
   const sorted = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-beta', '1.0.0-rc.2', '1.0.0-rc.10', '1.0.0', '1.0.1', '1.1.0', '2.0.0']
@@ -59,7 +59,7 @@ async function fakeGitHub(installer, { corrupt = false, status = 200 } = {}) {
     if (req.url === '/releases') {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(status !== 200 ? '{}' : JSON.stringify([{
-        tag_name: 'v1.1.0', prerelease: false, draft: false, html_url: `${base}/notes`, published_at: '2026-10-26T00:00:00Z',
+        tag_name: 'v1.1.0', prerelease: false, draft: false, html_url: `${base}/notes`, published_at: '2026-10-26T00:00:00Z', body: '## 新功能\n\n- **更新介绍**\n\n## 下载\n\n- x.exe',
         assets: [{ name, size: installer.length, browser_download_url: `${base}/download/${name}`, digest: `sha256:${hash}` }],
       }]))
     } else if (req.url === `/download/${name}`) {
@@ -85,6 +85,7 @@ test('a newer release is found, downloaded and checked against its SHA-256', asy
     const checked = await updater.check({ automatic: true })
     assert.equal(checked.latest?.version, '1.1.0')
     assert.equal(checked.error, undefined)
+    assert.deepEqual(checked.latest?.notes?.map(n => [n.version, n.body]), [['1.1.0', '## 新功能\n\n- **更新介绍**']], 'its notes, without the download list')
     await updater.check({ automatic: true })
     assert.deepEqual(found, ['1.1.0'], 'announced once')
 
@@ -131,4 +132,18 @@ test('a private or missing repository says so; skipped versions and the auto set
   } finally {
     github.close()
   }
+})
+
+test("each newer release's notes, newest first, on this one's channel", () => {
+  assert.equal(cleanNotes('## 修复\r\n- a\r\n## Downloads\r\n- b'), '## 修复\n- a')
+  const releases = [
+    { tag_name: 'v1.2.0-rc.1', prerelease: true, body: 'rc' },
+    { tag_name: 'v1.1.0', body: '一一', html_url: 'u', name: '春季更新' },
+    { tag_name: 'v1.0.5', body: '零五' },
+    { tag_name: 'v1.0.6', draft: true, body: '草稿' },
+    { tag_name: 'v1.0.0', body: '一' },
+  ]
+  assert.deepEqual(releaseNotes(releases, '1.0.0').map(n => n.version), ['1.1.0', '1.0.5'])
+  assert.deepEqual(releaseNotes(releases, '1.0.0')[0], { version: '1.1.0', title: '春季更新', url: 'u', body: '一一' })
+  assert.deepEqual(releaseNotes(releases, '1.1.0-rc.1').map(n => n.version), ['1.2.0-rc.1', '1.1.0'])
 })

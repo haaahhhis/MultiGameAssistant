@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { aboutCapability, compareVersions, newestRelease, pluginVersion } from '../src/about.ts'
+import { aboutCapability, cleanNotes, compareVersions, newestRelease, pluginVersion, releaseNotes } from '../src/about.ts'
 import type { MethodContext } from '../src/registry.ts'
 
 const call = { signal: new AbortController().signal } as MethodContext
@@ -56,10 +56,21 @@ test('about/info: the plugin with its version, or another build', async () => {
 
 test('about/checkUpdate: a newer release, and whether npm serves it yet', async () => {
   const check = (npm: unknown) => handler('about/checkUpdate', { version: () => '2.0.2', fetch: fakeFetch({ [GITHUB]: [release('v2.0.3'), release('v2.0.2')], [NPM]: npm }) })({}, call)
-  assert.deepEqual(await check({ 'dist-tags': { latest: '2.0.3' } }), { current: '2.0.2', latest: { version: '2.0.3', prerelease: false, notesUrl: 'https://github.com/x/releases/tag/v2.0.3', onNpm: true }, checkedAt: 5 })
+  assert.deepEqual(await check({ 'dist-tags': { latest: '2.0.3' } }), { current: '2.0.2', latest: { version: '2.0.3', prerelease: false, notesUrl: 'https://github.com/x/releases/tag/v2.0.3', onNpm: true, notes: [{ version: '2.0.3', url: 'https://github.com/x/releases/tag/v2.0.3', body: '' }] }, checkedAt: 5 })
   assert.equal(((await check({ 'dist-tags': { latest: '2.0.2' } })) as { latest: { onNpm: boolean } }).latest.onNpm, false, 'waiting for approval')
   assert.equal(((await check(new Error('offline'))) as { latest: { onNpm?: boolean } }).latest.onNpm, undefined, 'npm unknown')
   assert.deepEqual(await handler('about/checkUpdate', { version: () => '2.0.3', fetch: fakeFetch({ [GITHUB]: [release('v2.0.3')] }) })({}, call), { current: '2.0.3', checkedAt: 5 })
+})
+
+test("the release notes are each newer release's GitHub text, without the download list", () => {
+  const body = '## 新功能\r\n\r\n- **复制、粘贴**：Ctrl+C\r\n<!-- 草稿说明 -->\r\n## 修复\r\n\r\n- 修好了\r\n\r\n## 下载\r\n\r\n- Windows x64：`a.exe`\r\n'
+  assert.equal(cleanNotes(body), '## 新功能\n\n- **复制、粘贴**：Ctrl+C\n\n## 修复\n\n- 修好了')
+  assert.equal(cleanNotes(undefined), '')
+  assert.match(cleanNotes('x'.repeat(9000)), /……（更多见发布页）$/)
+  const releases = [release('v2.1.0-rc.1', { prerelease: true }), release('v2.0.4', { body: '四', name: 'v2.0.4', published_at: '2026-11-12T00:00:00Z' }), release('v2.0.3', { body: '三' }), release('v2.0.5', { draft: true }), release('v2.0.2', { body: '二' })]
+  assert.deepEqual(releaseNotes(releases, '2.0.2', '2.0.4').map(n => [n.version, n.body]), [['2.0.4', '四'], ['2.0.3', '三']], 'newest first, from after this one up to the offered one')
+  assert.equal(releaseNotes(releases, '2.0.2', '2.0.4')[0]!.publishedAt, '2026-11-12T00:00:00Z')
+  assert.deepEqual(releaseNotes(releases, '2.0.4', '2.1.0-rc.1').map(n => n.version), [], 'a stable version is not told about pre-releases')
 })
 
 test('about/checkUpdate: says why when it cannot', async () => {

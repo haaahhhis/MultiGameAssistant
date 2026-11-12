@@ -10,7 +10,7 @@
  * gateway finds its own @adg/gateway manifest instead, and is not the plugin.
  */
 import { readFileSync } from 'node:fs'
-import { ErrorCode, RpcError, type RequestResult } from '@adg/protocol'
+import { ErrorCode, RpcError, type ReleaseNote, type RequestResult } from '@adg/protocol'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
 
 export const PLUGIN_PACKAGE = 'dsh-multigameassistant'
@@ -61,7 +61,42 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
-type Release = { tag_name?: unknown; draft?: unknown; prerelease?: unknown; html_url?: unknown; assets?: unknown }
+type Release = { tag_name?: unknown; name?: unknown; draft?: unknown; prerelease?: unknown; html_url?: unknown; published_at?: unknown; body?: unknown; assets?: unknown }
+
+const MAX_NOTE = 8000
+const MAX_NOTES = 8
+
+/** A release's text as the app shows it: without the 「下载」 section (as apps/desktop/updates.mjs does) and comments. */
+export function cleanNotes(body: unknown): string {
+  const lines = String(body ?? '').replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n')
+  const out: string[] = []
+  let skipping = false
+  for (const line of lines) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line)
+    if (heading !== null) skipping = /^(下载|Downloads?)$/i.test(heading[1]!)
+    if (!skipping) out.push(line)
+  }
+  const text = out.join('\n').trim()
+  return text.length > MAX_NOTE ? `${text.slice(0, MAX_NOTE)}\n\n……（更多见发布页）` : text
+}
+
+/** The notes of the releases after `current` up to `upTo` (on its channel), newest first. */
+export function releaseNotes(releases: readonly Release[], current: string, upTo: string): ReleaseNote[] {
+  const pre = current.includes('-')
+  return releases
+    .filter(r => r.draft !== true && (pre || r.prerelease !== true) && typeof r.tag_name === 'string')
+    .map(r => ({ release: r, version: String(r.tag_name).replace(/^v/, '') }))
+    .filter(c => compareVersions(c.version, current) > 0 && compareVersions(c.version, upTo) <= 0)
+    .sort((a, b) => compareVersions(b.version, a.version))
+    .slice(0, MAX_NOTES)
+    .map(({ release, version }) => ({
+      version,
+      ...(typeof release.name === 'string' && release.name.trim() !== '' ? { title: release.name.trim() } : {}),
+      ...(typeof release.published_at === 'string' ? { publishedAt: release.published_at } : {}),
+      url: typeof release.html_url === 'string' ? release.html_url : '',
+      body: cleanNotes(release.body),
+    }))
+}
 
 /** The newest release newer than `current` that carries the plugin package; a pre-release only for a pre-release. */
 export function newestRelease(releases: readonly Release[], current: string): { version: string; prerelease: boolean; notesUrl: string } | undefined {
@@ -114,7 +149,8 @@ export function aboutCapability(deps: AboutDeps = {}): CapabilityRegistration {
     } catch {
       onNpm = undefined
     }
-    return { current, latest: { ...found, ...(onNpm === undefined ? {} : { onNpm }) }, checkedAt }
+    const notes = releaseNotes(releases as Release[], current, found.version)
+    return { current, latest: { ...found, ...(onNpm === undefined ? {} : { onNpm }), notes }, checkedAt }
   }
 
   return {

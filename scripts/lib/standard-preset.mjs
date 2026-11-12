@@ -1,9 +1,11 @@
 /**
  * The app's override of dsh's `standard` agent preset (packages/bundle/cordis.patch.yml):
  * dsh-web-app's own presets/standard.patch.yml, changed in one place. Its
- * compaction-basic row gets `auto` and `thresholdRatio` from the app's
- * compaction.json (设置 → 对话压缩, packages/gateway/src/compaction-settings.ts),
- * read when the agent service starts. A preset is overridden whole (dsh does not
+ * compaction-basic row gets `auto`, `thresholdRatio` and `retainRatio` from
+ * the app's compaction.json (设置 → 对话压缩, packages/gateway/src/compaction-settings.ts),
+ * read when the agent service starts, and the compaction group gets the app's
+ * low-context mode (packages/gateway/src/low-context.ts), which reads the same
+ * file before every step. A preset is overridden whole (dsh does not
  * merge plugin lists), so the rest must stay exactly dsh's: the override is made
  * from the installed file, and scripts/test/standard-preset.test.mjs fails when
  * the two drift apart (a dsh update): run `node scripts/sync-standard-preset.mjs`.
@@ -16,6 +18,11 @@ export const END = '# <<< preset-standard'
 
 /** The settings file as an expression: the parsed object, or {} when it is missing or broken. */
 const SETTINGS = "(() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })()"
+
+/** The threshold as a ratio: 5–100% (default 80%). */
+const RATIO = `(Math.min(100, Math.max(5, Number(${SETTINGS}.threshold) || 80)) / 100)`
+/** The file itself, for the low-context row. */
+const FILE = "(process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json'"
 
 /** dsh-web-app's standard.patch.yml as installed with dsh. */
 export function upstreamStandard(root) {
@@ -41,7 +48,14 @@ export function standardOverride(upstream) {
     `${indent}config:`,
     `${indent}  # 设置 → 对话压缩 (compaction.json in the app's data); read when the agent service starts.`,
     `${indent}  auto: !!js "${SETTINGS}.auto !== false"`,
-    `${indent}  thresholdRatio: !!js "Math.min(95, Math.max(50, Number(${SETTINGS}.threshold) || 80)) / 100"`,
+    `${indent}  thresholdRatio: !!js "${RATIO}"`,
+    // dsh keeps 16% of the window word for word, which must be below the threshold: half of a low one.
+    `${indent}  retainRatio: !!js "Math.min(0.16, ${RATIO} / 2)"`,
+    // Low-context mode: compacts all but the latest messages, before each step (it uses this group's compaction).
+    `${indent.slice(2)}- id: adg-low-context`,
+    `${indent}name: '@adg/gateway/low-context'`,
+    `${indent}config:`,
+    `${indent}  file: !!js "${FILE}"`,
   ]
   return [
     `${BEGIN} (made by scripts/sync-standard-preset.mjs from dsh-web-app's presets/standard.patch.yml: do not edit by hand)`,

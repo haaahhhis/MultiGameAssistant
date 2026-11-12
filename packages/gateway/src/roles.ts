@@ -52,7 +52,7 @@ const NOBODY = ['subagent_fork']
 const TOGETHER: readonly string[] = ['agent_delegate', 'agent_message', 'agent_threads']
 
 /** Long-term memory (memory.ts): every agent reads and writes it, whatever its tools; a sub-agent only reads. */
-export const MEMORY_TOOLS: readonly string[] = ['memory_save', 'memory_forget', 'memory_search']
+export const MEMORY_TOOLS: readonly string[] = ['memory_save', 'memory_forget', 'memory_search', 'history_search', 'history_read']
 const ALWAYS: readonly string[] = [...TOGETHER, ...MEMORY_TOOLS]
 
 /** What goes between agents and to the person: a sub-agent only does its part and answers its parent. */

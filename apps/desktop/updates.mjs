@@ -2,9 +2,10 @@
  * Updates from the project's GitHub Releases (.github/workflows/release.yml
  * publishes the installers there). The installed app looks for a newer release
  * when it starts and every few hours: a stable version is offered stable
- * releases only, a pre-release (1.0.0-rc.3) newer pre-releases too. The
- * installer for this architecture is downloaded and checked against the
- * SHA-256 GitHub computed when it was uploaded (the asset's digest);
+ * releases only, a pre-release (1.0.0-rc.3) newer pre-releases too. Each
+ * newer release's notes (its GitHub Release text) come with it, for the app's
+ * update notice. The installer for this architecture is downloaded and checked
+ * against the SHA-256 GitHub computed when it was uploaded (the asset's digest);
  * 「退出并安装」 then runs it quietly over the install (it finds the folder the
  * user chose, the data stays) and it starts the new version.
  */
@@ -71,6 +72,49 @@ export function pickRelease(releases, current, arch) {
     .sort((a, b) => compareVersions(b.version, a.version))[0]
 }
 
+/** The longest note shown for one release. */
+const MAX_NOTE = 8000
+/** The most releases whose notes are shown. */
+const MAX_NOTES = 8
+
+/**
+ * A release's notes as shown in the app: its GitHub Release text, without the
+ * 「下载」 section (which installer to pick: the app picks it) and comments.
+ */
+export function cleanNotes(body) {
+  const lines = String(body ?? '').replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n')
+  const out = []
+  let skipping = false
+  for (const line of lines) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line)
+    if (heading !== null) skipping = /^(下载|Downloads?)$/i.test(heading[1])
+    if (!skipping) out.push(line)
+  }
+  const text = out.join('\n').trim()
+  return text.length > MAX_NOTE ? `${text.slice(0, MAX_NOTE)}\n\n……（更多见发布页）` : text
+}
+
+/**
+ * The notes of every release newer than `current` (on its channel: pre-releases
+ * only for a pre-release), newest first: what updating brings.
+ */
+export function releaseNotes(releases, current) {
+  const pre = /-/.test(current)
+  return releases
+    .filter(r => r.draft !== true && (pre || r.prerelease !== true) && typeof r.tag_name === 'string')
+    .map(r => ({ release: r, version: String(r.tag_name).replace(/^v/, '') }))
+    .filter(c => compareVersions(c.version, current) > 0)
+    .sort((a, b) => compareVersions(b.version, a.version))
+    .slice(0, MAX_NOTES)
+    .map(({ release, version }) => ({
+      version,
+      ...(typeof release.name === 'string' && release.name.trim() !== '' ? { title: release.name.trim() } : {}),
+      ...(typeof release.published_at === 'string' ? { publishedAt: release.published_at } : {}),
+      url: String(release.html_url ?? ''),
+      body: cleanNotes(release.body),
+    }))
+}
+
 async function sha256(file) {
   const hash = createHash('sha256')
   await pipeline(createReadStream(file), hash)
@@ -115,7 +159,8 @@ export function createUpdater({ current, arch, dir, onChange, onFound = () => {}
       if (response.status === 404) throw new Error('找不到发布：仓库可能还是私有的')
       if (response.status === 403 || response.status === 429) throw new Error('GitHub 暂时不让查了（查得太频繁），过一会儿再试')
       if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`)
-      const pick = pickRelease(await response.json(), current, arch)
+      const releases = await response.json()
+      const pick = pickRelease(releases, current, arch)
       if (pick?.version !== found?.version) delete state.download
       found = pick
       state.latest = pick === undefined ? undefined : {
@@ -124,6 +169,7 @@ export function createUpdater({ current, arch, dir, onChange, onFound = () => {}
         notesUrl: pick.release.html_url,
         publishedAt: pick.release.published_at,
         size: installerAsset(pick.release, arch).size,
+        notes: releaseNotes(releases, current).filter(n => compareVersions(n.version, pick.version) <= 0),
       }
       delete state.error
       if (pick !== undefined && automatic && pick.version !== settings.skipped && !announced.has(pick.version)) {

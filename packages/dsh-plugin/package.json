@@ -40,6 +40,7 @@
     "./scheduler": "./lib/scheduler.js",
     "./game-intel": "./lib/game-intel.js",
     "./agent": "./lib/agent.js",
+    "./low-context": "./lib/low-context.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },

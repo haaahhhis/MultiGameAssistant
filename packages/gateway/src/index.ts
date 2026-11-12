@@ -46,6 +46,7 @@ import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
 import { MemoryStore, memoryPrompt, memoryTools } from './memory.ts'
 import { AutoMemory } from './memory-auto.ts'
+import { historyTools } from './history.ts'
 import { convertRecords } from './convert.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
@@ -872,6 +873,14 @@ export class AdgGateway extends Service {
       for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId) })) {
         this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
       }
+      // The words of its earlier conversations (history.ts): what compaction took out of the context is still in the log.
+      const history = historyTools({
+        agentOf: sessionId => this.memoryOwner(sessionId),
+        sessions: (agent, signal) => this.sessionsOf(agent, signal),
+        read: (sessionId, maxMessages, signal) => this.sessionEvents(sessionId, maxMessages, signal),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      })
+      for (const tool of history) this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
     }
 
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
@@ -1134,6 +1143,41 @@ Content-Length: 0
       const iterator = this.ctx.sessionController.follow({ address: { kind: 'session', sessionId: sessionId as never }, maxMessages: 80 }, controller.signal)[Symbol.asyncIterator]()
       const first = await iterator.next()
       return first.done === true || first.value.type !== 'snapshot' ? [] : convertRecords(first.value.records)
+    } finally {
+      signal.removeEventListener('abort', stop)
+      controller.abort()
+    }
+  }
+
+  /** An agent's own conversations (not its sub-agents'), newest first. */
+  private async sessionsOf(agent: string, signal: AbortSignal): Promise<{ id: string; title: string | null; updatedAt?: number }[]> {
+    const { items } = await this.ctx.sessionController.list({}, signal)
+    return items
+      .filter(s => s.origin !== 'subagent' && this.isOwn(String(s.sessionId)) && this.memoryOwner(String(s.sessionId)) === agent)
+      .map(s => ({ id: String(s.sessionId), title: ((s.projections?.values as { title?: unknown } | undefined)?.title as string | undefined) ?? null, ...(typeof s.updatedAt === 'number' ? { updatedAt: s.updatedAt } : {}) }))
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+  }
+
+  /** A session's records as protocol events, oldest first, back to about `maxMessages` messages (history.ts). */
+  private async sessionEvents(sessionId: string, maxMessages: number, signal: AbortSignal): Promise<SessionEvent[]> {
+    const controller = new AbortController()
+    const stop = () => controller.abort()
+    signal.addEventListener('abort', stop, { once: true })
+    const address = { kind: 'session', sessionId: sessionId as never } as const
+    const PAGE = 400
+    try {
+      const iterator = this.ctx.sessionController.follow({ address, maxMessages: Math.min(PAGE, maxMessages) }, controller.signal)[Symbol.asyncIterator]()
+      const first = await iterator.next()
+      if (first.done === true || first.value.type !== 'snapshot') return []
+      const snapshot = first.value
+      let events = convertRecords(snapshot.records)
+      let more = snapshot.hasMore
+      for (let read = PAGE; more && read < maxMessages && events.length > 0; read += PAGE) {
+        const page = await this.ctx.sessionController.page({ address, throughSeq: snapshot.cursor, beforeSeq: events[0]!.seq, maxMessages: PAGE }, controller.signal)
+        events = [...convertRecords(page.records), ...events]
+        more = page.hasMore
+      }
+      return events
     } finally {
       signal.removeEventListener('abort', stop)
       controller.abort()

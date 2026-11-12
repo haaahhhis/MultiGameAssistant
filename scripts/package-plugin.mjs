@@ -76,6 +76,8 @@ const result = await build({
     ...plugins.map(name => ({ in: join(root, 'packages', name, 'lib', 'index.js'), out: name })),
     // The app's part of its agent preset (packages/gateway/src/agent.ts).
     { in: join(root, 'packages', 'gateway', 'lib', 'agent.js'), out: 'agent' },
+    // Low-context mode, in the compaction group of that preset (packages/gateway/src/low-context.ts).
+    { in: join(root, 'packages', 'gateway', 'lib', 'low-context.js'), out: 'low-context' },
   ],
   outdir: join(staging, 'lib'),
   bundle: true,

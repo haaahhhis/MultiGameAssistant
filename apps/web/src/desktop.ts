@@ -1,3 +1,5 @@
+import type { ReleaseNote } from '@adg/protocol'
+
 /** What the desktop shell (apps/desktop/preload.cjs) adds; absent in a plain browser. */
 export interface DesktopBridge {
   /** A native file dialog. @returns the chosen file's path, or null when cancelled. */
@@ -46,7 +48,7 @@ export interface UpdateState {
   /** The last check failed: why. */
   error?: string
   /** A newer release (none when this is the newest). */
-  latest?: { version: string; prerelease: boolean; notesUrl: string; publishedAt?: string; size: number }
+  latest?: { version: string; prerelease: boolean; notesUrl: string; publishedAt?: string; size: number; /** What each release up to it brings, newest first. */ notes?: ReleaseNote[] }
   download?: { version: string; state: 'downloading' | 'ready' | 'failed'; received: number; total: number; error?: string }
 }
 

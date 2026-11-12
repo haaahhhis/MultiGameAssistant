@@ -188,6 +188,12 @@ const HOW_TO_WRITE = [
   '- 用户问你记得什么，照实说（按需用 memory_search 查全）；用户也可以在「设置 → 记忆」里看、改、删。',
 ].join('\n')
 
+/** Where the words of earlier conversations are (history.ts), when the summary and the memory are not enough. */
+const HISTORY = [
+  '## 以前的对话',
+  '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近几条消息），更早的对话你也看不到。摘要和上面的记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
+].join('\n')
+
 /**
  * The memory section of one agent's system prompt: all its profile entries,
  * the recent journal ones, and how to write more. A sub-agent reads the same,
@@ -223,6 +229,7 @@ export function memoryPrompt(entries: readonly MemoryEntry[], agentId: string, o
   if (journal.length > 0 || allJournal.length > 0) {
     parts.push(['## 近期日记', ...(journal.length === 0 ? ['（最近没有）'] : journal.map(line)), ...(allJournal.length > journal.length ? [`（更早的 ${allJournal.length - journal.length} 条日记不在这里，要用时用 memory_search 查）`] : [])].join('\n'))
   }
+  parts.push(HISTORY)
   parts.push(options.lead === undefined ? HOW_TO_WRITE : `这些只供参考：你是子 agent，不写记忆。发现值得记的（用户的偏好、做成的事），写进交给「${options.lead}」的回复里，由它去记。`)
   return parts.join('\n\n')
 }

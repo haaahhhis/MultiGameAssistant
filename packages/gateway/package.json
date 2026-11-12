@@ -16,6 +16,10 @@
       "types": "./lib/agent.d.ts",
       "default": "./lib/agent.js"
     },
+    "./low-context": {
+      "types": "./lib/low-context.d.ts",
+      "default": "./lib/low-context.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

@@ -6218,6 +6218,35 @@
             },
             "onNpm": {
               "type": "boolean"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "publishedAt": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "version",
+                  "url",
+                  "body"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -22999,13 +23028,23 @@
             },
             "threshold": {
               "type": "integer",
-              "minimum": 50,
-              "maximum": 95
+              "minimum": 5,
+              "maximum": 100
+            },
+            "lowContext": {
+              "type": "boolean"
+            },
+            "keepMessages": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
             }
           },
           "required": [
             "auto",
-            "threshold"
+            "threshold",
+            "lowContext",
+            "keepMessages"
           ],
           "additionalProperties": false
         },
@@ -23017,13 +23056,23 @@
             },
             "threshold": {
               "type": "integer",
-              "minimum": 50,
-              "maximum": 95
+              "minimum": 5,
+              "maximum": 100
+            },
+            "lowContext": {
+              "type": "boolean"
+            },
+            "keepMessages": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
             }
           },
           "required": [
             "auto",
-            "threshold"
+            "threshold",
+            "lowContext",
+            "keepMessages"
           ],
           "additionalProperties": false
         }
@@ -23046,13 +23095,23 @@
             },
             "threshold": {
               "type": "integer",
-              "minimum": 50,
-              "maximum": 95
+              "minimum": 5,
+              "maximum": 100
+            },
+            "lowContext": {
+              "type": "boolean"
+            },
+            "keepMessages": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
             }
           },
           "required": [
             "auto",
-            "threshold"
+            "threshold",
+            "lowContext",
+            "keepMessages"
           ],
           "additionalProperties": false
         }
@@ -23074,13 +23133,23 @@
             },
             "threshold": {
               "type": "integer",
-              "minimum": 50,
-              "maximum": 95
+              "minimum": 5,
+              "maximum": 100
+            },
+            "lowContext": {
+              "type": "boolean"
+            },
+            "keepMessages": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
             }
           },
           "required": [
             "auto",
-            "threshold"
+            "threshold",
+            "lowContext",
+            "keepMessages"
           ],
           "additionalProperties": false
         },
@@ -23092,13 +23161,23 @@
             },
             "threshold": {
               "type": "integer",
-              "minimum": 50,
-              "maximum": 95
+              "minimum": 5,
+              "maximum": 100
+            },
+            "lowContext": {
+              "type": "boolean"
+            },
+            "keepMessages": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20
             }
           },
           "required": [
             "auto",
-            "threshold"
+            "threshold",
+            "lowContext",
+            "keepMessages"
           ],
           "additionalProperties": false
         }

@@ -202,7 +202,12 @@
                 config:
                   # 设置 → 对话压缩 (compaction.json in the app's data); read when the agent service starts.
                   auto: !!js "(() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })().auto !== false"
-                  thresholdRatio: !!js "Math.min(95, Math.max(50, Number((() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })().threshold) || 80)) / 100"
+                  thresholdRatio: !!js "(Math.min(100, Math.max(5, Number((() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })().threshold) || 80)) / 100)"
+                  retainRatio: !!js "Math.min(0.16, (Math.min(100, Math.max(5, Number((() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })().threshold) || 80)) / 100) / 2)"
+              - id: adg-low-context
+                name: 'dsh-multigameassistant/low-context'
+                config:
+                  file: !!js "(process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json'"
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner
