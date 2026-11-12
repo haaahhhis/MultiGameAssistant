@@ -35,7 +35,7 @@ import { aboutCapability } from './about.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SessionEvent, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -45,6 +45,8 @@ import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-contex
 import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
 import { MemoryStore, memoryPrompt, memoryTools } from './memory.ts'
+import { AutoMemory } from './memory-auto.ts'
+import { convertRecords } from './convert.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
@@ -156,6 +158,8 @@ export interface Config {
    * only under dsh's own web server, at `/adg/`. @default true
    */
   readonly listen?: boolean
+  /** How long a conversation is quiet before automatic memory reads it (memory-auto.ts). @default DEFAULT_IDLE_MS */
+  readonly memoryIdleMs?: number
 }
 
 /** What a skill belongs to, as the 技能 page shows it. */
@@ -829,6 +833,23 @@ export class AdgGateway extends Service {
     if (config.dataDir !== undefined) {
       const memory = new MemoryStore(join(config.dataDir, 'memory.json'), () => this.broadcast('memory/changed', {}))
       this.memory = memory
+      // What the agents forgot to write, read back from a conversation once it is quiet (memory-auto.ts).
+      const auto = new AutoMemory({
+        store: memory,
+        file: join(config.dataDir, 'memory-auto.json'),
+        read: (sessionId, signal) => this.recentEvents(sessionId, signal),
+        agentOf: sessionId => {
+          const spec = this.specOf(sessionId)
+          return spec === undefined || spec.subAgentOf !== undefined ? undefined : { id: spec.id, name: this.persona?.of(spec.id).name ?? spec.name }
+        },
+        defaultModel: () => ctx.get('agentDefaultModel')?.currentSelection() as ModelSelection | undefined,
+        complete: request => this.completeOnce(request),
+        log,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...(config.memoryIdleMs === undefined ? {} : { idleMs: config.memoryIdleMs }),
+      })
+      ctx.effect(() => () => auto.dispose(), 'adg-gateway automatic memory')
+      ctx.on('api-session/status', (sessionId, running) => { if (this.isOwn(sessionId)) auto.activity(sessionId, running) })
       ctx.effect(() => this.registry.register({
         id: MEMORY_CAPABILITY,
         version: 1,
@@ -843,6 +864,8 @@ export class AdgGateway extends Service {
             try { return { item: await memory.update(id, { text, ...(kind === undefined ? {} : { kind }), ...(scope === undefined ? {} : { scope }) }, 'user') } } catch (error) { throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error)) }
           },
           'memory/remove': async params => ({ removed: await memory.remove((params as RequestParams<'memory/remove'>).id) }),
+          'memory/auto/get': async () => { await auto.loaded; return auto.settings },
+          'memory/auto/set': async params => auto.setSettings(params as RequestParams<'memory/auto/set'>),
         },
       }), 'adg-gateway capability memory')
       for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId) })) {
@@ -1099,6 +1122,40 @@ Content-Length: 0
       this.log.warn(`duty of the ${spec.name} agent (${agent.session.id}): ${error instanceof Error ? error.message : String(error)}`)
     }
     this.narrowed.set(agent, { spec, home, dispose: () => { for (const dispose of disposers) dispose() } })
+  }
+
+  /** A session's recent records as protocol events (automatic memory reads them back). */
+  private async recentEvents(sessionId: string, signal: AbortSignal): Promise<SessionEvent[]> {
+    const controller = new AbortController()
+    const stop = () => controller.abort()
+    signal.addEventListener('abort', stop, { once: true })
+    try {
+      const iterator = this.ctx.sessionController.follow({ address: { kind: 'session', sessionId: sessionId as never }, maxMessages: 80 }, controller.signal)[Symbol.asyncIterator]()
+      const first = await iterator.next()
+      return first.done === true || first.value.type !== 'snapshot' ? [] : convertRecords(first.value.records)
+    } finally {
+      signal.removeEventListener('abort', stop)
+      controller.abort()
+    }
+  }
+
+  /** One model call outside any conversation, for its text (dsh's llm service). */
+  private async completeOnce(request: { selection: ModelSelection; system: string; prompt: string; signal: AbortSignal }): Promise<string> {
+    const llm = this.ctx.get('llm')
+    if (llm === undefined) throw new Error('no model service')
+    const { provider, model, reasoningEffort } = request.selection
+    let text = ''
+    for await (const chunk of llm.stream({
+      provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as never }),
+      system: request.system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: request.prompt }] }],
+      maxTokens: 4000,
+      signal: request.signal,
+    })) {
+      if (chunk.type === 'text-delta') text += chunk.text
+      else if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) throw new Error(chunk.reason.failure.message)
+    }
+    return text
   }
 
   /** Whose memory an agent in this session reads and writes: its own agent's (a sub-agent's lead's); none for other chats. */

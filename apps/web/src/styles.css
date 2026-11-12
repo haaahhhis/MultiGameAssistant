@@ -1744,17 +1744,25 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .persona-follow button { flex: none; padding: 0 14px; }
 
 /* 设置 → 记忆 (MemoryPage) */
-.memory-search { margin-top: 0; }
+.memory-search { margin-top: 0; flex: 1 1 200px; min-width: 0; }
+.memory-browse { gap: 16px; }
+.memory-tabs { align-self: stretch; margin: 0; flex-wrap: wrap; }
+.memory-tabs button { flex: none; padding: 0 14px; }
+.memory-tab-count { margin-left: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.memory-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.memory-day { display: flex; flex-direction: column; gap: 4px; }
+.memory-day + .memory-day { padding-top: 6px; border-top: 1px solid var(--border); }
+.memory-day-title { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .memory-add-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .memory-kind { flex: none; margin: 0; }
 .memory-kind button { flex: none; padding: 0 14px; }
 .memory-scope { width: auto; min-width: 0; max-width: 100%; flex: 1 1 200px; margin-top: 0; }
 .memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.memory-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--border); }
-.memory-row:first-child { border-top: none; padding-top: 2px; }
+.memory-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
+.memory-row:first-child { border-top: none; padding-top: 4px; }
 .memory-text { font-size: 13.5px; line-height: 1.7; color: var(--text); overflow-wrap: anywhere; }
 .memory-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.memory-scope-tag { padding: 1px 8px; border-radius: 999px; font-size: 11.5px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
-.memory-scope-tag.shared { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.memory-kind-tag { padding: 1px 8px; border-radius: 999px; font-size: 11.5px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
+.memory-kind-tag.profile { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .memory-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 button.link-button.memory-forget { color: var(--error); }

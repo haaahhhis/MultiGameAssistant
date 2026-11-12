@@ -15,6 +15,10 @@
  * is that agent's id: only it reads it). Agents write them with
  * `memory_save` / `memory_forget`; the user reads, edits and deletes them on
  * 设置 → 记忆. Kept in `<dataDir>/memory.json`. Never passwords, codes or keys.
+ *
+ * With `auto` on (the default), a conversation that has been quiet for a while
+ * is also read back by a model, which adds what the agent forgot to write
+ * (entries `by: auto`). Only stretches where the user said something are read.
  */
 import { z } from 'zod'
 
@@ -38,10 +42,18 @@ export const MemoryEntry = z.object({
   /** ISO time it was written, and last changed. */
   createdAt: z.string(),
   updatedAt: z.string(),
-  /** Who wrote it: an agent id, or `user` (设置 → 记忆). */
+  /** Who wrote it: an agent id, `user` (设置 → 记忆), or `auto` (read back from a conversation). */
   by: z.string(),
 })
 export type MemoryEntry = z.infer<typeof MemoryEntry>
+
+/** Automatic memory: on or off, and the model it uses (null: the default model). */
+export const MemoryAutoSettings = z.object({
+  auto: z.boolean(),
+  /** Same shape as ModelSelection (methods.ts), which imports this file. */
+  model: z.object({ provider: z.string(), model: z.string(), reasoningEffort: z.string().optional() }).nullable(),
+})
+export type MemoryAutoSettings = z.infer<typeof MemoryAutoSettings>
 
 const MemoryText = z.string().trim().min(1).max(MAX_MEMORY_TEXT)
 
@@ -61,6 +73,16 @@ export const MemoryRequests = {
     capability: MEMORY_CAPABILITY,
     params: z.object({ id: z.string(), text: MemoryText, kind: MemoryKind.optional(), scope: z.string().min(1).max(64).optional() }),
     result: z.object({ item: MemoryEntry }),
+  },
+  'memory/auto/get': {
+    capability: MEMORY_CAPABILITY,
+    params: z.object({}),
+    result: MemoryAutoSettings,
+  },
+  'memory/auto/set': {
+    capability: MEMORY_CAPABILITY,
+    params: MemoryAutoSettings,
+    result: MemoryAutoSettings,
   },
   'memory/remove': {
     capability: MEMORY_CAPABILITY,
