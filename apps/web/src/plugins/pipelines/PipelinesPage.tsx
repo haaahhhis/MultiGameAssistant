@@ -7,6 +7,7 @@ import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { PipelineEditor, RETRIES, THEN } from './PipelineEditor.tsx'
+import { confirm } from '../../components/Dialog.tsx'
 import { Select } from '../../components/Select.tsx'
 
 const RUN_STATE: Readonly<Record<PipelineRun['state'], [string, string]>> = {
@@ -185,7 +186,7 @@ export function PipelinesPage({ client, openSettings, arg }: PageProps) {
                   ? <button className="danger-outline small-button" disabled={busy !== null} onClick={() => void act('cancel', () => client.connection.call('pipelines/cancel', { runId: activeRun.id }))}>取消运行</button>
                   :<button className="small-button" disabled={busy !== null || !pipeline.nodes.some(n => !isMarker(n)) || check?.ok === false} onClick={() => void runNow()}><Icon name="arrow" />运行</button>}
                 <button className="primary small-button" disabled={busy !== null || (!dirty && !isNew && pipeline.draft !== true)} onClick={() => void save()}>{busy === 'save' ? '保存中…' : pipeline.draft === true && !dirty ? '确认并保存' : '保存'}</button>
-                <button className="small-button" disabled={busy !== null || activeRun !== undefined} onClick={() => { if (confirm(`删除流水线「${pipeline.name}」？`)) void remove() }}>删除</button>
+                <button className="small-button" disabled={busy !== null || activeRun !== undefined} onClick={() => void confirm({ title: `删除流水线「${pipeline.name}」？`, message: '它的步骤和定时都会删掉，不能撤销。', confirmLabel: '删除', danger: true }).then(ok => { if (ok) void remove() })}>删除</button>
               </div>
               {stopping && (
                 <div className="notice info left small pipeline-stopping" role="status">

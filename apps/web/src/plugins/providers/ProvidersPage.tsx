@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY, type ModelCatalog, type ProviderProfile, type RequestResult } from '@adg/protocol'
+import { confirm } from '../../components/Dialog.tsx'
 import { useCredentials, useModelCatalog, useStore } from '../../hooks.ts'
 import { CredentialCard } from '../settings/ApiKeysPage.tsx'
 import { ProviderEditor } from './ProviderEditor.tsx'
@@ -137,7 +138,7 @@ function ProviderCard({ client, profile, revision, readOnly, onEdit, onRemoved }
     const keyNote = profile.apiKeyRef !== undefined && profile.credential?.source === 'file'
       ? `\n\n同时删除已保存的 Key（${profile.apiKeyRef}）。`
       : ''
-    if (!window.confirm(`确定删除「${profile.displayName}」吗？使用它的会话需要换一个模型。${keyNote}`)) return
+    if (!await confirm({ title: `删除「${profile.displayName}」？`, message: `使用它的会话需要换一个模型。${keyNote}`, confirmLabel: '删除', danger: true })) return
     setBusy(true)
     setError(null)
     try {

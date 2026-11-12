@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react'
 import { desktop, type UiMode } from '../desktop.ts'
+import { confirm } from './Dialog.tsx'
 import { Icon } from './Icons.tsx'
 
 const INTRO = [
@@ -15,7 +16,7 @@ const INTRO = [
   '· 第一次切换要启动它，可能要等一会儿；',
   '· 这边的定时任务和脚本在后台照常运行。',
   '',
-  '点标题栏左上角的「返回 MultiGameAssistant」切回来。现在切换吗？',
+  '点标题栏左上角的「返回 MultiGameAssistant」切回来。',
 ].join('\n')
 const INTRO_KEY = 'adg.officialIntro'
 
@@ -34,9 +35,9 @@ export function UiSwitch() {
   const official = state.mode === 'official'
   const go = () => {
     if (official) { void bridge.set('adg'); return }
-    if (!introduced() && !window.confirm(INTRO)) return
-    markIntroduced()
-    void bridge.set('official')
+    const switchOver = () => { markIntroduced(); void bridge.set('official') }
+    if (introduced()) { switchOver(); return }
+    void confirm({ title: '切换到 dsh 官方界面？', message: INTRO, confirmLabel: '切换', icon: 'popout' }).then(ok => { if (ok) switchOver() })
   }
   const label = state.starting ? '正在启动官方界面…' : official ? '返回 MultiGameAssistant' : 'dsh 官方界面'
   return (

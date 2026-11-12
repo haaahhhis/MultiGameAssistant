@@ -3,6 +3,7 @@ import type { AdgClient } from '@adg/client-core'
 import type { CredentialInfo, ModelSelection } from '@adg/protocol'
 import { useModelCatalog, useStore } from '../../hooks.ts'
 import { ProvidersSection } from '../providers/ProvidersPage.tsx'
+import { confirm } from '../../components/Dialog.tsx'
 import { Select } from '../../components/Select.tsx'
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -76,7 +77,7 @@ export function CredentialCard({ client, refName, title, description, helpUrl, i
   }
 
   const remove = async () => {
-    if (!window.confirm(`确定要删除已保存的 ${title} 吗？删除后需要重新填写才能使用对应模型。`)) return
+    if (!await confirm({ title: `删除已保存的 ${title}？`, message: '删除后需要重新填写才能使用对应模型。', confirmLabel: '删除', danger: true })) return
     setBusy(true)
     setMessage(null)
     try {

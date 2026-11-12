@@ -4,7 +4,9 @@ import type { AgentReminder, PipelineSchedule, PipelineSummary, RequestResult } 
 import { MAIN, MAIN_AGENT, agentOf, useRoles, type Agent } from '../agents.ts'
 import { useNow, useStore } from '../hooks.ts'
 import { errorText } from '../plugins/scripts/data.ts'
+import { confirm } from './Dialog.tsx'
 import { Icon } from './Icons.tsx'
+import { Select } from './Select.tsx'
 import { relativeTime } from './SessionList.tsx'
 
 /**
@@ -259,8 +261,8 @@ function PipelineLine({ pipeline, now }: { pipeline: PipelineSummary; now: numbe
 /** A reminder the agent set for itself: when, what for; it can be removed (not edited: ask the agent). */
 function ReminderCard({ client, reminder, now }: { client: AdgClient; reminder: AgentReminder; now: number }) {
   const [error, setError] = useState<string | null>(null)
-  const remove = () => {
-    if (!confirm(`删除提醒「${reminder.title}」？`)) return
+  const remove = async () => {
+    if (!await confirm({ title: '删除这个提醒？', message: 'agent 到时候就不会再被叫起来做这件事。要改时间，直接在对话里跟它说。', quote: reminder.title, confirmLabel: '删除', danger: true })) return
     setError(null)
     client.connection.call('reminders/remove', { id: reminder.id }).catch(e => setError(errorText(e)))
   }
@@ -271,7 +273,7 @@ function ReminderCard({ client, reminder, now }: { client: AdgClient; reminder: 
         <span className="task-title">{reminder.title}</span>
         <span className="muted small">{reminder.rule === '一次' ? '' : `${reminder.rule} · `}{reminder.repeats ? '下次 ' : ''}{clock(reminder.next)}{reminder.next > now ? `（${until(reminder.next - now)}后）` : ''}</span>
         <span className="spacer" />
-        <button className="icon-button" onClick={remove} title="删除这个提醒" aria-label="删除"><Icon name="close" /></button>
+        <button className="icon-button" onClick={() => void remove()} title="删除这个提醒" aria-label="删除"><Icon name="close" /></button>
       </div>
       <div className="task-prompt">{reminder.prompt}</div>
       {error !== null && <div className="error small">{error}</div>}
@@ -308,7 +310,7 @@ function TaskCard({ client, task, now, onEdit }: { client: AdgClient; task: Task
         <button className="small-button" onClick={() => act('tasks/run')} disabled={run?.state === 'running'} title="现在就交给它做一次">{run?.state === 'running' ? '在做' : '立即运行'}</button>
         <button className="small-button" onClick={toggle}>{task.schedule.enabled ? '暂停' : '开启'}</button>
         {onEdit !== undefined && <button className="icon-button" onClick={onEdit} title="修改" aria-label="修改"><Icon name="pencil" /></button>}
-        {onEdit !== undefined && <button className="icon-button" onClick={() => { if (confirm(`删除定时任务「${task.title}」？`)) act('tasks/remove') }} title="删除" aria-label="删除"><Icon name="close" /></button>}
+        {onEdit !== undefined && <button className="icon-button" onClick={() => void confirm({ title: '删除这个定时任务？', message: '删掉后到点不会再交给 agent 做，不能撤销。', quote: task.title, confirmLabel: '删除', danger: true }).then(ok => { if (ok) act('tasks/remove') })} title="删除" aria-label="删除"><Icon name="close" /></button>}
       </div>
       <div className="task-prompt">{task.prompt}</div>
       {run !== undefined && (
@@ -358,11 +360,9 @@ function TaskForm({ client, agents, task, chooseAgent = false, onDone }: {
   return (
     <div className="task-card task-form">
       {chooseAgent && (
-        <label className="field-label">交给谁
-          <select className="text-input" value={agent} onChange={e => setAgent(e.target.value)}>
-            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </label>
+        <div className="field-label">交给谁
+          <Select aria-label="交给谁" value={agent} onChange={setAgent} options={agents.map(a => ({ value: a.id, label: a.name }))} />
+        </div>
       )}
       <label className="field-label">名字<input className="text-input plain" value={title} maxLength={60} onChange={e => setTitle(e.target.value)} placeholder="例如：看今天结束的活动" /></label>
       <label className="field-label">交给它的话<textarea className="text-input plain" rows={3} value={prompt} maxLength={4000} onChange={e => setPrompt(e.target.value)} placeholder="写完整：要做什么、要交回什么" /></label>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { MAX_SKILL_NAME, SKILL_NAME, type RequestResult, type ScriptInfo, type SkillInfo } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
+import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { desktop } from '../../desktop.ts'
@@ -155,7 +156,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
     void navigator.clipboard?.writeText(`/${name} `).then(() => setCopied(true), () => {})
   }
   const remove = async (skill: SkillInfo) => {
-    if (!confirm(`删除技能「${skill.name}」？它的文件夹会一起删掉，agent 以后就用不到它了。`)) return
+    if (!await confirm({ title: `删除技能「${skill.name}」？`, message: '它的文件夹会一起删掉，agent 以后就用不到它了。', confirmLabel: '删除', danger: true })) return
     try {
       await client.connection.call('skills/remove', { name: skill.name })
       setSelected('')

@@ -4,6 +4,7 @@ import type { SessionHandle, AdgClient } from '@adg/client-core'
 import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
 import { usePermissionMode, useStore } from '../hooks.ts'
 import { ModelPicker } from './ModelPicker.tsx'
+import { confirm } from './Dialog.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
 import { useSlash } from './SlashMenu.tsx'
 import { ContextMeter } from './ContextMeter.tsx'
@@ -78,9 +79,11 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     setText('')
     setError(null)
     if (running) { setError('agent 正在工作，等它停下再压缩'); return true }
-    if (!window.confirm(COMPACT_WARNING)) return true
-    setNote('正在压缩对话：模型在写摘要，可能要一两分钟…')
-    session.compact().then(r => setNote(r.message), e => { setNote(null); setError(e instanceof Error ? e.message : String(e)) })
+    void confirm({ title: '压缩这个对话？', message: COMPACT_WARNING, confirmLabel: '压缩', danger: true }).then(ok => {
+      if (!ok) return
+      setNote('正在压缩对话：模型在写摘要，可能要一两分钟…')
+      session.compact().then(r => setNote(r.message), e => { setNote(null); setError(e instanceof Error ? e.message : String(e)) })
+    })
     return true
   }
 
@@ -212,7 +215,7 @@ const COMPACT_WARNING = [
   '· 摘要可能漏掉或写错内容；',
   '· 不能撤销。界面上的聊天记录还在，但 agent 看不到了。',
   '',
-  '对话很长、回复变慢或报上下文超长时再压缩。确定压缩吗？',
+  '对话很长、回复变慢或报上下文超长时再压缩。',
 ].join('\n')
 
 const MAX_IMAGES = 4

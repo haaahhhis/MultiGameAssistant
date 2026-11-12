@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { DEFAULT_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD, MIN_COMPACTION_THRESHOLD, type CompactionSettings } from '@adg/protocol'
+import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
@@ -41,7 +42,9 @@ export function CompactionPage({ client }: { client: AdgClient }) {
   }, [client, status.state])
 
   const save = async (settings: CompactionSettings) => {
-    if (!settings.auto && state?.settings.auto === true && !window.confirm('关掉自动压缩后，对话超过模型的上下文长度时会直接出错，要手动压缩或开新对话才能继续。\n\n确定关掉吗？')) return
+    if (!settings.auto && state?.settings.auto === true && !await confirm({
+      title: '关掉自动压缩？', message: '关掉后，对话超过模型的上下文长度时会直接出错，要手动压缩或开新对话才能继续。', confirmLabel: '关掉', danger: true,
+    })) return
     setBusy(true)
     setError(null)
     try {
@@ -53,7 +56,9 @@ export function CompactionPage({ client }: { client: AdgClient }) {
     }
   }
   const restart = async () => {
-    if (restartService === undefined || !window.confirm('重启 agent 服务：正在进行的对话和正在跑的脚本、流水线会被中断，大约需要半分钟。\n\n确定现在重启吗？')) return
+    if (restartService === undefined || !await confirm({
+      title: '现在重启 agent 服务？', message: '正在进行的对话和正在跑的脚本、流水线会被中断，大约需要半分钟。', confirmLabel: '重启', danger: true, icon: 'refresh',
+    })) return
     await restartService()
   }
 

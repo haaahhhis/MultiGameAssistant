@@ -43,6 +43,8 @@
   --shadow-1: 0 1px 2px rgb(16 16 20 / .04);
   --shadow: 0 1px 2px rgb(16 16 20 / .04), 0 24px 48px -28px rgb(16 16 20 / .16);
   --shadow-pop: 0 0 0 1px rgb(16 16 20 / .04), 0 12px 32px -8px rgb(16 16 20 / .18);
+  /* Behind a dialog or window that holds the page (Dialog.tsx, .dialog-backdrop, the games page window). */
+  --scrim: rgb(16 16 20 / .34);
   --r-sm: 6px;
   --r-md: 10px;
   --r-lg: 14px;
@@ -94,6 +96,7 @@
     --shadow-1: inset 0 1px 0 rgb(255 255 255 / .03);
     --shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 30px 60px -30px rgb(0 0 0 / .7);
     --shadow-pop: inset 0 1px 0 rgb(255 255 255 / .05), 0 16px 40px -12px rgb(0 0 0 / .7);
+    --scrim: rgb(0 0 0 / .56);
     color-scheme: dark;
   }
 }
@@ -135,6 +138,7 @@
   --shadow-1: inset 0 1px 0 rgb(255 255 255 / .03);
   --shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 30px 60px -30px rgb(0 0 0 / .7);
   --shadow-pop: inset 0 1px 0 rgb(255 255 255 / .05), 0 16px 40px -12px rgb(0 0 0 / .7);
+  --scrim: rgb(0 0 0 / .56);
   color-scheme: dark;
 }
 
@@ -341,7 +345,7 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .context-fill { fill: none; stroke: currentColor; stroke-width: 2px; stroke-linecap: round; }
 .context-meter.raised .context-trigger { color: var(--warn); }
 .context-meter.high .context-trigger { color: var(--error); }
-.context-panel { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); font-size: 12px; line-height: 20px; color: var(--text-2); }
+.context-panel { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: min(280px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); font-size: 12px; line-height: 20px; color: var(--text-2); }
 .context-head { display: flex; align-items: center; gap: 6px; }
 .context-head strong { color: var(--text); font-weight: 600; }
 .context-figures { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -639,12 +643,30 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 /* approvals */
 .approval-dock { position: fixed; right: 28px; bottom: 132px; width: min(380px, calc(100vw - 32px)); max-height: calc(100dvh - 160px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; z-index: 10; }
 /* A dialog that waits for the person (e.g. 「我已手动改好」 while the script's own window is open) */
-.dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, #000 32%, transparent); }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--scrim); animation: confirm-fade .16s var(--ease) both; }
 .dialog { display: flex; flex-direction: column; gap: 12px; width: min(480px, 100%); padding: 20px 22px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-pop); animation: rise .2s var(--ease) both; }
 .dialog h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
 .dialog h3 .ui-icon { width: 16px; height: 16px; color: var(--accent); }
 .dialog p { margin: 0; line-height: 1.7; font-size: 13.5px; }
 .dialog-progress { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+/* The app's confirm / alert box (components/Dialog.tsx), above panels and other dialogs. */
+.confirm-backdrop { z-index: 950; }
+@keyframes confirm-fade { from { opacity: 0; } }
+.confirm-dialog { width: min(440px, 100%); max-height: calc(100dvh - 32px); gap: 10px; padding: 20px 22px 18px; }
+.confirm-dialog h3 { align-items: flex-start; line-height: 1.45; overflow-wrap: anywhere; }
+.confirm-dialog h3 .ui-icon { flex-shrink: 0; margin-top: 2px; }
+.confirm-dialog.danger h3 .ui-icon { color: var(--error); }
+.confirm-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; color: var(--text-2); font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.confirm-body ul { margin: 0; padding-left: 1.3em; }
+.confirm-body li + li { margin-top: 2px; }
+.confirm-body li::marker { color: var(--muted); }
+.confirm-quote { margin: 0; padding: 8px 12px; max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--r-md); background: var(--sunken); color: var(--text); font-size: 13px; white-space: pre-wrap; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.confirm-actions button { min-width: 76px; }
+@media (max-width: 420px) {
+  .confirm-dialog { padding: 18px 16px 14px; }
+  .confirm-actions button { flex: 1; }
+}
 .approval-card { display: flex; flex-direction: column; gap: 10px; background: var(--raised); border: 1px solid color-mix(in srgb, var(--warn) 32%, var(--border)); border-radius: var(--r-lg); padding: 16px 18px; box-shadow: var(--shadow-pop); animation: rise .2s var(--ease) both; }
 .approval-head { display: flex; align-items: flex-start; gap: 12px; }
 .approval-head > .ui-icon { color: var(--warn); margin-top: 2px; }
@@ -1609,6 +1631,12 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .slash-tip { position: absolute; left: calc(260px + 8px); width: 260px; display: flex; flex-direction: column; gap: 4px; padding: 8px 11px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12.5px; line-height: 1.55; box-shadow: var(--shadow-pop); pointer-events: none; }
 .slash-tip-kind { font-size: 11px; opacity: .65; }
 .slash-tip-arg { font-size: 11.5px; opacity: .7; }
+/* Hover hints for every title="…" (components/Tooltip.tsx): the slash menu's tip, small. */
+.app-tooltip { position: fixed; z-index: 2100; max-width: min(320px, calc(100vw - 16px)); padding: 5px 9px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12px; font-weight: 400; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; box-shadow: var(--shadow-pop); pointer-events: none; animation: tip-in .12s var(--ease) both; }
+.app-tooltip.below { animation-name: tip-in-below; }
+@keyframes tip-in { from { opacity: 0; transform: translateY(2px); } }
+@keyframes tip-in-below { from { opacity: 0; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .app-tooltip, .confirm-backdrop, .dialog-backdrop, .dialog { animation: none; } }
 @media (max-width: 720px) { .slash-tip { display: none; } }
 .slash-expansion { margin-top: 6px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
 .slash-expansion summary { cursor: pointer; list-style: none; font-size: 12px; }

@@ -3,6 +3,8 @@ import { AdgClient } from '@adg/client-core'
 import { App, TokenPrompt } from './App.tsx'
 import { BootScreen } from './components/BootScreen.tsx'
 import { CrashScreen } from './components/CrashScreen.tsx'
+import { DialogHost } from './components/Dialog.tsx'
+import { TooltipHost } from './components/Tooltip.tsx'
 import { gatewayUrl, MOUNTED, readToken, saveToken } from './config.ts'
 import { registerPlugin } from './plugins.ts'
 import { chatPlugin } from './plugins/chat/index.ts'
@@ -50,7 +52,7 @@ const root = createRoot(document.getElementById('root')!)
 function boot(token: string | null) {
   const client = new AdgClient({ url: gatewayUrl(token), clientInfo: { name: 'adg-web', version: '0.1.0' } })
   client.start()
-  root.render(<CrashScreen><App client={client} /><BootScreen client={client} /></CrashScreen>)
+  root.render(<CrashScreen><App client={client} /><BootScreen client={client} /><DialogHost /><TooltipHost /></CrashScreen>)
 }
 
 // Under dsh's web server its login is the key (config.ts MOUNTED).

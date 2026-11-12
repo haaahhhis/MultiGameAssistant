@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { PermissionMode, PermissionsState } from '@adg/protocol'
+import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
@@ -30,7 +31,10 @@ export function PermissionsPage({ client }: { client: AdgClient }) {
 
   const choose = async (mode: PermissionMode) => {
     if (state?.mode === mode) return
-    if (mode === 'full' && !window.confirm('打开「完全访问」后，agent 可以不经确认运行任何命令、修改或删除任何文件（包括脚本文件）、操作屏幕、安装软件。只在你信任当前模型、并且需要它自己完成整件事时打开。\n\n确定打开吗？')) return
+    if (mode === 'full' && !await confirm({
+      title: '打开「完全访问」？', icon: 'shield', confirmLabel: '打开', danger: true,
+      message: '打开后，agent 可以不经确认运行任何命令、修改或删除任何文件（包括脚本文件）、操作屏幕、安装软件。\n\n只在你信任当前模型、并且需要它自己完成整件事时打开。',
+    })) return
     setBusy(true)
     setError(null)
     try { setState(await client.connection.call('permissions/set', { mode })) } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
