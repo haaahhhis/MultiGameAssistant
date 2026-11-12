@@ -131,13 +131,16 @@ export function ActivityEditor({ client, game, activity, onDone, onCancel }: {
             {preview !== undefined ? <img src={preview} alt="" /> : <><Icon name="image" /><span>选图片</span><small>或粘贴</small></>}
           </button>
           <input ref={fileRef} type="file" accept={IMAGE_TYPES.join(',')} hidden onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
-          {(image !== null || (ownCover && !dropCover)) && (
-            <button type="button" className="link-button small muted" onClick={() => { setImage(null); if (ownCover) setDropCover(true) }}>
-              {image !== null ? '不用这张' : sourced ? '用回来源的图' : '去掉图片'}
-            </button>
-          )}
+          <div className="activity-image-tools">
+            <span className="muted small">{preview === undefined ? '点上面选图，或直接粘贴' : '点图片换一张，或直接粘贴'}</span>
+            {(image !== null || (ownCover && !dropCover)) && (
+              <button type="button" className="link-button small muted" onClick={() => { setImage(null); if (ownCover) setDropCover(true) }}>
+                {image !== null ? '不用这张' : sourced ? '用回来源的图' : '去掉图片'}
+              </button>
+            )}
+          </div>
         </div>
-        <div className="activity-editor-fields">
+        <div className="activity-editor-fields top">
           <div className="field-row">
             <label className="field wide"><span className="field-title">活动名</span>
               <input className="text-input plain" autoFocus={activity === undefined} maxLength={60} value={form.name} onChange={set('name')} placeholder="例如：周年庆签到" />
@@ -147,19 +150,21 @@ export function ActivityEditor({ client, game, activity, onDone, onCancel }: {
             </label>
           </div>
           <div className="field-row">
-            <label className="field"><span className="field-title">开始</span>
+            <label className="field date"><span className="field-title">开始</span>
               <input className="text-input plain" type="datetime-local" value={form.startsAt} onChange={set('startsAt')} />
             </label>
-            <label className="field"><span className="field-title">结束</span>
+            <label className="field date"><span className="field-title">结束</span>
               <input className="text-input plain" type="datetime-local" value={form.endsAt} onChange={set('endsAt')} />
             </label>
           </div>
           <span className="muted small">时间按游戏服务器时间（{zoneLabel(tz)}）{form.endsAt === '' ? '；不填结束时间的会一直留着，直到你去掉它' : ''}</span>
+        </div>
+        <div className="activity-editor-fields full">
           <label className="field"><span className="field-title">活动页面（可选）</span>
             <input className="text-input plain" type="url" value={form.url} onChange={set('url')} placeholder="https://…" />
           </label>
-          <label className="field"><span className="field-title">说明（可选）</span>
-            <textarea className="text-input plain" rows={2} maxLength={500} value={form.description} onChange={set('description')} placeholder="要做什么、奖励是什么" />
+          <label className="field description"><span className="field-title">说明（可选）<small className="muted">{form.description.length}/500</small></span>
+            <textarea className="text-input plain" rows={8} maxLength={500} value={form.description} onChange={set('description')} placeholder="要做什么、奖励是什么" />
           </label>
         </div>
       </div>

@@ -121,3 +121,27 @@ test('a quiet conversation is read once, after the wait; working again puts the 
   assert.equal(calls, 1)
   auto.dispose()
 })
+
+test('low-context mode keeps it on, whatever the switch says', async () => {
+  const store = new MemoryStore(undefined)
+  let lowContext = true
+  let calls = 0
+  const auto = new AutoMemory({
+    store, file: undefined,
+    read: async () => [user(1, '以后叫我徐坤'), agent(2, '好的')],
+    agentOf: () => ({ id: 'main', name: '助手' }),
+    defaultModel: () => ({ provider: 'p', model: 'm' }),
+    complete: async () => { calls++; return '{"ops":[]}' },
+    log: { info: () => {}, warn: () => {} },
+    forced: () => lowContext,
+  })
+  await auto.setSettings({ auto: false, model: null })
+  assert.equal(auto.forced, true)
+  assert.equal(auto.on, true)
+  assert.deepEqual(await auto.run('s1'), { kind: 'done', added: 0, replaced: 0, skipped: 0 })
+  assert.equal(calls, 1)
+  lowContext = false
+  assert.equal(auto.on, false)
+  assert.deepEqual(await auto.run('s1'), { kind: 'skipped', why: 'off' })
+  auto.dispose()
+})

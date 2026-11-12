@@ -57,8 +57,8 @@ test('the prompt carries every profile entry and the recent journal, and says ho
 
   const text = memoryPrompt(store.visibleTo('main'), 'main', { now, timeZone: 'Asia/Shanghai' })
   assert.match(text, /^# 长期记忆/)
-  assert.match(text, /## 资料\n- \[m\w+\] \(2026-11-02，你自己的\) 日报发到飞书群\n- \[m\w+\] \(2026-11-01，共享\) 用户喜欢先看结论/)
-  assert.match(text, /## 近期日记\n- \[m\w+\] \(2026-11-10，共享\) 2026-11-10 把星铁日常/)
+  assert.match(text, /## 资料\n- \[m\w+\] \(更新于 2026-11-02 \d\d:\d\d，你自己的\) 日报发到飞书群\n- \[m\w+\] \(更新于 2026-11-01 \d\d:\d\d，共享\) 用户喜欢先看结论/)
+  assert.match(text, /## 近期日记\n- \[m\w+\] \(记于 2026-11-10 \d\d:\d\d，共享\) 2026-11-10 把星铁日常/)
   assert.doesNotMatch(text, /装好了 MAA/, 'older than 30 days: found with memory_search')
   assert.match(text, /更早的 1 条日记/)
   assert.doesNotMatch(text, /游戏自己的日记/, "another agent's own")

@@ -136,7 +136,7 @@ export function MemoryPage({ client }: { client: AdgClient }) {
 function AutoMemorySettings({ client }: { client: AdgClient }) {
   const status = useStore(client.connection.status)
   const { catalog } = useModelCatalog(client)
-  const [settings, setSettings] = useState<MemoryAutoSettings | null>(null)
+  const [settings, setSettings] = useState<(MemoryAutoSettings & { forced?: boolean | undefined }) | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -149,7 +149,8 @@ function AutoMemorySettings({ client }: { client: AdgClient }) {
     setBusy(true)
     setError(null)
     try {
-      setSettings(await client.connection.call('memory/auto/set', next))
+      const saved = await client.connection.call('memory/auto/set', { auto: next.auto, model: next.model })
+      setSettings({ ...saved, ...(settings?.forced === true ? { forced: true } : {}) })
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -157,6 +158,7 @@ function AutoMemorySettings({ client }: { client: AdgClient }) {
     }
   }
   if (settings === null) return error === null ? null : <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>
+  const on = settings.auto || settings.forced === true
   const current = settings.model === null ? '' : `${settings.model.provider}/${settings.model.model}`
   const known = current === '' || (catalog?.groups.some(g => g.models.some(m => `${g.id}/${m.id}` === current)) ?? false)
   const choose = (value: string) => {
@@ -167,10 +169,11 @@ function AutoMemorySettings({ client }: { client: AdgClient }) {
     <section className="card">
       <h3>自动整理</h3>
       <label className="check-label">
-        <input type="checkbox" checked={settings.auto} disabled={busy} onChange={e => void save({ ...settings, auto: e.target.checked })} />
+        <input type="checkbox" checked={on} disabled={busy || settings.forced === true} onChange={e => void save({ ...settings, auto: e.target.checked })} />
         对话停下几分钟后，自动把没记下的偏好和做过的事整理进记忆
       </label>
-      {settings.auto && (
+      {settings.forced === true && <p className="muted small">低上下文模式开着，自动整理会一直开着。</p>}
+      {on && (
         <label className="field">
           <span className="field-title">整理用的模型</span>
           {catalog === null ? <span className="muted small">读取中…</span> : (
@@ -232,6 +235,9 @@ function MemoryRow({ entry, nameOf, onSave, onForget }: { entry: MemoryEntry; na
         : <textarea className="text-input plain" rows={2} maxLength={MAX_MEMORY_TEXT} value={editing} onChange={e => setEditing(e.target.value)} aria-label="修改记忆" autoFocus />}
       <div className="memory-meta">
         <span className={`memory-kind-tag ${entry.kind}`}>{entry.kind === 'profile' ? '资料' : '日记'}</span>
+        <time className="muted small" dateTime={at(entry)} title={entry.kind === 'journal' ? '记下的时间' : '最后更新的时间'}>
+          {new Date(at(entry)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
+        </time>
         <span className="muted small">{entry.by === 'user' ? '你记的' : entry.by === 'auto' ? '自动整理出来的' : `${nameOf(entry.by)}记的`}</span>
         <span className="memory-actions">
           {editing === null

@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { formatGap, LONG_GAP_MS, TIME_SOURCE, timeFacts, timeNote, type TimedEvent } from '../src/time-context.ts'
+import { coverOf, formatGap, LONG_GAP_MS, TIME_SOURCE, timeFacts, timeNote, type TimedEvent } from '../src/time-context.ts'
 
 const ZONE = 'Asia/Shanghai'
 const NOW = Date.parse('2026-10-29T08:30:00+08:00')
@@ -37,4 +37,21 @@ test('gaps read in days, hours and minutes', () => {
   assert.equal(formatGap(45 * MIN), '45 分钟')
   assert.equal(formatGap(125 * MIN), '2 小时 5 分钟')
   assert.equal(formatGap(1440 * MIN), '1 天')
+})
+
+test('a summary is labelled with the time and the #numbers of what it replaced, an earlier summary in it included', () => {
+  const replace = { op: 'replace', startSeq: 0, endSeq: 0 }
+  const events: TimedEvent[] = [
+    user(Date.parse('2026-10-27T09:00:00+08:00')),
+    { type: 'assistant/message', time: Date.parse('2026-10-27T09:01:00+08:00') },
+    { type: 'user/message', time: Date.parse('2026-10-27T12:00:00+08:00'), surfaceOp: replace, sourceEventSeqs: [0, 1] },
+    user(Date.parse('2026-10-28T10:00:00+08:00')),
+    { type: 'assistant/message', time: Date.parse('2026-10-28T10:02:00+08:00') },
+    { type: 'compaction/summary', time: Date.parse('2026-10-28T20:00:00+08:00') },
+    { type: 'user/message', time: Date.parse('2026-10-28T20:00:00+08:00'), surfaceOp: replace, sourceEventSeqs: [2, 3, 4] },
+  ]
+  const facts = at(events)
+  assert.deepEqual(facts.summaryCovers, { from: events[0]!.time, to: events[4]!.time, firstSeq: 0, lastSeq: 4 })
+  assert.deepEqual(coverOf(events[2]!, seq => events[seq]), { from: events[0]!.time, to: events[1]!.time, firstSeq: 0, lastSeq: 1 })
+  assert.equal(timeNote(facts, NOW, 2, ZONE), '（提醒）前面的对话摘要生成于 2026-10-28 周三 20:00，概括的是 2026-10-27 周二 09:00 到 2026-10-28 周三 10:02 的对话（原文是 #0–#4，要细节用 history_read 查），只反映那时的情况，里面的待办和下一步以现在的实际状态为准。')
 })

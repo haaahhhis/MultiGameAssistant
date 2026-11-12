@@ -170,9 +170,19 @@ function newId(now: Date): string {
   return `m${now.getTime().toString(36)}${randomBytes(2).toString('hex')}`
 }
 
-/** The day an entry was written, in the user's time zone. */
-function day(iso: string, timeZone: string | undefined): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso))
+/** When, in the user's time zone: `2026-11-12 14:30`. */
+export function stamp(iso: string, timeZone: string | undefined): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso)).map(p => [p.type, p.value]))
+  return `${parts['year']}-${parts['month']}-${parts['day']} ${parts['hour']}:${parts['minute']}`
+}
+
+/**
+ * An entry's time label, kept by the store (not written in its words, so it is
+ * always there): a journal entry is dated by when it was written down, a
+ * profile entry by when it was last true.
+ */
+export function entryTime(entry: MemoryEntry, timeZone: string | undefined): string {
+  return entry.kind === 'journal' ? `记于 ${stamp(entry.createdAt, timeZone)}` : `更新于 ${stamp(entry.updatedAt, timeZone)}`
 }
 
 /** How agents write memory: in every lead agent's prompt, entries or not, so it starts writing. */
@@ -191,7 +201,7 @@ const HOW_TO_WRITE = [
 /** Where the words of earlier conversations are (history.ts), when the summary and the memory are not enough. */
 const HISTORY = [
   '## 以前的对话',
-  '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近几条消息），更早的对话你也看不到。摘要和上面的记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
+  '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近 12 小时的对话），更早的对话你也看不到。摘要后面的提醒写着它概括的是哪段时间、哪些 #编号。摘要和上面的记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
 ].join('\n')
 
 /**
@@ -204,7 +214,7 @@ export function memoryPrompt(entries: readonly MemoryEntry[], agentId: string, o
   const now = options.now ?? new Date()
   const where = (entry: MemoryEntry) => (entry.scope === SHARED_MEMORY ? '共享' : entry.scope === agentId ? '你自己的' : entry.scope)
   // A journal entry is dated by when it happened; a profile entry by when it was last true.
-  const line = (entry: MemoryEntry) => `- [${entry.id}] (${day(entry.kind === 'journal' ? entry.createdAt : entry.updatedAt, options.timeZone)}，${where(entry)}) ${entry.text}`
+  const line = (entry: MemoryEntry) => `- [${entry.id}] (${entryTime(entry, options.timeZone)}，${where(entry)}) ${entry.text}`
 
   const profile: string[] = []
   let chars = 0
@@ -223,7 +233,7 @@ export function memoryPrompt(entries: readonly MemoryEntry[], agentId: string, o
     '# 长期记忆',
     entries.length === 0
       ? '你还没有关于用户的记忆。下面写了什么时候该记。'
-      : '下面是之前的对话里记下的关于用户的事（「共享」的所有 agent 都看得到，「你自己的」只有你看得到）。照着用，不用向用户复述；和用户现在说的不一样时以现在说的为准，并更新记忆。方括号里是这条的 id。',
+      : '下面是之前的对话里记下的关于用户的事（「共享」的所有 agent 都看得到，「你自己的」只有你看得到）。照着用，不用向用户复述；和用户现在说的不一样时以现在说的为准，并更新记忆。方括号里是这条的 id，圆括号里是它记下或最后更新的时间：说到它时按这个时间说（「11 月 12 日记的」），越早的越可能已经过时。',
   ]
   if (profile.length > 0) parts.push(['## 资料', ...profile, ...(allProfile.length > profile.length ? [`（还有 ${allProfile.length - profile.length} 条较早的资料，用 memory_search 查）`] : [])].join('\n'))
   if (journal.length > 0 || allJournal.length > 0) {
@@ -238,6 +248,8 @@ export interface MemoryToolDeps {
   readonly store: MemoryStore
   /** The agent working in a session (`main`, a role's id); undefined: not one of the app's. */
   readonly agentOf: (sessionId: string) => string | undefined
+  /** The user's, for the time labels. */
+  readonly timeZone?: string
 }
 
 const SaveArgs = z.object({
@@ -270,7 +282,7 @@ function own(deps: MemoryToolDeps, agent: string, id: string): MemoryEntry {
   return entry
 }
 
-const brief = (entry: MemoryEntry) => ({ id: entry.id, kind: entry.kind, shared: entry.scope === SHARED_MEMORY, date: entry.updatedAt.slice(0, 10), text: entry.text })
+const brief = (entry: MemoryEntry, timeZone: string | undefined) => ({ id: entry.id, kind: entry.kind, shared: entry.scope === SHARED_MEMORY, time: entryTime(entry, timeZone), text: entry.text })
 
 export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
   const save: ToolDefinition = {
@@ -302,10 +314,10 @@ export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
         const old = own(deps, agent, replaces)
         const scope = shared == null ? old.scope : shared ? SHARED_MEMORY : agent
         const entry = await deps.store.update(old.id, { text, kind, scope }, agent)
-        return { saved: brief(entry), replaced: old.text } as never
+        return { saved: brief(entry, deps.timeZone), replaced: old.text } as never
       }
       const entry = await deps.store.add({ kind, scope: shared === true ? SHARED_MEMORY : agent, text, by: agent })
-      return { saved: brief(entry), note: '已记下，以后的对话里都记得' } as never
+      return { saved: brief(entry, deps.timeZone), note: '已记下，以后的对话里都记得' } as never
     },
     presentCall: args => {
       const a = (args ?? {}) as { text?: unknown; kind?: unknown }
@@ -323,7 +335,7 @@ export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
       const agent = caller(deps, exec)
       const entry = own(deps, agent, parse(ForgetArgs, args).id)
       await deps.store.remove(entry.id)
-      return { forgot: brief(entry) } as never
+      return { forgot: brief(entry, deps.timeZone) } as never
     },
     presentCall: () => ({ card: 'generic', title: '忘掉一条记忆', kind: 'other' }),
   }
@@ -347,7 +359,7 @@ export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
       const { query, kind, limit } = parse(SearchArgs, args)
       await deps.store.loaded
       const found = deps.store.search(agent, query ?? '', { ...(kind == null ? {} : { kind }), ...(limit == null ? {} : { limit }) })
-      return { items: found.map(brief), ...(found.length === 0 ? { note: '没有找到。换个说法再查，或者就是没记过。' } : {}) } as never
+      return { items: found.map(entry => brief(entry, deps.timeZone)), ...(found.length === 0 ? { note: '没有找到。换个说法再查，或者就是没记过。' } : {}) } as never
     },
     presentCall: args => ({ card: 'generic', title: `查记忆：${String((args as { query?: unknown } | undefined)?.query ?? '最新的')}`, kind: 'other' }),
   }

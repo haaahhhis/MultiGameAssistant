@@ -19,6 +19,7 @@
  * With `auto` on (the default), a conversation that has been quiet for a while
  * is also read back by a model, which adds what the agent forgot to write
  * (entries `by: auto`). Only stretches where the user said something are read.
+ * Low-context mode (compaction.ts) keeps it on, whatever `auto` says.
  */
 import { z } from 'zod'
 
@@ -77,7 +78,8 @@ export const MemoryRequests = {
   'memory/auto/get': {
     capability: MEMORY_CAPABILITY,
     params: z.object({}),
-    result: MemoryAutoSettings,
+    /** `forced`: on whatever `auto` says, because low-context mode is on (compaction.ts). */
+    result: MemoryAutoSettings.extend({ forced: z.boolean().optional() }),
   },
   'memory/auto/set': {
     capability: MEMORY_CAPABILITY,

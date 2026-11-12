@@ -29,6 +29,17 @@ export interface TimedEvent {
   readonly type: string
   readonly time: number
   readonly data?: unknown
+  /** A summary replaces earlier history: `{ op: 'replace', … }`, citing what it replaced. */
+  readonly surfaceOp?: unknown
+  readonly sourceEventSeqs?: readonly number[]
+}
+
+/** What a summary stands for: the time and the numbers (#seq) of the first and last records it replaced. */
+export interface SummaryCover {
+  readonly from: number
+  readonly to: number
+  readonly firstSeq: number
+  readonly lastSeq: number
 }
 
 /** What the reminder says, from the session's events before this step. */
@@ -37,6 +48,8 @@ export interface TimeFacts {
   readonly previous?: number
   /** The newest conversation summary (compaction) since the last reminder. */
   readonly summaryAt?: number
+  /** What that summary stands for. */
+  readonly summaryCovers?: SummaryCover
 }
 
 const VISIBLE = new Set(['user/message', 'assistant/message', 'tool/result'])
@@ -49,6 +62,7 @@ const VISIBLE = new Set(['user/message', 'assistant/message', 'tool/result'])
 export function timeFacts(count: number, eventAt: (seq: number) => TimedEvent | undefined): TimeFacts {
   let previous: number | undefined
   let summaryAt: number | undefined
+  let summaryCovers: SummaryCover | undefined
   for (let seq = count - 1; seq >= 0 && seq >= count - SCAN_LIMIT; seq--) {
     const event = eventAt(seq)
     if (event === undefined) continue
@@ -56,8 +70,26 @@ export function timeFacts(count: number, eventAt: (seq: number) => TimedEvent | 
     if (VISIBLE.has(event.type)) previous ??= event.time
     if (ours) break
     if (event.type === 'compaction/summary') summaryAt ??= event.time
+    if (summaryCovers === undefined && isSummary(event)) summaryCovers = coverOf(event, eventAt)
   }
-  return { ...(previous === undefined ? {} : { previous }), ...(summaryAt === undefined ? {} : { summaryAt }) }
+  return { ...(previous === undefined ? {} : { previous }), ...(summaryAt === undefined ? {} : { summaryAt }), ...(summaryCovers === undefined ? {} : { summaryCovers }) }
+}
+
+const isSummary = (event: TimedEvent) => event.type === 'user/message' && typeof event.surfaceOp === 'object' && event.surfaceOp !== null && (event.sourceEventSeqs?.length ?? 0) > 0
+
+/** The span a summary replaced; an earlier summary inside it counts for what it replaced in turn. */
+export function coverOf(summary: TimedEvent, eventAt: (seq: number) => TimedEvent | undefined, depth = 0): SummaryCover | undefined {
+  let cover: SummaryCover | undefined
+  const widen = (next: SummaryCover) => {
+    cover = cover === undefined ? next : { from: Math.min(cover.from, next.from), to: Math.max(cover.to, next.to), firstSeq: Math.min(cover.firstSeq, next.firstSeq), lastSeq: Math.max(cover.lastSeq, next.lastSeq) }
+  }
+  for (const seq of summary.sourceEventSeqs ?? []) {
+    const source = eventAt(seq)
+    if (source === undefined) continue
+    const inner = depth < 8 && isSummary(source) ? coverOf(source, eventAt, depth + 1) : undefined
+    widen(inner ?? { from: source.time, to: source.time, firstSeq: seq, lastSeq: seq })
+  }
+  return cover
 }
 
 /** The reminder for this step, or undefined when none applies. */
@@ -68,7 +100,9 @@ export function timeNote(facts: TimeFacts, now: number, step: number, timeZone: 
     lines.push(`（提醒）距上一条消息过去了 ${formatGap(now - facts.previous)}（上一条在 ${formatTime(facts.previous, timeZone)}，现在 ${formatTime(now, timeZone)}）。之前对话里的待办、问题和状态可能已经过时：涉及它们时先用工具查现在的情况，不要直接追问；还需要问时说明是哪天的事。`)
   }
   if (facts.summaryAt !== undefined) {
-    lines.push(`（提醒）前面的对话摘要生成于 ${formatTime(facts.summaryAt, timeZone)}，只反映那时的情况，里面的待办和下一步以现在的实际状态为准。`)
+    const cover = facts.summaryCovers
+    const span = cover === undefined ? '' : `，概括的是 ${formatTime(cover.from, timeZone)} 到 ${formatTime(cover.to, timeZone)} 的对话（原文是 #${cover.firstSeq}–#${cover.lastSeq}，要细节用 history_read 查）`
+    lines.push(`（提醒）前面的对话摘要生成于 ${formatTime(facts.summaryAt, timeZone)}${span}，只反映那时的情况，里面的待办和下一步以现在的实际状态为准。`)
   }
   return lines.length === 0 ? undefined : lines.join('\n')
 }

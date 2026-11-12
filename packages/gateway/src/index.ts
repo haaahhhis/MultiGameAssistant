@@ -311,6 +311,7 @@ export class AdgGateway extends Service {
   private persona: PersonaStore | undefined
   /** Long-term memory (memory.ts): every agent's prompt carries what it may read. */
   private memory: MemoryStore | undefined
+  private compaction: CompactionStore | undefined
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
   private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
@@ -849,6 +850,8 @@ export class AdgGateway extends Service {
         log,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(config.memoryIdleMs === undefined ? {} : { idleMs: config.memoryIdleMs }),
+        // Low-context mode compacts all but the last hours: what is worth keeping must be read out first.
+        forced: () => this.compaction?.state().settings.lowContext === true,
       })
       ctx.effect(() => () => auto.dispose(), 'adg-gateway automatic memory')
       ctx.on('api-session/status', (sessionId, running) => { if (this.isOwn(sessionId)) auto.activity(sessionId, running) })
@@ -866,11 +869,11 @@ export class AdgGateway extends Service {
             try { return { item: await memory.update(id, { text, ...(kind === undefined ? {} : { kind }), ...(scope === undefined ? {} : { scope }) }, 'user') } } catch (error) { throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error)) }
           },
           'memory/remove': async params => ({ removed: await memory.remove((params as RequestParams<'memory/remove'>).id) }),
-          'memory/auto/get': async () => { await auto.loaded; return auto.settings },
+          'memory/auto/get': async () => { await auto.loaded; return { ...auto.settings, ...(auto.forced ? { forced: true } : {}) } },
           'memory/auto/set': async params => auto.setSettings(params as RequestParams<'memory/auto/set'>),
         },
       }), 'adg-gateway capability memory')
-      for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId) })) {
+      for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })) {
         this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
       }
       // The words of its earlier conversations (history.ts): what compaction took out of the context is still in the log.
@@ -886,6 +889,7 @@ export class AdgGateway extends Service {
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
     if (config.dataDir !== undefined) {
       const compaction = new CompactionStore(config.dataDir)
+      this.compaction = compaction
       ctx.effect(() => this.registry.register({
         id: COMPACTION_CAPABILITY,
         version: 1,
@@ -1047,6 +1051,19 @@ Content-Length: 0
       peer.close()
     })
     socket.on('error', error => log.warn(`socket error: ${error.message}`))
+  }
+
+  /**
+   * Is work of this conversation's task still going elsewhere: a sub-agent of
+   * it working, or work it handed to a colleague not back yet? Low-context mode
+   * (low-context.ts) compacts only once there is none.
+   */
+  workPending(sessionId: string): boolean {
+    for (const agent of this.agents.values()) {
+      const header = agent.session.header
+      if (header?.origin === 'subagent' && header.parentSession === sessionId && (agent as { status?: string }).status === 'running') return true
+    }
+    return (this.handOffDesk as { waitingOn?(sessionId: string): boolean } | undefined)?.waitingOn?.(sessionId) === true
   }
 
   /** Is this one of the app's sessions? Every session is, unless the dsh is shared (Config.shared). */

@@ -23033,18 +23033,12 @@
             },
             "lowContext": {
               "type": "boolean"
-            },
-            "keepMessages": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 20
             }
           },
           "required": [
             "auto",
             "threshold",
-            "lowContext",
-            "keepMessages"
+            "lowContext"
           ],
           "additionalProperties": false
         },
@@ -23061,18 +23055,12 @@
             },
             "lowContext": {
               "type": "boolean"
-            },
-            "keepMessages": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 20
             }
           },
           "required": [
             "auto",
             "threshold",
-            "lowContext",
-            "keepMessages"
+            "lowContext"
           ],
           "additionalProperties": false
         }
@@ -23100,18 +23088,12 @@
             },
             "lowContext": {
               "type": "boolean"
-            },
-            "keepMessages": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 20
             }
           },
           "required": [
             "auto",
             "threshold",
-            "lowContext",
-            "keepMessages"
+            "lowContext"
           ],
           "additionalProperties": false
         }
@@ -23138,18 +23120,12 @@
             },
             "lowContext": {
               "type": "boolean"
-            },
-            "keepMessages": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 20
             }
           },
           "required": [
             "auto",
             "threshold",
-            "lowContext",
-            "keepMessages"
+            "lowContext"
           ],
           "additionalProperties": false
         },
@@ -23166,18 +23142,12 @@
             },
             "lowContext": {
               "type": "boolean"
-            },
-            "keepMessages": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 20
             }
           },
           "required": [
             "auto",
             "threshold",
-            "lowContext",
-            "keepMessages"
+            "lowContext"
           ],
           "additionalProperties": false
         }
@@ -23445,6 +23415,9 @@
               "type": "null"
             }
           ]
+        },
+        "forced": {
+          "type": "boolean"
         }
       },
       "required": [

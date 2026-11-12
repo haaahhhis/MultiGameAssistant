@@ -110,6 +110,8 @@ export interface HandOffDesk {
   askRefusal(sessionId: string): string | undefined
   /** A reminder this conversation's agent is setting, saying where its words go when it comes; undefined when it is not on a thread. */
   reminderNote(sessionId: string, prompt: string): string | undefined
+  /** Has this conversation handed work on that has not come back yet? */
+  waitingOn(sessionId: string): boolean
 }
 
 export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
@@ -189,6 +191,10 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
       if (chain.length > MAX_HOPS) return `这件事已经转了 ${MAX_HOPS} 手，不能再往下交了：用你手上的信息做完，在结论里说清楚缺什么`
       if (chainTop(parent).said >= MAX_CHAIN_MESSAGES) return `这件事的来回已经够多了（${MAX_CHAIN_MESSAGES} 条）：用你手上的信息做完，在结论里说清楚缺什么`
       return undefined
+    },
+
+    waitingOn(sessionId) {
+      return [...live.values()].some(t => t.item.fromSession === sessionId && t.conclusion === undefined)
     },
 
     askRefusal(sessionId) {

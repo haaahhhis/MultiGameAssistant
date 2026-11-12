@@ -175,6 +175,8 @@ export interface AutoMemoryDeps {
   readonly log: { info(message: string): void; warn(message: string): void }
   readonly idleMs?: number
   readonly timeZone?: string
+  /** On whatever the switch says: low-context mode keeps it on, since compaction leaves only the summary. */
+  readonly forced?: () => boolean
 }
 
 /** What one pass did, for the log and tests. */
@@ -201,10 +203,20 @@ export class AutoMemory {
     return this.#settings
   }
 
+  /** Kept on by low-context mode, whatever the switch says. */
+  get forced(): boolean {
+    return this.#deps.forced?.() === true
+  }
+
+  /** Does it read conversations now? */
+  get on(): boolean {
+    return this.#settings.auto || this.forced
+  }
+
   async setSettings(settings: MemoryAutoSettings): Promise<MemoryAutoSettings> {
     await this.loaded
     this.#settings = settings
-    if (!settings.auto) this.#clearTimers()
+    if (!this.on) this.#clearTimers()
     await this.#save()
     return settings
   }
@@ -214,7 +226,7 @@ export class AutoMemory {
     const timer = this.#timers.get(sessionId)
     if (timer !== undefined) clearTimeout(timer)
     this.#timers.delete(sessionId)
-    if (running || !this.#settings.auto || this.#stop.signal.aborted) return
+    if (running || !this.on || this.#stop.signal.aborted) return
     if (this.#deps.agentOf(sessionId) === undefined) return
     const next = setTimeout(() => {
       this.#timers.delete(sessionId)
@@ -242,7 +254,7 @@ export class AutoMemory {
   async #pass(sessionId: string): Promise<PassOutcome> {
     await this.loaded
     await this.#deps.store.loaded
-    if (!this.#settings.auto) return { kind: 'skipped', why: 'off' }
+    if (!this.on) return { kind: 'skipped', why: 'off' }
     const agent = this.#deps.agentOf(sessionId)
     if (agent === undefined) return { kind: 'skipped', why: 'not an agent of the app' }
     const signal = AbortSignal.any([this.#stop.signal, AbortSignal.timeout(120_000)])

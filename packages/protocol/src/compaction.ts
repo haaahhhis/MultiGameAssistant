@@ -7,11 +7,13 @@
  * applies after a restart, until then `applied` differs from `settings`.
  * Compacting by hand (session/compact) works either way.
  *
- * Low-context mode (`lowContext`) also compacts before each step: everything
- * but the latest `keepMessages` messages, and anything older than a day, is
- * replaced by the summary. Only what was compacted leaves the agent's context;
- * the agent reads the rest back with history_search / history_read. It is read
- * before every step, so it applies at once.
+ * Low-context mode (`lowContext`) keeps the last 12 hours in the context: what
+ * is older is compacted into the summary, and only once the agent's task is
+ * over (its turn ends with nothing of it still going: no sub-agent, no
+ * hand-off waiting for an answer). Never in the middle of a task, so the
+ * model provider's prompt cache keeps working there. Only what was compacted
+ * leaves the agent's context; the agent reads it back with history_search /
+ * history_read. It is read each time, so it applies at once.
  */
 import { z } from 'zod'
 
@@ -26,22 +28,16 @@ export const MAX_COMPACTION_THRESHOLD = 100
 /** Below this, compacting often: the settings page says so. */
 export const LOW_COMPACTION_THRESHOLD = 30
 
-/** Low-context mode: how many of the latest messages stay word for word. */
-export const DEFAULT_KEEP_MESSAGES = 5
-export const MIN_KEEP_MESSAGES = 2
-export const MAX_KEEP_MESSAGES = 20
-/** Low-context mode: a message older than this is compacted, however few there are. */
-export const LOW_CONTEXT_MAX_AGE_MS = 24 * 60 * 60_000
+/** Low-context mode: what is more recent than this stays word for word. */
+export const LOW_CONTEXT_WINDOW_MS = 12 * 60 * 60_000
 
 export const CompactionSettings = z.object({
   /** Compact by itself when the conversation is long; off: a too-long conversation fails until compacted by hand. */
   auto: z.boolean(),
   /** How full the context window gets before compacting, in percent. */
   threshold: z.number().int().min(MIN_COMPACTION_THRESHOLD).max(MAX_COMPACTION_THRESHOLD),
-  /** Low-context mode: keep only the latest messages and the summary in the context. */
+  /** Low-context mode: keep only the last 12 hours and the summary in the context. */
   lowContext: z.boolean(),
-  /** Low-context mode: the latest messages kept word for word. */
-  keepMessages: z.number().int().min(MIN_KEEP_MESSAGES).max(MAX_KEEP_MESSAGES),
 })
 export type CompactionSettings = z.infer<typeof CompactionSettings>
 

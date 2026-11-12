@@ -1,21 +1,26 @@
 /**
- * @adg/gateway/low-context — low-context mode (设置 → 对话压缩): before each
- * step, the conversation is compacted down to its latest few messages, and a
- * message older than a day is compacted however few there are. It is dsh's own
- * compaction (the summary the model writes, citing what it replaced), only on a
- * span chosen by message count and age instead of by how full the context is:
- * nothing leaves the agent's context without being compacted, and the durable
- * log keeps every word (the chat shows it all; the agent reads it back with
- * history_search / history_read, history.ts).
+ * @adg/gateway/low-context — low-context mode (设置 → 对话压缩): the last 12
+ * hours of a conversation stay word for word; what is older is compacted into
+ * the summary. It is dsh's own compaction (the summary the model writes,
+ * citing what it replaced), only on a span chosen by age instead of by how
+ * full the context is: nothing leaves the agent's context without being
+ * compacted, and the durable log keeps every word (the chat shows it all; the
+ * agent reads it back with history_search / history_read, history.ts).
+ *
+ * It compacts only once the agent's task is over: as its turn ends, with
+ * nothing of that task still going (no sub-agent working, no hand-off waiting
+ * for an answer, no message queued for the next turn). Never in the middle of
+ * a task, where rewriting the history would lose the model provider's prompt
+ * cache on every request after it.
  *
  * Mounted in the agent preset's compaction group, next to dsh-compaction-basic
  * (scripts/lib/standard-preset.mjs), so it reaches that group's engine. It
- * reads compaction.json before every step (a stat, and the file only when it
+ * reads compaction.json each time (a stat, and the file only when it
  * changed), so turning it on or off applies at once.
  */
 import { readFileSync, statSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import { DEFAULT_KEEP_MESSAGES, LOW_CONTEXT_MAX_AGE_MS, MAX_KEEP_MESSAGES, MIN_KEEP_MESSAGES } from '@adg/protocol'
+import { LOW_CONTEXT_WINDOW_MS } from '@adg/protocol'
 
 export const name = 'adg-low-context'
 export const inject = ['compaction']
@@ -39,22 +44,6 @@ export interface SurfaceView {
   eventAt(seq: number): SurfaceEvent | undefined
 }
 
-export interface LowContextOptions {
-  /** The latest messages kept word for word. */
-  readonly keep: number
-  readonly now: number
-  /** Older than this is compacted, however few. */
-  readonly maxAgeMs?: number
-  /**
-   * Messages past `keep` before it compacts by count, so each new message does
-   * not cost a summary of its own: it keeps `keep` to `keep + slack`.
-   */
-  readonly slack?: number
-}
-
-/** How many messages over `keep` wait for the next compaction. */
-export const SLACK = 2
-
 const isReplace = (event: SurfaceEvent) => typeof event.surfaceOp === 'object' && event.surfaceOp !== null
 const sourceOf = (data: unknown): { kind?: unknown; form?: unknown } => (data as { source?: { kind?: unknown; form?: unknown } } | undefined)?.source ?? {}
 
@@ -77,63 +66,49 @@ export function isMessage(event: SurfaceEvent): boolean {
 
 /**
  * The span to compact, as the inclusive first and last surface seqs; null when
- * nothing needs it. It starts after the system prompt and ends just before a
- * message, so a turn (with its tool calls and results) goes whole, and the
- * latest message always stays.
+ * nothing needs it: everything from after the system prompt up to the first
+ * message of the window. It ends just before a message, so a turn (with its
+ * tool calls and results) goes whole, and the latest message always stays.
  */
-export function lowContextRange(session: SurfaceView, options: LowContextOptions): { start: number; end: number } | null {
+export function lowContextRange(session: SurfaceView, options: { now: number; windowMs?: number }): { start: number; end: number } | null {
   const nodes = session.surface.nodes
   const events = nodes.map(seq => session.eventAt(seq))
   const first = events[0]?.type === 'system/message' ? 1 : 0
   const messages: number[] = []
   for (let i = first; i < events.length; i++) if (events[i] !== undefined && isMessage(events[i]!)) messages.push(i)
   if (messages.length === 0) return null
-  const keep = Math.max(1, options.keep)
-  const slack = options.slack ?? SLACK
-  let keepFrom = -1
-  if (messages.length > keep + slack) keepFrom = messages[messages.length - keep]!
-  // The first message within the age; when every one is older, the latest of them stays.
-  const cutoff = options.now - (options.maxAgeMs ?? LOW_CONTEXT_MAX_AGE_MS)
-  const fresh = messages.find(i => events[i]!.time >= cutoff) ?? messages[messages.length - 1]!
-  if (fresh > messages[0]!) keepFrom = Math.max(keepFrom, fresh)
+  const cutoff = options.now - (options.windowMs ?? LOW_CONTEXT_WINDOW_MS)
+  // The first message in the window; when every one is older, the latest of them stays.
+  const keepFrom = messages.find(i => events[i]!.time >= cutoff) ?? messages[messages.length - 1]!
   if (keepFrom <= first) return null
   // Only a summary before it: nothing new to compact.
   if (events.slice(first, keepFrom).every(event => event === undefined || isReplace(event) || event.type === 'system/message')) return null
   return { start: nodes[first]!, end: nodes[keepFrom - 1]! }
 }
 
-/** compaction.json's low-context part; off when missing or broken. */
-export interface LowContextSettings {
-  readonly on: boolean
-  readonly keep: number
-}
-
-export function parseLowContext(raw: unknown): LowContextSettings {
-  const value = (raw ?? {}) as { lowContext?: unknown; keepMessages?: unknown }
-  const keep = typeof value.keepMessages === 'number' && Number.isInteger(value.keepMessages)
-    ? Math.min(MAX_KEEP_MESSAGES, Math.max(MIN_KEEP_MESSAGES, value.keepMessages))
-    : DEFAULT_KEEP_MESSAGES
-  return { on: value.lowContext === true, keep }
+/** compaction.json's low-context switch; off when missing or broken. */
+export function parseLowContext(raw: unknown): boolean {
+  return (raw as { lowContext?: unknown } | undefined)?.lowContext === true
 }
 
 /** Reads the file again only when it changed. */
-export function settingsReader(file: string | undefined): () => LowContextSettings {
+export function settingsReader(file: string | undefined): () => boolean {
   let stamp = ''
-  let settings: LowContextSettings = parseLowContext(undefined)
+  let on = false
   return () => {
-    if (file === undefined) return settings
+    if (file === undefined) return on
     try {
       const stat = statSync(file)
       const now = `${stat.mtimeMs}:${stat.size}`
       if (now !== stamp) {
         stamp = now
-        settings = parseLowContext(JSON.parse(readFileSync(file, 'utf8')))
+        on = parseLowContext(JSON.parse(readFileSync(file, 'utf8')))
       }
     } catch {
       stamp = ''
-      settings = parseLowContext(undefined)
+      on = false
     }
-    return settings
+    return on
   }
 }
 
@@ -141,32 +116,46 @@ interface Engine {
   compactRegion?(start: number, end: number, agent: unknown, signal: AbortSignal): Promise<{ shadowedSeqs: readonly number[] }>
 }
 
-interface PreStep {
-  readonly agent: { readonly session: SurfaceView & { readonly id: string } }
-  readonly signal: AbortSignal
+/** The agent ending its turn, as dsh's `agent/turn-stopping` gives it. */
+export interface StoppingAgent {
+  readonly session: SurfaceView & { readonly id: string }
+  readonly inbox?: { readonly nextTurn?: readonly unknown[]; readonly nextStep?: readonly unknown[] }
+}
+
+/** The gateway's view of work still going for a conversation (index.ts `workPending`). */
+interface WorkView {
+  workPending?(sessionId: string): boolean
+}
+
+/**
+ * Is the agent's task over as its turn ends? Not when a message waits for its
+ * next turn, a sub-agent of it is working, or a colleague still owes it an
+ * answer: those bring it back to the same task.
+ */
+export function taskOver(agent: StoppingAgent, work: WorkView | undefined): boolean {
+  if ((agent.inbox?.nextTurn?.length ?? 0) > 0 || (agent.inbox?.nextStep?.length ?? 0) > 0) return false
+  return work?.workPending?.(agent.session.id) !== true
 }
 
 export function apply(ctx: Context, config: Config = {}): void {
   const log = ctx.logger('adg-low-context')
-  const read = settingsReader(config.file)
+  const enabled = settingsReader(config.file)
   const engine = (ctx as unknown as { compaction: Engine }).compaction
   if (typeof engine?.compactRegion !== 'function') {
     log.warn('this dsh compaction has no compactRegion: low-context mode is off')
     return
   }
-  ctx.on('agent/pre-step' as never, (async ({ agent, signal }: PreStep, next: () => Promise<unknown>) => {
-    const settings = read()
-    if (settings.on && !signal.aborted) {
-      try {
-        const range = lowContextRange(agent.session, { keep: settings.keep, now: Date.now() })
-        if (range !== null) {
-          const result = await engine.compactRegion!(range.start, range.end, agent, signal)
-          log.info(`low-context: compacted ${result.shadowedSeqs.length} records (seqs ${range.start}-${range.end}) of ${agent.session.id}`)
-        }
-      } catch (error) {
-        log.warn(`low-context compaction of ${agent.session.id} failed: ${error instanceof Error ? error.message : String(error)}; continuing the turn`)
-      }
+  // The turn is still open here, so the compaction belongs to it (as dsh's own automatic one does).
+  ctx.on('agent/turn-stopping' as never, (async ({ agent, signal }: { agent: StoppingAgent; signal: AbortSignal }) => {
+    if (!enabled() || signal.aborted) return
+    try {
+      if (!taskOver(agent, (ctx.get as (name: string) => unknown)('adgGateway') as WorkView | undefined)) return
+      const range = lowContextRange(agent.session, { now: Date.now() })
+      if (range === null) return
+      const result = await engine.compactRegion!(range.start, range.end, agent, signal)
+      log.info(`low-context: compacted ${result.shadowedSeqs.length} records (seqs ${range.start}-${range.end}) of ${agent.session.id}`)
+    } catch (error) {
+      log.warn(`low-context compaction of ${agent.session.id} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
-    return next()
   }) as never)
 }

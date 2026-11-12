@@ -35,6 +35,8 @@ test('the agent doing the work can ask, and the work goes on once it is answered
   const o = office(async (sessionId, message, desk) => {
     if (sessionId === 's-scripts' && parseTask(message) !== undefined) {
       id = parseTask(message)!.thread!
+      assert.equal(desk.waitingOn('s-main'), true, '助手 waits for this to come back')
+      assert.equal(desk.waitingOn('s-scripts'), false, 'the one doing it is not waiting on anybody')
       const told = await desk.message({ thread: id, fromSession: 's-scripts', from: '脚本', kind: 'question', text: '现在迁移还是今晚迁？' })
       assert.match(told, /结束这一轮/)
       return text('我问了助手，等它回答')
@@ -49,6 +51,7 @@ test('the agent doing the work can ask, and the work goes on once it is answered
   const reply = await o.desk.handOff(handed())
   await tick()
   assert.equal(id, 'h1', 'the work says which thread it is')
+  assert.equal(o.desk.waitingOn('s-main'), false, 'back: nothing to wait for')
   assert.deepEqual(o.said.map(s => s.sessionId), ['s-scripts', 's-main', 's-scripts', 's-main'], 'there and back and there, then the conclusion back')
   assert.equal(parseThreadNote(o.said[1]!.text)?.text, '现在迁移还是今晚迁？')
   assert.equal(parseThreadNote(o.said[2]!.text)?.text, '今晚迁')

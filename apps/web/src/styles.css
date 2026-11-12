@@ -771,7 +771,6 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .compaction-costs { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.8; color: var(--text-2); }
 .compaction-threshold input[type="range"] { width: min(360px, 100%); accent-color: var(--accent-fill); }
 .compaction-warn { margin-top: 6px; }
-.compaction-keep { margin-top: 10px; max-width: 360px; }
 .compaction-page .card p .ui-icon { width: 14px; height: 14px; vertical-align: -2px; }
 .about-card { display: flex; flex-direction: column; gap: 10px; }
 .about-card h3 { margin: 0; }
