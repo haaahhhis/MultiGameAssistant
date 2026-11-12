@@ -1640,7 +1640,7 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .persona-tile .small { line-height: 1.5; overflow-wrap: anywhere; }
 .persona-tile.selected .small { color: var(--text-2); }
 .persona-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.persona-custom { resize: vertical; min-height: 92px; line-height: 1.7; }
+.persona-custom { resize: vertical; min-height: 92px; max-height: 360px; line-height: 1.7; }
 .persona-peer { align-self: flex-start; max-width: 100%; margin: 0; }
 .persona-peer button { flex: none; padding: 0 14px; }
 .persona-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -1654,7 +1654,8 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .persona-sample p { margin: 0; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
 .persona-sample-who { font-size: 11.5px; font-weight: 600; color: var(--accent); }
 .persona-sample.none { font-size: 12.5px; color: var(--muted); border-style: dashed; background: none; box-shadow: none; }
-.persona-prompt { margin: 0; padding: 10px 0; border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--border); font-size: 12.5px; line-height: 1.7; color: var(--text-2); overflow-wrap: anywhere; }
+/* A long 其他要求 makes a long prompt: it scrolls inside its box, and the page stays as it is. */
+.persona-prompt { margin: 0; padding: 10px 0; max-height: min(420px, 50vh); overflow-y: auto; overscroll-behavior: contain; border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--border); font-size: 12.5px; line-height: 1.7; color: var(--text-2); overflow-wrap: anywhere; }
 .persona-prompt > div { padding: 2px 14px 2px 12px; border-left: 2px solid transparent; }
 .persona-prompt > div + div { margin-top: 4px; }
 .persona-prompt > div:first-child { font-weight: 600; color: var(--text); }
