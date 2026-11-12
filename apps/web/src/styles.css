@@ -1615,12 +1615,61 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .full-access-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--warn) 10%, transparent); color: var(--warn); font-size: 12px; font-weight: 500; }
 .full-access-chip:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .full-access-chip .ui-icon { width: 13px; height: 13px; }
-/* 设置 → 回复风格 (PersonaPage) */
-.persona-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.persona-style strong { font-size: 13.5px; }
-.persona-style .small { line-height: 1.55; }
-.persona-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.persona-prompt { margin: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--sunken); border: 1px solid var(--border); font-family: var(--font); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; color: var(--text-2); }
+/* 设置 → 回复风格 (PersonaPage): one card — who, the choices, and what they come to. */
+.persona-page { max-width: 1040px; }
+.persona-board { padding: 0; gap: 0; }
+/* Who is being set, and 保存: stays at the top of the window while the card is scrolled. */
+.persona-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px 12px 22px; border-bottom: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--raised); }
+.persona-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.persona-who .field-title { flex-shrink: 0; }
+.persona-state { flex: 1 1 80px; min-width: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; font-size: 12.5px; color: var(--muted); }
+.persona-state.dirty { color: var(--text); font-weight: 500; }
+.persona-state .ui-icon { width: 15px; height: 15px; color: var(--ok); }
+.persona-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.persona-error { margin: 14px 22px 0; }
+.persona-panes { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+.persona-form { display: flex; flex-direction: column; gap: 20px; min-width: 0; padding: 20px 22px 18px; }
+.persona-form .field { gap: 7px; }
+.persona-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.persona-tile { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 9px 12px; text-align: left; font-weight: 400; border-color: var(--border); border-radius: var(--r-md); }
+.persona-tile.wide { grid-column: 1 / -1; }
+.persona-tile:hover:not(:disabled):not(.selected) { border-color: var(--border-strong); }
+.persona-tile.selected, .persona-tile.selected:hover:not(:disabled) { border-color: var(--accent-line); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.persona-tile strong { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; font-size: 13px; font-weight: 600; }
+.persona-tile strong .ui-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--accent); stroke-width: 2.2; }
+.persona-tile .small { line-height: 1.5; overflow-wrap: anywhere; }
+.persona-tile.selected .small { color: var(--text-2); }
+.persona-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.persona-custom { resize: vertical; min-height: 92px; line-height: 1.7; }
+.persona-peer { align-self: flex-start; max-width: 100%; margin: 0; }
+.persona-peer button { flex: none; padding: 0 14px; }
+.persona-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--border); }
+/* The right half: a line said in the style, then the text the agent is given. */
+.persona-preview { min-width: 0; border-left: 1px solid var(--border); border-radius: 0 0 var(--r-lg) 0; background: var(--surface); }
+.persona-preview-in { position: sticky; top: 58px; display: flex; flex-direction: column; gap: 18px; padding: 20px 22px 22px; }
+.persona-preview-in .field { gap: 7px; }
+.persona-preview-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.persona-preview-head strong { font-size: 14px; }
+.persona-sample { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 11px 14px; border: 1px solid var(--border); border-radius: 4px var(--r-lg) var(--r-lg) var(--r-lg); background: var(--raised); box-shadow: var(--shadow-1); }
+.persona-sample p { margin: 0; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.persona-sample-who { font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.persona-sample.none { font-size: 12.5px; color: var(--muted); border-style: dashed; background: none; box-shadow: none; }
+.persona-prompt { margin: 0; padding: 10px 0; border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--border); font-size: 12.5px; line-height: 1.7; color: var(--text-2); overflow-wrap: anywhere; }
+.persona-prompt > div { padding: 2px 14px 2px 12px; border-left: 2px solid transparent; }
+.persona-prompt > div + div { margin-top: 4px; }
+.persona-prompt > div:first-child { font-weight: 600; color: var(--text); }
+/* Not in what is saved yet. */
+.persona-prompt > div.changed { border-left-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.persona-prompt.empty-prompt { padding: 10px 14px; color: var(--muted); border-style: dashed; background: none; }
+@media (max-width: 1040px) {
+  .persona-panes { grid-template-columns: 1fr; }
+  .persona-preview { border-left: none; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .persona-preview-in { position: static; }
+}
+@media (max-width: 600px) {
+  .persona-pair, .persona-tiles { grid-template-columns: 1fr; }
+  .persona-bar, .persona-form, .persona-preview-in { padding-inline: 14px; }
+}
 /* slash menu: commands and skills floating over the chat box (SlashMenu.tsx) */
 .slash-anchor { position: relative; }
 .slash-pop { position: absolute; left: max(12px, calc((100% - 760px) / 2 + 12px)); bottom: calc(100% + 6px); z-index: 40; animation: rise .12s var(--ease) both; }
@@ -1737,36 +1786,66 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
   .chat-split.with-pane > .chat-detail { display: none; }
 }
 
-/* 设置 → 回复风格: for whom. */
-.persona-scope { align-self: flex-start; flex-wrap: wrap; }
-.persona-scope button { position: relative; flex: none; padding: 0 14px; }
-.persona-own-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
-.persona-follow { align-self: flex-start; }
-.persona-follow button { flex: none; padding: 0 14px; }
+/* 设置 → 回复风格、记忆: whose it is, picked from a dropdown. */
+.select-trigger.scope-select { width: 200px; max-width: 100%; margin-top: 0; font-weight: 500; }
 
 /* 设置 → 记忆 (MemoryPage) */
-.memory-search { margin-top: 0; flex: 1 1 200px; min-width: 0; }
+.memory-auto { padding-block: 16px; }
+.memory-auto-row { display: flex; align-items: center; gap: 14px 28px; flex-wrap: wrap; }
+.memory-auto-check { flex: 1 1 320px; min-width: 0; align-items: flex-start; gap: 10px; }
+.memory-auto-check input { flex-shrink: 0; margin: 3px 0 0; }
+.memory-auto-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.memory-auto-text strong { font-size: 14px; font-weight: 600; color: var(--text); }
+.memory-auto-text .small { line-height: 1.6; }
+.memory-auto-model { flex: 1 1 260px; }
 .memory-browse { gap: 16px; }
-.memory-tabs { align-self: stretch; margin: 0; flex-wrap: wrap; }
-.memory-tabs button { flex: none; padding: 0 14px; }
-.memory-tab-count { margin-left: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.memory-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.memory-day { display: flex; flex-direction: column; gap: 4px; }
-.memory-day + .memory-day { padding-top: 6px; border-top: 1px solid var(--border); }
-.memory-day-title { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
-.memory-add-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.memory-kind { flex: none; margin: 0; }
-.memory-kind button { flex: none; padding: 0 14px; }
-.memory-scope { width: auto; min-width: 0; max-width: 100%; flex: 1 1 200px; margin-top: 0; }
+.memory-head { align-items: center; }
+.memory-whose { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
+.memory-head .small-button { height: 30px; }
+/* Writing one down: the box, and under it what kind it is and the two buttons. */
+.memory-compose { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--accent-line); border-radius: var(--r-md); background: var(--accent-soft); }
+.memory-compose .text-input { margin-top: 0; background: var(--raised); resize: vertical; }
+.memory-compose-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.memory-compose-hint { flex: 1 1 120px; min-width: 0; }
+.memory-compose-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.memory-kind { flex: none; margin: 0; background: var(--raised); }
+.memory-kind button { flex: none; height: 28px; padding: 0 14px; }
+.memory-filters { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.memory-kinds { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.memory-kinds .filter-chip { padding: 4px 12px; }
+.memory-kind-count { margin-left: 6px; font-size: 11.5px; font-variant-numeric: tabular-nums; opacity: .75; }
+.memory-search { position: relative; flex: 0 1 260px; min-width: 160px; }
+.memory-search .ui-icon { position: absolute; left: 11px; top: 50%; width: 15px; height: 15px; margin-top: -7.5px; color: var(--muted); pointer-events: none; }
+.memory-search .text-input { margin-top: 0; height: 32px; padding: 0 10px 0 33px; font-size: 12.5px; }
+.memory-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 16px 20px; text-align: center; }
+.memory-empty p { margin: 0; }
+.memory-day { display: flex; flex-direction: column; gap: 2px; }
+/* The day, then a hairline to the card's edge. */
+.memory-day-title { display: flex; align-items: center; gap: 12px; margin: 4px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.memory-day-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.memory-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
-.memory-row:first-child { border-top: none; padding-top: 4px; }
-.memory-text { font-size: 13.5px; line-height: 1.7; color: var(--text); overflow-wrap: anywhere; }
-.memory-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.memory-kind-tag { padding: 1px 8px; border-radius: 999px; font-size: 11.5px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
+/* When, what, and what can be done with it; the row lights up under the pointer. */
+.memory-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; margin: 0 -10px; padding: 9px 10px; border-radius: var(--r-md); transition: background .12s var(--ease); }
+.memory-row:hover, .memory-row:focus-within { background: var(--hover); }
+.memory-row.editing { background: none; }
+.memory-time { padding-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.memory-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.memory-body .text-input { margin-top: 0; resize: vertical; }
+.memory-text { font-size: 13.5px; line-height: 1.7; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.memory-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
+.memory-kind-tag { padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 18px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
 .memory-kind-tag.profile { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.memory-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.memory-edit-actions { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.memory-actions { display: inline-flex; align-items: center; gap: 2px; padding-top: 1px; opacity: .55; transition: opacity .12s var(--ease); }
+.memory-row:hover .memory-actions, .memory-row:focus-within .memory-actions { opacity: 1; }
 button.link-button.memory-forget { color: var(--error); }
+@media (hover: none) { .memory-actions { opacity: 1; } }
+/* A narrow window: the search takes its own line. */
+@media (max-width: 960px) { .memory-search { flex-basis: 100%; } }
+@media (max-width: 600px) {
+  .memory-row { grid-template-columns: 36px minmax(0, 1fr); }
+  .memory-actions { grid-column: 2; }
+}
 
 /* A newer version: 「更新」 in the rail, its notes dialog, the dock card's highlights, 设置 → 关于 (components/Updates.tsx) */
 .rail-item.rail-new .ui-icon { color: var(--accent); }

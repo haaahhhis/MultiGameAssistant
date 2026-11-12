@@ -6,8 +6,12 @@
  * conversation back for what they forgot; here the user reads them one agent
  * at a time, newest first by day, writes one down, changes one, or makes an
  * agent forget it.
+ *
+ * The page reads top to bottom as: the one setting (自动整理), then one card of
+ * memories — its head picks whose they are (a dropdown, 共享 first), says who sees
+ * them and holds 「记一条」, which writes into the one on screen.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { MAX_MEMORY_TEXT, SHARED_MEMORY, type MemoryAutoSettings, type MemoryEntry, type MemoryKind } from '@adg/protocol'
 import { MAIN, useRoles } from '../../agents.ts'
@@ -17,21 +21,39 @@ import { Select } from '../../components/Select.tsx'
 import { useModelCatalog, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 
-const KINDS: readonly { kind: MemoryKind; title: string }[] = [
-  { kind: 'profile', title: '资料' },
-  { kind: 'journal', title: '日记' },
+const KINDS: readonly { kind: MemoryKind; title: string; hint: string }[] = [
+  { kind: 'profile', title: '资料', hint: '长期有效的事实和偏好' },
+  { kind: 'journal', title: '日记', hint: '某一天做过或决定的事' },
 ]
 
 /** Both kinds. */
 const ANY = ''
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
 
 function day(iso: string): string {
   const d = new Date(iso)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** A day as its heading reads: 「今天 · 11月13日 周五」, the year only when it is not this one. */
+function dayTitle(key: string): string {
+  const [y, m, d] = key.split('-').map(Number) as [number, number, number]
+  const date = new Date(y, m - 1, d)
+  const now = new Date()
+  const ago = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - date.getTime()) / 86_400_000)
+  const text = `${y === now.getFullYear() ? '' : `${y}年`}${m}月${d}日 ${WEEKDAYS[date.getDay()]}`
+  return ago === 0 ? `今天 · ${text}` : ago === 1 ? `昨天 · ${text}` : text
+}
+
 /** When an entry is dated: a journal entry by when it happened, a profile entry by when it was last true. */
 const at = (entry: MemoryEntry) => (entry.kind === 'journal' ? entry.createdAt : entry.updatedAt)
+
+/** Ctrl/⌘+Enter confirms what is being written, Esc drops it. */
+const writingKeys = (confirmIt: () => void, drop: () => void) => (e: KeyboardEvent) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); confirmIt() }
+  else if (e.key === 'Escape') { e.preventDefault(); drop() }
+}
 
 export function MemoryPage({ client }: { client: AdgClient }) {
   const status = useStore(client.connection.status)
@@ -41,6 +63,7 @@ export function MemoryPage({ client }: { client: AdgClient }) {
   const [scope, setScope] = useState(SHARED_MEMORY)
   const [kind, setKind] = useState<MemoryKind | typeof ANY>(ANY)
   const [query, setQuery] = useState('')
+  const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => client.connection.on('memory/changed', () => setRevision(r => r + 1)), [client])
@@ -55,8 +78,9 @@ export function MemoryPage({ client }: { client: AdgClient }) {
   const nameOf = (id: string) => id === SHARED_MEMORY ? '共享' : id === 'user' ? '你' : id === 'auto' ? '自动整理' : agents.find(a => a.id === id)?.name ?? id
   const words = query.trim().toLowerCase().split(/\s+/).filter(w => w !== '')
   const count = (id: string) => (items ?? []).filter(e => e.scope === id).length
-  const shown = (items ?? [])
-    .filter(e => e.scope === scope && (kind === ANY || e.kind === kind) && words.every(w => e.text.toLowerCase().includes(w)))
+  const mine = (items ?? []).filter(e => e.scope === scope)
+  const shown = mine
+    .filter(e => (kind === ANY || e.kind === kind) && words.every(w => e.text.toLowerCase().includes(w)))
     .sort((a, b) => at(b).localeCompare(at(a)))
   // Newest day first, each day's entries under it.
   const days: { day: string; entries: MemoryEntry[] }[] = []
@@ -67,6 +91,8 @@ export function MemoryPage({ client }: { client: AdgClient }) {
   }
   const tabs = [{ id: SHARED_MEMORY, name: '共享' }, ...agents]
   const tabName = tabs.find(t => t.id === scope)?.name ?? scope
+  const shared = scope === SHARED_MEMORY
+  const filtered = words.length > 0 || kind !== ANY
 
   const run = async (action: () => Promise<unknown>): Promise<boolean> => {
     setError(null)
@@ -79,6 +105,14 @@ export function MemoryPage({ client }: { client: AdgClient }) {
       return false
     }
   }
+  const add = async (k: MemoryKind, text: string): Promise<boolean> => {
+    if (!await run(() => client.connection.call('memory/add', { kind: k, scope, text }))) return false
+    // The new one is on screen: not filtered away by the other kind or a search.
+    if (kind !== ANY && kind !== k) setKind(ANY)
+    setQuery('')
+    setAdding(false)
+    return true
+  }
 
   return (
     <div className="settings-page memory-page">
@@ -87,29 +121,48 @@ export function MemoryPage({ client }: { client: AdgClient }) {
       {items !== null && (
         <>
           <AutoMemorySettings client={client} />
-          <AddMemory agents={agents} scope={scope} onAdd={(k, to, text) => run(() => client.connection.call('memory/add', { kind: k, scope: to, text }))} />
           <section className="card memory-browse">
-            <div className="persona-scope segmented-control memory-tabs" role="tablist" aria-label="谁的记忆">
-              {tabs.map(t => (
-                <button key={t.id} role="tab" aria-selected={scope === t.id} className={scope === t.id ? 'active' : ''} onClick={() => setScope(t.id)}>
-                  {t.name}<span className="memory-tab-count">{count(t.id)}</span>
-                </button>
-              ))}
-            </div>
-            <div className="memory-filters">
-              <div className="segmented-control memory-kind" role="radiogroup" aria-label="种类">
-                {[{ kind: ANY, title: '全部' } as const, ...KINDS].map(k => (
-                  <button key={k.kind} role="radio" aria-checked={kind === k.kind} className={kind === k.kind ? 'active' : ''} onClick={() => setKind(k.kind)}>{k.title}</button>
-                ))}
+            <div className="card-head memory-head">
+              <div className="memory-whose">
+                <Select className="scope-select" aria-label="谁的记忆" value={scope} onChange={setScope} options={tabs.map(t => ({
+                  value: t.id,
+                  label: t.id === SHARED_MEMORY ? '共享的记忆' : `「${t.name}」的记忆`,
+                  hint: count(t.id) === 0 ? '还没有' : `${count(t.id)} 条`,
+                  ...(t.id === SHARED_MEMORY ? {} : { group: '一个 agent 自己的' }),
+                }))} />
+                <span className="muted small">{shared ? '每个 agent 都看得到' : `只有「${tabName}」自己看得到`}</span>
               </div>
-              <input className="text-input plain memory-search" type="search" placeholder="搜索（空格分开几个词）" value={query} onChange={e => setQuery(e.target.value)} aria-label="搜索记忆" />
+              {!adding && <button className="small-button" onClick={() => setAdding(true)}><Icon name="plus" />记一条</button>}
             </div>
+            {adding && <AddMemory to={shared ? '共享' : `「${tabName}」`} onAdd={add} onClose={() => setAdding(false)} />}
             {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
+            {mine.length > 0 && (
+              <div className="memory-filters">
+                <div className="memory-kinds" role="radiogroup" aria-label="种类">
+                  {[{ kind: ANY, title: '全部' } as const, ...KINDS].map(k => (
+                    <button key={k.kind} role="radio" aria-checked={kind === k.kind} className={`filter-chip ${kind === k.kind ? 'active' : ''}`} onClick={() => setKind(k.kind)}>
+                      {k.title}<span className="memory-kind-count">{k.kind === ANY ? mine.length : mine.filter(e => e.kind === k.kind).length}</span>
+                    </button>
+                  ))}
+                </div>
+                <label className="memory-search">
+                  <Icon name="search" />
+                  <input className="text-input plain" type="search" placeholder="搜索（空格分开几个词）" value={query} onChange={e => setQuery(e.target.value)} aria-label="搜索记忆" />
+                </label>
+              </div>
+            )}
             {days.length === 0
-              ? <p className="muted small">{words.length > 0 || kind !== ANY ? '没有找到。' : `「${tabName}」还没有记忆。`}</p>
+              ? (
+                <div className="memory-empty">
+                  <p className="muted">{filtered ? '没有找到。' : `「${tabName}」还没有记忆。`}</p>
+                  {filtered
+                    ? <button className="link-button small" onClick={() => { setKind(ANY); setQuery('') }}>清除筛选</button>
+                    : <p className="muted small">agent 干活时会自己记下，你也可以点「记一条」写给它。</p>}
+                </div>
+              )
               : days.map(group => (
                 <div key={group.day} className="memory-day">
-                  <h4 className="memory-day-title">{group.day}</h4>
+                  <h4 className="memory-day-title"><span>{dayTitle(group.day)}</span></h4>
                   <ul className="memory-list">
                     {group.entries.map(entry => (
                       <MemoryRow key={entry.id} entry={entry} nameOf={nameOf}
@@ -166,91 +219,103 @@ function AutoMemorySettings({ client }: { client: AdgClient }) {
     void save({ ...settings, model: value === '' ? null : { provider: provider!, model: rest.join('/') } })
   }
   return (
-    <section className="card">
-      <h3>自动整理</h3>
-      <label className="check-label">
-        <input type="checkbox" checked={on} disabled={busy || settings.forced === true} onChange={e => void save({ ...settings, auto: e.target.checked })} />
-        对话停下几分钟后，自动把没记下的偏好和做过的事整理进记忆
-      </label>
-      {settings.forced === true && <p className="muted small">低上下文模式开着，自动整理会一直开着。</p>}
-      {on && (
-        <label className="field">
-          <span className="field-title">整理用的模型</span>
-          {catalog === null ? <span className="muted small">读取中…</span> : (
-            <Select aria-label="整理用的模型" value={current} disabled={busy} onChange={choose} options={[
-              { value: '', label: '和默认模型一样' },
-              ...(known ? [] : [{ value: current, label: `${settings.model!.provider} / ${settings.model!.model}`, hint: '不可用：这个模型服务没有配好', disabled: true }]),
-              ...catalog.groups.flatMap(group => group.models.map(model => ({ value: `${group.id}/${model.id}`, label: model.name, group: group.name }))),
-            ]} />
-          )}
+    <section className="card memory-auto">
+      <div className="memory-auto-row">
+        <label className="check-label memory-auto-check">
+          <input type="checkbox" checked={on} disabled={busy || settings.forced === true} onChange={e => void save({ ...settings, auto: e.target.checked })} />
+          <span className="memory-auto-text">
+            <strong>自动整理</strong>
+            <span className="muted small">对话停下几分钟后，自动把没记下的偏好和做过的事整理进记忆{settings.forced === true ? '。低上下文模式开着，自动整理会一直开着。' : ''}</span>
+          </span>
         </label>
-      )}
+        {on && (
+          <label className="field memory-auto-model">
+            <span className="field-title">整理用的模型</span>
+            {catalog === null ? <span className="muted small">读取中…</span> : (
+              <Select aria-label="整理用的模型" value={current} disabled={busy} onChange={choose} options={[
+                { value: '', label: '和默认模型一样' },
+                ...(known ? [] : [{ value: current, label: `${settings.model!.provider} / ${settings.model!.model}`, hint: '不可用：这个模型服务没有配好', disabled: true }]),
+                ...catalog.groups.flatMap(group => group.models.map(model => ({ value: `${group.id}/${model.id}`, label: model.name, group: group.name }))),
+              ]} />
+            )}
+          </label>
+        )}
+      </div>
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </section>
   )
 }
 
-function AddMemory({ agents, scope, onAdd }: { agents: readonly { id: string; name: string }[]; scope: string; onAdd: (kind: MemoryKind, scope: string, text: string) => Promise<boolean> }) {
+/**
+ * Writing one down, opened by 「记一条」: it goes to whose memories are on screen.
+ * @param to - whose memory that is, as the button says it.
+ */
+function AddMemory({ to, onAdd, onClose }: { to: string; onAdd: (kind: MemoryKind, text: string) => Promise<boolean>; onClose: () => void }) {
   const [text, setText] = useState('')
   const [kind, setKind] = useState<MemoryKind>('profile')
-  const [to, setTo] = useState(scope)
   const [busy, setBusy] = useState(false)
-  useEffect(() => { setTo(scope) }, [scope])
+  const ready = !busy && text.trim() !== ''
   const add = async () => {
+    if (!ready) return
     setBusy(true)
-    if (await onAdd(kind, to, text.trim())) setText('')
+    await onAdd(kind, text.trim())
     setBusy(false)
   }
   return (
-    <section className="card">
-      <h3>记一条</h3>
-      <textarea className="text-input plain" rows={2} maxLength={MAX_MEMORY_TEXT} placeholder="一句话写一件事，例如：日报只要告诉我有没有失败的；明日方舟只玩 B 服。" value={text} onChange={e => setText(e.target.value)} />
-      <div className="memory-add-row">
+    <div className="memory-compose">
+      <textarea className="text-input plain" rows={3} maxLength={MAX_MEMORY_TEXT} autoFocus aria-label="要记下的事"
+        placeholder="一句话写一件事，例如：日报只要告诉我有没有失败的；明日方舟只玩 B 服。"
+        value={text} onChange={e => setText(e.target.value)} onKeyDown={writingKeys(() => void add(), onClose)} />
+      <div className="memory-compose-foot">
         <div className="segmented-control memory-kind" role="radiogroup" aria-label="种类">
           {KINDS.map(k => <button key={k.kind} role="radio" aria-checked={kind === k.kind} className={kind === k.kind ? 'active' : ''} onClick={() => setKind(k.kind)}>{k.title}</button>)}
         </div>
-        <Select className="memory-scope" aria-label="给谁看" value={to} onChange={setTo} options={[
-          { value: SHARED_MEMORY, label: '共享：每个 agent 都看得到' },
-          ...agents.map(a => ({ value: a.id, label: `只给「${a.name}」` })),
-        ]} />
-        <button className="primary" disabled={busy || text.trim() === ''} onClick={() => void add()}>{busy ? '记下中…' : '记下'}</button>
+        <span className="muted small memory-compose-hint">{KINDS.find(k => k.kind === kind)?.hint}</span>
+        <span className="memory-compose-actions">
+          <button disabled={busy} onClick={onClose}>取消</button>
+          <button className="primary" disabled={!ready} onClick={() => void add()}>{busy ? '记下中…' : `记到${to}`}</button>
+        </span>
       </div>
-    </section>
+    </div>
   )
 }
 
 function MemoryRow({ entry, nameOf, onSave, onForget }: { entry: MemoryEntry; nameOf: (id: string) => string; onSave: (text: string) => Promise<boolean>; onForget: () => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const ready = !busy && editing !== null && editing.trim() !== ''
   const save = async () => {
-    if (editing === null) return
+    if (!ready) return
     setBusy(true)
     if (await onSave(editing.trim())) setEditing(null)
     setBusy(false)
   }
   return (
-    <li className="memory-row">
-      {editing === null
-        ? <div className="memory-text">{entry.text}</div>
-        : <textarea className="text-input plain" rows={2} maxLength={MAX_MEMORY_TEXT} value={editing} onChange={e => setEditing(e.target.value)} aria-label="修改记忆" autoFocus />}
-      <div className="memory-meta">
-        <span className={`memory-kind-tag ${entry.kind}`}>{entry.kind === 'profile' ? '资料' : '日记'}</span>
-        <time className="muted small" dateTime={at(entry)} title={entry.kind === 'journal' ? '记下的时间' : '最后更新的时间'}>
-          {new Date(at(entry)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
-        </time>
-        <span className="muted small">{entry.by === 'user' ? '你记的' : entry.by === 'auto' ? '自动整理出来的' : `${nameOf(entry.by)}记的`}</span>
-        <span className="memory-actions">
-          {editing === null
-            ? <>
-                <button className="link-button small" onClick={() => setEditing(entry.text)}>修改</button>
-                <button className="link-button small memory-forget" onClick={onForget}>忘掉</button>
-              </>
-            : <>
-                <button className="link-button small" disabled={busy} onClick={() => setEditing(null)}>取消</button>
-                <button className="small-button primary" disabled={busy || editing.trim() === ''} onClick={() => void save()}>保存</button>
-              </>}
-        </span>
+    <li className={`memory-row ${editing === null ? '' : 'editing'}`}>
+      <time className="memory-time" dateTime={at(entry)} title={entry.kind === 'journal' ? '记下的时间' : '最后更新的时间'}>
+        {new Date(at(entry)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
+      </time>
+      <div className="memory-body">
+        {editing === null
+          ? <div className="memory-text">{entry.text}</div>
+          : <textarea className="text-input plain" rows={3} maxLength={MAX_MEMORY_TEXT} value={editing} onChange={e => setEditing(e.target.value)} onKeyDown={writingKeys(() => void save(), () => setEditing(null))} aria-label="修改记忆" autoFocus />}
+        <div className="memory-meta">
+          <span className={`memory-kind-tag ${entry.kind}`}>{entry.kind === 'profile' ? '资料' : '日记'}</span>
+          <span className="muted small">{entry.by === 'user' ? '你记的' : entry.by === 'auto' ? '自动整理出来的' : `${nameOf(entry.by)}记的`}</span>
+          {editing !== null && (
+            <span className="memory-edit-actions">
+              <button className="small-button" disabled={busy} onClick={() => setEditing(null)}>取消</button>
+              <button className="small-button primary" disabled={!ready} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button>
+            </span>
+          )}
+        </div>
       </div>
+      {editing === null && (
+        <span className="memory-actions">
+          <button className="link-button small" onClick={() => setEditing(entry.text)}>修改</button>
+          <button className="link-button small memory-forget" onClick={onForget}>忘掉</button>
+        </span>
+      )}
     </li>
   )
 }

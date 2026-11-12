@@ -8,16 +8,10 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { Persona, PersonaSettings, QUIET, type PersonaOverride, type PersonaStyle } from '@adg/protocol'
+import { Persona, PersonaSettings, personaOf, type PersonaOverride } from '@adg/protocol'
 
-export const STYLE_TEXT: Readonly<Record<PersonaStyle, string>> = {
-  default: '',
-  concise: '回答简短直接：先给结论，再给必要的细节；少寒暄，不用表情。',
-  patient: '耐心、讲清楚：每一步说明为什么这么做，用对方听得懂的话，像教一个刚接触的人。',
-  lively: '语气轻松活泼，可以用一点语气词和表情，但信息要准确、不啰嗦。',
-  buddy: '像一起玩游戏的老朋友那样说话：熟悉游戏里的说法，可以适当吐槽和鼓励，但不夸张、不油腻。',
-  butler: '像一位稳重周到的管家：礼貌、条理清楚，主动汇报进度和需要对方决定的事。',
-}
+// The text itself is written in @adg/protocol, where the settings page reads it too.
+export { STYLE_TEXT, personaOf, personaPrompt } from '@adg/protocol'
 
 export const DEFAULT_PERSONA: PersonaSettings = { persona: { style: 'default' }, agents: {} }
 
@@ -41,27 +35,6 @@ export const IDENTITY_PROMPT = [
   '3. 只有确认脚本做不了，才用你自己的能力（截图点击、命令行）去做：装着的脚本都没有这个功能；或者脚本跑了失败、修不好。动手前用一句话告诉用户为什么不用脚本。',
   '4. 有能做这件事的脚本但还没装：先告诉用户是哪个脚本、问要不要装，不要不问就自己点。',
 ].join('\n')
-
-/** How one agent talks: its own where it has any, else what is set for all. */
-export function personaOf(settings: PersonaSettings, agentId: string): Persona & { name?: string } {
-  const own = Object.entries(settings.agents[agentId] ?? {}).filter(([, value]) => value !== undefined)
-  return { ...settings.persona, ...Object.fromEntries(own) }
-}
-
-/** The system-prompt text for a persona; empty when nothing is set. */
-export function personaPrompt(p: Persona & { name?: string | undefined }): string {
-  const lines: string[] = []
-  if (p.name !== undefined && p.name.trim() !== '') lines.push(`你的名字是「${p.name.trim()}」，自称时用这个名字。`)
-  if (p.callUser !== undefined && p.callUser.trim() !== '') lines.push(`称呼用户为「${p.callUser.trim()}」。`)
-  if (STYLE_TEXT[p.style] !== '') lines.push(STYLE_TEXT[p.style])
-  if (p.custom !== undefined && p.custom.trim() !== '') lines.push(`用户对你说话方式的要求：${p.custom.trim()}`)
-  if (lines.length === 0) return ''
-  lines.push(p.peerStyle === 'same'
-    ? '和其他 agent 说话时也用这个方式。'
-    : '上面是对用户说话的方式。和其他 agent 说话（agent_delegate、agent_message、交回去的结论）用平实的话，直接说事，不用人设和称呼：它们要读的是内容。')
-  lines.push(`软件约定的固定写法（比如「${QUIET}」这一句、线索编号、工具的参数）一字不差照写，不加语气词和表情。`)
-  return ['# 回复风格', ...lines, '这些只影响你说话的方式，不改变做事的规则：确认、安全限制和不能做的事都照旧；在飞书里回复也一样。'].join('\n')
-}
 
 /** Blank fields are dropped, spaces trimmed: what is left out follows what is set for all. */
 function cleanFields<T extends PersonaOverride>(p: T): PersonaOverride {
