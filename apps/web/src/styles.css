@@ -1742,6 +1742,9 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 
 /* The pack card's 「脚本更新了，检查脚本包？」 and the documents a draft was written from (PackCards.tsx). */
 .pack-review { flex-wrap: wrap; }
+/* Going back to a pack version that was replaced. */
+.pack-history { display: flex; flex-direction: column; gap: 6px; }
+.pack-history > p { margin: 0; }
 .pack-review > span:first-of-type { flex: 1 1 260px; }
 .pack-review .key-actions { margin-left: auto; }
 .draft-docs { margin: 4px 0 8px; }

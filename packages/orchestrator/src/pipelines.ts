@@ -69,13 +69,15 @@ export class Pipelines {
   }
 
   /**
-   * Save (the user's save clears `draft`; the agent's keeps it).
-   * @throws Error when the agent would overwrite a pipeline the user saved.
+   * Save. The user's save, and 编排's (`orchestrator`: the agent whose work
+   * pipelines are, and its sub-agents), is the pipeline as it now is: `draft`
+   * is cleared. Another agent's (`agent`) is a draft for the user to look at.
+   * @throws Error when a draft would overwrite a saved pipeline.
    */
-  async save(input: Pipeline, by: 'user' | 'agent'): Promise<{ pipeline: Pipeline; check: PipelineCheck }> {
+  async save(input: Pipeline, by: 'user' | 'orchestrator' | 'agent'): Promise<{ pipeline: Pipeline; check: PipelineCheck }> {
     const existing = this.#pipelines.get(input.id)
     if (by === 'agent' && existing !== undefined && existing.draft !== true) {
-      throw new Error(`已经有一条叫 ${input.id} 的流水线（用户保存过），换一个 id，或请用户在「编排」页修改`)
+      throw new Error(`已经有一条保存过的流水线叫 ${input.id}，草稿不能覆盖它：要改它，用 agent_delegate 交给「编排」（它可以直接修改保存）；要另起一条，换一个 id`)
     }
     const now = this.#now()
     const pipeline = Pipeline.parse({ ...input, createdAt: existing?.createdAt ?? now, updatedAt: now })

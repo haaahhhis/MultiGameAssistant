@@ -107,7 +107,7 @@ const llm = await startFakeLlm({
   models: [FAKE_MODEL],
   replies: [
     call('script_analyze', { id: ID }), { text: '分析完成。' },
-    call('pack_propose', { pack_id: ID, script_id: ID, manifest: MANIFEST, skill: SKILL, summary: '根据目录结构和日志写的脚本包。' }), { text: '草稿已提交。' },
+    call('pack_propose', { pack_id: ID, script_id: ID, manifest: MANIFEST, skill: SKILL, summary: '根据目录结构和日志写的脚本包。' }), { text: '脚本包已保存。' },
     call('script_run', { id: ID, task: 'daily', wait: true }), { text: '运行结束。' },
     call('write', { file_path: join(dir, 'config', 'hacked.txt'), content: 'x' }), { text: '被拦截了。' },
     call(SHELL, { description: 'try', command: `Set-Content "${join(dir, 'app', 'evil.txt')}" x` }), { text: '也被拦截了。' },
@@ -164,12 +164,12 @@ try {
 
   const proposed = await ask('生成脚本包')
   if (proposed.error) fail(`pack_propose failed: ${proposed.text}`)
+  if (!proposed.text.includes('"in_use": true')) fail(`the pack is not in use: ${proposed.text.slice(0, 300)}`)
   const drafts = await rpc('packs/drafts', { scriptId: ID })
-  if (drafts.items.length !== 1) fail('draft not listed')
-  await rpc('packs/accept', { packId: ID })
+  if (drafts.items.length !== 0) fail('a draft was left waiting for the user')
   const withPack = await rpc('scripts/get', { id: ID })
   if (withPack.packId !== ID) fail(`pack not attached: ${withPack.packId}`)
-  step('draft proposed by the agent and accepted', `tasks: ${drafts.items[0].tasks.map(t => t.id).join(', ')}`)
+  step('pack saved by the agent, in use at once', 'no draft left to accept')
 
   const configDuring = new Promise(resolve => {
     const timer = setInterval(() => {

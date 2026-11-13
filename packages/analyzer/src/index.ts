@@ -4,9 +4,10 @@
  * - `script_analyze`: the facts about a script directory (read-only);
  * - `script_help`: a program's own `--help` output (asks first for scripts no
  *   built-in pack describes, since it starts their program);
- * - `pack_propose`: a validated Script Pack draft for the user to accept;
+ * - `pack_propose`: a validated Script Pack, in use at once (the pack it
+ *   replaces is kept in the history; the user is not asked to accept it);
  * - every pack's SKILL.md and the `script-analysis` guide as agent skills;
- * - the `packs@1` capability for reviewing drafts.
+ * - the `packs@1` capability for the drafts left from when each waited for the user.
  */
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
@@ -20,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@adg/gateway'
 import type {} from '@adg/script-registry'
 import { MANIFEST_FILE, parseManifest, SKILL_FILE } from '@adg/pack-schema'
-import { PACKS_CAPABILITY, ScriptId, type PackDraft, type RequestParams } from '@adg/protocol'
+import { BUILTIN_PACK_VERSION, PACKS_CAPABILITY, ScriptId, type PackDraft, type PackVersion, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { analyzeDir } from './analyze.ts'
 import { DraftStore, type StoredDraft } from './drafts.ts'
@@ -52,6 +53,18 @@ export class AdgAnalyzer extends Service {
     this.drafts = new DraftStore(library.dataDir)
     const drafts = this.drafts
     const changed = (packId?: string) => ctx.get('adgGateway')?.broadcast('packs/changed', packId === undefined ? {} : { packId })
+    /** A pack just put among the user's packs becomes its script's. @returns why it could not, if so. */
+    const use = async (packId: string, scriptId: string): Promise<string | undefined> => {
+      await library.reloadPacks()
+      try {
+        await library.attachPack(scriptId, packId)
+        return undefined
+      } catch (error) {
+        const problem = error instanceof Error ? error.message : String(error)
+        log.warn(`pack ${packId} saved but could not attach it to ${scriptId}: ${problem}`)
+        return problem
+      }
+    }
 
     // ── skills ──
     // The guide is for every session; a pack's SKILL.md only for the sessions working on its scripts (the gateway's skill scope).
@@ -96,7 +109,7 @@ export class AdgAnalyzer extends Service {
     ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-analyzer tools', agent => {
       const registered: Array<() => void> = []
       // 设置 → 权限 decides per area (the gateway's guardTool).
-      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
+      for (const tool of analyzerTools({ library, drafts, approve, ready: scripts.ready, changed, use })) registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
       return () => { for (const dispose of registered) dispose() }
     }))
 
@@ -116,18 +129,38 @@ export class AdgAnalyzer extends Service {
             await scripts.ready
             const { packId } = params as RequestParams<'packs/accept'>
             const { dir, meta } = await drafts.accept(packId)
-            await library.reloadPacks()
-            try {
-              await library.attachPack(meta.scriptId, packId)
-            } catch (error) {
-              log.warn(`accepted pack ${packId} but could not attach it to ${meta.scriptId}: ${error instanceof Error ? error.message : String(error)}`)
-            }
+            await use(packId, meta.scriptId)
             changed(packId)
             return { packId, dir }
           },
           'packs/reject': async params => {
             const { packId } = params as RequestParams<'packs/reject'>
             await drafts.reject(packId)
+            changed(packId)
+            return {}
+          },
+          'packs/history': async params => {
+            await scripts.ready
+            const { packId } = params as RequestParams<'packs/history'>
+            const tasksOf = (manifest: string) => { try { return parseManifest(manifest).tasks.map(t => ({ id: t.id, title: t.title })) } catch { return [] } }
+            const items: PackVersion[] = (await drafts.history(packId)).map(v => ({ id: v.id, at: v.at, tasks: tasksOf(v.manifest) }))
+            // A user pack used instead of a built-in one: the built-in one is the way back when nothing else is.
+            const over = library.pack(packId)?.over
+            if (over !== undefined) items.push({ id: BUILTIN_PACK_VERSION, builtin: true, tasks: over.manifest.tasks.map(t => ({ id: t.id, title: t.title })) })
+            return { items }
+          },
+          'packs/restore': async params => {
+            await scripts.ready
+            const { packId, version } = params as RequestParams<'packs/restore'>
+            if (version === BUILTIN_PACK_VERSION) {
+              if (library.pack(packId)?.over === undefined) throw new Error(`${packId} 没有内置的脚本包可以恢复`)
+              await drafts.discard(packId)
+            } else {
+              await drafts.restore(packId, version)
+            }
+            // The scripts using it take the pack as it now is (its tasks, what it needs installed).
+            await library.reloadPacks()
+            for (const script of library.list().scripts) if (script.packId === packId) await use(packId, script.id)
             changed(packId)
             return {}
           },
@@ -158,6 +191,8 @@ interface ToolDeps {
   readonly approve: (exec: ToolRunContext, reason: string) => Promise<void>
   readonly ready: Promise<void>
   readonly changed: (packId?: string) => void
+  /** Make a saved pack its script's (reload the packs, attach it). @returns why it could not, if so. */
+  readonly use: (packId: string, scriptId: string) => Promise<string | undefined>
 }
 
 function analyzerTools(deps: ToolDeps): ToolDefinition[] {
@@ -249,7 +284,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'pack_reviewed',
-      description: '脚本更新后检查过脚本包、确认不用改时调用：记下脚本包已经对照现在的版本检查过，不再提醒。要改就用 pack_propose 提交，用户接受后会自动记下，不用调用这个。',
+      description: '脚本更新后检查过脚本包、确认不用改时调用：记下脚本包已经对照现在的版本检查过，不再提醒。要改就用 pack_propose 保存，保存时会自动记下，不用调用这个。',
       properties: {
         id,
         reason: { type: 'string', description: '为什么不用改（会告诉用户），例如「这几个版本只修了识别问题，任务、配置和日志都没变」。' },
@@ -265,7 +300,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'pack_propose',
-      description: '提交脚本包草稿（adg.script.yaml 和 SKILL.md）。会按 schema 校验，失败时返回具体字段以便修正后重新提交；通过后保存为草稿，用户在「脚本」页确认后生效。不会修改脚本本身。',
+      description: '保存脚本包（adg.script.yaml 和 SKILL.md），直接生效，不用用户再确认：新写一份，或者用原来的 id 改已有的一份（内置的、用户确认过的都可以；被替换的那一版留在历史里）。会按 schema 校验，失败时返回具体字段，脚本包保持原样，修正后重新提交；通过后这个脚本马上用新的脚本包，之后的 script_run、script_tasks 都按它来。不会修改脚本本身。',
       properties: {
         pack_id: { type: 'string', description: '脚本包 id（与 manifest 里的 id 相同；改进已有脚本包时用原 id）。' },
         script_id: { type: 'string', description: '这个包描述的脚本库里的脚本 id。' },
@@ -281,7 +316,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
       },
       required: ['pack_id', 'script_id', 'manifest', 'skill', 'summary', 'docs'],
       kind: 'edit',
-      title: a => `提交脚本包草稿：${String(a['pack_id'] ?? '')}`,
+      title: a => `保存脚本包：${String(a['pack_id'] ?? '')}`,
       execute: async (args, exec) => {
         const a = parse(z.object({
           pack_id: ScriptId, script_id: ScriptId, manifest: z.string().min(10).max(200_000), skill: z.string().min(10).max(200_000), summary: z.string().min(1).max(4000),
@@ -294,14 +329,21 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
           throw new Error('先读项目的文档再写脚本包：docs 里写出读过的文档（出处和得到了什么）；确实找不到文档时用 no_docs 说明找过哪些地方（脚本目录、仓库 README、Wiki、文档站）')
         }
         deps.library.get(a.script_id) // must exist
-        const result = await deps.drafts.propose({
+        const saved = await deps.drafts.save({
           packId: a.pack_id, scriptId: a.script_id, proposedAt: Date.now(), summary: a.summary,
           ...(docs.length === 0 ? {} : { docs }),
           ...(docs.length > 0 || a.no_docs == null ? {} : { noDocs: a.no_docs.trim() }),
           ...(exec.agent === undefined ? {} : { sessionId: exec.agent.session.id }),
         }, a.manifest, a.skill)
+        const problem = await deps.use(a.pack_id, a.script_id)
         deps.changed(a.pack_id)
-        return { ok: true, pack_id: a.pack_id, tasks: result.tasks, next: '草稿已保存。请告诉用户到「脚本」页查看这个脚本的「脚本包草稿」并确认。' }
+        return {
+          ok: true, pack_id: a.pack_id, tasks: saved.tasks, in_use: problem === undefined, replaced: saved.replaced,
+          ...(problem === undefined ? {} : { problem }),
+          next: problem === undefined
+            ? `脚本包已经保存并生效${saved.replaced ? '（之前的版本留在历史里）' : ''}，不用用户确认。回复里告诉用户改了什么、依据了哪些文档、哪些还待确认。`
+            : `脚本包已经保存，但没能接到脚本 ${a.script_id} 上：${problem}。把这个原因告诉用户。`,
+        }
       },
     }),
   ]

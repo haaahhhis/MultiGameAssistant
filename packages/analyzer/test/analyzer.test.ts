@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -123,6 +123,83 @@ test('drafts validate before saving, and accepting keeps the previous user pack'
   await store.propose({ packId: 'tool', scriptId: 'tool', proposedAt: 3, summary: 'x' }, MANIFEST, SKILL)
   await store.reject('tool')
   assert.deepEqual(await store.list(), [])
+})
+
+test('a pack the agent saves is in use at once: no draft waits, the pack it replaces is kept, a bad one changes nothing', async () => {
+  const data = tmp('save')
+  const store = new DraftStore(data)
+  const meta = (summary: string) => ({ packId: 'tool', scriptId: 'tool', proposedAt: 1, summary })
+  const inUse = () => readFileSync(join(data, 'packs', 'tool', 'adg.script.yaml'), 'utf8')
+
+  const first = await store.save(meta('第一版'), MANIFEST, SKILL, 1000)
+  assert.deepEqual(first.tasks, [{ id: 'run', title: '运行' }])
+  assert.equal(first.replaced, false)
+  assert.equal(first.dir, join(data, 'packs', 'tool'))
+  assert.match(inUse(), /title: 运行\n/)
+  assert.ok(existsSync(join(first.dir, 'SKILL.md')) && !existsSync(join(first.dir, 'draft.json')))
+  assert.deepEqual(await store.list(), [], 'nothing left for the user to accept')
+
+  const second = await store.save(meta('第二版'), MANIFEST.replace('运行', '运行二'), SKILL, 2000)
+  assert.equal(second.replaced, true)
+  assert.match(inUse(), /运行二/)
+  const kept = readdirSync(join(data, 'pack-history', 'tool'))
+  assert.equal(kept.length, 1, 'the version it replaced is in the history')
+  assert.match(readFileSync(join(data, 'pack-history', 'tool', kept[0]!, 'adg.script.yaml'), 'utf8'), /title: 运行\n/)
+
+  await assert.rejects(store.save(meta('坏的'), 'id: tool\nname: Tool\ntasks:\n  - { id: run, title: 运行 }\n', SKILL), /tasks need a launch section/)
+  await assert.rejects(store.save(meta('坏的'), MANIFEST, '# no frontmatter'), /frontmatter/)
+  assert.match(inUse(), /运行二/, 'the pack in use is as it was')
+  assert.equal(readdirSync(join(data, 'pack-history', 'tool')).length, 1)
+
+  // A draft left from before (it waited for the user) is taken over by the save.
+  await store.propose(meta('旧草稿'), MANIFEST.replace('运行', '旧的'), SKILL)
+  await store.save(meta('第三版'), MANIFEST.replace('运行', '运行三'), SKILL, 3000)
+  assert.match(inUse(), /运行三/)
+  assert.deepEqual(await store.list(), [])
+})
+
+test('a replaced pack can be put back, and putting it back can be undone; a user pack can be dropped for the built-in one', async () => {
+  const data = tmp('restore')
+  const store = new DraftStore(data)
+  const meta = { packId: 'tool', scriptId: 'tool', proposedAt: 1, summary: 's' }
+  const inUse = () => readFileSync(join(data, 'packs', 'tool', 'adg.script.yaml'), 'utf8')
+  const T = Date.UTC(2026, 10, 13, 4, 30)
+  assert.deepEqual(await store.history('tool'), [], 'nothing replaced yet')
+
+  await store.save(meta, MANIFEST.replace('运行', '一'), SKILL, T)
+  await store.save(meta, MANIFEST.replace('运行', '二'), SKILL, T + 1000)
+  await store.save(meta, MANIFEST.replace('运行', '三'), SKILL, T + 2000)
+  const history = await store.history('tool')
+  assert.deepEqual(history.map(v => [v.at, /title: (.)/.exec(v.manifest)?.[1]]), [[T + 2000, '二'], [T + 1000, '一']], 'the last replaced first, each with when it was replaced')
+
+  // Back to 二: 三 takes its place in the history.
+  await store.restore('tool', history[0]!.id, T + 3000)
+  assert.match(inUse(), /title: 二/)
+  assert.ok(existsSync(join(data, 'packs', 'tool', 'SKILL.md')), 'the whole pack comes back')
+  const after = await store.history('tool')
+  assert.deepEqual(after.map(v => [v.at, /title: (.)/.exec(v.manifest)?.[1]]), [[T + 3000, '三'], [T + 1000, '一']])
+  // And forward again.
+  await store.restore('tool', after[0]!.id, T + 4000)
+  assert.match(inUse(), /title: 三/)
+  assert.deepEqual((await store.history('tool')).map(v => /title: (.)/.exec(v.manifest)?.[1]), ['二', '一'])
+
+  await assert.rejects(store.restore('tool', '2020-01-01T00-00-00-000Z'), /历史里没有/)
+  await assert.rejects(store.restore('tool', '..'), /历史里没有/, 'only a version in its history')
+  assert.match(inUse(), /title: 三/, 'a restore that fails changes nothing')
+
+  // A version that no longer fits the schema stays where it is.
+  const bad = (await store.history('tool'))[1]!
+  writeFileSync(join(data, 'pack-history', 'tool', bad.id, 'adg.script.yaml'), 'id: tool\nname: Tool\ntasks:\n  - { id: run, title: 运行 }\n')
+  await assert.rejects(store.restore('tool', bad.id), /tasks need a launch section/)
+  assert.match(inUse(), /title: 三/)
+
+  // Dropping the user pack keeps it in the history; with no user pack there is nothing to drop.
+  await store.discard('tool', T + 5000)
+  assert.ok(!existsSync(join(data, 'packs', 'tool')))
+  assert.equal((await store.history('tool'))[0]?.at, T + 5000)
+  await assert.rejects(store.discard('tool'), /没有自己写的脚本包/)
+  await store.restore('tool', (await store.history('tool'))[0]!.id, T + 6000)
+  assert.match(inUse(), /title: 三/, 'and it can come back from there')
 })
 
 test('SKILL.md frontmatter becomes a skill registration', () => {

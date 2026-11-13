@@ -19,6 +19,8 @@ export interface LoadedPack {
   readonly builtin: boolean
   /** `SKILL.md`, when present. */
   readonly skill?: string
+  /** The built-in pack of the same id this user pack is used instead of: what is back in use when the user pack goes. */
+  readonly over?: LoadedPack
 }
 
 export interface PackLoadError {
@@ -47,7 +49,8 @@ export async function loadPacks(dirs: readonly PackDir[]): Promise<{ packs: Map<
         const manifest = parseManifest(text, file)
         if (manifest.id !== entry.name) throw new Error(`${file}: id "${manifest.id}" must match its directory name "${entry.name}"`)
         const skill = await readFile(join(packDir, SKILL_FILE), 'utf8').catch(() => undefined)
-        packs.set(manifest.id, { manifest, dir: packDir, builtin, ...(skill === undefined ? {} : { skill }) })
+        const under = packs.get(manifest.id)
+        packs.set(manifest.id, { manifest, dir: packDir, builtin, ...(skill === undefined ? {} : { skill }), ...(!builtin && under?.builtin === true ? { over: under } : {}) })
       } catch (error) {
         errors.push({ id: entry.name, dir: packDir, builtin, error: error instanceof Error ? error.message : String(error) })
       }

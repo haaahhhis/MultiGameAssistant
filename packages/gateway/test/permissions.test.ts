@@ -8,6 +8,7 @@ import { Permissions } from '../src/permissions.ts'
 
 test('each area keeps its own policy on top of the mode, saved and read back; unknown ones are dropped', async () => {
   assert.equal(areaOf('pipeline_draft')?.id, 'pipelines-edit')
+  assert.equal(areaOf('pipeline_save')?.id, 'pipelines-edit', 'what 编排 saves with is under the same setting')
   assert.equal(areaOf('screen_capture'), undefined, 'a screenshot is in no area')
   const file = join(mkdtempSync(join(tmpdir(), 'adg-perm-')), 'permissions.json')
   const permissions = new Permissions(file)

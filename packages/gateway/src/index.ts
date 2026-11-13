@@ -227,6 +227,8 @@ const MAIN_AGENT: RoleSpec = {
     'game_list', 'game_activities', 'game_report',
     'pipeline_*', 'schedule_*', 'monitor_incidents', 'monitor_stall_check', 'emulator_status', 'window_list',
   ],
+  // Saving a pipeline outright is 编排's: 助手 drafts one for the user, or hands the change to 编排.
+  hide: ['pipeline_save'],
 }
 
 /** Whose memory an agent reads: its own, or for a sub-agent (`<lead>:sub`, roles.ts subAgentSpec) its lead's. */
@@ -1222,6 +1224,16 @@ Content-Length: 0
 
   /** Whose memory an agent in this session reads and writes: its own agent's (a sub-agent's lead's); none for other chats. */
   private memoryOwner(sessionId: string): string | undefined {
+    return this.leadOf(sessionId)
+  }
+
+  /**
+   * The lead agent a session's agent is, or works for: its role's id (`main`
+   * for 助手), and for a sub-agent its lead's. What a tool reads to know whose
+   * hands it is in (only 编排's save pipelines outright). Undefined for chats
+   * that are not the app's.
+   */
+  leadOf(sessionId: string): string | undefined {
     const spec = this.specOf(sessionId)
     return spec === undefined ? undefined : memoryOwnerOf(spec)
   }

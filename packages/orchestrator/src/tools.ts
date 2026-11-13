@@ -1,11 +1,13 @@
 /**
- * Agent tools for pipelines. The agent drafts (the user saves it in the
- * 编排 page before it runs on a schedule), runs, and reads status; schedules
- * it may set when the user asks ("每天四点半跑").
+ * Agent tools for pipelines. 编排 and its sub-agents save pipelines outright
+ * (`pipeline_save`: new ones, and changes to saved ones); other agents draft
+ * (`pipeline_draft`: the user saves it in the 编排 page before it runs on a
+ * schedule). Running, reading status, and schedules set when the user asks
+ * ("每天四点半跑").
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { AgentTaskId, ClockTime, Pipeline, PipelineId, PowerAction, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
+import { AgentTaskId, ClockTime, isMarker, Pipeline, PipelineId, PowerAction, withStartEnd, type PipelineInput, type PipelineRun } from '@adg/protocol'
 import { systemInfo } from './system.ts'
 import { PARAMS_SCHEMA, taskParams } from '@adg/runner'
 import { z } from 'zod'
@@ -54,7 +56,7 @@ const brief = (run: PipelineRun, pipelines: Pipelines) => {
 
 const DRAFT_HELP = `先按 pipeline-planning 技能：调用 system_info 看电脑带不带得动，默认一次只跑一个游戏（串行），串行的连线用 always，这样一个游戏失败不影响后面的。
 流水线是一个 DAG：nodes 是步骤，edges 是先后关系（from 完成后才运行 to；同一个节点的多个下游并行）。
-节点 kind：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数；脚本存了多份配置时可以填 profile 选一份，script_profiles 可查，不填用脚本当前那份）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
+节点 kind（「开始」「结束」不用写，系统会加；从 pipeline_get 照抄时带着 start、end 和它们的连线也可以）：script-task（填 script_id、task_id、params，script_tasks 可查任务和参数；脚本存了多份配置时可以填 profile 选一份，script_profiles 可查，不填用脚本当前那份）、agent（填 prompt）、wait（填 minutes，或 until 写 HH:MM）、notify（填 text，发飞书）、gate（填 text，等用户确认）。
 连线 when：success（默认）/ failure / always。失败处理：节点或整条流水线的 retries（重试次数）和 then（continue 继续其他分支 / stop 停止流水线），默认不重试、继续。
 需要同一资源（桌面鼠标键盘、同一台模拟器、同一账号）的并行节点会自动排队，不用自己串起来；只在有真正的先后依赖时才连线。
 例：MAA（模拟器）和三月七（桌面）并行，都完成后发飞书——nodes：maa（script-task，script_id maa，task_id daily）、m7（script-task，script_id march7th，task_id main）、done（notify，text「日常都跑完了」）；edges：maa→done（always）、m7→done（always）。`
@@ -71,7 +73,7 @@ const DRAFT_SCHEMA: Record<string, JsonSchemaNode> = {
       type: 'object',
       properties: {
         id: { type: 'string', description: '节点 id（字母数字）。' },
-        kind: { type: 'string', enum: ['script-task', 'agent', 'wait', 'notify', 'gate'] },
+        kind: { type: 'string', enum: ['script-task', 'agent', 'wait', 'notify', 'gate', 'start', 'end'] },
         title: { type: 'string', description: '名称（可选）。' },
         script_id: { type: 'string', description: 'script-task：脚本 id。' },
         task_id: { type: 'string', description: 'script-task：任务 id。' },
@@ -112,7 +114,7 @@ const DraftArgs = z.object({
   description: z.string().nullish(),
   nodes: z.array(z.object({
     id: z.string(),
-    kind: z.enum(['script-task', 'agent', 'wait', 'notify', 'gate']),
+    kind: z.enum(['script-task', 'agent', 'wait', 'notify', 'gate', 'start', 'end']),
     title: z.string().nullish(),
     script_id: z.string().nullish(),
     task_id: z.string().nullish(),
@@ -160,6 +162,8 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
         case 'wait': return { ...base, kind: 'wait' as const, ...(given(n.until) ? { until: n.until } : { minutes: n.minutes ?? 1 }) }
         case 'notify': return { ...base, kind: 'notify' as const, text: n.text ?? '' }
         case 'gate': return { ...base, kind: 'gate' as const, text: n.text ?? '' }
+        case 'start': return { ...base, kind: 'start' as const }
+        case 'end': return { ...base, kind: 'end' as const }
       }
     }),
     edges: (args.edges ?? []).map(e => ({ from: e.from, to: e.to, when: e.when ?? 'success' })),
@@ -168,6 +172,30 @@ export function draftToPipeline(args: z.infer<typeof DraftArgs>, library: CheckL
     ...(given(args.close_game_after) ? { closeGameAfter: args.close_game_after } : {}),
     ...(given(args.power_after) ? { powerAfter: args.power_after } : {}),
   })
+}
+
+/**
+ * A change to a saved pipeline, from the tool's arguments: what they cannot
+ * say stays as it was (when it runs, where its nodes sit on the canvas), and
+ * so do the pipeline's own options they left out.
+ */
+export function changeOf(args: z.infer<typeof DraftArgs>, existing: Pipeline, library: CheckLibrary): PipelineInput {
+  const next = draftToPipeline(args, library)
+  // 开始 and 结束 keep their place too: found by kind, since the ones just added may be named differently.
+  const placeOf = (node: PipelineInput['nodes'][number]) => existing.nodes.find(old => (isMarker(node) ? old.kind === node.kind : old.id === node.id))?.position
+  return {
+    ...next,
+    nodes: next.nodes.map(node => {
+      const position = placeOf(node)
+      return position === undefined ? node : { ...node, position }
+    }),
+    ...(given(args.description) || existing.description === undefined ? {} : { description: existing.description }),
+    ...(given(args.retries) || given(args.then) ? {} : { onFailure: existing.onFailure }),
+    ...(given(args.stop_emulator_after) ? {} : { stopEmulatorAfter: existing.stopEmulatorAfter }),
+    ...(given(args.close_game_after) ? {} : { closeGameAfter: existing.closeGameAfter }),
+    ...(given(args.power_after) ? {} : { powerAfter: existing.powerAfter }),
+    schedule: existing.schedule,
+  }
 }
 
 export function pipelineTools(pipelines: Pipelines, engine: Engine, library: CheckLibrary, system: () => Promise<unknown> = systemInfo): ToolDefinition[] {
@@ -197,7 +225,7 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
     }),
     tool({
       name: 'pipeline_draft',
-      description: `按用户的描述生成一条流水线草稿并保存（只是到点让某个 agent 做一件事、没有脚本步骤的，用 schedule_task_save 做成定时任务，不要做成流水线），用户会在「编排」页看到、可以拖拽修改；草稿可以立即用 pipeline_run 运行，但用户在界面里保存之前不会按定时运行。不能覆盖用户保存过的流水线（换个 id）。返回运行前检查的结果，有 error 要修正后重新提交。\n${DRAFT_HELP}`,
+      description: `按用户的描述生成一条流水线草稿并保存（只是到点让某个 agent 做一件事、没有脚本步骤的，用 schedule_task_save 做成定时任务，不要做成流水线），用户会在「编排」页看到、可以拖拽修改；草稿可以立即用 pipeline_run 运行，但用户在界面里保存之前不会按定时运行。不能覆盖已经保存的流水线：要改那一条，用 agent_delegate 交给「编排」，它可以直接改好保存；要另起一条就换个 id。返回运行前检查的结果，有 error 要修正后重新提交。\n${DRAFT_HELP}`,
       properties: DRAFT_SCHEMA,
       required: ['id', 'name', 'nodes'],
       kind: 'other',
@@ -211,6 +239,29 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
           next: check.ok
             ? `告诉用户草稿已保存在「编排」页，可以直接运行或先看看；回复里附上链接 [在编排页打开](${link})。每天定时运行要在编排页保存后，在「定时与失败」里设置时间；开机自动运行在 [设置 → 定时与自启](#/settings/schedule)`
             : '修正 check.issues 里的 error 后重新提交',
+        }
+      },
+    }),
+    tool({
+      name: 'pipeline_save',
+      description: `保存一条流水线，直接生效，不用用户再确认：新建一条，或者按 id 修改已有的一条（用户保存过的、草稿都可以；草稿保存后就不再是草稿）。只是到点让某个 agent 做一件事、没有脚本步骤的，用 schedule_task_save 做成定时任务，不要做成流水线。
+修改已有的：先 pipeline_get 读出现在的定义，在它上面改；nodes 和 edges 要写全，没写的节点和连线会被去掉，节点原有的 retries、then、wait_for_all 也要照样写上。定时（用 schedule_set 改）和节点在画布上的位置保持不变；description、retries、then、stop_emulator_after、close_game_after、power_after 没填的保持原值。正在运行的那一次不受影响，下一次运行用新的定义。
+返回运行前检查的结果和保存后的定义；有 error 时也已经保存，但运行会被拒绝，要修正后重新提交。\n${DRAFT_HELP}`,
+      properties: DRAFT_SCHEMA,
+      required: ['id', 'name', 'nodes'],
+      kind: 'other',
+      title: a => `保存流水线：${String(a['name'] ?? '')}`,
+      execute: async args => {
+        const a = parse(DraftArgs, args)
+        const existing = pipelines.has(a.id) ? pipelines.get(a.id) : undefined
+        const input = parse(Pipeline, existing === undefined ? draftToPipeline(a, library) : changeOf(a, existing, library))
+        const { pipeline, check } = await pipelines.save(input, 'orchestrator')
+        const link = `#/p/pipelines/${encodeURIComponent(pipeline.id)}`
+        return {
+          ok: check.ok, id: pipeline.id, saved: existing === undefined ? 'created' : 'updated', pipeline, check, link,
+          next: check.ok
+            ? `已经保存并生效。回复里说清楚改了什么，附上链接 [在编排页打开](${link})；定时用 schedule_set 设置`
+            : '已经保存，但 check.issues 里有 error，运行会被拒绝：修正后重新提交',
         }
       },
     }),
@@ -255,7 +306,7 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
     }),
     tool({
       name: 'schedule_set',
-      description: '设置一条流水线的定时：每天（或指定星期几）的几个时间点自动运行；错过不超过 catch_up_minutes 分钟（电脑睡眠、刚开机）会补跑。用户说「每天四点半跑日常」时使用。草稿要用户在界面保存后才会按定时运行。',
+      description: '设置一条流水线的定时：每天（或指定星期几）的几个时间点自动运行；错过不超过 catch_up_minutes 分钟（电脑睡眠、刚开机）会补跑。用户说「每天四点半跑日常」时使用。草稿要保存后才会按定时运行（用户在「编排」页保存，或「编排」用 pipeline_save 保存）。',
       properties: {
         id,
         enabled: { type: 'boolean', description: '开启或关闭定时。' },
@@ -277,7 +328,7 @@ export function pipelineTools(pipelines: Pipelines, engine: Engine, library: Che
           ...(a.catch_up_minutes == null ? {} : { catchUpMinutes: a.catch_up_minutes }),
         }
         const { pipeline } = await pipelines.save({ ...current, schedule }, current.draft === true ? 'agent' : 'user')
-        return { ok: true, schedule: pipeline.schedule, note: pipeline.draft === true ? '这是草稿：用户在「编排」页保存后才会按定时运行' : undefined }
+        return { ok: true, schedule: pipeline.schedule, note: pipeline.draft === true ? '这是草稿：保存后才会按定时运行（用户在「编排」页保存，或「编排」用 pipeline_save 保存）' : undefined }
       },
     }),
     tool({

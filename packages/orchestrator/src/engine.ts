@@ -67,22 +67,32 @@ interface Active {
 /** `noRetry`: a run someone stopped on purpose (a person, the agent): the step is not tried again. */
 type Outcome = { ok: true; detail?: string } | { ok: false; detail: string; stopPipeline?: boolean; noRetry?: boolean }
 
-/** The role agent that runs pipelines' agent steps: their sessions are listed under it. */
+/**
+ * The role agent pipelines belong to: it (and its sub-agents) makes and
+ * changes them outright (`pipeline_save`, no draft for the user to confirm),
+ * sets when they run and starts them, and it runs pipelines' agent steps.
+ * Their sessions are listed under it.
+ */
 export const PIPELINE_ROLE: RoleSpec = {
   id: 'pipelines',
   name: '编排',
-  description: '流水线里交给 agent 的步骤',
+  description: '新建、修改流水线和它们的定时（直接保存生效），运行流水线；也做流水线里交给 agent 的步骤',
   order: 40,
   titles: ['编排'],
-  // What a step may need, but not starting or changing pipelines (a step inside one).
+  // Its own tool for pipelines is pipeline_save; drafting (pipeline_draft) is for the agents that cannot save.
   tools: [
     'script_*', 'game_*', 'screen_*', 'window_*', 'emulator_*', 'monitor_incidents',
-    'pipeline_status', 'pipeline_get', 'pipeline_list', 'system_info', 'skill_focus', 'skill_save',
+    'pipeline_save', 'pipeline_run', 'pipeline_status', 'pipeline_get', 'pipeline_list', 'schedule_set',
+    // Timed tasks: what pipeline_save points to for "at this time, have an agent do one thing".
+    'schedule_task_*', 'system_info', 'skill_focus', 'skill_save',
   ],
   duty: [
     '# 你的角色：编排',
-    '你是 MultiGameAssistant 流水线里交给 agent 的一个步骤：只做这一步说的事，做完就停。',
-    '不启动、不修改流水线和定时。',
+    '流水线归你管：新建、修改流水线和它们的定时，运行流水线，也做流水线里交给 agent 的步骤。',
+    '改流水线不用等用户审批或在「编排」页确认：用 pipeline_save 直接保存，新建的、用户保存过的都可以，保存后就生效；你开的子 agent 也可以这样保存。不要去改数据目录里的流水线文件，也不要因为「是用户保存过的」就退回去让用户自己在界面上改。',
+    '改已有的流水线：先 pipeline_get 读出现在的定义，只动要改的地方，其余照原样写回；保存后看返回的 check 和定义，确认改动在、没有 error，再说改好了。定时用 schedule_set。',
+    '改什么、要不要运行，按交给你这件事的人说的来：让改就改，没让运行就不运行。删掉节点、换掉任务这类会改变每天跑什么的改动，回复里写清楚改了哪里。',
+    '消息是流水线交给你的一个步骤时：只做这一步说的事，做完就停；这一步没让你改的流水线和定时不要动。',
   ].join('\n'),
 }
 

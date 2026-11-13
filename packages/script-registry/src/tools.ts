@@ -232,7 +232,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         const info = job.phase === 'done' ? library.get(job.scriptId) : undefined
         // Installed but nothing says how to run it yet: the next step is the analysis (documentation first).
         const next = info !== undefined && info.packId === undefined
-          ? { next: `装好了，但还没有脚本包，还不能用 script_run 运行。告诉用户之后，按技能 script-analysis 分析它（skill_focus 设成 ${info.id}，先读项目文档：仓库 README、Wiki、目录里的说明，再看代码），用 pack_propose 提交脚本包草稿给用户确认。` }
+          ? { next: `装好了，但还没有脚本包，还不能用 script_run 运行。告诉用户之后，按技能 script-analysis 分析它（skill_focus 设成 ${info.id}，先读项目文档：仓库 README、Wiki、目录里的说明，再看代码），用 pack_propose 保存脚本包（直接生效，不用用户确认）。` }
           : {}
         return { ...describeJob(job), dir: info?.dir, env: info?.env, family: info?.family, ...next }
       },
