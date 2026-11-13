@@ -143,8 +143,21 @@ export class AdgOrchestrator extends Service {
 
     ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-orchestrator tools', agent => {
       const registered: Array<() => void> = []
+      // Saving outright is 编排's and its sub-agents': the others draft, or hand the change to it.
+      const mayNot = (name: string, session: string | undefined) => (name !== 'pipeline_save' || (session !== undefined && ctx.get('adgGateway')?.leadOf(session) === PIPELINE_ROLE.id)
+        ? undefined
+        : `只有「${PIPELINE_ROLE.name}」和它的子 agent 能直接保存流水线：用 agent_delegate 把要改的交给「${PIPELINE_ROLE.name}」，或者用 pipeline_draft 起草一条给用户确认`)
       for (const tool of [...pipelineTools(pipelines, engine, library), ...taskTools(tasks, () => ctx.get('adgGateway')?.roles.list() ?? [])]) {
-        registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
+        registered.push(agent.tools.register({
+          ...tool,
+          execute: async (args, exec) => {
+            await this.ready
+            const refusal = mayNot(tool.name, exec.agent?.session.id)
+            if (refusal !== undefined) throw new Error(refusal)
+            await ctx.get('adgGateway')?.guardTool(exec)
+            return tool.execute(args, exec)
+          },
+        }))
       }
       return () => { for (const dispose of registered) dispose() }
     }))

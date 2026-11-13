@@ -31,10 +31,10 @@ export const SAVE_SKILL_PROMPT = [
 export function optimizeScriptPrompt(target: string, why?: string, id?: string): string {
   return [
     `优化脚本${target === '' ? '：最近运行过的脚本（script_runs 看最近一周跑过哪些，一个一个来）' : `「${target}」${id === undefined ? '' : `（脚本 id ${id}）`}`}${why === undefined ? '' : `（${why}）`}。把这段时间运行攒下的信息用起来，一次做完下面几件事：`,
-    '1. 重新总结脚本包：script_tasks、script_help 看它现在有哪些任务和参数，script_runs、script_run_log 看最近的运行（成功的看正常流程和用时，失败的看原因）；更新过版本就先用 script_changelog 读更新日志。对照它的脚本包，任务、参数、配置文件、完成和出错的日志文字、预计用时有不对或缺的，用原来的脚本包 id 提交 pack_propose（summary 写明依据）；都对就不提交；',
+    '1. 重新总结脚本包：script_tasks、script_help 看它现在有哪些任务和参数，script_runs、script_run_log 看最近的运行（成功的看正常流程和用时，失败的看原因）；更新过版本就先用 script_changelog 读更新日志。对照它的脚本包，任务、参数、配置文件、完成和出错的日志文字、预计用时有不对或缺的，用原来的脚本包 id 调用 pack_propose 保存（直接生效；summary 写明依据）；都对就不改；',
     '2. 改善监控时间：monitor_stall_check 看它正常运行时日志的节奏，按建议值和你看日志的判断用 monitor_stall_set 设它多久没新日志算卡住，note 写明依据（例如「战斗中最长 70 秒不输出」）；',
     '3. 把做过的步骤总结成技能，分到对应的游戏和脚本：运行和处理这个脚本时反复用到、已经走通的做法（常见报错怎么处理、怎么确认跑完、配置怎么改）用 skill_save 存成技能，scripts 填这个脚本的 id，只给它用；其中和游戏本身有关、别的脚本也用得上的（游戏里的操作、界面、活动、机制）单独存，games 填它玩的游戏 id（game_list 查），不填 scripts；已有的技能就合并更新（replace），不要重复存，没有值得存的就不存；',
-    '4. 不要运行脚本、不要改它的配置；最后用几句话告诉我：脚本包改了什么（草稿在「脚本」页等我确认）、卡住时间设成多少、存了或更新了哪些技能。',
+    '4. 不要运行脚本、不要改它的配置；最后用几句话告诉我：脚本包改了什么（已经直接生效）、卡住时间设成多少、存了或更新了哪些技能。',
   ].join('\n')
 }
 
@@ -74,12 +74,12 @@ export const COMMANDS: readonly SlashCommand[] = [
   {
     name: '编排',
     aliases: ['plan', 'pipeline'],
-    title: '把脚本编成流水线（先起草，我确认后才生效）',
+    title: '把脚本编成流水线',
     arg: '想做什么（可选，例如「每天早上跑完三个游戏的日常」）',
     expand: arg => [
       `帮我把脚本编排成流水线：${arg === '' ? '把我装好的各个脚本的日常任务排成每天能自动跑的流程' : arg}。按技能 pipeline-planning：`,
       '1. 先 system_info 看电脑配置（能不能同时跑几个游戏），pipeline_list 看已有的流水线，script_tasks 看各脚本有哪些任务；',
-      '2. 用 pipeline_draft 起草（草稿，我在「编排」页保存后才会按定时运行）：模拟器和前台脚本能并行的并行，失败不要挡住别的；',
+      '2. 排好后保存：你是「编排」就用 pipeline_save 直接保存；不是就用 pipeline_draft 起草（草稿，我在「编排」页保存后才会按定时运行），或者交给「编排」。模拟器和前台脚本能并行的并行，失败不要挡住别的；',
       '3. 说清楚为什么这样排、哪些步骤并行、估计多久、建议定在几点跑。',
     ].join('\n'),
   },

@@ -83,7 +83,7 @@ export function optimizer(ctx: Context, library: () => ScriptLibrary, log: { war
         title: `要优化「${script.name}」吗？`,
         text: [
           `${script.name} ${why(script) ?? ''}，攒下的运行记录够用来优化它了。`,
-          '要让「脚本」agent 一次做完：按这些运行重新总结脚本包、按正常时的日志节奏调「多久没动静算卡住」、把反复走通的步骤存成只给它用的技能吗？脚本包的改动会先作为草稿给你确认。',
+          '要让「脚本」agent 一次做完：按这些运行重新总结脚本包、按正常时的日志节奏调「多久没动静算卡住」、把反复走通的步骤存成只给它用的技能吗？脚本包要改的它会直接改好（之前的版本留在历史里），结果会告诉你。',
         ].join('\n'),
         severity: 'info',
         actions: [{ id: 'run', label: '优化脚本', style: 'primary' }, { id: 'keep', label: '这次不用' }],

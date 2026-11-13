@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { GuardGrant, PackDraft, ScriptInfo } from '@adg/protocol'
+import type { GuardGrant, PackDraft, PackVersion, ScriptInfo } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -8,8 +8,10 @@ import { errorText } from './data.ts'
 import { Select } from '../../components/Select.tsx'
 
 /**
- * Pack drafts the agent proposed for this script, to accept or reject (with the
- * documents each was written from); asking the agent to analyze it; and, after
+ * Asking the agent to analyze this script (the pack it writes is in use at once);
+ * pack drafts left from when each waited to be accepted or rejected (with the
+ * documents each was written from); going back to a version of the pack that was
+ * replaced (the agent's changes are not confirmed first, so this is the way back); and, after
  * the script updated past its pack's version, asking whether to check the pack.
  */
 export function PackCard({ client, script, openSession }: { client: AdgClient; script: ScriptInfo; openSession: (id: string) => void }) {
@@ -21,6 +23,8 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState<'manifest' | 'skill' | null>(null)
+  const [versions, setVersions] = useState<PackVersion[]>([])
+  const [restored, setRestored] = useState(false)
 
   useEffect(() => client.connection.on('packs/changed', () => setRevision(r => r + 1)), [client])
   useEffect(() => {
@@ -29,6 +33,14 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
     client.connection.call('packs/drafts', { scriptId: script.id }).then(r => { if (live) setDrafts(r.items) }).catch(() => {})
     return () => { live = false }
   }, [client, script.id, status.state, capabilities, revision])
+
+  // What the pack can go back to: the versions the agent's changes replaced, and the built-in pack under a user pack.
+  useEffect(() => {
+    if (status.state !== 'open' || !capabilities.has('packs') || script.packId === undefined) { setVersions([]); return }
+    let live = true
+    client.connection.call('packs/history', { packId: script.packId }).then(r => { if (live) setVersions(r.items) }).catch(() => { if (live) setVersions([]) })
+    return () => { live = false }
+  }, [client, script.packId, status.state, capabilities, revision])
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -40,7 +52,7 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
     const { sessionId } = await client.connection.call('sessions/create', { focus: { scripts: [script.id] } })
     await client.connection.call('session/prompt', {
       sessionId, requestId: `analyze-${Date.now()}`, mode: 'queue',
-      text: `请按 script-analysis 技能分析脚本库里的「${script.name}」（id: ${script.id}），${script.packId === undefined ? '为它生成' : '检查并改进它的'}脚本包：先找到并读完这个项目自己的文档（目录里的说明、仓库 README、Wiki、文档站），再结合代码核对补全，实在没有文档才直接看代码。用 pack_propose 提交草稿，docs 里写明依据的文档。`,
+      text: `请按 script-analysis 技能分析脚本库里的「${script.name}」（id: ${script.id}），${script.packId === undefined ? '为它生成' : '检查并改进它的'}脚本包：先找到并读完这个项目自己的文档（目录里的说明、仓库 README、Wiki、文档站），再结合代码核对补全，实在没有文档才直接看代码。用 pack_propose 保存（直接生效），docs 里写明依据的文档。`,
     })
     openSession(sessionId)
   })
@@ -55,7 +67,15 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
     if (sessionId !== undefined) openSession(sessionId)
   })
 
+  const restore = (version: PackVersion) => act(async () => {
+    setRestored(false)
+    await client.connection.call('packs/restore', { packId: script.packId!, version: version.id })
+    setRestored(true)
+  })
+  const versionLabel = (version: PackVersion) => `${version.builtin === true ? '内置脚本包' : `${relativeTime(version.at ?? now, now)}被替换`} · 任务：${version.tasks.map(t => t.title).join('、') || '无'}`
+
   const draft = drafts[0]
+  const previous = versions[0]
   const due = script.optimize?.due
   return (
     <section className="card">
@@ -92,6 +112,22 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
             <button className="small-button" disabled={busy} onClick={() => void optimize('keep')}>这次不用</button>
             <button className="primary small-button" disabled={busy || status.state !== 'open'} onClick={() => void optimize('run')}>优化脚本</button>
           </span>
+        </div>
+      )}
+      {previous !== undefined && (
+        <div className="pack-history">
+          <div className="key-actions">
+            <span className="muted small">{previous.builtin === true ? '现在用的是自己写的脚本包，可以换回' : '上一版脚本包：'}{versionLabel(previous)}</span>
+            <span className="spacer" />
+            <button className="small-button" disabled={busy || status.state !== 'open'} title="现在用的这一版会留在历史里，可以再恢复回来" onClick={() => void restore(previous)}>{previous.builtin === true ? '恢复内置的' : '恢复上一版'}</button>
+          </div>
+          {versions.length > 1 && (
+            <details className="draft-docs">
+              <summary className="muted small">更早的版本（{versions.length - 1}）</summary>
+              <ul>{versions.slice(1).map(v => <li key={v.id}>{versionLabel(v)} <button className="link-button" disabled={busy || status.state !== 'open'} onClick={() => void restore(v)}>恢复</button></li>)}</ul>
+            </details>
+          )}
+          {restored && <p className="muted small">已恢复。刚才用的那一版留在历史里，可以再恢复回来。</p>}
         </div>
       )}
       {draft !== undefined && (
