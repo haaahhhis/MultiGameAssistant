@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
+import { ARCHIVE_MARK } from '@adg/protocol'
 import { coverOf, formatGap, LONG_GAP_MS, TIME_SOURCE, timeFacts, timeNote, type TimedEvent } from '../src/time-context.ts'
 
 const ZONE = 'Asia/Shanghai'
@@ -37,6 +38,22 @@ test('gaps read in days, hours and minutes', () => {
   assert.equal(formatGap(45 * MIN), '45 分钟')
   assert.equal(formatGap(125 * MIN), '2 小时 5 分钟')
   assert.equal(formatGap(1440 * MIN), '1 天')
+})
+
+test('an archive pointer is no summary: the reminder still describes the newest summary, or says nothing', () => {
+  const replace = { op: 'replace', startSeq: 0, endSeq: 0 }
+  const pointer = (time: number, sources: number[]): TimedEvent => ({ type: 'user/message', time, data: { content: [{ type: 'text', text: `${ARCHIVE_MARK}这个对话……` }] }, surfaceOp: replace, sourceEventSeqs: sources })
+  const events: TimedEvent[] = [
+    user(NOW - 3000 * MIN),
+    { type: 'compaction/summary', time: NOW - 100 * MIN },
+    { type: 'user/message', time: NOW - 100 * MIN, data: { content: [{ type: 'text', text: '要点' }] }, surfaceOp: replace, sourceEventSeqs: [0] },
+    { type: 'compaction/summary', time: NOW - 99 * MIN },
+    pointer(NOW - 99 * MIN, [2]),
+  ]
+  const facts = at(events)
+  assert.equal(facts.summaryAt, NOW - 100 * MIN, "the summary's time, not the pointer's")
+  assert.equal(facts.summaryCovers?.firstSeq, 0)
+  assert.equal(at([user(NOW - 3000 * MIN), { type: 'compaction/summary', time: NOW - 99 * MIN }, pointer(NOW - 99 * MIN, [0])]).summaryAt, undefined, 'a pointer alone: nothing to remind')
 })
 
 test('a summary is labelled with the time and the #numbers of what it replaced, an earlier summary in it included', () => {

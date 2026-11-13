@@ -3,16 +3,25 @@
  * not how to do a job (that is a skill), but who the user is, what they
  * prefer, what was agreed and what was done.
  *
- * Two kinds of entries:
+ * Three kinds of entries:
+ * - `core` (核心): the user's core wishes and preferences. Always shared, in
+ *   every agent's system prompt every time, never pushed out by newer entries
+ *   or by age. Small on purpose (`MAX_CORE_CHARS` in all): the user writes
+ *   them, or an agent when the user explicitly asks; automatic memory never
+ *   adds or changes one.
  * - `profile` (资料): lasting facts — how to address the user, preferences,
- *   conventions, their machines and games. Every one goes into the agents'
- *   system prompt.
+ *   conventions, their machines and games. The newest go into the agents'
+ *   system prompt; older ones are found with `memory_search`.
  * - `journal` (日记): what happened on a day — a decision, a job done, a
  *   problem solved. Only the recent ones go into the prompt; older ones are
  *   found with `memory_search`.
  *
  * Each entry is `shared` (every agent reads it) or one agent's own (`scope`
- * is that agent's id: only it reads it). Agents write them with
+ * is that agent's id: only it reads it). An entry may say where it was learned
+ * (`source`: the conversation and the message number), so the words around it
+ * can be read back with `history_read`. Every change is also appended to
+ * `<dataDir>/memory-log.jsonl` with what the entry read before and after, so
+ * a wrong change can be put right. Agents write them with
  * `memory_save` / `memory_forget`; the user reads, edits and deletes them on
  * 设置 → 记忆. Kept in `<dataDir>/memory.json`. Never passwords, codes or keys.
  *
@@ -28,8 +37,20 @@ export const MEMORY_CAPABILITY = 'memory'
 /** Everyone's: the scope of an entry every agent reads. */
 export const SHARED_MEMORY = 'shared'
 
-export const MemoryKind = z.enum(['profile', 'journal'])
+export const MemoryKind = z.enum(['profile', 'journal', 'core'])
 export type MemoryKind = z.infer<typeof MemoryKind>
+
+/** All the core entries together hold at most this much: they ride in every request and are never dropped. */
+export const MAX_CORE_CHARS = 2000
+
+/** Where an entry was learned: whose conversation, which one, and the number (#seq) of a message there. */
+export const MemorySource = z.object({
+  /** The lead agent whose conversation it is (only that agent reads it back). */
+  agent: z.string(),
+  sessionId: z.string(),
+  seq: z.number().int().min(0),
+})
+export type MemorySource = z.infer<typeof MemorySource>
 
 /** Longest entry: one fact or one event, not a document (a document is a skill or a file). */
 export const MAX_MEMORY_TEXT = 600
@@ -45,6 +66,8 @@ export const MemoryEntry = z.object({
   updatedAt: z.string(),
   /** Who wrote it: an agent id, `user` (设置 → 记忆), or `auto` (read back from a conversation). */
   by: z.string(),
+  /** Where it was learned; absent for what the user wrote on 设置 → 记忆, and for entries from before this was kept. */
+  source: MemorySource.optional(),
 })
 export type MemoryEntry = z.infer<typeof MemoryEntry>
 

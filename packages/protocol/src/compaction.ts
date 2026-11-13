@@ -14,6 +14,13 @@
  * model provider's prompt cache keeps working there. Only what was compacted
  * leaves the agent's context; the agent reads it back with history_search /
  * history_read. It is read each time, so it applies at once.
+ *
+ * Archiving (`archiveDays`, only with low-context mode on): each stretch that
+ * ages out is summarized once, on its own, instead of being folded into one
+ * rolling summary; a summary whose conversation is older than that many days
+ * then leaves the context too, replaced by a one-line pointer, and is kept in
+ * `<dataDir>/summaries.jsonl`, where history_search finds it. Off (null): the
+ * one rolling summary stays, as before.
  */
 import { z } from 'zod'
 
@@ -31,6 +38,13 @@ export const LOW_COMPACTION_THRESHOLD = 30
 /** Low-context mode: what is more recent than this stays word for word. */
 export const LOW_CONTEXT_WINDOW_MS = 12 * 60 * 60_000
 
+export const MIN_ARCHIVE_DAYS = 1
+export const MAX_ARCHIVE_DAYS = 365
+/** What the settings page offers. */
+export const ARCHIVE_DAYS_CHOICES = [3, 7, 14, 30] as const
+/** How the pointer that replaces archived summaries begins: what tells it from a summary. */
+export const ARCHIVE_MARK = '（已归档）'
+
 export const CompactionSettings = z.object({
   /** Compact by itself when the conversation is long; off: a too-long conversation fails until compacted by hand. */
   auto: z.boolean(),
@@ -38,6 +52,8 @@ export const CompactionSettings = z.object({
   threshold: z.number().int().min(MIN_COMPACTION_THRESHOLD).max(MAX_COMPACTION_THRESHOLD),
   /** Low-context mode: keep only the last 12 hours and the summary in the context. */
   lowContext: z.boolean(),
+  /** With low-context mode: summaries of conversation older than this many days leave the context too; null: they stay. */
+  archiveDays: z.number().int().min(MIN_ARCHIVE_DAYS).max(MAX_ARCHIVE_DAYS).nullable().default(null),
 })
 export type CompactionSettings = z.infer<typeof CompactionSettings>
 

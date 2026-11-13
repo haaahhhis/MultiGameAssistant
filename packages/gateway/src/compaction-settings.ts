@@ -4,8 +4,8 @@
  * service starts: packages/bundle/cordis.patch.yml's preset-standard row turns
  * it into dsh-compaction-basic's `auto` and `thresholdRatio`. So what this
  * store reads at start is what is in effect (`applied`) until the next start.
- * Low-context mode is read from the file each time it might compact
- * (low-context.ts), so it is in effect as soon as it is saved.
+ * Low-context mode and its archiving are read from the file each time it
+ * might compact (low-context.ts), so they are in effect as soon as saved.
  */
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { CompactionSettings, DEFAULT_COMPACTION_THRESHOLD } from '@adg/protocol'
 
 export const COMPACTION_FILE = 'compaction.json'
-export const DEFAULT_COMPACTION: CompactionSettings = { auto: true, threshold: DEFAULT_COMPACTION_THRESHOLD, lowContext: false }
+export const DEFAULT_COMPACTION: CompactionSettings = { auto: true, threshold: DEFAULT_COMPACTION_THRESHOLD, lowContext: false, archiveDays: null }
 
 export class CompactionStore {
   readonly #file: string
@@ -28,8 +28,8 @@ export class CompactionStore {
   }
 
   state(): { settings: CompactionSettings; applied: CompactionSettings } {
-    // Low-context mode needs no restart: what is saved is what runs.
-    return { settings: this.#current, applied: { ...this.applied, lowContext: this.#current.lowContext } }
+    // Low-context mode and archiving need no restart: what is saved is what runs.
+    return { settings: this.#current, applied: { ...this.applied, lowContext: this.#current.lowContext, archiveDays: this.#current.archiveDays } }
   }
 
   async set(settings: CompactionSettings): Promise<{ settings: CompactionSettings; applied: CompactionSettings }> {

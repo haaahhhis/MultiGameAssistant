@@ -4,14 +4,16 @@
  * is said up front: the agent keeps only the summary. dsh reads the settings
  * when the agent service starts, so a change waits for a restart; the desktop
  * app can restart the service from here. Low-context mode (the last 12 hours
- * kept, older compacted once a task is over) is read each time: it needs no
- * restart.
+ * kept, older compacted once a task is over) and its archiving (summaries of
+ * conversation older than some days leave the context too) are read each
+ * time: they need no restart.
  */
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { DEFAULT_COMPACTION_THRESHOLD, LOW_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD, MIN_COMPACTION_THRESHOLD, type CompactionSettings } from '@adg/protocol'
+import { ARCHIVE_DAYS_CHOICES, DEFAULT_COMPACTION_THRESHOLD, LOW_COMPACTION_THRESHOLD, MAX_COMPACTION_THRESHOLD, MIN_COMPACTION_THRESHOLD, type CompactionSettings } from '@adg/protocol'
 import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
+import { Select } from '../../components/Select.tsx'
 import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
@@ -108,6 +110,22 @@ export function CompactionPage({ client }: { client: AdgClient }) {
             低上下文模式
           </label>
           <p className="muted small">只保留最近 12 小时的对话，更早的在任务做完后压缩成摘要。</p>
+          <label className="check-label compaction-archive">
+            <input type="checkbox" checked={state.settings.archiveDays !== null} disabled={busy || !state.settings.lowContext}
+              onChange={e => void save({ ...state.settings, archiveDays: e.target.checked ? 7 : null })} />
+            摘要也归档
+          </label>
+          {state.settings.archiveDays !== null && (
+            <label className="field compaction-archive-days">
+              <span className="field-title">对话过了多久，它的摘要就移出上下文</span>
+              <Select aria-label="多久以后归档" value={String(state.settings.archiveDays)} disabled={busy || !state.settings.lowContext}
+                onChange={value => void save({ ...state.settings, archiveDays: Number(value) })}
+                options={[...new Set<number>([...ARCHIVE_DAYS_CHOICES, state.settings.archiveDays])].sort((a, b) => a - b).map(days => ({ value: String(days), label: `${days} 天` }))} />
+            </label>
+          )}
+          <p className="muted small">{state.settings.lowContext
+            ? '打开后，每一段较早的对话单独写一份摘要（攒到大约一天写一次，不会把摘要再压成摘要）；对话过了上面的天数，它的摘要也移出上下文，只留一行说明。做过的事在「记忆」的日记里，agent 需要细节时会去查归档的摘要和原话。上下文最短，但 agent 要靠查才想得起来以前的事。'
+            : '要先打开低上下文模式。'}</p>
         </section>
       )}
       <section className="card">
