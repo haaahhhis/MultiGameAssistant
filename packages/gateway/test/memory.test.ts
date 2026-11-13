@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { looksSecret, MemoryStore, memoryPrompt, memoryTools } from '../src/memory.ts'
+import { MAX_CORE_CHARS } from '@adg/protocol'
+import { looksSecret, MEMORY_LOG, MemoryStore, memoryPrompt, memoryTools } from '../src/memory.ts'
 import { hiddenTools, subAgentSpec } from '../src/roles.ts'
 
 const day = (d: string) => new Date(`${d}T03:00:00Z`)
@@ -95,6 +96,73 @@ test('the tools write as the calling agent, change only what it reads, and find 
 
   await run(forget, { id: mine['saved'].id }, 's2')
   assert.equal(store.list().length, 1)
+})
+
+test('core entries are shared, few, never trimmed, and come first in every prompt however much else is kept', async () => {
+  const store = new MemoryStore(undefined)
+  const core = await store.add({ kind: 'core', scope: 'games', text: '任何会花钱的操作都先问用户', by: 'user' }, day('2025-01-01'))
+  assert.equal(core.scope, 'shared')
+  // Past the core's room a new one is refused; none already kept is dropped for it.
+  const filler: string[] = []
+  for (let i = 0; store.coreUsed() + 600 <= MAX_CORE_CHARS; i++) filler.push((await store.add({ kind: 'core', scope: 'shared', text: `${i}${'核'.repeat(599)}`, by: 'user' })).id)
+  await assert.rejects(store.add({ kind: 'core', scope: 'shared', text: '长'.repeat(600), by: 'user' }), /核心记忆一共最多 2000 个字/)
+  const profile = await store.add({ kind: 'profile', scope: 'shared', text: '长'.repeat(600), by: 'user' })
+  await assert.rejects(store.update(profile.id, { text: profile.text, kind: 'core' }, 'user'), /核心记忆/, 'made core by an edit: the same room')
+  for (const id of [...filler, profile.id]) await store.remove(id)
+  assert.equal(store.coreUsed(), core.text.length)
+
+  // Newer profile entries past the prompt's room, and past what the store keeps: the core entry stays.
+  for (let i = 0; i < 2005; i++) await store.add({ kind: 'profile', scope: 'shared', text: `资料第 ${i} 条：${'字'.repeat(90)}`, by: 'main' }, new Date(Date.parse('2026-01-01T00:00:00Z') + i * 60_000))
+  assert.equal(store.list().length, 2000)
+  assert.ok(store.get(core.id) !== undefined, 'never trimmed')
+  const text = memoryPrompt(store.visibleTo('main'), 'main', { now: day('2026-11-12'), timeZone: 'UTC' })
+  assert.match(text, /## 核心（用户最在意的要求和偏好，每次都要遵守）\n- \[m\w+\] 任何会花钱的操作都先问用户\n\n## 资料/)
+  assert.match(text, /还有 \d+ 条较早的资料/)
+  assert.match(text, /kind=core/)
+})
+
+test('every change is logged with the entry before and after', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-memory-log-'))
+  const store = new MemoryStore(join(dir, 'memory.json'))
+  const entry = await store.add({ kind: 'profile', scope: 'shared', text: '用户的显卡是 RTX 2080 Ti', by: 'main' })
+  await store.update(entry.id, { text: '用户的显卡是 RTX 2080 Ti' }, 'auto')
+  await store.update(entry.id, { text: '用户的显卡是 RTX 4070' }, 'auto')
+  await store.remove(entry.id, 'main')
+  const rows = readFileSync(join(dir, MEMORY_LOG), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  assert.deepEqual(rows.map(r => [r.op, r.by]), [['add', 'main'], ['update', 'auto'], ['remove', 'main']], 'the same words again are no change')
+  assert.equal(rows[1].before.text, '用户的显卡是 RTX 2080 Ti')
+  assert.equal(rows[1].after.text, '用户的显卡是 RTX 4070')
+  assert.equal(rows[2].before.text, '用户的显卡是 RTX 4070', 'what was removed can be put back')
+})
+
+test('a search with no entry holding every word finds those holding the most, and says so', async () => {
+  const store = new MemoryStore(undefined)
+  await store.add({ kind: 'journal', scope: 'shared', text: '2026-11-02 给星铁装好了 M7A 脚本', by: 'main' })
+  await store.add({ kind: 'profile', scope: 'shared', text: '星铁只玩官服', by: 'main' })
+  await store.add({ kind: 'profile', scope: 'shared', text: '用户的显卡是 RTX 4070', by: 'main' })
+  assert.deepEqual(store.find('main', '星铁 M7A').items.map(e => e.text), ['2026-11-02 给星铁装好了 M7A 脚本'])
+  const partly = store.find('main', '星铁 脚本 更新')
+  assert.equal(partly.every, false)
+  assert.equal(partly.items[0]?.text, '2026-11-02 给星铁装好了 M7A 脚本', 'two of three words first')
+  assert.equal(partly.items.length, 2)
+  assert.deepEqual(store.search('main', '星铁 脚本 更新'), [], 'search keeps its old meaning: every word')
+  // A Chinese phrase said another way still shares most of its pairs.
+  assert.equal(store.find('main', '星铁脚本装好').items[0]?.text, '2026-11-02 给星铁装好了 M7A 脚本')
+})
+
+test('memory_save notes where it was said, and the prompt and search say the words can be read back', async () => {
+  const store = new MemoryStore(undefined)
+  const [save, , search] = memoryTools({ store, agentOf: id => (id === 's1' ? 'main' : id === 's2' ? 'games' : undefined) })
+  const as = (session: string, seq: number) => ({ agent: { session: { id: session, seq } } }) as never
+  const saved = await save!.execute({ text: '以后都先告诉我结论', kind: 'core' }, as('s1', 42)) as unknown as { saved: { id: string; shared: boolean } }
+  assert.equal(saved.saved.shared, true)
+  assert.deepEqual(store.get(saved.saved.id)?.source, { agent: 'main', sessionId: 's1', seq: 41 }, 'the record before the save itself')
+  const journal = await save!.execute({ text: '2026-11-12 给 MAA 加了 8 点的定时', kind: 'journal', shared: true }, as('s1', 50)) as unknown as { saved: { id: string } }
+  const prompt = memoryPrompt(store.visibleTo('main'), 'main', { now: day('2026-11-13') })
+  assert.match(prompt, /\(记于 [^)]*，共享，可查原文\) 2026-11-12 给 MAA/)
+  assert.doesNotMatch(memoryPrompt(store.visibleTo('games'), 'games', { now: day('2026-11-13') }), /共享，可查原文\)/, "another agent's conversation: it cannot read it back")
+  const found = await search!.execute({ query: 'MAA 定时' }, as('s1', 60)) as unknown as { items: Record<string, string>[] }
+  assert.equal(found.items[0]?.['原文'], `history_read memory_id=${journal.saved.id}`)
 })
 
 test('every agent keeps the memory tools; a sub-agent only reads', () => {

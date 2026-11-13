@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import type { SessionEvent } from '@adg/protocol'
+import type { MemoryEntry, SessionEvent } from '@adg/protocol'
 import { around, historyTools, line, matches, saidIn, snippet } from '../src/history.ts'
+import type { ArchivedSummary } from '../src/low-context.ts'
 
 const T = Date.parse('2026-11-12T03:00:00Z')
 const user = (seq: number, text: string, kind = 'user', extra: object = {}) => ({ type: 'user/message', seq, time: T + seq * 60_000, messageId: `u${seq}`, content: [{ type: 'text', text }], origin: { kind, human: kind === 'user' }, ...extra }) as unknown as SessionEvent
@@ -50,4 +51,57 @@ test('the tools search and read the agent\'s own conversations, this one first, 
   const other = await read!.execute({ seq: 1, session_id: 's0' }, exec('s1')) as unknown as string
   assert.match(other, /RTX 4070/)
   await assert.rejects(Promise.resolve(read!.execute({ seq: 1, session_id: 'other' }, exec('s1'))), /只能读你自己的对话/)
+})
+
+test('with no message holding every word, a search lists those holding the most, and says so', async () => {
+  const [search] = historyTools({
+    agentOf: () => 'main',
+    sessions: async () => [{ id: 's1', title: null }],
+    read: async () => here,
+    timeZone: 'UTC',
+  })
+  const exec = { agent: { session: { id: 's1' } }, signal: new AbortController().signal } as never
+  const found = await search!.execute({ query: 'MAA 公招 B 服 定时 星铁' }, exec) as unknown as { items: { seq: number }[]; note: string }
+  assert.equal(found.items[0]?.seq, 1, 'the message with the most of the words first')
+  assert.match(found.note, /没有同时包含所有关键词的/)
+})
+
+test('a memory entry opens the conversation it was learned in; one learned elsewhere, or with no source, says why not', async () => {
+  const entries: Record<string, MemoryEntry> = {
+    j1: { id: 'j1', kind: 'journal', scope: 'shared', text: '加了 8 点的定时', createdAt: '', updatedAt: '', by: 'main', source: { agent: 'main', sessionId: 's0', seq: 1 } },
+    j2: { id: 'j2', kind: 'journal', scope: 'shared', text: '游戏那边的事', createdAt: '', updatedAt: '', by: 'games', source: { agent: 'games', sessionId: 'other', seq: 1 } },
+    p1: { id: 'p1', kind: 'profile', scope: 'shared', text: '用户手写的', createdAt: '', updatedAt: '', by: 'user' },
+    g1: { id: 'g1', kind: 'profile', scope: 'games', text: '游戏自己的', createdAt: '', updatedAt: '', by: 'games', source: { agent: 'games', sessionId: 'other', seq: 1 } },
+  }
+  const [, read] = historyTools({
+    agentOf: id => (id === 'other' ? 'games' : 'main'),
+    sessions: async agent => (agent === 'main' ? [{ id: 's0', title: null }, { id: 's1', title: null }] : [{ id: 'other', title: null }]),
+    read: async id => (id === 's0' ? older : here),
+    memory: id => entries[id],
+    timeZone: 'UTC',
+  })
+  const exec = { agent: { session: { id: 's1' } }, signal: new AbortController().signal } as never
+  assert.match(await read!.execute({ memory_id: 'j1' }, exec) as unknown as string, /^对话 s0，#1–#2：[\s\S]*RTX 4070/)
+  await assert.rejects(Promise.resolve(read!.execute({ memory_id: 'j2' }, exec)), /别的 agent 的对话里记下的/)
+  await assert.rejects(Promise.resolve(read!.execute({ memory_id: 'p1' }, exec)), /没有记下出处/)
+  await assert.rejects(Promise.resolve(read!.execute({ memory_id: 'g1' }, exec)), /没有这条记忆/, "another agent's own entry is not there for it")
+  await assert.rejects(Promise.resolve(read!.execute({}, exec)), /要给 seq/)
+})
+
+test('archived summaries are searched too, once, and only in the agent\'s own conversations', async () => {
+  const archived: ArchivedSummary[] = [
+    { sessionId: 's1', seq: 4, from: T, to: T + 1, firstSeq: 1, lastSeq: 2, text: '之前的对话摘要：用户要 8 点跑 MAA', archivedAt: 0 },
+    { sessionId: 's0', seq: 90, from: T - 1e9, to: T - 9e8, firstSeq: 10, lastSeq: 80, text: '十月：给 MAA 换了 B 服的账号', archivedAt: 0 },
+    { sessionId: 'other', seq: 5, from: T, to: T, firstSeq: 1, lastSeq: 2, text: 'MAA 的秘密摘要', archivedAt: 0 },
+  ]
+  const [search] = historyTools({
+    agentOf: () => 'main',
+    sessions: async () => [{ id: 's0', title: '上周的对话' }, { id: 's1', title: '这周' }],
+    read: async id => (id === 's1' ? here : []),
+    archived: async () => archived,
+    timeZone: 'UTC',
+  })
+  const exec = { agent: { session: { id: 's1' } }, signal: new AbortController().signal } as never
+  const found = await search!.execute({ query: 'MAA' }, exec) as unknown as { items: { session_id: string; seq: number; from: string }[] }
+  assert.deepEqual(found.items.map(i => [i.session_id, i.seq, i.from]), [['s1', 4, '压缩摘要'], ['s1', 1, '用户'], ['s0', 90, '归档摘要']], 'the log copy of a summary is not listed twice; another agent\'s is not listed')
 })

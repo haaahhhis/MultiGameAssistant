@@ -9,13 +9,15 @@
  * - a turn starting after a long gap: earlier to-dos and states may be stale,
  *   check them with tools before asking;
  * - a conversation summary (compaction) since the last reminder: when it was
- *   written, since its "next step" reflects that time.
+ *   written, since its "next step" reflects that time. An archive pointer
+ *   (low-context.ts) is no summary: it has no to-dos, and says itself what it is.
  *
  * The note is appended to the history, never put in the system prompt, so the
  * model provider's prompt cache keeps working; and it is not shown in the chat
  * (convert.ts shows human messages and summaries only).
  */
 import { randomUUID } from 'node:crypto'
+import { ARCHIVE_MARK } from '@adg/protocol'
 
 /** The message source of the reminders, also how the next one finds the last. */
 export const TIME_SOURCE = 'adg-time'
@@ -63,19 +65,31 @@ export function timeFacts(count: number, eventAt: (seq: number) => TimedEvent | 
   let previous: number | undefined
   let summaryAt: number | undefined
   let summaryCovers: SummaryCover | undefined
+  // Pointers seen whose compaction record (just before them) is still to come, read backwards.
+  let pointers = 0
   for (let seq = count - 1; seq >= 0 && seq >= count - SCAN_LIMIT; seq--) {
     const event = eventAt(seq)
     if (event === undefined) continue
     const ours = event.type === 'user/message' && sourceKind(event.data) === TIME_SOURCE
     if (VISIBLE.has(event.type)) previous ??= event.time
     if (ours) break
-    if (event.type === 'compaction/summary') summaryAt ??= event.time
+    if (isSummary(event) && isPointer(event)) { pointers++; continue }
+    if (event.type === 'compaction/summary') {
+      if (pointers > 0) { pointers--; continue }
+      summaryAt ??= event.time
+    }
     if (summaryCovers === undefined && isSummary(event)) summaryCovers = coverOf(event, eventAt)
   }
   return { ...(previous === undefined ? {} : { previous }), ...(summaryAt === undefined ? {} : { summaryAt }), ...(summaryCovers === undefined ? {} : { summaryCovers }) }
 }
 
 const isSummary = (event: TimedEvent) => event.type === 'user/message' && typeof event.surfaceOp === 'object' && event.surfaceOp !== null && (event.sourceEventSeqs?.length ?? 0) > 0
+
+/** The pointer archiving leaves in place of old summaries (low-context.ts). */
+function isPointer(event: TimedEvent): boolean {
+  const content = (event.data as { content?: unknown } | undefined)?.content
+  return Array.isArray(content) && content.some(block => typeof (block as { text?: unknown }).text === 'string' && (block as { text: string }).text.includes(ARCHIVE_MARK))
+}
 
 /** The span a summary replaced; an earlier summary inside it counts for what it replaced in turn. */
 export function coverOf(summary: TimedEvent, eventAt: (seq: number) => TimedEvent | undefined, depth = 0): SummaryCover | undefined {

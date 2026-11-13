@@ -1,6 +1,7 @@
 /**
  * 设置 → 记忆 (memory@1): what the agents remember about the user across
- * conversations — 资料 (lasting facts and preferences) and 日记 (what was done
+ * conversations — 核心 (the user's core wishes, in every prompt and never
+ * pushed out), 资料 (lasting facts and preferences) and 日记 (what was done
  * or decided on a day), shared by every agent or one agent's own. The agents
  * write them as they work, and with 自动整理 on a model reads a quiet
  * conversation back for what they forgot; here the user reads them one agent
@@ -9,11 +10,13 @@
  *
  * The page reads top to bottom as: the one setting (自动整理), then one card of
  * memories — its head picks whose they are (a dropdown, 共享 first), says who sees
- * them and holds 「记一条」, which writes into the one on screen.
+ * them and holds 「记一条」, which writes into the one on screen. 核心 entries are
+ * always shared: in 共享 they come first, under a heading of their own, with how
+ * much of their room is used.
  */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { MAX_MEMORY_TEXT, SHARED_MEMORY, type MemoryAutoSettings, type MemoryEntry, type MemoryKind } from '@adg/protocol'
+import { MAX_CORE_CHARS, MAX_MEMORY_TEXT, SHARED_MEMORY, type MemoryAutoSettings, type MemoryEntry, type MemoryKind } from '@adg/protocol'
 import { MAIN, useRoles } from '../../agents.ts'
 import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
@@ -22,9 +25,11 @@ import { useModelCatalog, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 
 const KINDS: readonly { kind: MemoryKind; title: string; hint: string }[] = [
+  { kind: 'core', title: '核心', hint: `你最在意的要求和偏好：每个 agent 每次都会带上，不会被挤掉；所有核心一共最多 ${MAX_CORE_CHARS} 字，总是共享` },
   { kind: 'profile', title: '资料', hint: '长期有效的事实和偏好' },
   { kind: 'journal', title: '日记', hint: '某一天做过或决定的事' },
 ]
+const KIND_TITLES: Record<MemoryKind, string> = { core: '核心', profile: '资料', journal: '日记' }
 
 /** Both kinds. */
 const ANY = ''
@@ -79,12 +84,14 @@ export function MemoryPage({ client }: { client: AdgClient }) {
   const words = query.trim().toLowerCase().split(/\s+/).filter(w => w !== '')
   const count = (id: string) => (items ?? []).filter(e => e.scope === id).length
   const mine = (items ?? []).filter(e => e.scope === scope)
+  const coreUsed = (items ?? []).filter(e => e.kind === 'core').reduce((sum, e) => sum + e.text.length, 0)
   const shown = mine
     .filter(e => (kind === ANY || e.kind === kind) && words.every(w => e.text.toLowerCase().includes(w)))
     .sort((a, b) => at(b).localeCompare(at(a)))
-  // Newest day first, each day's entries under it.
+  // The core entries first, on their own; then newest day first, each day's entries under it.
+  const core = shown.filter(e => e.kind === 'core')
   const days: { day: string; entries: MemoryEntry[] }[] = []
-  for (const entry of shown) {
+  for (const entry of shown.filter(e => e.kind !== 'core')) {
     const d = day(at(entry))
     if (days.at(-1)?.day === d) days.at(-1)!.entries.push(entry)
     else days.push({ day: d, entries: [entry] })
@@ -106,8 +113,11 @@ export function MemoryPage({ client }: { client: AdgClient }) {
     }
   }
   const add = async (k: MemoryKind, text: string): Promise<boolean> => {
-    if (!await run(() => client.connection.call('memory/add', { kind: k, scope, text }))) return false
-    // The new one is on screen: not filtered away by the other kind or a search.
+    // A core entry is everyone's.
+    const to = k === 'core' ? SHARED_MEMORY : scope
+    if (!await run(() => client.connection.call('memory/add', { kind: k, scope: to, text }))) return false
+    // The new one is on screen: in its memory, not filtered away by the other kind or a search.
+    if (to !== scope) setScope(to)
     if (kind !== ANY && kind !== k) setKind(ANY)
     setQuery('')
     setAdding(false)
@@ -117,7 +127,7 @@ export function MemoryPage({ client }: { client: AdgClient }) {
   return (
     <div className="settings-page memory-page">
       <h2>记忆</h2>
-      <p>agent 在对话里记下的关于你的事，新开的对话也记得。「共享」的每个 agent 都看得到，其余的只有那个 agent 自己看得到。你也可以在这里记一条、改掉或删掉。密码、验证码、密钥不会被记下。怎么一步步做一件事是另一回事，存在「技能」里。</p>
+      <p>agent 在对话里记下的关于你的事，新开的对话也记得。「共享」的每个 agent 都看得到，其余的只有那个 agent 自己看得到。「核心」是你最在意的要求和偏好，每个 agent 每次都会带上，不会因为记得多了或时间久了被挤掉；只有你自己（或你明确让 agent 记）才会写进去。你也可以在这里记一条、改掉或删掉。密码、验证码、密钥不会被记下。怎么一步步做一件事是另一回事，存在「技能」里。</p>
       {items !== null && (
         <>
           <AutoMemorySettings client={client} />
@@ -134,7 +144,7 @@ export function MemoryPage({ client }: { client: AdgClient }) {
               </div>
               {!adding && <button className="small-button" onClick={() => setAdding(true)}><Icon name="plus" />记一条</button>}
             </div>
-            {adding && <AddMemory to={shared ? '共享' : `「${tabName}」`} onAdd={add} onClose={() => setAdding(false)} />}
+            {adding && <AddMemory to={shared ? '共享' : `「${tabName}」`} coreUsed={coreUsed} onAdd={add} onClose={() => setAdding(false)} />}
             {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
             {mine.length > 0 && (
               <div className="memory-filters">
@@ -151,7 +161,20 @@ export function MemoryPage({ client }: { client: AdgClient }) {
                 </label>
               </div>
             )}
-            {days.length === 0
+            {core.length > 0 && (
+              <div className="memory-day memory-core">
+                <h4 className="memory-day-title"><span>核心 · 每次都带上（{coreUsed} / {MAX_CORE_CHARS} 字）</span></h4>
+                <ul className="memory-list">
+                  {core.map(entry => (
+                    <MemoryRow key={entry.id} entry={entry} nameOf={nameOf}
+                      onSave={text => run(() => client.connection.call('memory/update', { id: entry.id, text }))}
+                      onForget={() => void confirm({ title: '删掉这条核心记忆？', message: '之后 agent 就不会每次都带上它了，不能撤销。', quote: entry.text, confirmLabel: '删掉', danger: true })
+                        .then(ok => { if (ok) void run(() => client.connection.call('memory/remove', { id: entry.id })) })} />
+                  ))}
+                </ul>
+              </div>
+            )}
+            {days.length === 0 && core.length === 0
               ? (
                 <div className="memory-empty">
                   <p className="muted">{filtered ? '没有找到。' : `「${tabName}」还没有记忆。`}</p>
@@ -250,11 +273,13 @@ function AutoMemorySettings({ client }: { client: AdgClient }) {
  * Writing one down, opened by 「记一条」: it goes to whose memories are on screen.
  * @param to - whose memory that is, as the button says it.
  */
-function AddMemory({ to, onAdd, onClose }: { to: string; onAdd: (kind: MemoryKind, text: string) => Promise<boolean>; onClose: () => void }) {
+function AddMemory({ to, coreUsed, onAdd, onClose }: { to: string; coreUsed: number; onAdd: (kind: MemoryKind, text: string) => Promise<boolean>; onClose: () => void }) {
   const [text, setText] = useState('')
   const [kind, setKind] = useState<MemoryKind>('profile')
   const [busy, setBusy] = useState(false)
-  const ready = !busy && text.trim() !== ''
+  const coreLeft = MAX_CORE_CHARS - coreUsed
+  const tooLong = kind === 'core' && text.trim().length > coreLeft
+  const ready = !busy && text.trim() !== '' && !tooLong
   const add = async () => {
     if (!ready) return
     setBusy(true)
@@ -270,10 +295,13 @@ function AddMemory({ to, onAdd, onClose }: { to: string; onAdd: (kind: MemoryKin
         <div className="segmented-control memory-kind" role="radiogroup" aria-label="种类">
           {KINDS.map(k => <button key={k.kind} role="radio" aria-checked={kind === k.kind} className={kind === k.kind ? 'active' : ''} onClick={() => setKind(k.kind)}>{k.title}</button>)}
         </div>
-        <span className="muted small memory-compose-hint">{KINDS.find(k => k.kind === kind)?.hint}</span>
+        <span className={`small memory-compose-hint ${tooLong ? 'warn-text' : 'muted'}`}>
+          {KINDS.find(k => k.kind === kind)?.hint}
+          {kind === 'core' && (tooLong ? `。核心只剩 ${Math.max(0, coreLeft)} 字了：先合并或删掉几条，或记成资料。` : `（还能写 ${coreLeft} 字）`)}
+        </span>
         <span className="memory-compose-actions">
           <button disabled={busy} onClick={onClose}>取消</button>
-          <button className="primary" disabled={!ready} onClick={() => void add()}>{busy ? '记下中…' : `记到${to}`}</button>
+          <button className="primary" disabled={!ready} onClick={() => void add()}>{busy ? '记下中…' : kind === 'core' ? '记成核心' : `记到${to}`}</button>
         </span>
       </div>
     </div>
@@ -300,7 +328,7 @@ function MemoryRow({ entry, nameOf, onSave, onForget }: { entry: MemoryEntry; na
           ? <div className="memory-text">{entry.text}</div>
           : <textarea className="text-input plain" rows={3} maxLength={MAX_MEMORY_TEXT} value={editing} onChange={e => setEditing(e.target.value)} onKeyDown={writingKeys(() => void save(), () => setEditing(null))} aria-label="修改记忆" autoFocus />}
         <div className="memory-meta">
-          <span className={`memory-kind-tag ${entry.kind}`}>{entry.kind === 'profile' ? '资料' : '日记'}</span>
+          <span className={`memory-kind-tag ${entry.kind}`}>{KIND_TITLES[entry.kind]}</span>
           <span className="muted small">{entry.by === 'user' ? '你记的' : entry.by === 'auto' ? '自动整理出来的' : `${nameOf(entry.by)}记的`}</span>
           {editing !== null && (
             <span className="memory-edit-actions">

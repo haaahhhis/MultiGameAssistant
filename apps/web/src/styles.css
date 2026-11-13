@@ -771,6 +771,8 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .compaction-costs { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.8; color: var(--text-2); }
 .compaction-threshold input[type="range"] { width: min(360px, 100%); accent-color: var(--accent-fill); }
 .compaction-warn { margin-top: 6px; }
+.compaction-archive { margin-top: 12px; }
+.compaction-archive-days { margin-top: 8px; max-width: 360px; }
 .compaction-page .card p .ui-icon { width: 14px; height: 14px; vertical-align: -2px; }
 .about-card { display: flex; flex-direction: column; gap: 10px; }
 .about-card h3 { margin: 0; }
@@ -1839,6 +1841,8 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .memory-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
 .memory-kind-tag { padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 18px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
 .memory-kind-tag.profile { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.memory-kind-tag.core { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); font-weight: 600; }
+.memory-compose-hint.warn-text { color: var(--warn); }
 .memory-edit-actions { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .memory-actions { display: inline-flex; align-items: center; gap: 2px; padding-top: 1px; opacity: .55; transition: opacity .12s var(--ease); }
 .memory-row:hover .memory-actions, .memory-row:focus-within .memory-actions { opacity: 1; }

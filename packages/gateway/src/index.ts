@@ -47,6 +47,8 @@ import { CompactionStore } from './compaction-settings.ts'
 import { MemoryStore, memoryPrompt, memoryTools } from './memory.ts'
 import { AutoMemory } from './memory-auto.ts'
 import { historyTools } from './history.ts'
+import { RecallLog, recallFor, recallMessage, recallText, saidByUser } from './recall.ts'
+import { SUMMARIES_FILE, summariesReader } from './low-context.ts'
 import { convertRecords } from './convert.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
@@ -842,7 +844,8 @@ export class AdgGateway extends Service {
       const auto = new AutoMemory({
         store: memory,
         file: join(config.dataDir, 'memory-auto.json'),
-        read: (sessionId, signal) => this.recentEvents(sessionId, signal),
+        // Back to where it stopped (oldest unread first): nothing between is passed over.
+        read: (sessionId, since, signal) => this.sessionEvents(sessionId, since.maxMessages, signal, since.after),
         agentOf: sessionId => {
           const spec = this.specOf(sessionId)
           return spec === undefined || spec.subAgentOf !== undefined ? undefined : { id: spec.id, name: this.persona?.of(spec.id).name ?? spec.name }
@@ -878,14 +881,40 @@ export class AdgGateway extends Service {
       for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })) {
         this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
       }
-      // The words of its earlier conversations (history.ts): what compaction took out of the context is still in the log.
+      // The words of its earlier conversations (history.ts): what compaction took out of the context is still in the log,
+      // and summaries archived out of it are in summaries.jsonl (low-context.ts).
       const history = historyTools({
         agentOf: sessionId => this.memoryOwner(sessionId),
         sessions: (agent, signal) => this.sessionsOf(agent, signal),
         read: (sessionId, maxMessages, signal) => this.sessionEvents(sessionId, maxMessages, signal),
+        memory: id => memory.get(id),
+        archived: summariesReader(join(config.dataDir, SUMMARIES_FILE)),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       })
       for (const tool of history) this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
+
+      // What the user just said may touch kept entries the prompt has no room for (recall.ts): they come along, once.
+      // Appended after the step's messages, so the prompt cache keeps working; prepended, so it sees the step's own messages.
+      const recalled = new RecallLog()
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      this.agentPart('adg-gateway recall hook', agent => agent.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
+        const decision = await next()
+        if (decision.kind !== 'enter' || payload.signal.aborted) return decision
+        try {
+          const sessionId = payload.agent.session.id
+          const owner = this.memoryOwner(sessionId)
+          const said = saidByUser(decision.messages)
+          if (owner === undefined || said === '') return decision
+          await memory.loaded
+          const entries = recallFor(said, memory.visibleTo(owner), owner, { timeZone: zone, already: recalled.of(sessionId) })
+          if (entries.length === 0) return decision
+          recalled.add(sessionId, entries.map(entry => entry.id))
+          return { ...decision, messages: [...decision.messages, recallMessage(recallText(entries, owner, zone), entries.map(entry => entry.id))] }
+        } catch (error) {
+          log.warn(`memory recall for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
+          return decision
+        }
+      }) as never, true))
     }
 
     // Automatic compaction (compaction@1): dsh reads the same file when it starts, so a change applies after a restart.
@@ -1153,21 +1182,6 @@ Content-Length: 0
     this.narrowed.set(agent, { spec, home, dispose: () => { for (const dispose of disposers) dispose() } })
   }
 
-  /** A session's recent records as protocol events (automatic memory reads them back). */
-  private async recentEvents(sessionId: string, signal: AbortSignal): Promise<SessionEvent[]> {
-    const controller = new AbortController()
-    const stop = () => controller.abort()
-    signal.addEventListener('abort', stop, { once: true })
-    try {
-      const iterator = this.ctx.sessionController.follow({ address: { kind: 'session', sessionId: sessionId as never }, maxMessages: 80 }, controller.signal)[Symbol.asyncIterator]()
-      const first = await iterator.next()
-      return first.done === true || first.value.type !== 'snapshot' ? [] : convertRecords(first.value.records)
-    } finally {
-      signal.removeEventListener('abort', stop)
-      controller.abort()
-    }
-  }
-
   /** An agent's own conversations (not its sub-agents'), newest first. */
   private async sessionsOf(agent: string, signal: AbortSignal): Promise<{ id: string; title: string | null; updatedAt?: number }[]> {
     const { items } = await this.ctx.sessionController.list({}, signal)
@@ -1177,8 +1191,12 @@ Content-Length: 0
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
   }
 
-  /** A session's records as protocol events, oldest first, back to about `maxMessages` messages (history.ts). */
-  private async sessionEvents(sessionId: string, maxMessages: number, signal: AbortSignal): Promise<SessionEvent[]> {
+  /**
+   * A session's records as protocol events, oldest first, back to about
+   * `maxMessages` messages (history.ts), or only as far back as the record
+   * after `stopAt` when that comes first (automatic memory, memory-auto.ts).
+   */
+  private async sessionEvents(sessionId: string, maxMessages: number, signal: AbortSignal, stopAt = -1): Promise<SessionEvent[]> {
     const controller = new AbortController()
     const stop = () => controller.abort()
     signal.addEventListener('abort', stop, { once: true })
@@ -1191,7 +1209,7 @@ Content-Length: 0
       const snapshot = first.value
       let events = convertRecords(snapshot.records)
       let more = snapshot.hasMore
-      for (let read = PAGE; more && read < maxMessages && events.length > 0; read += PAGE) {
+      for (let read = PAGE; more && read < maxMessages && events.length > 0 && events[0]!.seq > stopAt; read += PAGE) {
         const page = await this.ctx.sessionController.page({ address, throughSeq: snapshot.cursor, beforeSeq: events[0]!.seq, maxMessages: PAGE }, controller.signal)
         events = [...convertRecords(page.records), ...events]
         more = page.hasMore

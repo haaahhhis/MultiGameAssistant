@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { isMessage, lowContextRange, parseLowContext, settingsReader, taskOver, type SurfaceEvent, type SurfaceView } from '../src/low-context.ts'
+import { ARCHIVE_MARK } from '@adg/protocol'
+import { archiveRange, archiver, coverOf, isMessage, isPointer, keepSummaries, lowContextRange, parseArchiveDays, parseLowContext, pointerText, settingsReader, summariesReader, taskOver, type StoppingAgent, type SurfaceEvent, type SurfaceView } from '../src/low-context.ts'
 
 const HOUR = 60 * 60_000
 const NOW = Date.parse('2026-11-13T12:00:00Z')
@@ -75,11 +76,129 @@ test('the switch comes from compaction.json, off when it is missing or broken, a
   assert.equal(parseLowContext(undefined), false)
   assert.equal(parseLowContext({ lowContext: true }), true)
   assert.equal(parseLowContext({ lowContext: 'yes' }), false)
+  assert.equal(parseArchiveDays({ archiveDays: 7 }), 7)
+  assert.equal(parseArchiveDays({ archiveDays: 0 }), null, 'out of range: off')
+  assert.equal(parseArchiveDays({ archiveDays: '7' }), null)
+  assert.equal(parseArchiveDays({}), null, 'older files have none: off')
   const file = join(mkdtempSync(join(tmpdir(), 'adg-low-context-')), 'compaction.json')
-  const enabled = settingsReader(file)
-  assert.equal(enabled(), false, 'no file yet')
+  const read = settingsReader(file)
+  assert.deepEqual(read(), { lowContext: false, archiveDays: null }, 'no file yet')
   writeFileSync(file, JSON.stringify({ auto: true, threshold: 80, lowContext: true }))
-  assert.equal(enabled(), true)
-  writeFileSync(file, 'not json at all, and longer')
-  assert.equal(enabled(), false)
+  assert.deepEqual(read(), { lowContext: true, archiveDays: null })
+  writeFileSync(file, JSON.stringify({ auto: true, threshold: 80, lowContext: true, archiveDays: 14 }))
+  assert.deepEqual(read(), { lowContext: true, archiveDays: 14 })
+  writeFileSync(file, 'not json at all, and longer than before')
+  assert.deepEqual(read(), { lowContext: false, archiveDays: null })
+})
+
+const DAY = 24 * HOUR
+
+/**
+ * A log for archiving: every record by its seq (shadowed ones too, as dsh keeps
+ * them), and a surface of the seqs still in view.
+ */
+function log() {
+  const events = new Map<number, SurfaceEvent>()
+  let next = 1
+  const add = (event: SurfaceEvent) => { const seq = next++; events.set(seq, event); return seq }
+  const say = (at: number) => [add({ type: 'user/message', time: at, data: { source: { kind: 'user' } }, surfaceOp: 'append' }), add({ type: 'assistant/message', time: at + 1, surfaceOp: 'append' })]
+  const summary = (written: number, replaced: readonly number[], text = '要点：装好了 MAA') => {
+    const start = add({ type: 'compaction/start', time: written })
+    const record = add({ type: 'compaction/summary', time: written })
+    return add({ type: 'user/message', time: written, data: { content: [{ type: 'text', text: '这是检查点。\n\n<compacted-summary>' }, { type: 'text', text }, { type: 'text', text: '</compacted-summary>' }] }, surfaceOp: { op: 'replace' }, sourceEventSeqs: [start, record, ...replaced] })
+  }
+  const system = add({ type: 'system/message', time: NOW - 100 * DAY })
+  return { events, add, say, summary, system, view: (nodes: number[]): SurfaceView & { id: string } => ({ id: 's1', surface: { nodes }, eventAt: seq => events.get(seq) }) }
+}
+
+test('with archiving, the summaries at the start stay and only what follows is compacted, a day or so at a time', () => {
+  const l = log()
+  const old = l.say(NOW - 3 * DAY)
+  const s1 = l.summary(NOW - 3 * DAY + HOUR, old)
+  const day2 = l.say(NOW - 30 * HOUR)
+  const day3 = l.say(NOW - 20 * HOUR)
+  const today = l.say(NOW - HOUR)
+  const session = l.view([l.system, s1, ...day2, ...day3, ...today])
+  assert.deepEqual(lowContextRange(session, { now: NOW }), { start: s1, end: day3[1] }, 'without archiving: the summary goes in again')
+  assert.deepEqual(lowContextRange(session, { now: NOW, separate: true, batchMs: 12 * HOUR }), { start: day2[0], end: day3[1] }, 'with it: from after the summary')
+  const young = l.view([l.system, s1, ...day3, ...today])
+  assert.equal(lowContextRange(young, { now: NOW, separate: true, batchMs: 12 * HOUR }), null, 'its oldest message is not a day old yet: it waits')
+})
+
+test("a summary's span is the messages it replaced, through a summary inside it; its compaction's own records do not count", () => {
+  const l = log()
+  const first = l.say(NOW - 10 * DAY)
+  const s1 = l.summary(NOW - 9 * DAY, first)
+  const second = l.say(NOW - 8 * DAY)
+  const s2 = l.summary(NOW - 2 * DAY, [s1, ...second])
+  assert.deepEqual(coverOf(l.view([]), l.events.get(s2)!), { from: NOW - 10 * DAY, to: NOW - 8 * DAY + 1, firstSeq: first[0], lastSeq: second[1] })
+})
+
+test('old summaries at the start are archived together; a recent one, and what follows it, stay', () => {
+  const l = log()
+  const a = l.say(NOW - 20 * DAY)
+  const sa = l.summary(NOW - 19 * DAY, a, '要点 A')
+  const b = l.say(NOW - 10 * DAY)
+  const sb = l.summary(NOW - 9 * DAY, b, '要点 B')
+  const c = l.say(NOW - 2 * DAY)
+  const sc = l.summary(NOW - DAY, c, '要点 C')
+  const today = l.say(NOW - HOUR)
+  const session = l.view([l.system, sa, sb, sc, ...today])
+  const range = archiveRange(session, { now: NOW, archiveDays: 7 })
+  assert.equal(range?.start, sa)
+  assert.equal(range?.end, sb)
+  assert.deepEqual(range?.cover, { from: NOW - 20 * DAY, to: NOW - 10 * DAY + 1, firstSeq: a[0], lastSeq: b[1] })
+  assert.deepEqual(range?.summaries.map(s => [s.seq, s.text]), [[sa, '要点 A'], [sb, '要点 B']], "each one's own words, without dsh's framing")
+  assert.equal(archiveRange(session, { now: NOW, archiveDays: 30 }), null, 'none old enough')
+
+  // The pointer they leave is archived again with the next old summary, and alone is nothing to do.
+  const text = pointerText(range!.cover)
+  assert.ok(text.startsWith(ARCHIVE_MARK))
+  assert.match(text, new RegExp(`#${a[0]}–#${b[1]}`))
+  assert.match(text, /history_search/)
+  const start = l.add({ type: 'compaction/start', time: NOW })
+  const pointer = l.add({ type: 'user/message', time: NOW, data: { content: [{ type: 'text', text }] }, surfaceOp: { op: 'replace' }, sourceEventSeqs: [start, sa, sb] })
+  assert.equal(isPointer(l.events.get(pointer)!), true)
+  assert.equal(isPointer(l.events.get(sc)!), false)
+  assert.equal(archiveRange(l.view([l.system, pointer, sc, ...today]), { now: NOW, archiveDays: 7 }), null, 'only the pointer is old')
+  const later = archiveRange(l.view([l.system, pointer, sc, ...today]), { now: NOW + 7 * DAY, archiveDays: 7 })
+  assert.equal(later?.start, pointer)
+  assert.equal(later?.end, sc)
+  assert.deepEqual(later?.summaries.map(s => s.text), ['要点 C'], 'the pointer is not kept as a summary')
+  assert.equal(later?.cover.firstSeq, a[0], 'the new pointer stands for all of it')
+})
+
+test('archiving answers the summary step with the pointer for that session only, and lets go of the engine when done', async () => {
+  const calls: string[] = []
+  const engine = {
+    async summarize(_input: unknown, agent: unknown) { calls.push(`model:${(agent as StoppingAgent).session.id}`); return { summary: [{ type: 'text', text: 'model' }] } },
+    async compactRegion(start: number, end: number, agent: unknown) {
+      const result = await (this as unknown as { summarize(input: unknown, agent: unknown): Promise<{ summary: { text: string }[] }> }).summarize({}, agent)
+      calls.push(`${start}-${end}:${result.summary[0]!.text}`)
+      return { shadowedSeqs: [start, end] }
+    },
+  }
+  const original = engine.summarize
+  const archive = archiver(engine)!
+  const agent = (id: string) => ({ session: { id, surface: { nodes: [] }, eventAt: () => undefined, requestHeader: () => ({ config: { provider: 'p', model: 'm' } }) } }) as StoppingAgent
+  await archive.run({ start: 2, end: 5 }, agent('s1'), `${ARCHIVE_MARK}已归档`, new AbortController().signal)
+  await engine.compactRegion(7, 9, agent('s2'))
+  await engine.compactRegion(3, 4, agent('s1'))
+  assert.deepEqual(calls, [`2-5:${ARCHIVE_MARK}已归档`, 'model:s2', '7-9:model', 'model:s1', '3-4:model'], 'only while it is archived, and only that session')
+  archive.dispose()
+  assert.equal(engine.summarize, original)
+  assert.equal(archiver({ async compactRegion() { return { shadowedSeqs: [] } } }), undefined, 'no summarize step: no archiving')
+})
+
+test('archived summaries are kept in summaries.jsonl and read back once each, a broken line aside', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'adg-summaries-')), 'summaries.jsonl')
+  const read = summariesReader(file)
+  assert.deepEqual(await read(), [], 'none yet')
+  const cover = { from: 1, to: 2, firstSeq: 3, lastSeq: 4 }
+  await keepSummaries(file, 's1', [{ seq: 10, text: '要点 A', cover }, { seq: 11, text: '要点 B', cover }], 99)
+  await keepSummaries(file, 's1', [{ seq: 10, text: '要点 A', cover }], 100)
+  appendFileSync(file, '{"cut short\n')
+  const rows = await read()
+  assert.deepEqual(rows.map(r => [r.sessionId, r.seq, r.text]), [['s1', 10, '要点 A'], ['s1', 11, '要点 B']])
+  assert.equal(rows[0]!.archivedAt, 100, 'kept twice (a failed compaction tried again): the last copy')
 })
