@@ -24,6 +24,7 @@ import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import { SHARED_MEMORY, type MemoryAutoSettings, type MemoryEntry, type MemorySource, type ModelSelection, type SessionEvent } from '@adg/protocol'
 import { writeFileAtomic } from '@adg/protocol/node'
+import { HARNESS_NOTES } from './history.ts'
 import { KIND_NAMES, type MemoryStore } from './memory.ts'
 
 /** Who writes what this pass keeps. */
@@ -45,8 +46,8 @@ export const FIRST_MESSAGES = 400
 const MAX_OPS = 6
 /** Sessions whose place is remembered. */
 const MAX_CURSORS = 2_000
-/** Notes the harness adds to a step: not what anyone said. */
-const NOTE_KINDS = new Set(['time-context', 'adg-time', 'adg-recall'])
+/** Not what anyone said: the harness's notes, and a summary (or archive pointer), which restates what was read before it. */
+const NOT_SAID = new Set([...HARNESS_NOTES, 'compact-checkpoint'])
 
 export const DEFAULT_AUTO_SETTINGS: MemoryAutoSettings = { auto: true, model: null }
 
@@ -67,7 +68,7 @@ export function exchangesOf(events: readonly SessionEvent[], after: number): Exc
   for (const event of events) {
     if (event.seq <= after) continue
     if (event.type === 'user/message') {
-      if (NOTE_KINDS.has(event.origin.kind)) continue
+      if (NOT_SAID.has(event.origin.kind) || event.replacesHistory === true) continue
       const text = textOf(event.content)
       if (text !== '') out.push({ seq: event.seq, time: event.time, from: event.origin.human ? 'user' : 'app', text })
     } else if (event.type === 'assistant/message') {

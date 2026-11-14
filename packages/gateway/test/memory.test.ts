@@ -33,6 +33,13 @@ test('entries are kept in memory.json, shared or one agent own, and the same tex
   assert.equal(await store.remove(name.id), false)
 })
 
+test('entries written in the same millisecond get ids of their own', async () => {
+  const store = new MemoryStore(undefined)
+  const now = new Date()
+  for (let i = 0; i < 1000; i++) await store.add({ kind: 'journal', scope: 'shared', text: `第 ${i} 条`, by: 'auto' }, now)
+  assert.equal(new Set(store.list().map(e => e.id)).size, 1000)
+})
+
 test('passwords, codes and keys are never kept; commit hashes and ordinary words are', async () => {
   assert.equal(looksSecret('邮箱密码是 hunter2abc'), true)
   assert.equal(looksSecret('验证码：834201'), true)

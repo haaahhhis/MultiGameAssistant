@@ -16,6 +16,10 @@ test('what was said: messages, replies and summaries, without reasoning or the h
   assert.deepEqual(said.map(s => [s.seq, s.from]), [[1, 'user'], [2, 'agent'], [4, 'app'], [5, 'user'], [6, 'agent']])
   assert.equal(said[2]!.summary, true)
   assert.doesNotMatch(JSON.stringify(said), /想一想|10 点/)
+  const context = [user(7, 'Current runtime context. …', 'runtime-context'), user(8, '<system-reminder>A skill is…', 'skill-catalog'), user(9, 'AGENTS.md …', 'agent-instructions')]
+  assert.deepEqual(saidIn(context), [], "dsh's context blocks are no one's words")
+  const framed = user(10, 'This is an automatically generated checkpoint …\n\n<compacted-summary>### 定下的事\n- 8 点跑 MAA</compacted-summary>', 'compact-checkpoint', { replacesHistory: true })
+  assert.equal(saidIn([framed])[0]!.text, '### 定下的事\n- 8 点跑 MAA', "a summary is its own words, without dsh's framing")
   assert.match(line(said[0]!, 'Asia/Shanghai'), /^#1 2026-11-12 11:01 用户：给明日方舟/)
   assert.match(line(said[2]!, 'UTC'), /（压缩摘要）/)
   assert.match(line({ ...said[0]!, text: 'x'.repeat(30) }, 'UTC', 10), /…（后面省略 20 字）$/)
@@ -51,6 +55,21 @@ test('the tools search and read the agent\'s own conversations, this one first, 
   const other = await read!.execute({ seq: 1, session_id: 's0' }, exec('s1')) as unknown as string
   assert.match(other, /RTX 4070/)
   await assert.rejects(Promise.resolve(read!.execute({ seq: 1, session_id: 'other' }, exec('s1'))), /只能读你自己的对话/)
+})
+
+test('a search of this conversation leaves out the turn now running: the question being answered is in the context already', async () => {
+  const turn = (seq: number) => ({ type: 'turn/start', seq, time: T + seq * 60_000, turn: seq }) as unknown as SessionEvent
+  const log = [turn(0), user(1, '给 MAA 加个早上 8 点的定时'), agent(2, '好的，已经加好了。'), turn(3), user(4, '之前 MAA 的定时是几点来着？'), agent(5, '我查一下 MAA 的定时。')]
+  const [search] = historyTools({
+    agentOf: () => 'main',
+    sessions: async () => [{ id: 's1', title: null }, { id: 's0', title: null }],
+    read: async () => log,
+    timeZone: 'UTC',
+  })
+  const exec = (session: string) => ({ agent: { session: { id: session } }, signal: new AbortController().signal }) as never
+  const found = await search!.execute({ query: 'MAA 定时' }, exec('s1')) as unknown as { items: { session_id: string; seq: number }[] }
+  assert.deepEqual(found.items.filter(i => i.session_id === 's1').map(i => i.seq), [1], 'not the question (#4) or the reply being written (#5)')
+  assert.deepEqual(found.items.filter(i => i.session_id === 's0').map(i => i.seq), [5, 4, 1], "another conversation's last turn is not running: all of it")
 })
 
 test('with no message holding every word, a search lists those holding the most, and says so', async () => {

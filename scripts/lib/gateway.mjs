@@ -2,7 +2,6 @@
  * Minimal JSON-RPC client for development scripts talking to a running gateway.
  * (The real client is @adg/client-core; scripts stay dependency-free.)
  */
-import { setTimeout as delay } from 'node:timers/promises'
 
 export const FAKE_PROVIDER = 'adg-fake'
 export const FAKE_MODEL = 'fake-vision'
@@ -47,11 +46,20 @@ export async function connectGateway({
     pending.set(id, { resolve, reject })
     ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
   })
-  /** Resolve with the params of the first notification `match` accepts. */
-  const waitFor = (match, what, ms = 60_000) => Promise.race([
-    new Promise(resolve => waiters.push({ match, resolve })),
-    delay(ms).then(() => { throw new Error(`timed out waiting for ${what}`) }),
-  ])
+  /**
+   * Resolve with the params of the first notification `match` accepts. The
+   * timer stops once it does: a timer left running would keep the script's
+   * process alive for the whole timeout after it is done.
+   */
+  const waitFor = (match, what, ms = 60_000) => new Promise((resolve, reject) => {
+    const waiter = { match, resolve: params => { clearTimeout(timer); resolve(params) } }
+    const timer = setTimeout(() => {
+      const at = waiters.indexOf(waiter)
+      if (at >= 0) waiters.splice(at, 1)
+      reject(new Error(`timed out waiting for ${what}`))
+    }, ms)
+    waiters.push(waiter)
+  })
 
   const init = await call('initialize', { protocolVersion: 1, client: { name, version: '0' } })
   return { call, waitFor, close: () => ws.close(), capabilities: init.capabilities.map(c => c.id) }

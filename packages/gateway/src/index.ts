@@ -44,7 +44,8 @@ import { IDENTITY_PROMPT, PersonaStore, personaOf, personaPrompt } from './perso
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
 import { compactSession } from './compact.ts'
 import { CompactionStore } from './compaction-settings.ts'
-import { MemoryStore, memoryPrompt, memoryTools } from './memory.ts'
+import { MemoryStore, memoryTools } from './memory.ts'
+import { MemoryViews, type ViewAgent, type ViewSession } from './memory-view.ts'
 import { AutoMemory } from './memory-auto.ts'
 import { historyTools } from './history.ts'
 import { RecallLog, recallFor, recallMessage, recallText, saidByUser } from './recall.ts'
@@ -313,8 +314,11 @@ export class AdgGateway extends Service {
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly home: boolean; readonly dispose: () => void }>()
   private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private persona: PersonaStore | undefined
-  /** Long-term memory (memory.ts): every agent's prompt carries what it may read. */
-  private memory: MemoryStore | undefined
+  /**
+   * Long-term memory (memory.ts) as each conversation was shown it (memory-view.ts): every agent's prompt carries
+   * what it may read, pinned as the conversation began, with the changes since as notes.
+   */
+  private memoryViews: MemoryViews | undefined
   private compaction: CompactionStore | undefined
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
@@ -839,7 +843,8 @@ export class AdgGateway extends Service {
     // gets its part of it (narrow); the tools write it as the agents work; 设置 → 记忆 reads and changes it.
     if (config.dataDir !== undefined) {
       const memory = new MemoryStore(join(config.dataDir, 'memory.json'), () => this.broadcast('memory/changed', {}))
-      this.memory = memory
+      const views = new MemoryViews(memory, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+      this.memoryViews = views
       // What the agents forgot to write, read back from a conversation once it is quiet (memory-auto.ts).
       const auto = new AutoMemory({
         store: memory,
@@ -878,9 +883,28 @@ export class AdgGateway extends Service {
           'memory/auto/set': async params => auto.setSettings(params as RequestParams<'memory/auto/set'>),
         },
       }), 'adg-gateway capability memory')
-      for (const tool of memoryTools({ store: memory, agentOf: sessionId => this.memoryOwner(sessionId), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })) {
+      for (const tool of memoryTools({
+        store: memory,
+        agentOf: sessionId => this.memoryOwner(sessionId),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        wrote: (sessionId, id, entry, seq) => views.wrote(sessionId, id, entry, seq),
+      })) {
         this.agentPart(`adg-gateway ${tool.name}`, agent => agent.tools.register(tool))
       }
+      // What changed in the memory since a conversation's prompt was pinned (memory-view.ts), as a note before the step:
+      // appended after the step's messages, so the prompt and the provider's cache stay as they are; prepended, so it goes
+      // in whatever other listeners do with the step's messages.
+      this.agentPart('adg-gateway memory note hook', agent => agent.on('agent/pre-step' as never, (async (payload: PreStep, next: () => Promise<PreStepDecision>) => {
+        const decision = await next()
+        if (decision.kind !== 'enter' || payload.signal.aborted) return decision
+        try {
+          const note = views.note(payload.agent.session as ViewSession)
+          return note === undefined ? decision : { ...decision, messages: [...decision.messages, note] }
+        } catch (error) {
+          log.warn(`memory note for ${payload.agent.session.id}: ${error instanceof Error ? error.message : String(error)}`)
+          return decision
+        }
+      }) as never, true))
       // The words of its earlier conversations (history.ts): what compaction took out of the context is still in the log,
       // and summaries archived out of it are in summaries.jsonl (low-context.ts).
       const history = historyTools({
@@ -906,7 +930,8 @@ export class AdgGateway extends Service {
           const said = saidByUser(decision.messages)
           if (owner === undefined || said === '') return decision
           await memory.loaded
-          const entries = recallFor(said, memory.visibleTo(owner), owner, { timeZone: zone, already: recalled.of(sessionId) })
+          const inView = views.inView(sessionId)
+          const entries = recallFor(said, memory.visibleTo(owner), owner, { timeZone: zone, already: recalled.of(sessionId), ...(inView === undefined ? {} : { inView }) })
           if (entries.length === 0) return decision
           recalled.add(sessionId, entries.map(entry => entry.id))
           return { ...decision, messages: [...decision.messages, recallMessage(recallText(entries, owner, zone), entries.map(entry => entry.id))] }
@@ -1163,11 +1188,11 @@ Content-Length: 0
       // After the app's identity, before the reply style.
       disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:role', order: 10_095, interpolate: false, text }))
       // What it remembers of the user (memory.ts): a sub-agent reads its lead's, and leaves the writing to it.
-      const memory = this.memory
-      if (memory !== undefined) {
+      // Pinned for the conversation, so a change to the memory leaves the prompt as it is (memory-view.ts).
+      const views = this.memoryViews
+      if (views !== undefined) {
         const owner = memoryOwnerOf(spec)
-        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:memory', order: 10_098, interpolate: false, text: () => memoryPrompt(memory.visibleTo(owner), owner, { timeZone, ...(spec.subAgentOf === undefined ? {} : { lead: spec.subAgentOf }) }) }))
+        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:memory', order: 10_098, interpolate: false, text: () => views.section(agent as unknown as ViewAgent, owner, spec.subAgentOf) }))
       }
       // A sub-agent answers its parent alone, and its answer is data: no team, no reply style.
       if (spec.subAgentOf === undefined) {

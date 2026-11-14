@@ -21,8 +21,16 @@ import { SHARED_MEMORY, type MemoryEntry, type SessionEvent } from '@adg/protoco
 import type { ArchivedSummary } from './low-context.ts'
 import { hasAll, termScore, termsOf } from './words.ts'
 
-/** Notes the harness adds to a step: not what anyone said. */
-const NOTE_SOURCES = new Set(['time-context', 'adg-time', 'adg-recall'])
+/**
+ * What the harness adds to a step, not what anyone said: dsh's context blocks
+ * (the runtime context, the skill catalog, the time, AGENTS.md and the like,
+ * a referenced conversation, an invoked skill's instructions) and this app's
+ * notes (the time reminder, recalled memory, what changed in the memory).
+ */
+export const HARNESS_NOTES: ReadonlySet<string> = new Set([
+  'runtime-context', 'skill-catalog', 'time-context', 'agent-instructions', 'session-reference', 'skill-invocation',
+  'adg-time', 'adg-recall', 'adg-memory',
+])
 /** How far back a search reads in one conversation. */
 export const SEARCH_DEPTH = 1500
 /** How many conversations a search reads, newest first. */
@@ -65,13 +73,21 @@ function textOf(content: readonly { type: string; text?: string }[]): string {
   return content.filter(p => p.type === 'text' && typeof p.text === 'string').map(p => p.text).join('\n').trim()
 }
 
+/** A summary's own words, without dsh's framing (its preamble to the model and the `<compacted-summary>` tags). */
+export function unframed(text: string): string {
+  const open = '<compacted-summary>'
+  const at = text.indexOf(open)
+  const end = text.lastIndexOf('</compacted-summary>')
+  return at >= 0 && end > at ? text.slice(at + open.length, end).trim() : text
+}
+
 /** What was said, in order: the user's, the app's and other agents' messages, the agent's replies, the summaries. */
 export function saidIn(events: readonly SessionEvent[]): Said[] {
   const out: Said[] = []
   for (const event of events) {
     if (event.type === 'user/message') {
-      if (NOTE_SOURCES.has(event.origin.kind)) continue
-      const text = textOf(event.content)
+      if (HARNESS_NOTES.has(event.origin.kind)) continue
+      const text = event.replacesHistory === true ? unframed(textOf(event.content)) : textOf(event.content)
       if (text !== '') out.push({ seq: event.seq, time: event.time, from: event.origin.human ? 'user' : 'app', text, ...(event.replacesHistory === true ? { summary: true as const } : {}) })
     } else if (event.type === 'assistant/message') {
       const text = textOf(event.content)
@@ -79,6 +95,16 @@ export function saidIn(events: readonly SessionEvent[]): Said[] {
     }
   }
   return out
+}
+
+/**
+ * The log before the turn now running. What that turn holds is in the agent's
+ * context already, the question it is answering first of all, which holds
+ * every word it searches for and would come first in every search.
+ */
+export function beforeThisTurn(events: readonly SessionEvent[]): readonly SessionEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) if (events[i]!.type === 'turn/start') return events.slice(0, i)
+  return events
 }
 
 const WHO: Record<Said['from'], string> = { user: '用户', app: '软件/同事', agent: '你' }
@@ -207,7 +233,8 @@ export function historyTools(deps: HistoryDeps): ToolDefinition[] {
       }
       for (const s of sessions.slice(0, SEARCH_SESSIONS)) {
         if (all.length >= max || signal.aborted) break
-        const said = saidIn(await deps.read(s.id, SEARCH_DEPTH, signal))
+        const read = await deps.read(s.id, SEARCH_DEPTH, signal)
+        const said = saidIn(s.id === session ? beforeThisTurn(read) : read)
         for (let i = said.length - 1; i >= 0 && all.length < max; i--) {
           const m = said[i]!
           if (m.time < since) break
