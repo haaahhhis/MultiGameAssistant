@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { parseGameManifest, parseManifest, renderTask } from '@adg/pack-schema'
+import { guideIssues, guideView, parseGameManifest, parseManifest, renderTask } from '@adg/pack-schema'
 
 const DIR = fileURLToPath(new URL('../packs/', import.meta.url))
 const load = (id: string) => parseManifest(readFileSync(join(DIR, id, 'adg.script.yaml'), 'utf8'), `${id}/adg.script.yaml`)
@@ -15,6 +15,25 @@ test('every built-in pack is valid; its skill is in the skills repository, not s
     assert.ok(pack.tasks.length > 0, `${id} has tasks`)
     assert.ok(!existsSync(join(DIR, id, 'SKILL.md')), `${id}/SKILL.md belongs in MultiGameAssistant/skills`)
   }
+})
+
+test('every built-in pack has a user guide with nothing meant for the agent in it', () => {
+  for (const id of readdirSync(DIR)) {
+    const pack = load(id)
+    assert.ok(pack.guide !== undefined, `${id} has a guide`)
+    assert.deepEqual(guideIssues(pack), [], id)
+    assert.ok(pack.tasks.every(t => t.patches.every(p => p.set.every(s => s.note !== undefined))), `${id}: every change a run makes says what it does`)
+  }
+})
+
+test('MAA\'s guide says what a run changes and how to turn its features on', () => {
+  const guide = guideView(load('maa'), { builtin: true })
+  assert.equal(guide.written, true)
+  assert.ok(guide.features.some(f => f.title === '自动公招' && f.enable.includes('勾选「自动公招」')))
+  const changes = guide.config.find(f => f.file === 'config/gui.new.json')!.changes
+  assert.deepEqual(changes.find(c => c.key === 'Configurations › Default › Gui › ConnectSettings › Address'), { key: 'Configurations › Default › Gui › ConnectSettings › Address', value: '「模拟器的 ADB 地址」', note: '连接本应用准备好的模拟器', tasks: ['日常（运行 MAA 里已勾选的任务）'] })
+  assert.ok(changes.some(c => c.key.endsWith('StartEmulator') && c.when !== undefined))
+  assert.ok(guide.troubleshooting.some(t => t.problem.includes('重连失败')))
 })
 
 test('MAA daily patches both config generations with the emulator address', () => {

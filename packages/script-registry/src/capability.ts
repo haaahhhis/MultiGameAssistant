@@ -3,6 +3,7 @@
  * so these methods do not ask for approval; the agent tools do.
  */
 import type { CapabilityRegistration } from '@adg/gateway'
+import { guideView } from '@adg/pack-schema'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 import type { PackReview } from './pack-review.ts'
@@ -20,6 +21,10 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
     methods: {
       'scripts/list': () => library.list(),
       'scripts/get': params => library.get((params as RequestParams<'scripts/get'>).id),
+      'scripts/guide': params => {
+        const pack = library.packOf((params as RequestParams<'scripts/guide'>).id)
+        return { guide: pack === undefined ? null : guideView(pack.manifest, { builtin: pack.builtin }) }
+      },
       'scripts/search': (params, call) => library.search((params as RequestParams<'scripts/search'>).query, call.signal),
       'scripts/releases': (params, call) => {
         const p = params as RequestParams<'scripts/releases'>

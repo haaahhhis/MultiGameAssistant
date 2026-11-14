@@ -132,6 +132,9 @@
     "scripts/get": {
       "capability": "scripts"
     },
+    "scripts/guide": {
+      "capability": "scripts"
+    },
     "scripts/search": {
       "capability": "scripts"
     },
@@ -7779,6 +7782,314 @@
         "versions",
         "channels",
         "addedAt"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/guide.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/guide.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "guide": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "packId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "builtin": {
+                  "type": "boolean"
+                },
+                "written": {
+                  "type": "boolean"
+                },
+                "overview": {
+                  "type": "string"
+                },
+                "tasks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "utterances": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "input": {
+                        "type": "string",
+                        "enum": [
+                          "desktop",
+                          "window",
+                          "adb",
+                          "none"
+                        ]
+                      },
+                      "expectedDuration": {
+                        "type": "string"
+                      },
+                      "params": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "string",
+                                "integer",
+                                "number",
+                                "boolean"
+                              ]
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "default": {
+                              "type": "string"
+                            },
+                            "values": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "type"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "utterances",
+                      "input",
+                      "params"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "setup": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "features": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "enable": {
+                        "type": "string"
+                      },
+                      "config": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "file": {
+                              "type": "string"
+                            },
+                            "key": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "file",
+                            "key",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "tasks": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "enable",
+                      "config",
+                      "tasks"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "config": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string"
+                      },
+                      "about": {
+                        "type": "string"
+                      },
+                      "keys": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "meaning": {
+                              "type": "string"
+                            },
+                            "values": {
+                              "type": "string"
+                            },
+                            "default": {
+                              "type": "string"
+                            },
+                            "advice": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "meaning"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "changes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "when": {
+                              "type": "string"
+                            },
+                            "tasks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "value",
+                            "tasks"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "file",
+                      "keys",
+                      "changes"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "troubleshooting": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "problem": {
+                        "type": "string"
+                      },
+                      "cause": {
+                        "type": "string"
+                      },
+                      "fix": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "problem",
+                      "fix"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "packId",
+                "name",
+                "builtin",
+                "written",
+                "tasks",
+                "setup",
+                "checks",
+                "features",
+                "config",
+                "troubleshooting"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "guide"
       ],
       "additionalProperties": false
     },

@@ -7,9 +7,10 @@
  * code only reads packs; nothing here names a particular script or game.
  */
 export {
-  ConfigFile, ConfigPatch, Game, Launch, LogEncoding, LogRule, Logs, LogSource, ParamChoices, PathSegment, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
+  ConfigFile, ConfigPatch, declaresFile, Game, Guide, Launch, LogEncoding, LogRule, Logs, LogSource, ParamChoices, PathSegment, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
   type ScriptManifestInput,
 } from './manifest.ts'
+export { guideIssues, guideView, keyText, valueText } from './guide.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'
 export { PackError, parseManifest } from './parse.ts'
 export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, SraSource, type GameManifestInput } from './game.ts'

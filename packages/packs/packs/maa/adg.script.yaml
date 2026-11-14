@@ -46,7 +46,7 @@ game:
 tasks:
   - id: daily
     title: 日常（运行 MAA 里已勾选的任务）
-    description: 按 MAA 当前配置里勾选的任务队列跑一遍，例如开始唤醒、基建换班、刷理智、领取奖励
+    description: 按 MAA 里勾选好的任务队列跑一遍（例如开始唤醒、基建换班、理智作战、自动公招、信用收支、领取奖励），全部完成后关闭 MAA。做哪些事、刷哪一关、用不用理智药都在 MAA 里设置，这个任务没有参数。
     utterances: [清日常, 明日方舟日常, 方舟日常, 跑一遍 MAA, 刷理智, 基建换班]
     patches:
       # Both config generations: older MAA reads gui.json, newer gui.new.json.
@@ -54,18 +54,24 @@ tasks:
         set:
           - path: [Configurations, Default, Start.RunDirectly]
             value: 'True'
+            note: 启动 MAA 后直接开始任务队列，不用手动点「Link Start!」
           - path: [Configurations, Default, Start.StartGame]
             value: 'True'
+            note: 「开始唤醒」时打开明日方舟客户端
           - path: [Configurations, Default, Connect.Address]
             value: '{adb}'
+            note: 连接本应用准备好的模拟器
       - file: config/gui.new.json
         set:
           - path: [Configurations, Default, Gui, StartUpSettings, RunDirectly]
             value: true
+            note: 启动 MAA 后直接开始任务队列，不用手动点「Link Start!」
           - path: [Configurations, Default, Gui, RuntimeSettings, StartGame]
             value: true
+            note: 「开始唤醒」时打开明日方舟客户端
           - path: [Configurations, Default, Gui, ConnectSettings, Address]
             value: '{adb}'
+            note: 连接本应用准备好的模拟器
       # MultiGameAssistant started MuMu already: MAA must not start an emulator too.
       # With a manual ADB address MAA keeps starting its emulator itself.
       - file: config/gui.json
@@ -73,11 +79,13 @@ tasks:
         set:
           - path: [Configurations, Default, Start.OpenEmulatorAfterLaunch]
             value: 'False'
+            note: 模拟器已经由本应用打开，MAA 不再自己开一个
       - file: config/gui.new.json
         when: emulator-managed
         set:
           - path: [Configurations, Default, Gui, StartUpSettings, StartEmulator]
             value: false
+            note: 模拟器已经由本应用打开，MAA 不再自己开一个
     resources: { input: adb, emulator: mumu, account: arknights }
     success: done-log
     expectedDuration: 60m
@@ -100,3 +108,113 @@ recovery:
   - { on: adb-disconnected, do: reconnect-adb }
   - { on: adb-disconnected, do: restart }
   - { on: stalled, do: restart }
+# The user guide (the 脚本 page): from MAA's own docs (docs/zh-cn/manual), its
+# MaaWpfGui settings classes and zh-cn strings, and the log lines above.
+guide:
+  overview: MAA（明日方舟小助手）通过安卓模拟器操作明日方舟，把 MAA 里勾选好的任务一次跑完：开始唤醒、基建换班、理智作战、自动公招、信用收支、领取奖励、自动肉鸽等。不占用电脑的鼠标键盘，但运行时会占用模拟器和这个游戏账号。本应用运行它时会先准备好模拟器、让 MAA 启动后直接开始，看到「任务已全部完成」后关闭 MAA。
+  setup:
+    - 在「配置」里点「打开脚本修改设置」打开 MAA，在「设置 → 连接设置」里选好「连接配置」，和你用的模拟器对应（例如 MuMu 模拟器 12）。
+    - 在 MAA 主界面的任务列表里勾选要做的事，点每一项右边的齿轮设置细节：刷哪一关、用不用理智药和源石、公招招几星、基建怎么换班。
+    - 在主界面「完成后」里选跑完之后做什么，例如「退出 MAA」；不想让模拟器被关掉就不要选「退出 模拟器」。
+    - 关掉 MAA 窗口，设置会保存到本应用用的那份配置里。
+  checks:
+    - MAA 正在用的配置是 Default（MAA「设置」里的「切换配置」）：本应用运行时只给 Default 这份配置设置连接地址和直接运行。
+    - 没有另外开着的 MAA 窗口。
+    - 任务列表里勾选的项目、关卡和理智药设置是这次想要的。
+    - 模拟器的分辨率是 16:9（例如 1280×720、1920×1080）。
+    - 同时开着几个模拟器时，关掉 MAA「设置 → 连接设置」里的「自动检测连接」，免得 MAA 连到别的模拟器。
+  features:
+    - title: 开始唤醒
+      description: 打开明日方舟客户端并进入游戏；停在掉线弹窗时会点确认重新连接。
+      enable: 在任务列表勾选「开始唤醒」，齿轮里选客户端类型（官服、B 服等），需要时填账号切换。
+      tasks: [daily]
+    - title: 基建换班
+      description: 自动计算效率较高的干员组合给各设施换班，按「无人机用途」使用无人机。
+      enable: 在任务列表勾选「基建换班」，齿轮里选换班模式、无人机用途和要换班的设施。
+      tasks: [daily]
+    - title: 理智作战（刷理智）
+      description: 反复打指定关卡用掉理智；可以用理智药、源石，或刷到指定次数、指定材料为止。
+      enable: 在任务列表勾选「理智作战」，齿轮里选关卡（「当前/上次」是游戏里上次打的关），设置使用药剂、使用源石和指定次数。
+      tasks: [daily]
+    - title: 自动公招
+      description: 自动选择公招标签并招募，可以用加急许可；遇到保留词条、5 星或 6 星标签会提醒。
+      enable: 在任务列表勾选「自动公招」，齿轮里设置招募哪几星、每次最多招募几次、要不要自动使用加急许可。
+      tasks: [daily]
+    - title: 信用收支
+      description: 访问好友获取信用点，再去信用交易所购物。
+      enable: 在任务列表勾选「信用收支」，齿轮里设置优先买和不买的物品。
+      tasks: [daily]
+    - title: 领取奖励
+      description: 领取每日、每周任务的奖励，也可以领其他类型的奖励。
+      enable: 在任务列表勾选「领取奖励」，齿轮里选还要领哪些奖励。
+      tasks: [daily]
+    - title: 自动肉鸽
+      description: 自动打集成战略（默认傀影主题）。需要游戏稳定在 60 帧以上，耗时较长。
+      enable: 在任务列表勾选「自动肉鸽」，齿轮里选「肉鸽主题」和策略。
+      tasks: [daily]
+  config:
+    - file: config/gui.new.json
+      about: 新版 MAA 的设置。Configurations 下每份配置一组（Default 是默认那份），Current 是正在用的那份；每份里有任务队列 TaskQueue（主界面任务列表的每一项、是否勾选、各自的设置）和界面设置 Gui。
+      keys:
+        - path: [Current]
+          meaning: 正在用的配置名称
+          values: Configurations 里的一个名称
+          default: Default
+          advice: 保持 Default：本应用运行时只修改 Default 这份配置。
+        - path: [Configurations, Default, TaskQueue]
+          meaning: 任务队列：主界面任务列表里的每一项（类型、是否勾选、各自的设置），按界面上的顺序执行
+          advice: 在 MAA 界面里勾选和设置，不要手动改；不同配置里任务的个数和顺序可能不一样。
+        - path: [Configurations, Default, Gui, ConnectSettings, Config]
+          meaning: 连接配置（模拟器类型），对应「设置 → 连接设置 → 连接配置」
+          values: 例如 General（通用）、MuMuEmulator12（MuMu 模拟器 12）
+          default: General
+          advice: 选和你用的模拟器对应的那一项。
+        - path: [Configurations, Default, Gui, ConnectSettings, AutoDetect]
+          meaning: 自动检测连接：开着时 MAA 自己找正在运行的模拟器，改用找到的地址；连上一次后 MAA 会自己把它关掉（开了「每次重新检测」时除外）
+          values: true 或 false
+          default: true
+          advice: 只开一个模拟器时无所谓；同时开着几个时设为 false。
+        - path: [Configurations, Default, Gui, ConnectSettings, AlwaysAutoDetect]
+          meaning: 每次重新检测：每次连接都重新自动检测
+          values: true 或 false
+          default: false
+          advice: 保持 false，让 MAA 用本应用给的地址。
+        - path: [Configurations, Default, Gui, PostActions]
+          meaning: 任务全部完成后做什么，对应主界面「完成后」
+          values: ExitArknights（退出明日方舟）、BackToAndroidHome（返回模拟器首页）、ExitEmulator（退出模拟器）、ExitSelf（退出 MAA）等，可以多选，用逗号分隔
+          default: None
+          advice: 不想让模拟器被关掉就不要选 ExitEmulator。
+    - file: config/gui.json
+      about: 旧版 MAA 的设置，同样按配置分组；键名是「Start.RunDirectly」这样带点的一整个名字，开关的值是文字 True / False。新版 MAA 读 gui.new.json，两份本应用都会改。
+      keys:
+        - path: [Current]
+          meaning: 正在用的配置名称
+          default: Default
+          advice: 保持 Default。
+  troubleshooting:
+    - problem: 日志出现「重连失败，连接断开」
+      cause: MAA 和模拟器的连接断了，它自己重连也没成功。
+      fix: 本应用会自动重新连接模拟器（模拟器关了会重新打开），再从头运行一次。还不行就检查模拟器是否还开着，以及 MAA「设置 → 连接设置」里的连接配置是否和模拟器对应。
+      tag: adb-disconnected
+    - problem: 日志出现「模拟器断开，正在尝试重连」或「连接失败」
+      cause: MAA 正在自己重试连接，这次运行不会因此失败。
+      fix: 一般不用管；反复出现时检查模拟器是否卡住，同时开着几个模拟器时关掉「自动检测连接」。
+      tag: adb-reconnecting
+    - problem: 日志出现「截图失败」
+      cause: MAA 没能从模拟器截到图，会自己重试。
+      fix: 经常出现时到 MAA「设置 → 连接设置」检查连接配置是否和模拟器对应；用 MuMu 模拟器时检查「MuMu 截图增强」的设置。
+      tag: screencap-failed
+    - problem: 日志出现「任务出错」
+      cause: 队列里某一项没做成（例如找不到入口、材料不够）。MAA 会接着做后面的项，但这次运行会记为失败。
+      fix: 在「任务」的运行记录里看日志，找到是哪一项出错；需要时打开 MAA 调整这一项的设置。
+      tag: task-error
+    - problem: 跑了很久，一直没有「任务已全部完成」
+      cause: 本应用以 MAA 日志里的「任务已全部完成」为准，没有这句就不算成功；MAA 很久没有新日志会被当作卡住。
+      fix: 卡住时本应用会停下并重新运行一次；仍然卡住就打开 MAA 看它停在哪一步。
+      tag: stalled
+    - problem: MAA 连到了别的模拟器，或者没用本应用打开的模拟器
+      cause: 「自动检测连接」开着时 MAA 用自己检测到的地址；或者 MAA 正在用的配置不是 Default。
+      fix: 关掉「设置 → 连接设置」里的「自动检测连接」，并把配置切回 Default。
+    - problem: 跑完以后模拟器也被关掉了
+      cause: MAA 主界面「完成后」里选了「退出 模拟器」。
+      fix: 想让模拟器继续开着，就在「完成后」里取消它。

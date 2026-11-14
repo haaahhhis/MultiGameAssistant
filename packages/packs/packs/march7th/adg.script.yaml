@@ -36,60 +36,73 @@ game:
 tasks:
   - id: main
     title: 完整运行
+    description: 启动游戏，按设置里开启的功能完整跑一轮：兑换码、活动、清体力、每日实训，以及开启了的模拟宇宙、差分宇宙、货币战争、锄大地、混沌回忆等，最后领取奖励。
     utterances: [完整运行, 星穹铁道全部, 三月七跑一遍, 星铁日常全套]
     args: ['main']
     resources: { input: desktop, account: starrail }
     expectedDuration: 90m
   - id: routine
     title: 日常
+    description: 只做日常这部分（按设置里开启的：兑换码、活动、历战余响、清体力、每日实训），不管今天是否已经跑过，最后领取奖励。
     utterances: [星铁日常, 星穹铁道日常]
     args: ['routine']
     resources: { input: desktop, account: starrail }
     expectedDuration: 45m
   - id: daily
     title: 每日实训
+    description: 完成每日实训里能自动完成的项目，再领取奖励。
     utterances: [每日实训]
     args: ['daily']
     resources: { input: desktop, account: starrail }
   - id: power
     title: 清体力
+    description: 按设置里的副本类型和体力计划用掉开拓力。
     utterances: [清体力, 刷开拓力, 用掉体力]
     args: ['power']
     resources: { input: desktop, account: starrail }
   - id: universe
     title: 模拟宇宙
+    description: 运行模拟宇宙（三月七自带的模拟宇宙程序），类型和次数按设置。
     args: ['universe']
     resources: { input: desktop, account: starrail }
   - id: divergent
     title: 差分宇宙
+    description: 运行差分宇宙，模式和难度按设置。
     args: ['divergent']
     resources: { input: desktop, account: starrail }
   - id: currencywars
     title: 货币战争
+    description: 运行货币战争，模式和职级难度按设置。
     args: ['currencywars']
     resources: { input: desktop, account: starrail }
   - id: fight
     title: 锄大地
+    description: 锄大地：自动跑大世界路线清怪（三月七自带的锄大地程序），优先星球和地图版本按设置。
     args: ['fight']
     resources: { input: desktop, account: starrail }
   - id: forgottenhall
     title: 混沌回忆
+    description: 挑战混沌回忆，关卡范围和队伍按设置。
     args: ['forgottenhall']
     resources: { input: desktop, account: starrail }
   - id: purefiction
     title: 虚构叙事
+    description: 挑战虚构叙事，关卡范围和队伍按设置。
     args: ['purefiction']
     resources: { input: desktop, account: starrail }
   - id: apocalyptic
     title: 末日幻影
+    description: 挑战末日幻影，关卡范围和队伍按设置。
     args: ['apocalyptic']
     resources: { input: desktop, account: starrail }
   - id: redemption
     title: 兑换码
+    description: 兑换兑换码。
     args: ['redemption']
     resources: { input: desktop, account: starrail }
   - id: game_update
     title: 更新游戏
+    description: 通过启动器更新星穹铁道。
     args: ['game_update']
 logs:
   sources:
@@ -98,3 +111,106 @@ logs:
   # often retried inside the task, so they are warnings; the exit code decides.
   rules:
     - { match: '\| (ERROR|CRITICAL) \|', level: warning, tag: script-error }
+# The user guide (the 脚本 page): from its README, main.py's tasks and the
+# comments in assets/config/config.example.yaml.
+guide:
+  overview: 三月七小助手自动做崩坏：星穹铁道的日常和周常：清体力、每日实训、领取奖励、委托、锄大地、模拟宇宙、差分宇宙、货币战争、混沌回忆、虚构叙事、末日幻影等。它操作 PC 版游戏窗口，运行时会占用电脑的鼠标键盘，不能和其他占用鼠标的脚本同时跑。它自己会启动游戏；做哪些事、刷哪个副本都由它的设置（config.yaml）决定。
+  setup:
+    - 在「配置」里点「打开脚本修改设置」打开三月七小助手的设置窗口，设置游戏路径，开启要做的功能（清体力、每日实训、领取奖励、模拟宇宙、锄大地等），选好副本类型和队伍。
+    - 把「任务完成后的操作」设成无操作或退出程序，不要选循环执行或关机；最好关掉「成功后暂停程序」，让它跑完就退出。
+    - 关掉设置窗口，设置会保存到本应用用的那份配置里。
+  checks:
+    - 运行期间不要动鼠标键盘，游戏窗口会被切到前台。
+    - 同一时间只能跑一个占用鼠标键盘的脚本，本应用会让它们排队。
+  features:
+    - title: 清体力
+      description: 按副本类型和体力计划用掉开拓力。
+      enable: 在设置里打开清体力，选副本类型（拟造花萼（金）、拟造花萼（赤）、凝滞虚影、侵蚀隧洞等）。
+      config:
+        - { file: config.yaml, path: [power_enable], value: true }
+      tasks: [main, routine, power]
+    - title: 每日实训
+      enable: 在设置里打开每日实训。
+      config:
+        - { file: config.yaml, path: [daily_enable], value: true }
+      tasks: [main, routine, daily]
+    - title: 领取奖励
+      description: 领取委托、邮件、支援、每日实训、无名勋礼、兑换码等奖励，每一种可以单独开关。
+      enable: 在设置里打开领取奖励，再勾选要领的种类。
+      config:
+        - { file: config.yaml, path: [reward_enable], value: true }
+      tasks: [main, routine, daily]
+    - title: 历战余响
+      description: 体力优先打满每周 3 次历战余响。
+      enable: 在设置里打开历战余响，选从周几开始打。
+      config:
+        - { file: config.yaml, path: [echo_of_war_enable], value: true }
+      tasks: [main, routine]
+    - title: 模拟宇宙 / 差分宇宙
+      enable: 在设置里打开模拟宇宙，选类型（差分宇宙或模拟宇宙）、运行频率和次数。
+      config:
+        - { file: config.yaml, path: [universe_enable], value: true }
+      tasks: [main, universe, divergent]
+    - title: 货币战争
+      description: 打货币战争拿每周积分奖励。
+      enable: 在设置里打开货币战争，选模式和职级难度。
+      config:
+        - { file: config.yaml, path: [currencywars_enable], value: true }
+      tasks: [main, currencywars]
+    - title: 锄大地
+      enable: 在设置里打开锄大地，选优先星球和地图版本。
+      config:
+        - { file: config.yaml, path: [fight_enable], value: true }
+      tasks: [main, fight]
+    - title: 混沌回忆、虚构叙事、末日幻影
+      enable: 在设置里分别打开它们，设置允许挑战的关卡范围和队伍。
+      config:
+        - { file: config.yaml, path: [forgottenhall_enable], value: true }
+        - { file: config.yaml, path: [purefiction_enable], value: true }
+        - { file: config.yaml, path: [apocalyptic_enable], value: true }
+      tasks: [main, forgottenhall, purefiction, apocalyptic]
+  config:
+    - file: config.yaml
+      about: 三月七小助手的全部设置，一个键一项，文件里每个键后面都有中文注释。设置窗口改的就是它。
+      keys:
+        - path: [game_path]
+          meaning: 游戏程序 StarRail.exe 的位置
+          advice: 打开了「自动配置游戏路径」（auto_set_game_path_enable）时三月七会自己找。
+        - path: [after_finish]
+          meaning: 任务完成后做什么
+          values: None（无操作）、Exit（退出程序）、Loop（循环执行）、Shutdown（关机）
+          default: None
+          advice: 用 None 或 Exit；Loop 会让它一直不结束，Shutdown 会关机。
+        - path: [pause_after_success]
+          meaning: 成功后是否暂停程序（不循环时）
+          values: true 暂停，false 直接退出
+          default: true
+          advice: 设为 false，跑完就退出。
+        - path: [exit_after_failure]
+          meaning: 失败后是否直接退出
+          values: true 直接退出，false 暂停程序
+          default: false
+          advice: 设为 true，失败时也能马上结束。
+        - path: [instance_type]
+          meaning: 清体力打的副本类型
+          values: 拟造花萼（金）、拟造花萼（赤）、凝滞虚影、侵蚀隧洞等
+          default: 拟造花萼（金）
+        - path: [use_reserved_trailblaze_power]
+          meaning: 清体力时是否使用后备开拓力
+          values: true 或 false
+          default: false
+        - path: [use_fuel]
+          meaning: 清体力时是否使用燃料
+          values: true 或 false
+          default: false
+  troubleshooting:
+    - problem: 日志里有「| ERROR |」
+      cause: 三月七记录了一个错误；它常在任务里自己重试，不一定失败。
+      fix: 以这次运行的结果为准；运行失败时在运行记录里看出错前后的日志。
+      tag: script-error
+    - problem: 日志出现「截图失败：没有找到游戏窗口」
+      cause: 游戏没有打开，或者窗口标题和设置里的不一样。
+      fix: 检查设置里的游戏路径和游戏窗口标题（game_title_name），确认游戏能正常打开。
+    - problem: 跑完了却一直不结束
+      cause: 「任务完成后的操作」选了循环执行，或者开着「成功后暂停程序」。
+      fix: 把 after_finish 改成 None 或 Exit，把 pause_after_success 设为 false。

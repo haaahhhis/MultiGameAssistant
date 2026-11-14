@@ -171,6 +171,65 @@ export const PackSummary = z.object({
 })
 export type PackSummary = z.infer<typeof PackSummary>
 
+/**
+ * A script's user guide as the 脚本 page shows it, made from its pack: the
+ * pack's `guide`, its tasks and parameters, and the config changes its runs
+ * make for themselves. Keys are written `Configurations › Default › Start.RunDirectly`;
+ * values with run facts in them say so (「模拟器的 ADB 地址」).
+ */
+export const PackGuide = z.object({
+  packId: z.string(),
+  name: z.string(),
+  builtin: z.boolean(),
+  /** The pack has a written guide; without one only its tasks and run changes are known. */
+  written: z.boolean(),
+  overview: z.string().optional(),
+  tasks: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    description: z.string().optional(),
+    utterances: z.array(z.string()),
+    /** `desktop` takes the mouse and keyboard; `adb` an emulator; `window` the game's window in the background. */
+    input: z.enum(['desktop', 'window', 'adb', 'none']),
+    expectedDuration: z.string().optional(),
+    params: z.array(z.object({
+      name: z.string(),
+      type: z.enum(['string', 'integer', 'number', 'boolean']),
+      description: z.string().optional(),
+      default: z.string().optional(),
+      /** Its allowed values: listed, or where they come from. */
+      values: z.string().optional(),
+    })),
+  })),
+  setup: z.array(z.string()),
+  checks: z.array(z.string()),
+  features: z.array(z.object({
+    title: z.string(),
+    description: z.string().optional(),
+    enable: z.string(),
+    config: z.array(z.object({ file: z.string(), key: z.string(), value: z.string() })),
+    /** Titles of the tasks that do it. */
+    tasks: z.array(z.string()),
+  })),
+  config: z.array(z.object({
+    file: z.string(),
+    about: z.string().optional(),
+    keys: z.array(z.object({ key: z.string(), meaning: z.string(), values: z.string().optional(), default: z.string().optional(), advice: z.string().optional() })),
+    /** What runs set in it for themselves; the file is put back after each run. */
+    changes: z.array(z.object({
+      key: z.string(),
+      value: z.string(),
+      note: z.string().optional(),
+      /** Only then (e.g. 本应用启动了模拟器时). */
+      when: z.string().optional(),
+      /** Titles of the tasks that make it. */
+      tasks: z.array(z.string()),
+    })),
+  })),
+  troubleshooting: z.array(z.object({ problem: z.string(), cause: z.string().optional(), fix: z.string() })),
+})
+export type PackGuide = z.infer<typeof PackGuide>
+
 /** What Mirror酱 says about a resource (no CDK needed). */
 export const MirrorLookup = z.object({
   rid: z.string(),
@@ -312,6 +371,12 @@ export const ScriptRequests = {
     capability: SCRIPTS_CAPABILITY,
     params: ById,
     result: ScriptInfo,
+  },
+  /** The script's user guide, from its pack; null without a pack. */
+  'scripts/guide': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({ guide: PackGuide.nullable() }),
   },
   /** Search GitHub repositories; packs whose repo matches are marked. */
   'scripts/search': {

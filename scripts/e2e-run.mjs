@@ -74,6 +74,7 @@ launch:
 tasks:
   - id: daily
     title: 日常
+    description: 按假工具的配置跑一遍日常
     utterances: [跑日常]
     args: ['daily.json']
     patches:
@@ -81,15 +82,18 @@ tasks:
         set:
           - path: [Settings, Run.Directly]
             value: true
+            note: 启动后直接开始
     success: done-log
   - id: android
     title: 模拟器任务
+    description: 在模拟器上跑一遍
     args: ['daily.json']
     patches:
       - file: config/settings.json
         set:
           - path: [Settings, Connect.Address]
             value: '{adb}'
+            note: 连接本应用准备好的模拟器
     resources: { input: adb, emulator: mumu }
     success: done-log
 logs:
@@ -98,6 +102,8 @@ logs:
     - path: debug/run.log
   rules:
     - { match: '全部任务完成', level: done }
+guide:
+  overview: 端到端检查用的假工具：读配置、写日志、结束。
 `
 const SKILL = '---\nname: e2e-fake-tool\ndescription: E2E 假工具，用于端到端检查。\n---\n\n# E2E 假工具\n\n任务 daily：跑日常。\n'
 
@@ -107,7 +113,7 @@ const llm = await startFakeLlm({
   models: [FAKE_MODEL],
   replies: [
     call('script_analyze', { id: ID }), { text: '分析完成。' },
-    call('pack_propose', { pack_id: ID, script_id: ID, manifest: MANIFEST, skill: SKILL, summary: '根据目录结构和日志写的脚本包。' }), { text: '脚本包已保存。' },
+    call('pack_propose', { pack_id: ID, script_id: ID, manifest: MANIFEST, skill: SKILL, summary: '根据目录结构和日志写的脚本包。', docs: [], no_docs: '假工具没有文档：目录里只有程序和配置。' }), { text: '脚本包已保存。' },
     call('script_run', { id: ID, task: 'daily', wait: true }), { text: '运行结束。' },
     call('write', { file_path: join(dir, 'config', 'hacked.txt'), content: 'x' }), { text: '被拦截了。' },
     call(SHELL, { description: 'try', command: `Set-Content "${join(dir, 'app', 'evil.txt')}" x` }), { text: '也被拦截了。' },

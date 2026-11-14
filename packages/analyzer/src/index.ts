@@ -20,7 +20,7 @@ import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-a
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@adg/gateway'
 import type {} from '@adg/script-registry'
-import { MANIFEST_FILE, parseManifest, SKILL_FILE } from '@adg/pack-schema'
+import { guideIssues, MANIFEST_FILE, parseManifest, SKILL_FILE } from '@adg/pack-schema'
 import { BUILTIN_PACK_VERSION, PACKS_CAPABILITY, ScriptId, type PackDraft, type PackVersion, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import { analyzeDir } from './analyze.ts'
@@ -300,12 +300,12 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'pack_propose',
-      description: '保存脚本包（adg.script.yaml 和 SKILL.md），直接生效，不用用户再确认：新写一份，或者用原来的 id 改已有的一份（内置的、用户确认过的都可以；被替换的那一版留在历史里）。会按 schema 校验，失败时返回具体字段，脚本包保持原样，修正后重新提交；通过后这个脚本马上用新的脚本包，之后的 script_run、script_tasks 都按它来。不会修改脚本本身。',
+      description: '保存脚本包（adg.script.yaml 和 SKILL.md），直接生效，不用用户再确认：新写一份，或者用原来的 id 改已有的一份（内置的、用户确认过的都可以；被替换的那一版留在历史里）。会按 schema 校验，并检查 manifest 里给用户看的使用说明（guide、任务和参数的 description、临时修改的 note）：缺了或混进了给 agent 的内容（工具名、脚本包字段、占位符、核验依据、待确认）都会失败并返回具体位置，脚本包保持原样，修正后重新提交；通过后这个脚本马上用新的脚本包，之后的 script_run、script_tasks 都按它来。不会修改脚本本身。',
       properties: {
         pack_id: { type: 'string', description: '脚本包 id（与 manifest 里的 id 相同；改进已有脚本包时用原 id）。' },
         script_id: { type: 'string', description: '这个包描述的脚本库里的脚本 id。' },
-        manifest: { type: 'string', description: 'adg.script.yaml 的完整内容。' },
-        skill: { type: 'string', description: 'SKILL.md 的完整内容（以 name / description frontmatter 开头）。' },
+        manifest: { type: 'string', description: 'adg.script.yaml 的完整内容，包括 guide（给用户看的使用说明，脚本页显示）。' },
+        skill: { type: 'string', description: 'SKILL.md 的完整内容（以 name / description frontmatter 开头）：只给 agent 看的备注——用户说法怎么对应任务、操作要点、核验依据、限制、待确认。' },
         summary: { type: 'string', description: '给用户看的一段话：做了什么、依据是什么、哪些还待确认。' },
         docs: {
           type: 'array',
@@ -329,6 +329,9 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
           throw new Error('先读项目的文档再写脚本包：docs 里写出读过的文档（出处和得到了什么）；确实找不到文档时用 no_docs 说明找过哪些地方（脚本目录、仓库 README、Wiki、文档站）')
         }
         deps.library.get(a.script_id) // must exist
+        // The guide is for the user (the 脚本 page shows it); the agent's own notes go in SKILL.md.
+        const issues = guideIssues(parseManifest(a.manifest, `${a.pack_id}/${MANIFEST_FILE}`))
+        if (issues.length > 0) throw new Error(`使用说明还要改（按 script-analysis 技能「使用说明」一节）：\n- ${issues.join('\n- ')}`)
         const saved = await deps.drafts.save({
           packId: a.pack_id, scriptId: a.script_id, proposedAt: Date.now(), summary: a.summary,
           ...(docs.length === 0 ? {} : { docs }),

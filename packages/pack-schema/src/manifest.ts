@@ -107,6 +107,8 @@ export const ConfigPatch = z.object({
   set: z.array(z.object({
     path: z.array(PathSegment).min(1),
     value: z.unknown(),
+    /** What this change does, for people: shown in the script's guide (e.g. 「启动 MAA 后直接开始任务」). */
+    note: z.string().optional(),
   })).min(1),
 })
 export type ConfigPatch = z.infer<typeof ConfigPatch>
@@ -254,6 +256,80 @@ export const Recovery = z.object({
 })
 export type Recovery = z.infer<typeof Recovery>
 
+/** A text people read in the guide. */
+const Text = z.string().trim().min(1)
+
+/** A key in one of the script's config files, as `ConfigPatch` writes it. */
+const KeyRef = z.object({
+  /** One of `config.files` (a path it lists, or a file its `*` matches). */
+  file: z.string().min(1),
+  path: z.array(PathSegment).min(1),
+})
+
+/**
+ * The user guide: what someone needs to use the script, written for them in
+ * plain words (the 脚本 page shows it). What each task and parameter does is
+ * the tasks' own `title` / `description` and their params' `description`;
+ * what a run changes for itself is the tasks' patches, explained by each
+ * change's `note`. Notes for the agent (evidence, limits, open questions)
+ * belong in SKILL.md, not here.
+ */
+export const Guide = z.object({
+  /** What the script does and how (on an emulator, or holding the mouse), in a few sentences. */
+  overview: Text,
+  /** One-time setup before the first run, in order: what to set in the script's own window. */
+  setup: z.array(Text).default([]),
+  /** What to check before each run. */
+  checks: z.array(Text).default([]),
+  /** The script's features and how each is turned on. */
+  features: z.array(z.object({
+    title: Text,
+    description: Text.optional(),
+    /** How to turn it on in the script's own window: where it is and what to pick. */
+    enable: Text,
+    /** The config keys behind that setting and the value that turns it on. */
+    config: z.array(KeyRef.extend({ value: z.unknown() })).default([]),
+    /** Tasks that do it, by id. */
+    tasks: z.array(z.string()).default([]),
+  })).default([]),
+  /** The config files: what each holds and the keys that matter. */
+  config: z.array(z.object({
+    file: z.string().min(1),
+    /** What the file holds and when the script reads it. */
+    about: Text,
+    keys: z.array(z.object({
+      path: z.array(PathSegment).min(1),
+      /** What the key does. */
+      meaning: Text,
+      /** Its values and what each means, e.g. 「True 开，False 关」. */
+      values: Text.optional(),
+      /** Its default, as the script writes it. */
+      default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+      /** What to set it to for use with MultiGameAssistant, and why. */
+      advice: Text.optional(),
+    })).default([]),
+  })).default([]),
+  /** Common problems: what is seen (a log message in the script's own words, or a symptom), what it means, what to do. */
+  troubleshooting: z.array(z.object({
+    problem: Text,
+    cause: Text.optional(),
+    fix: Text,
+    /** The log rule it comes from (a rule's tag). */
+    tag: z.string().optional(),
+  })).default([]),
+})
+export type Guide = z.infer<typeof Guide>
+
+/** Whether `file` is one of the declared config files (`*` matches within one path segment). */
+export function declaresFile(files: readonly { path: string }[], file: string): boolean {
+  const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+  return files.some(f => {
+    if (!f.path.includes('*')) return norm(f.path) === norm(file)
+    const pattern = norm(f.path).split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')
+    return new RegExp(`^${pattern}$`).test(norm(file))
+  })
+}
+
 export const ScriptManifest = z.object({
   id: ScriptId,
   name: z.string().min(1),
@@ -305,6 +381,8 @@ export const ScriptManifest = z.object({
   logs: Logs.default({ sources: [{ stdout: true, encoding: 'auto' }], rules: [] }),
   recovery: z.array(Recovery).default([]),
   game: Game.optional(),
+  /** The user guide shown on the 脚本 page. */
+  guide: Guide.optional(),
   intervention: open.optional(),
   update: open.optional(),
 }).superRefine((manifest, issues) => {
@@ -317,6 +395,21 @@ export const ScriptManifest = z.object({
   const tags = new Set(['stalled', 'failed', ...manifest.logs.rules.map(r => r.tag ?? r.level)])
   manifest.recovery.forEach((entry, index) => {
     if (!tags.has(entry.on)) issues.addIssue({ code: 'custom', path: ['recovery', index, 'on'], message: `no log rule has tag ${entry.on} (use a rule tag, stalled or failed)` })
+  })
+  const guide = manifest.guide
+  if (guide === undefined) return
+  const file = (name: string, path: (string | number)[]) => {
+    if (!declaresFile(manifest.config.files, name)) issues.addIssue({ code: 'custom', path, message: `${name} is not one of config.files` })
+  }
+  guide.features.forEach((feature, index) => {
+    feature.config.forEach((key, k) => file(key.file, ['guide', 'features', index, 'config', k, 'file']))
+    feature.tasks.forEach((task, t) => {
+      if (!ids.has(task)) issues.addIssue({ code: 'custom', path: ['guide', 'features', index, 'tasks', t], message: `no task ${task}` })
+    })
+  })
+  guide.config.forEach((entry, index) => file(entry.file, ['guide', 'config', index, 'file']))
+  guide.troubleshooting.forEach((entry, index) => {
+    if (entry.tag !== undefined && !tags.has(entry.tag)) issues.addIssue({ code: 'custom', path: ['guide', 'troubleshooting', index, 'tag'], message: `no log rule has tag ${entry.tag}` })
   })
 })
 export type ScriptManifest = z.infer<typeof ScriptManifest>

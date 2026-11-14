@@ -13,6 +13,7 @@ import { ConfigCard } from './ConfigCard.tsx'
 import { GameCard } from './GameCard.tsx'
 import { RunsCard } from './RunsCard.tsx'
 import { SummaryCard } from './SummaryCard.tsx'
+import { GuideCard } from './GuideCard.tsx'
 import { SetupCard } from './SetupCard.tsx'
 
 const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
@@ -77,6 +78,8 @@ export function ScriptDetail({ client, script, job, setup, onRemoved, openSessio
       {setup !== undefined && <SetupCard client={client} setup={setup} openSession={openSession} onImported={() => {}} />}
 
       {script.dir !== undefined && <SummaryCard client={client} script={script} openSession={openSession} />}
+      {/* Its own key (GameCard below is keyed by the id too): a new script starts with its guide unread. */}
+      {script.packId !== undefined && <GuideCard key={`guide:${script.id}`} client={client} script={script} />}
 
       <section className="card">
         <div className="card-head">

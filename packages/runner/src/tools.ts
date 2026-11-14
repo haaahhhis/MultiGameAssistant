@@ -7,6 +7,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { existsSync, statSync } from 'node:fs'
 import { basename, isAbsolute } from 'node:path'
+import { guideView } from '@adg/pack-schema'
 import { ScriptId } from '@adg/protocol'
 import { z } from 'zod'
 import { configStatus, importConfig, readConfig, writeConfig } from './config.ts'
@@ -220,15 +221,24 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.tasks,
-      description: '列出一个脚本能运行的任务：任务 id、名称、用户可能的说法、参数（类型、默认值、可选值；choices 是从脚本配置里读出的可选项，例如 MaaEnd 的实例名，canCreate 表示可以用 script_choice_create 新建）、占用的资源（desktop 抢占鼠标键盘、adb 使用模拟器）。运行前先调用它把用户的话对应到任务和参数。',
-      properties: { id, profile: { ...profile, description: '可选项（choices）从哪份配置里读；不填是当前那份。' } },
+      description: '列出一个脚本能运行的任务：任务 id、名称、用户可能的说法、参数（类型、默认值、可选值；choices 是从脚本配置里读出的可选项，例如 MaaEnd 的实例名，canCreate 表示可以用 script_choice_create 新建）、占用的资源（desktop 抢占鼠标键盘、adb 使用模拟器）。运行前先调用它把用户的话对应到任务和参数。guide 为 true 时附上脚本包的使用说明（脚本页上给用户看的同一份）：功能怎么开启、配置文件的重要键和运行时临时改的键、首次设置、运行前检查、常见问题；用户问「怎么开启某功能」「这个设置是什么意思」「这个报错怎么办」时用。',
+      properties: {
+        id,
+        profile: { ...profile, description: '可选项（choices）从哪份配置里读；不填是当前那份。' },
+        guide: { type: 'boolean', description: '附上使用说明。' },
+      },
       required: ['id'],
       readOnly: true,
       kind: 'read',
       title: a => `查看任务：${String(a['id'] ?? '')}`,
       execute: async args => {
-        const a = parse(z.object({ id: ScriptId, profile: Profile }), args)
-        return { ...(await runner.tasks(a.id, ref(a.profile))), profiles: await runner.profiles.list(a.id) }
+        const a = parse(z.object({ id: ScriptId, profile: Profile, guide: z.boolean().nullish() }), args)
+        const listed = { ...(await runner.tasks(a.id, ref(a.profile))), profiles: await runner.profiles.list(a.id) }
+        const manifest = a.guide === true ? config.library.packOf(a.id)?.manifest : undefined
+        if (manifest === undefined) return listed
+        // The tasks are listed above already, with their choices read from the config.
+        const { tasks: _tasks, packId: _packId, builtin: _builtin, ...guide } = guideView(manifest, { builtin: false })
+        return { ...listed, guide }
       },
     }),
     tool({

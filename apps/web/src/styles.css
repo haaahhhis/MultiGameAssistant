@@ -1329,6 +1329,30 @@ button.script-row.active { background: var(--raised); box-shadow: inset 0 0 0 1p
   .probe-grid { grid-template-columns: 1fr; }
 }
 
+/* 使用说明: a script's user guide */
+.guide-overview { margin: 0; line-height: 1.7; }
+.guide-tabs { align-self: flex-start; }
+.guide-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.guide-list > li { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--border); min-width: 0; }
+.guide-list > li:first-child { border-top: none; padding-top: 0; }
+.guide-list p, .guide-file p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.guide-item-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+.guide-label { display: inline-block; margin-right: 8px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+.guide-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; overflow-wrap: anywhere; }
+.guide-keys { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.guide-keys > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 8px 12px; border-radius: var(--r-md); background: var(--sunken); }
+.guide-keys dt { min-width: 0; }
+.guide-keys dt code { font-weight: 500; overflow-wrap: anywhere; }
+.guide-keys dd { margin: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.guide-advice { font-size: 12.5px; color: var(--text-2); }
+.guide-files { display: flex; flex-direction: column; gap: 18px; }
+.guide-file { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.guide-file + .guide-file { padding-top: 14px; border-top: 1px solid var(--border); }
+.guide-file-name { font-weight: 500; overflow-wrap: anywhere; }
+.guide-before { display: flex; flex-direction: column; gap: 14px; }
+.guide-steps { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; line-height: 1.65; }
+.guide-steps.checks { list-style: '✓  '; }
+
 /* M2: runs, drafts, guard, emulators */
 .run-form { display: flex; flex-direction: column; gap: 6px; }
 .run-form .key-actions { margin-top: 6px; }

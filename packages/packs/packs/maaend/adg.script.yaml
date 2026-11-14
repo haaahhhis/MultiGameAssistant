@@ -42,12 +42,12 @@ tasks:
   # each offers only the MXU instances with its kind of controller.
   - id: run-pc
     title: 运行一个实例（PC 版，占用鼠标键盘）
-    description: 运行 MXU 实例里已配置的任务；实例的控制器是 Win32-Front（直接操作 PC 版游戏）
+    description: 运行 MaaEnd 里一个「电脑端-前台」实例勾选的任务，直接操作 PC 版游戏，跑完 MaaEnd 自己退出。运行时游戏窗口要在最前面，会占用鼠标键盘。
     utterances: [终末地日常, 跑 MaaEnd, 终末地]
     params:
       instance:
         type: string
-        description: MXU 实例
+        description: 要运行的实例：MaaEnd 里建的实例名称，每个实例有自己的控制器和任务列表
         choices:
           file: config/mxu-MaaEnd.json
           list: [instances]
@@ -61,11 +61,11 @@ tasks:
     expectedDuration: 60m
   - id: run-adb
     title: 运行一个实例（模拟器）
-    description: 运行 MXU 实例里已配置的任务；实例的控制器是 ADB（通过模拟器操作，不占用鼠标）
+    description: 运行 MaaEnd 里一个「安卓端」实例勾选的任务，通过模拟器操作，不占用鼠标键盘，跑完 MaaEnd 自己退出。
     params:
       instance:
         type: string
-        description: MXU 实例
+        description: 要运行的实例：MaaEnd 里建的实例名称，每个实例有自己的控制器和任务列表
         choices:
           file: config/mxu-MaaEnd.json
           list: [instances]
@@ -81,6 +81,7 @@ tasks:
         set:
           - path: [instances, { where: { field: name, equals: '{instance}' } }, savedDevice, adbDeviceAddress]
             value: '{adb}'
+            note: 让这个实例连接本应用准备好的模拟器
     resources: { input: adb, emulator: mumu, account: endfield }
     expectedDuration: 60m
 logs:
@@ -88,3 +89,72 @@ logs:
     - stdout: true
     - path: debug/maa.log
   rules: []
+# The user guide (the 脚本 page): from MaaEnd's README, its interface.json and
+# zh_cn labels (controllers, tasks), and docs/zh_cn/users/troubleshooting.md.
+guide:
+  overview: MaaEnd（MAA 终末地小助手，基于 MaaFramework）自动做明日方舟：终末地的日常：日常奖励领取、基建任务、拜访好友、协议空间、环境监测、据点交易、自动采集等。它按「实例」运行：每个实例选一种控制器（「电脑端-前台」直接操作 PC 版，会占用鼠标键盘；「安卓端」通过模拟器操作）和自己的任务列表。本应用运行时选一个实例跑它勾选的任务，跑完 MaaEnd 自己退出；游戏没开时本应用会先打开它。
+  setup:
+    - 在「配置」里点「打开脚本修改设置」打开 MaaEnd，建一个实例并选控制器：操作 PC 版选「电脑端-前台」，用模拟器选「安卓端」。
+    - 在这个实例的任务列表里勾选要做的事，展开每一项设置选项；然后关掉 MaaEnd，设置会保存到本应用用的那份配置里。
+    - 用 PC 版时，在本页「启动游戏」里把程序位置设成鹰角官方启动器：直接运行 Endfield.exe 会提示要从官方启动器打开游戏。
+  checks:
+    - 选对任务和实例：「运行一个实例（PC 版）」只列出电脑端实例，「运行一个实例（模拟器）」只列出安卓端实例；没有合适的实例可以新建一个（复制一个同类实例）。
+    - 用电脑端实例时，运行期间游戏窗口要保持在最前、不被遮挡，不要动鼠标键盘。
+    - PC 版启动器打开后可能停在启动器界面，需要点一下「开始游戏」。
+  features:
+    - title: 日常奖励领取
+      enable: 在实例的任务列表勾选「日常奖励领取」。
+      tasks: [run-pc, run-adb]
+    - title: 基建任务
+      description: 领取基建产物、补货，收取、放置、赠送线索。
+      enable: 在实例的任务列表勾选「基建任务」，展开设置要做哪些事。
+      tasks: [run-pc, run-adb]
+    - title: 拜访好友
+      description: 拜访好友，顺手完成生产助力和情报交流。
+      enable: 在实例的任务列表勾选「拜访好友」。
+      tasks: [run-pc, run-adb]
+    - title: 协议空间（消耗理智）
+      description: 消耗理智刷协议空间，可选奖励路线。
+      enable: 在实例的任务列表勾选「协议空间」，展开选奖励路线。
+      tasks: [run-pc, run-adb]
+    - title: 环境监测
+      enable: 在实例的任务列表勾选「环境监测」。
+      tasks: [run-pc, run-adb]
+    - title: 据点交易
+      description: 用各据点的产品兑换调度券。
+      enable: 在实例的任务列表勾选「据点交易」。
+      tasks: [run-pc, run-adb]
+    - title: 自动采集
+      description: 按野外资源路线巡回采集。
+      enable: 在实例的任务列表勾选「自动采集」，展开选路线。
+      tasks: [run-pc, run-adb]
+    - title: 基质刷取、生态农场、选剑演武（仅 PC 版）
+      description: 这几项只有「电脑端-前台」实例能用。
+      enable: 在电脑端实例的任务列表勾选「基质刷取」「生态农场」或「选剑演武」。
+      tasks: [run-pc]
+  config:
+    - file: config/mxu-MaaEnd.json
+      about: MaaEnd 界面（MXU）的设置。instances 里是你建的每个实例：名称 name、控制器 controllerName、任务列表 tasks（每项的任务名 taskName、是否勾选 enabled、选项 optionValues）和上次连接的设备 savedDevice。
+      keys:
+        - path: [instances]
+          meaning: 实例列表，运行时选的就是这里的名称
+          advice: 在 MaaEnd 里新建、改名和设置实例，不要手动改。
+        - path: [instances, { where: { field: name, equals: '<实例名>' } }, controllerName]
+          meaning: 实例的控制器，决定它出现在哪个任务里
+          values: Win32-Front（电脑端-前台：PC 版，游戏窗口要在最前，会占用鼠标）、ADB（安卓端：模拟器）
+        - path: [instances, { where: { field: name, equals: '<实例名>' } }, tasks]
+          meaning: 实例要做的任务：taskName 是任务名，enabled 是否勾选，optionValues 是它的选项
+          advice: 在 MaaEnd 界面里勾选和设置。
+        - path: [instances, { where: { field: name, equals: '<实例名>' } }, savedDevice, adbDeviceAddress]
+          meaning: 安卓端实例连接的设备地址
+          advice: 不用改：本应用运行时会临时换成它准备好的模拟器。
+  troubleshooting:
+    - problem: 找不到游戏窗口，或者游戏没打开
+      cause: PC 版要从鹰角官方启动器打开，启动器可能停在「开始游戏」那一步；或者「启动游戏」里的程序位置不是启动器。
+      fix: 在启动器里点「开始游戏」，等游戏进到主界面后重新运行；「启动游戏」的程序位置填官方启动器。
+    - problem: 运行时选不到我的实例
+      cause: 实例的控制器和任务不对应：PC 版任务只列电脑端实例，模拟器任务只列安卓端实例。
+      fix: 换另一个任务运行，或者在 MaaEnd 里改这个实例的控制器。
+    - problem: 识别出错、点错地方
+      cause: 画面识别没对上，常见于游戏更新之后。
+      fix: 先把 MaaEnd 更新到最新版；还有问题就在 MaaEnd 设置里打开「保存调试图像」，重现一次后把 debug 文件夹里的日志和 debug/vision 里的图片反馈给 MaaEnd。
