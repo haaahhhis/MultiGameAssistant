@@ -215,8 +215,13 @@ test('a long message keeps its start and its end; the harness\'s notes are no on
   assert.ok(cut.length < 2100)
   assert.match(cut, /^开头的请求/)
   assert.match(cut, /结尾的结论$/)
-  const notes = [{ ...user(1, '相关的记忆…', false), origin: { kind: 'adg-recall', human: false } }, { ...user(2, '（提醒）…', false), origin: { kind: 'adg-time', human: false } }] as unknown as SessionEvent[]
-  assert.deepEqual(exchangesOf(notes, -1), [])
+  const note = (seq: number, kind: string, extra: object = {}) => ({ ...user(seq, '…', false), origin: { kind, human: false }, ...extra })
+  const notes = [
+    note(1, 'adg-recall'), note(2, 'adg-time'), note(3, 'runtime-context'), note(4, 'skill-catalog'), note(5, 'time-context'),
+    note(6, 'compact-checkpoint', { replacesHistory: true }),
+  ] as unknown as SessionEvent[]
+  assert.deepEqual(exchangesOf(notes, -1), [], 'nor is a summary, which restates what was read before it')
+  assert.equal(exchangesOf([note(7, 'notice')] as unknown as SessionEvent[], -1).length, 1, 'a notice the app sent is read')
 })
 
 test('low-context mode keeps it on, whatever the switch says', async () => {

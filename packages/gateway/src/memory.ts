@@ -80,13 +80,25 @@ export class MemoryStore {
   readonly #logFile: string | undefined
   readonly #changed: (() => void) | undefined
   #items: MemoryEntry[] = []
+  #ready = false
+  #version = 0
   readonly loaded: Promise<void>
 
   constructor(file: string | undefined, changed?: () => void) {
     this.#file = file
     this.#logFile = file === undefined ? undefined : join(dirname(file), MEMORY_LOG)
     this.#changed = changed
-    this.loaded = this.#load()
+    this.loaded = this.#load().finally(() => { this.#ready = true })
+  }
+
+  /** The file has been read: what `list` gives is what is kept. */
+  get ready(): boolean {
+    return this.#ready
+  }
+
+  /** Goes up with every change, so a reader knows when to look again. */
+  get version(): number {
+    return this.#version
   }
 
   /** Every entry, newest first. */
@@ -120,7 +132,10 @@ export class MemoryStore {
     if (same !== undefined) return this.update(same.id, { text }, write.by, now)
     if (write.kind === 'core') this.#roomForCore(text.length)
     const at = now.toISOString()
-    const entry: MemoryEntry = { id: newId(now), kind: write.kind, scope, text, createdAt: at, updatedAt: at, by: write.by, ...(write.source === undefined ? {} : { source: write.source }) }
+    // Several written in one millisecond (an automatic pass's batch) may draw the same id: drawn again.
+    let id = newId(now)
+    while (this.#items.some(entry => entry.id === id)) id = newId(now)
+    const entry: MemoryEntry = { id, kind: write.kind, scope, text, createdAt: at, updatedAt: at, by: write.by, ...(write.source === undefined ? {} : { source: write.source }) }
     this.#items.push(entry)
     const trimmed = this.#trim()
     await this.#save()
@@ -237,6 +252,7 @@ export class MemoryStore {
   }
 
   async #save(): Promise<void> {
+    this.#version++
     if (this.#file !== undefined) await writeFileAtomic(this.#file, `${JSON.stringify({ version: 1, items: this.#items }, null, 1)}\n`)
     this.#changed?.()
   }
@@ -319,7 +335,7 @@ const HOW_TO_WRITE = [
   '- 用户说起自己的事（怎么称呼、偏好和习惯、用的电脑和设备、玩哪些游戏和账号情况、定下的分工和规矩）、纠正你、或者说「记住…」时，马上用 memory_save 记成资料（kind=profile）。',
   '- 一件事做完或有了结论（装好或更新了脚本、改了流水线或定时、解决了一个问题、用户做了决定或拒绝了什么），这一轮结束前用 memory_save 记一条日记（kind=journal）：做了什么、结果怎样、还剩什么没做。不记过程和闲聊，也不记一眼就能从软件里查到的状态。',
   '- 一条只写一件事，写成以后不看这次对话也看得懂的一句话：哪个游戏、哪个脚本、具体的名字和数字照实写；「今天」「明天」「下周」换成具体日期。记下时会自动注明是在这个对话的哪里说的，以后能查回原文。',
-  '- 先看上面有没有同一件事：有就用 replaces 改那一条，不要重复记；过时了或记错了用 memory_forget 删掉。用户说「忘掉…」「别记…」就删。',
+  '- 先看上面和对话里的「（记忆更新）」有没有同一件事：有就用 replaces 改那一条，不要重复记；过时了或记错了用 memory_forget 删掉。用户说「忘掉…」「别记…」就删。',
   '- 所有 agent 都该知道的（称呼、偏好、设备和习惯、大家都要守的约定）记成共享（shared=true）；只和你自己的工作有关的记成你自己的。核心总是共享的。',
   '- 不记密码、验证码、密钥、token、cookie，用户让记也不记，告诉用户为什么。',
   '- 记忆和技能是两回事：一件事一步步怎么做，存成技能（skill_save）；用户是谁、喜欢什么、约定了什么、做过什么，记进记忆。',
@@ -332,6 +348,17 @@ const HISTORY = [
   '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近 12 小时的对话；开了归档时，更早的摘要也会移出上下文，只留一行说明），更早的对话你也看不到。日记是你做过的事的索引：标着「可查原文」的记忆，用 history_read 的 memory_id 就能读到当时的对话。摘要和记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文和归档的摘要，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
 ].join('\n')
 
+/** How the memory section starts: memory-view.ts finds a conversation's section in the prompt it was sent. */
+export const MEMORY_HEADING = '# 长期记忆'
+
+/** How the memory section ends: how to write, or, for a sub-agent, that it does not. */
+export function memoryTail(lead: string | undefined): string {
+  return lead === undefined ? HOW_TO_WRITE : `这些只供参考：你是子 agent，不写记忆。发现值得记的（用户的偏好、做成的事），写进交给「${lead}」的回复里，由它去记。`
+}
+
+/** Said in every memory section: a conversation's section stays as it began, and what changes comes as notes (memory-view.ts). */
+const UPDATES = '这是这个对话开始时的记忆；之后有变化（你或别的 agent 记的、自动整理的、用户在设置里改的），会以「（记忆更新）」开头的消息出现在对话里，以最新的为准。'
+
 /**
  * The memory section of one agent's system prompt: the core entries, the
  * newest profile ones, the recent journal ones, and how to write more. A
@@ -343,10 +370,10 @@ export function memoryPrompt(entries: readonly MemoryEntry[], agentId: string, o
   const line = (entry: MemoryEntry) => entryLine(entry, agentId, options.timeZone)
 
   const parts = [
-    '# 长期记忆',
+    MEMORY_HEADING,
     entries.length === 0
-      ? '你还没有关于用户的记忆。下面写了什么时候该记。'
-      : '下面是之前的对话里记下的关于用户的事（「共享」的所有 agent 都看得到，「你自己的」只有你看得到）。照着用，不用向用户复述；和用户现在说的不一样时以现在说的为准，并更新记忆。方括号里是这条的 id，圆括号里是它记下或最后更新的时间：说到它时按这个时间说（「11 月 12 日记的」），越早的越可能已经过时。',
+      ? `你还没有关于用户的记忆。下面写了什么时候该记。${UPDATES}`
+      : `下面是之前的对话里记下的关于用户的事（「共享」的所有 agent 都看得到，「你自己的」只有你看得到）。照着用，不用向用户复述；和用户现在说的不一样时以现在说的为准，并更新记忆。方括号里是这条的 id，圆括号里是它记下或最后更新的时间：说到它时按这个时间说（「11 月 12 日记的」），越早的越可能已经过时。${UPDATES}`,
   ]
   if (shown.core.length > 0) parts.push(['## 核心（用户最在意的要求和偏好，每次都要遵守）', ...shown.core.map(line)].join('\n'))
   if (shown.profile.length > 0) parts.push(['## 资料', ...shown.profile.map(line), ...(shown.profileLeft > 0 ? [`（还有 ${shown.profileLeft} 条较早的资料，用 memory_search 查）`] : [])].join('\n'))
@@ -354,7 +381,7 @@ export function memoryPrompt(entries: readonly MemoryEntry[], agentId: string, o
     parts.push(['## 近期日记', ...(shown.journal.length === 0 ? ['（最近没有）'] : shown.journal.map(line)), ...(shown.journalLeft > 0 ? [`（更早的 ${shown.journalLeft} 条日记不在这里，要用时用 memory_search 查）`] : [])].join('\n'))
   }
   parts.push(HISTORY)
-  parts.push(options.lead === undefined ? HOW_TO_WRITE : `这些只供参考：你是子 agent，不写记忆。发现值得记的（用户的偏好、做成的事），写进交给「${options.lead}」的回复里，由它去记。`)
+  parts.push(memoryTail(options.lead))
   return parts.join('\n\n')
 }
 
@@ -364,6 +391,12 @@ export interface MemoryToolDeps {
   readonly agentOf: (sessionId: string) => string | undefined
   /** The user's, for the time labels. */
   readonly timeZone?: string
+  /**
+   * An agent wrote (`entry`) or forgot (undefined) one in its session, at
+   * record `seq` (-1: not known): the tool's result tells it, so it needs no
+   * note about it (memory-view.ts).
+   */
+  readonly wrote?: (sessionId: string, id: string, entry: MemoryEntry | undefined, seq: number) => void
 }
 
 const SaveArgs = z.object({
@@ -445,13 +478,16 @@ export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
       const agent = caller(deps, exec as Exec)
       const { text, kind, shared, replaces } = parse(SaveArgs, args)
       const source = hereOf(exec as Exec, agent)
+      const sessionId = (exec as Exec).agent!.session.id
       if (replaces != null && replaces !== '') {
         const old = own(deps, agent, replaces)
         const scope = shared == null ? old.scope : shared ? SHARED_MEMORY : agent
         const entry = await deps.store.update(old.id, { text, kind, scope, ...(source === undefined ? {} : { source }) }, agent)
+        deps.wrote?.(sessionId, entry.id, entry, source?.seq ?? -1)
         return { saved: brief(entry, agent, deps.timeZone), replaced: old.text } as never
       }
       const entry = await deps.store.add({ kind, scope: shared === true ? SHARED_MEMORY : agent, text, by: agent, ...(source === undefined ? {} : { source }) })
+      deps.wrote?.(sessionId, entry.id, entry, source?.seq ?? -1)
       return { saved: brief(entry, agent, deps.timeZone), note: kind === 'core' ? '已记成核心，每个 agent 每次都会带上' : '已记下，以后的对话里都记得' } as never
     },
     presentCall: args => {
@@ -470,6 +506,7 @@ export function memoryTools(deps: MemoryToolDeps): ToolDefinition[] {
       const agent = caller(deps, exec as Exec)
       const entry = own(deps, agent, parse(ForgetArgs, args).id)
       await deps.store.remove(entry.id, agent)
+      deps.wrote?.((exec as Exec).agent!.session.id, entry.id, undefined, hereOf(exec as Exec, agent)?.seq ?? -1)
       return { forgot: brief(entry, agent, deps.timeZone) } as never
     },
     presentCall: () => ({ card: 'generic', title: '忘掉一条记忆', kind: 'other' }),

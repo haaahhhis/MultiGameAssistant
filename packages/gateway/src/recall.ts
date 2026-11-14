@@ -1,7 +1,8 @@
 /**
  * What a turn brings along by itself from long-term memory (memory.ts). The
  * system prompt carries the core entries, the newest profile ones and the
- * recent journal; the rest waits for memory_search, which an agent calls only
+ * recent journal (as the conversation began, with notes of what changed
+ * since: memory-view.ts); the rest waits for memory_search, which an agent calls only
  * when it thinks to. So when the user says something, kept entries that are
  * not in the prompt and share enough words with it come along, as a note after
  * the user's message: appended to the history, so the model provider's prompt
@@ -42,12 +43,13 @@ export function saidByUser(messages: readonly unknown[]): string {
 /**
  * The entries to bring along: not in the prompt, not brought before in this
  * conversation, and sharing enough words with what was said; best first.
- * `entries` as the agent reads them (`visibleTo`, newest first).
+ * `entries` as the agent reads them (`visibleTo`, newest first); `inView`,
+ * what the conversation has of them already (its pinned memory and the notes
+ * since, memory-view.ts), else what a prompt rendered now would show.
  */
-export function recallFor(said: string, entries: readonly MemoryEntry[], agentId: string, options: { now?: Date; timeZone?: string; already?: ReadonlySet<string> } = {}): MemoryEntry[] {
+export function recallFor(said: string, entries: readonly MemoryEntry[], agentId: string, options: { now?: Date; timeZone?: string; already?: ReadonlySet<string>; inView?: ReadonlySet<string> } = {}): MemoryEntry[] {
   if (said.trim() === '') return []
-  const shown = promptEntries(entries, agentId, options)
-  const inView = new Set([...shown.core, ...shown.profile, ...shown.journal].map(entry => entry.id))
+  const inView = options.inView ?? inPrompt(entries, agentId, options)
   const pool = entries.filter(entry => !inView.has(entry.id) && options.already?.has(entry.id) !== true)
   const picked: MemoryEntry[] = []
   let chars = 0
@@ -60,6 +62,12 @@ export function recallFor(said: string, entries: readonly MemoryEntry[], agentId
     chars += length
   }
   return picked
+}
+
+/** The entries a prompt rendered now would show. */
+function inPrompt(entries: readonly MemoryEntry[], agentId: string, options: { now?: Date; timeZone?: string }): Set<string> {
+  const shown = promptEntries(entries, agentId, options)
+  return new Set([...shown.core, ...shown.profile, ...shown.journal].map(entry => entry.id))
 }
 
 /** The note: what it is, then the entries as the prompt shows them. */
