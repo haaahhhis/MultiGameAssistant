@@ -49,7 +49,8 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
   }
 
   const analyze = () => act(async () => {
-    const { sessionId } = await client.connection.call('sessions/create', { focus: { scripts: [script.id] } })
+    // The 脚本 agent's session: it has pack_propose (a session without a role does not, and only hands the saving on).
+    const { sessionId } = await client.connection.call('sessions/create', { focus: { scripts: [script.id] }, role: 'scripts' })
     await client.connection.call('session/prompt', {
       sessionId, requestId: `analyze-${Date.now()}`, mode: 'queue',
       text: `请按 script-analysis 技能分析脚本库里的「${script.name}」（id: ${script.id}），${script.packId === undefined ? '为它生成' : '检查并改进它的'}脚本包：先找到并读完这个项目自己的文档（目录里的说明、仓库 README、Wiki、文档站），再结合代码核对补全，实在没有文档才直接看代码。写好给我看的使用说明（每个任务和参数是什么、每个功能怎么开启、配置文件怎么设置、运行前检查什么、常见问题），给 agent 的备注写进 SKILL.md。用 pack_propose 保存（直接生效），docs 里写明依据的文档。`,

@@ -123,4 +123,10 @@ test('guide issues: a missing guide, undescribed tasks and parameters, the agent
   assert.match(notes('cause: 某个子任务失败', "cause: '地址来自 {adb}'")[0]!, /占位符「\{adb\}」/)
   assert.match(notes('overview: 通过模拟器自动做日常，不占用鼠标键盘。', 'overview: 本草稿尚未进行托管运行。')[0]!, /给 agent 的备注/)
   assert.deepEqual(notes('fix: 看运行记录里的出错位置', 'fix: 检查 game_title_name 和 script_path'), [], 'script config keys that look like tool names are fine')
+  // Seen with a real model (M9A): the script's own log line names its own manifest.
+  assert.deepEqual(notes('problem: 日志出现「任务出错」', 'problem: 日志里有「获取 resource/manifest.json失败」'), [])
+  assert.deepEqual(notes('problem: 日志出现「任务出错」', 'problem: 界面里点「保存草稿」后报错'), [], 'a label in quotes is the script\'s own word')
+  assert.match(notes('fix: 看运行记录里的出错位置', 'fix: 改 manifest 里的配置')[0]!, /脚本包的文件「manifest」/)
+  assert.match(notes('fix: 看运行记录里的出错位置', 'fix: 日志「x」出现后用 script_run 重跑')[0]!, /工具名/)
+  assert.match(notes('fix: 看运行记录里的出错位置', 'fix: 「script_run」重跑')[0]!, /工具名/, 'tool names count inside quotes too')
 })

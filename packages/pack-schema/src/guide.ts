@@ -134,13 +134,17 @@ const TOOLS = [
  * What reads as the agent's own notes rather than a user guide: tool names,
  * the pack's internals, placeholders, open questions. Those go in SKILL.md.
  */
-const AGENT_NOTES: readonly [RegExp, string][] = [
-  [new RegExp(`\\b(?:${TOOLS.join('|')})\\b`), '工具名'],
-  [/\bmanifest\b|adg\.script\.yaml|SKILL\.md/i, '脚本包的文件'],
-  [/\bpatch(?:es)?\b|\bdone-log\b|\bexit-code\b|\bstopAfterDone\b|\bselfLaunch\b|\brestore\b|\bsuccess:/i, '脚本包的字段'],
-  [/\{[A-Za-z][A-Za-z0-9_.]*\}/, '占位符'],
-  [/渲染器|占位符|待确认|待核验|待校准|尚未验证|未经验证|核验依据|本草稿|草稿/, '给 agent 的备注'],
+const AGENT_NOTES: readonly [RegExp, string, 'anywhere' | 'unquoted'][] = [
+  [new RegExp(`\\b(?:${TOOLS.join('|')})\\b`), '工具名', 'anywhere'],
+  // A bare word: `resource/manifest.json` in a script's log is the script's own file.
+  [/(?<![\w./\\-])manifest(?![\w./\\-])|adg\.script\.yaml|SKILL\.md/i, '脚本包的文件', 'unquoted'],
+  [/\bpatch(?:es)?\b|\bdone-log\b|\bexit-code\b|\bstopAfterDone\b|\bselfLaunch\b|\brestore\b|\bsuccess:/i, '脚本包的字段', 'unquoted'],
+  [/\{[A-Za-z][A-Za-z0-9_.]*\}/, '占位符', 'unquoted'],
+  [/渲染器|占位符|待确认|待核验|待校准|尚未验证|未经验证|核验依据|本草稿|草稿/, '给 agent 的备注', 'unquoted'],
 ]
+
+/** Text in 「」 is the script's own words (a log line, a label in its window): only tool names are looked for there. */
+const unquoted = (text: string) => text.replace(/「[^」]*」/g, '「」')
 
 /**
  * Problems with a pack's user guide that the agent must fix before saving:
@@ -174,10 +178,10 @@ export function guideIssues(manifest: ScriptManifest): string[] {
   }
   for (const [where, text] of texts) {
     if (text === undefined) continue
-    for (const [pattern, what] of AGENT_NOTES) {
-      const found = pattern.exec(text)
+    for (const [pattern, what, scope] of AGENT_NOTES) {
+      const found = pattern.exec(scope === 'anywhere' ? text : unquoted(text))
       if (found === null) continue
-      issues.push(`${where} 里有${what}「${found[0]}」：使用说明只写用户要知道的（能做什么、怎么设置、出错怎么办）；工具用法、脚本包内部、核验依据和待确认写进 SKILL.md`)
+      issues.push(`${where} 里有${what}「${found[0]}」：使用说明只写用户要知道的（能做什么、怎么设置、出错怎么办）；工具用法、脚本包内部、核验依据和待确认写进 SKILL.md${scope === 'unquoted' ? '。如果这是脚本自己的日志原文或界面文字，用「」括起来、原样保留，不要改写' : ''}`)
       break
     }
   }
