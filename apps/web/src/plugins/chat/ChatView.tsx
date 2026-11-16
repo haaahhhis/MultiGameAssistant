@@ -14,7 +14,7 @@ import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
 import { SkillOffer } from './SkillOffer.tsx'
 import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
-import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentOf, SubAgentPane, SubTaskCard, SubTaskTracker, SUBAGENT_TOOL, taskLabels, taskWords, useChatDetail, useSubAgents, type ChatDetail, type OpenTask } from './SubTasks.tsx'
+import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentIds, subAgentIds, SubAgentOf, SubAgentPane, SubTaskCard, SubTaskTracker, SUBAGENT_TOOL, taskLabels, taskWords, useChatDetail, useSubAgents, type ChatDetail, type OpenTask } from './SubTasks.tsx'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 80
@@ -48,8 +48,10 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   )
   // dsh's note that a sub-agent ended is for the model: its card says so.
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
-  const settled = useMemo(() => settledTasks(built), [built])
-  const labels = useMemo(() => taskLabels(built), [built])
+  // Since dsh 0.2.2 the conversation names its sub-agents (agent-1); their ids are in dsh's catalog of them.
+  const childIds = useMemo(() => subAgentIds(state.events), [state.events])
+  const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
+  const labels = useMemo(() => taskLabels(built, childIds), [built, childIds])
   const subAgents = useSubAgents(client, session.id)
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
@@ -119,6 +121,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <ConversationAgent.Provider value={agentName}>
     <OpenSubTask.Provider value={setPane}>
     <SettledTasks.Provider value={settled}>
+    <SubAgentIds.Provider value={childIds}>
     <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
     {ready && subAgentOf === null && (
       <div className="chat-corner">
@@ -159,6 +162,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     </div>
     {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={agentName} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => setPane(null)} />}
     </div>
+    </SubAgentIds.Provider>
     </SettledTasks.Provider>
     </OpenSubTask.Provider>
     </ConversationAgent.Provider>

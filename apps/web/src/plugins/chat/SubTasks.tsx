@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
-import { summarizeToolArgs, type SessionItem } from '@adg/protocol'
+import { summarizeToolArgs, type SessionEvent, type SessionItem } from '@adg/protocol'
 import { useLastReplies } from '../../agents.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
@@ -21,13 +21,37 @@ import { ConversationAgent } from './Delegation.tsx'
 /** dsh's tool that starts a sub-agent. */
 export const SUBAGENT_TOOL = 'subagent'
 
-/** How a tool result names the child (dsh-tool-subagent's start result). */
+/** How a tool result names the child (dsh-tool-subagent's start result): its session id before dsh 0.2.2, its name (agent-1) since. */
 const STARTED = /started subagent (\S+)/
+
+/**
+ * The session id of each sub-agent a conversation opened, by the name dsh
+ * gives it in the conversation (agent-1), from dsh's catalog of them. Before
+ * dsh 0.2.2 the conversation said the id itself, and that is not in here.
+ */
+export function subAgentIds(events: readonly SessionEvent[]): ReadonlyMap<string, string> {
+  const ids = new Map<string, string>()
+  for (const event of events) {
+    if (event.type !== 'unknown' || event.upstreamType !== 'subagent/catalog') continue
+    const data = event.data as { childId?: unknown; name?: unknown } | null
+    if (typeof data?.childId === 'string' && typeof data.name === 'string') ids.set(data.name, data.childId)
+  }
+  return ids
+}
+
+/** Names of a conversation's sub-agents to their session ids (subAgentIds). */
+export const SubAgentIds = createContext<ReadonlyMap<string, string>>(new Map())
+
+/** The session id of the sub-agent a start result or notice names. */
+const childId = (named: string | undefined, ids: ReadonlyMap<string, string>) => (named === undefined ? undefined : ids.get(named) ?? named)
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 
-/** What dsh adds to a sub-agent's first message, for the sub-agent: not what it was given to do. */
-const PARENT_NOTE = /\s*Your parent agent\b[\s\S]*$/
+/**
+ * What dsh adds to a sub-agent's first message, for the sub-agent: not what it was given to do.
+ * "Your parent agent…" before dsh 0.2.2, "Your final answer is delivered automatically…" since (cut short in a title).
+ */
+const PARENT_NOTE = /\s*Your (?:parent agent\b|final answe)[\s\S]*$/
 
 export function taskWords(text: string): string {
   return text.replace(PARENT_NOTE, '')
@@ -37,13 +61,13 @@ export function taskWords(text: string): string {
 const SETTLED = /^Background subagent (\S+) (finished|was stopped)?/
 
 /** How the sub-agents of a conversation ended, from the notices it was sent; those are not drawn, the card says it. */
-export function settledTasks(items: readonly ChatItem[]): ReadonlyMap<string, TaskState> {
+export function settledTasks(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, TaskState> {
   const ended = new Map<string, TaskState>()
   for (const item of items) {
     if (!isSettlement(item)) continue
     const match = SETTLED.exec(item.summary)
     if (match === null) continue
-    ended.set(match[1]!, match[2] === 'finished' ? DONE : match[2] === 'was stopped' ? STOPPED : FAILED)
+    ended.set(childId(match[1], ids)!, match[2] === 'finished' ? DONE : match[2] === 'was stopped' ? STOPPED : FAILED)
   }
   return ended
 }
@@ -116,7 +140,7 @@ function OpenSteps({ handle, running }: { handle: NonNullable<ReturnType<typeof 
 export function SubTaskCard({ client, item, compact }: { client: AdgClient; item: ToolItem; compact: boolean }) {
   const open = useContext(OpenSubTask)
   const { description, prompt } = useMemo(() => argsOf(item.arguments), [item.arguments])
-  const id = STARTED.exec(item.result ?? '')?.[1]
+  const id = childId(STARTED.exec(item.result ?? '')?.[1], useContext(SubAgentIds))
   const child = useChild(client, id)
   const refused = item.status === 'error' || item.status === 'interrupted'
   const running = !refused && (child?.running ?? item.status === 'running')
@@ -243,11 +267,11 @@ export function DetailSwitch({ detail, onChange }: { detail: ChatDetail; onChang
 }
 
 /** What each sub-agent opened in a conversation was given to do, by its id (the card's words). */
-export function taskLabels(items: readonly ChatItem[]): ReadonlyMap<string, string> {
+export function taskLabels(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, string> {
   const labels = new Map<string, string>()
   for (const item of items) {
     if (item.kind !== 'tool' || item.name !== SUBAGENT_TOOL) continue
-    const id = STARTED.exec(item.result ?? '')?.[1]
+    const id = childId(STARTED.exec(item.result ?? '')?.[1], ids)
     if (id === undefined) continue
     const { description, prompt } = argsOf(item.arguments)
     const label = description !== '' ? description : (prompt.split('\n')[0] ?? '')
