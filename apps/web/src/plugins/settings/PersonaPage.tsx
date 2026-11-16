@@ -31,7 +31,7 @@ const STYLES: readonly { style: PersonaStyle; title: string; note: string; sampl
 
 const PEER_STYLES: readonly { style: PeerStyle; title: string; text: string }[] = [
   { style: 'plain', title: '平实', text: '直接说事，不带人设和称呼：它们要读的是内容。推荐。' },
-  { style: 'same', title: '和对你一样', text: '人设也带到 agent 之间的往来里，你在「协作」里看到的就是这个语气。' },
+  { style: 'same', title: '和对你一样', text: '人设也带到 agent 之间的往来里，你在「全部」里看到的就是这个语气。' },
 ]
 
 /** All agents' settings; otherwise the id of the agent on screen. */

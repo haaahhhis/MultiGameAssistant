@@ -68,8 +68,6 @@ export type Route =
   | { readonly kind: 'schedule' }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
-  /** One session view alone, in a popped-out window. */
-  | { readonly kind: 'window'; readonly view: string; readonly sessionId: string }
 
 /** An agent's own tabs besides its conversation (App.tsx AgentTabs). */
 export type AgentTab = 'schedule' | 'history'
@@ -78,8 +76,6 @@ export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
   const section = /^#\/settings\/(.+)$/.exec(location.hash)
   if (section !== null) return { kind: 'settings', section: decodeURIComponent(section[1]!) }
-  const popped = /^#\/w\/([^/]+)\/(.+)$/.exec(location.hash)
-  if (popped !== null) return { kind: 'window', view: decodeURIComponent(popped[1]!), sessionId: decodeURIComponent(popped[2]!) }
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
@@ -100,8 +96,7 @@ export function readRoute(): Route {
  * for corrections nobody should go back to.
  */
 export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): void {
-  const hash = route.kind === 'window' ? `#/w/${encodeURIComponent(route.view)}/${encodeURIComponent(route.sessionId)}`
-    : route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
+  const hash = route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
     : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.tab === undefined ? '' : `/${route.tab}`}`
     : route.kind === 'handoff' ? `#/h/${encodeURIComponent(route.id)}`
     : route.kind === 'schedule' ? '#/schedule'
@@ -112,16 +107,4 @@ export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): voi
   const url = `${location.pathname}${location.search}${hash}`
   if (mode === 'replace') history.replaceState(history.state, '', url)
   else history.pushState(null, '', url)
-}
-
-/**
- * Address of a popped-out session view. The token rides along once, as on
- * first load, since a new window may not share this one's sessionStorage.
- */
-export function popoutUrl(view: string, sessionId: string): string {
-  const url = new URL(location.href)
-  const token = readToken()
-  if (token !== null) url.searchParams.set('token', token)
-  url.hash = `#/w/${encodeURIComponent(view)}/${encodeURIComponent(sessionId)}`
-  return url.href
 }

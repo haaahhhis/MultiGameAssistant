@@ -1,5 +1,7 @@
 import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useFollowTail, useStayAtBottom } from '../../components/useFollowTail.ts'
+import { SessionTools } from '../../components/sessionTools.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
@@ -86,6 +88,10 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     })
   }, [rows])
   const [pane, setPane] = useState<OpenTask | null>(null)
+  // The sub-task list goes beside the 对话 / 轨迹 tabs; where there are none (a sub-agent's pane), above the chat.
+  const toolsSlot = useContext(SessionTools)
+  const tracker = ready && subAgentOf === null ? <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} /> : null
+  const showDetail = ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1)
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
   const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && (h.state === 'running' || h.state === 'waiting'))
@@ -123,10 +129,11 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <SettledTasks.Provider value={settled}>
     <SubAgentIds.Provider value={childIds}>
     <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
-    {ready && subAgentOf === null && (
+    {tracker !== null && toolsSlot !== null && createPortal(tracker, toolsSlot)}
+    {(showDetail || (tracker !== null && toolsSlot === null)) && (
       <div className="chat-corner">
-        <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} />
-        {allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
+        {toolsSlot === null && tracker}
+        {showDetail && <DetailSwitch detail={detail} onChange={setDetail} />}
       </div>
     )}
     <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
@@ -151,7 +158,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
           : row.kind === 'delegation'
             ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
           : row.kind === 'subtask'
-            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} compact={level < 3} /></Turn>
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
             : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
@@ -207,8 +214,8 @@ function layerOf(row: Row): 1 | 2 | 3 {
 }
 
 /**
- * The rows a level shows; it only filters. 协作 keeps sub-tasks, as a line
- * each: work going on stays in sight. A row taken away hands on its turn's header.
+ * The rows a level shows; it only filters: 汇报 what is said to you, 全部
+ * everything. A row taken away hands on its turn's header.
  */
 function atDetail(rows: readonly Row[], level: ChatDetail): readonly Row[] {
   if (level > 1) return rows

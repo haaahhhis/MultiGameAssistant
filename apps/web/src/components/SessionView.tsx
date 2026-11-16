@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
-import { popoutUrl } from '../config.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
+import { SessionTools } from './sessionTools.ts'
 
 export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
@@ -58,6 +58,8 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const active = views.find(v => v.id === tab) ?? views[0]
   useEffect(() => writeTab(tab), [tab])
   const readOnly = useReadOnly(item, state.running || state.queue.length > 0 || initialPrompt !== undefined)
+  // Where the view on screen puts its own controls, beside the tabs.
+  const [tools, setTools] = useState<HTMLElement | null>(null)
 
   return (
     <section className="main">
@@ -84,6 +86,7 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
           </div>
         </div>
         <div className="session-actions">
+          <div className="session-tools" ref={setTools} />
           <nav className="tabs" role="tablist" aria-label="会话视图">
             {views.map(view => (
               <button key={view.id} role="tab" aria-selected={view.id === active?.id}
@@ -92,19 +95,13 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
               </button>
             ))}
           </nav>
-          {active !== undefined && (
-            <button className="icon-button popout-button" title={`在新窗口打开「${active.title}」`} aria-label={`在新窗口打开「${active.title}」`}
-              onClick={() => window.open(popoutUrl(active.id, session.id), `dsh-${active.id}-${session.id}`)}>
-              <Icon name="popout" />
-            </button>
-          )}
         </div>
       </header>
       {state.error !== null && <div className="banner error">{state.error}</div>}
       <div className="view">
         {active === undefined
           ? <div className="empty">当前连接没有提供可用的视图插件。</div>
-          : <active.component client={client} session={session} state={state} readOnly={readOnly} />}
+          : <SessionTools.Provider value={tools}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SessionTools.Provider>}
       </div>
       {readOnly ? (
         <div className="session-readonly">
@@ -119,43 +116,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
         </>
       )}
     </section>
-  )
-}
-
-/** One session view on its own, for a popped-out window: no sidebar, no composer. */
-export function PoppedView({ client, viewId, sessionId }: { client: AdgClient; viewId: string; sessionId: string }) {
-  const session = useSessionHandle(client, sessionId)
-  const views = useSessionViews(client)
-  const connection = useStore(client.connection.status)
-  const view = views.find(v => v.id === viewId)
-  if (session === null || view === undefined) {
-    return <div className="popped"><section className="main empty">{connection.state === 'open' && view === undefined ? '当前连接没有提供这个视图。' : '正在打开…'}</section></div>
-  }
-  return <PoppedSession client={client} session={session} view={view} />
-}
-
-function PoppedSession({ client, session, view }: {
-  client: AdgClient
-  session: NonNullable<ReturnType<typeof useSessionHandle>>
-  view: ReturnType<typeof useSessionViews>[number]
-}) {
-  const state = useStore(session.state)
-  const item = useStore(client.sessions).items.find(i => i.id === session.id)
-  const readOnly = useReadOnly(item, state.running || state.queue.length > 0)
-  useEffect(() => { document.title = `${view.title} · ${state.title ?? '会话'}` }, [view.title, state.title])
-  return (
-    <div className="popped">
-      <section className="main">
-        <header className="session-header">
-          <div className="session-heading">
-            <div className="breadcrumb"><span>{view.title}</span><span className="breadcrumb-divider">/</span><h1>{state.title ?? '新会话'}</h1></div>
-            <div className="session-meta"><RunState running={state.running} /><span>与主窗口同步更新</span></div>
-          </div>
-        </header>
-        {state.error !== null && <div className="banner error">{state.error}</div>}
-        <div className="view"><view.component client={client} session={session} state={state} readOnly={readOnly} /></div>
-      </section>
-    </div>
   )
 }
 

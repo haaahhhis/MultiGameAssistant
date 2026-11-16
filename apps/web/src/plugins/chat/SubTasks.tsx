@@ -133,11 +133,8 @@ function OpenSteps({ handle, running }: { handle: NonNullable<ReturnType<typeof 
   )
 }
 
-/**
- * A sub-agent an agent opened, in that agent's turn.
- * @param compact - one line, opening beside the conversation (the 协作 level); else with its steps and answer.
- */
-export function SubTaskCard({ client, item, compact }: { client: AdgClient; item: ToolItem; compact: boolean }) {
+/** A sub-agent an agent opened, in that agent's turn: with its steps and answer. */
+export function SubTaskCard({ client, item }: { client: AdgClient; item: ToolItem }) {
   const open = useContext(OpenSubTask)
   const { description, prompt } = useMemo(() => argsOf(item.arguments), [item.arguments])
   const id = childId(STARTED.exec(item.result ?? '')?.[1], useContext(SubAgentIds))
@@ -152,20 +149,6 @@ export function SubTaskCard({ client, item, compact }: { client: AdgClient; item
   const label = description !== '' ? description : (prompt.split('\n')[0] ?? '子任务')
   const badge = <span className={`delegation-state tone-${state.tone}`}>{state.tone === 'running' && <span className="tool-spinner" aria-hidden />}{state.label}</span>
 
-  if (compact) {
-    return (
-      <div className="delegation task-line">
-        <button className={`exchange-line subtask-line tone-${state.tone}`} disabled={id === undefined} title={prompt} onClick={() => { if (id !== undefined) open({ id, label }) }}>
-          <Icon name="flow" />
-          <span className="exchange-who">子任务</span>
-          <span className="exchange-title">{label}</span>
-          {badge}
-          {id !== undefined && <Icon name="chevron" className="exchange-open" />}
-        </button>
-        {refused && <div className="delegation-failed"><Icon name="alert" />{item.result ?? item.error ?? '没有开起来'}</div>}
-      </div>
-    )
-  }
   const showSteps = id !== undefined && (running || expanded)
   return (
     <div className={`subtask tone-${state.tone}`}>
@@ -225,20 +208,21 @@ function PaneChat({ client, handle, parent }: { client: AdgClient; handle: NonNu
 
 /**
  * How much of what agents say a conversation shows (docs/design/agent-roles.md
- * §14.5). It only filters what is already loaded, and is kept per agent, in
- * this browser.
+ * §14.5): 汇报 (1) is what the agent says to you, 全部 (3) everything, sub-tasks
+ * with their steps and answers. It only filters what is already loaded, and is
+ * kept per agent, in this browser. (2, 协作, sub-tasks as one line each, is gone:
+ * a level saved as it reads as 全部.)
  */
-export type ChatDetail = 1 | 2 | 3
+export type ChatDetail = 1 | 3
 
 const DETAIL_KEY = 'adg.chatDetail.'
 
 export function useChatDetail(agentId: string): [ChatDetail, (detail: ChatDetail) => void] {
   const read = (): ChatDetail => {
     try {
-      const saved = Number(localStorage.getItem(DETAIL_KEY + agentId))
-      return saved === 1 || saved === 3 ? saved : 2
+      return Number(localStorage.getItem(DETAIL_KEY + agentId)) === 1 ? 1 : 3
     } catch {
-      return 2
+      return 3
     }
   }
   // Read while rendering, not after: another agent's level is right in the first frame.
@@ -252,8 +236,7 @@ export function useChatDetail(agentId: string): [ChatDetail, (detail: ChatDetail
 
 const LEVELS: readonly { level: ChatDetail; label: string; hint: string }[] = [
   { level: 1, label: '汇报', hint: '只看它和你说的话' },
-  { level: 2, label: '协作', hint: '加上 agent 之间的往来，子任务一行' },
-  { level: 3, label: '全部', hint: '子任务也展开：步骤和答案' },
+  { level: 3, label: '全部', hint: '加上 agent 之间的往来和子任务的步骤、答案' },
 ]
 
 export function DetailSwitch({ detail, onChange }: { detail: ChatDetail; onChange: (detail: ChatDetail) => void }) {

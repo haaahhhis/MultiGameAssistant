@@ -713,8 +713,8 @@ function withoutToken(url) {
 }
 
 /**
- * Keep a window on the UI origin: same-origin `window.open` (a popped-out
- * session view) becomes another sandboxed app window under the same rules;
+ * Keep a window on the UI origin: same-origin `window.open` becomes another
+ * sandboxed app window under the same rules;
  * any other link or navigation goes to the system browser.
  * @param {Electron.WebContents} contents
  * @param {string} origin

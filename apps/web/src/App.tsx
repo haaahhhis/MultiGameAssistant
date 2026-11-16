@@ -4,7 +4,7 @@ import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
 import { ScriptUpdateNotes } from './components/ScriptUpdates.tsx'
 import { NavRail, type RailTarget } from './components/NavRail.tsx'
-import { PoppedView, SessionView } from './components/SessionView.tsx'
+import { SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { AgentHistory, useHasEarlier } from './components/SessionList.tsx'
 import { useShowEarlier } from './preferences.ts'
@@ -39,7 +39,7 @@ export function App({ client }: { client: AdgClient }) {
   useEffect(() => {
     writeRoute(route, replacing.current ? 'replace' : 'push')
     replacing.current = false
-    if (route.kind !== 'handoff' && route.kind !== 'window') beforeExchange.current = route
+    if (route.kind !== 'handoff') beforeExchange.current = route
   }, [route])
   // Two agents' exchange takes the place of the page that was on screen, which stays there, hidden,
   // as it was: taking it away and opening it again when the exchange closed is what made the chat flash.
@@ -92,8 +92,6 @@ export function App({ client }: { client: AdgClient }) {
   const tabAgent = view.kind === 'home' ? MAIN_AGENT : view.kind === 'agent' ? view.id
     : view.kind === 'session' ? (selectedItem === undefined ? undefined : agentIdOf(selectedItem, roles)) : pageOwner
   const agentTab = (id: string, tab: string) => setRoute(tab === 'chat' ? { kind: 'agent', id } : tab === 'schedule' || tab === 'history' ? { kind: 'agent', id, tab } : { kind: 'page', id: tab })
-
-  if (route.kind === 'window') return <PoppedView client={client} viewId={route.view} sessionId={route.sessionId} />
 
   const rail: RailTarget = view.kind === 'settings' ? { kind: 'settings' } : view.kind === 'schedule' ? { kind: 'schedule' }
     : tabAgent !== undefined ? { kind: 'agent', id: tabAgent }
