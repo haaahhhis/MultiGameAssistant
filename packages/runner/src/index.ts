@@ -38,8 +38,8 @@ const ConfigSchema = z.object({
 })
 export type Config = z.input<typeof ConfigSchema>
 
-/** How often saved runs are tidied besides after each run. */
-const TIDY_EVERY_MS = 6 * 60 * 60_000
+/** How often saved runs are tidied besides at startup and after each run: once a day. */
+const TIDY_EVERY_MS = 24 * 60 * 60_000
 
 export class AdgRunner extends Service {
   static inject = ['adgScripts']
@@ -65,7 +65,7 @@ export class AdgRunner extends Service {
     })
     const runner = this.runner
     // Earlier runs and their saved logs, for the run list and the agent; then the retention rules (retention.ts),
-    // again after every run and every few hours (the app can stay up for weeks).
+    // again after every run and once a day (the app can stay up for weeks).
     const tidy = () => runner.tidy().catch(error => log.warn(`tidying run logs failed: ${String(error)}`))
     void runner.loadHistory().catch(error => log.warn(`loading run history failed: ${String(error)}`)).then(tidy)
     ctx.effect(() => {

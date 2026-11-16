@@ -102,8 +102,8 @@ export interface IncidentStore {
  * record stays, without its picture.
  */
 export const KEEP_SCREENSHOTS_MS = 7 * 86_400_000
-/** How often the running monitor looks for screenshots past their time. */
-const TIDY_SCREENSHOTS_EVERY_MS = 6 * 60 * 60_000
+/** How often the running monitor looks for screenshots past their time (besides at startup): once a day. */
+const TIDY_SCREENSHOTS_EVERY_MS = 24 * 60 * 60_000
 
 /** Seconds a script may be quiet before the agent steps in, until its own normal rhythm is known (`scriptStall`). */
 export const DEFAULT_STALL_SECONDS = 60
@@ -160,7 +160,7 @@ export class Monitor {
   /** Serializes work per run so recovery steps never interleave. */
   readonly #queues = new Map<string, Promise<void>>()
   #seq = 0
-  /** When screenshots were last tidied (tick does it every few hours). */
+  /** When screenshots were last tidied (tick does it once a day). */
   #shotsTidiedAt = 0
   #tidyingShots: Promise<number> | undefined
 
