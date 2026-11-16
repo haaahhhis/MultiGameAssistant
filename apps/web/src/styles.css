@@ -1732,6 +1732,28 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .area-choice button.active.allow { color: var(--ok); }
 .area-choice button.active.ask { color: var(--warn); }
 .area-choice button.active.deny { color: var(--error); }
+/* 设置 → 模型: each agent's model and its sub-agents' (plugins/settings/AgentModels.tsx); stacked as the card narrows. */
+.agent-models { display: flex; flex-direction: column; container-type: inline-size; }
+.agent-models-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 210px) minmax(0, 210px); gap: 8px 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--border); }
+.agent-models-row.head { border-top: none; padding: 0 0 6px; font-size: 12px; color: var(--muted); }
+.agent-models-row.all { border-top: none; padding-top: 4px; padding-bottom: 14px; }
+.agent-models-row.all + .agent-models-row { border-top-color: var(--border-strong); }
+.agent-models-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agent-models-name strong { font-size: 13.5px; }
+.agent-models-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.agent-models-cell .select-trigger { margin: 0; }
+.agent-models-cell-label { display: none; font-size: 12px; color: var(--muted); }
+@container (max-width: 560px) {
+  .agent-models-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .agent-models-row.head { display: none; }
+  .agent-models-name { grid-column: 1 / -1; }
+  .agent-models-cell-label { display: block; }
+  .agent-models-cell.empty { display: none; }
+  .agent-models-row.all .agent-models-cell:not(.empty) { grid-column: 1 / -1; }
+}
+@container (max-width: 340px) {
+  .agent-models-row { grid-template-columns: minmax(0, 1fr); }
+}
 /* in the pipeline inspector the list opens below and the description sits under it (no room beside) */
 .inspector-section .slash-pop.below { left: 0; right: 0; }
 .inspector-section .slash-list { width: 100%; max-height: 240px; }

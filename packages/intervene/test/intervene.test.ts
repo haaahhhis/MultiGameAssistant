@@ -83,7 +83,7 @@ test('screens: the emulator through ADB, a window through the helper, in screens
   await assert.rejects(screens.findWindow('记事本'), /没有标题包含「记事本」的窗口。现有窗口：终末地/)
 })
 
-function interventions(over: { ask?: (sessionId: string, text: string, images: readonly Buffer[]) => Promise<string>; vision?: string; run?: Partial<RunInfo>; windows?: RunWindow[] } = {}) {
+function interventions(over: { ask?: (sessionId: string, text: string, images: readonly Buffer[]) => Promise<string>; vision?: string; run?: Partial<RunInfo>; windows?: RunWindow[]; now?: () => number } = {}) {
   const suspended: string[] = []
   const restarted: string[] = []
   let made = 0
@@ -112,6 +112,7 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
     onChange: () => {},
     dataDir: mkdtempSync(join(tmpdir(), 'adg-iv-')),
     timeoutMs: 500,
+    ...(over.now === undefined ? {} : { now: over.now }),
     log: { info() {}, warn() {} },
   })
   return { iv: () => iv, suspended, restarted, handedOff }
@@ -179,6 +180,35 @@ test('retry runs the task again; give-up leaves it paused for the user; diagnose
   const d = await diagnose.iv().handle(incident, 'diagnose', undefined)
   assert.deepEqual([d.state, d.summary, d.paused], ['gave-up', '看起来是网络断了', false], 'no intervention_done: the answer is the summary')
   assert.deepEqual(diagnose.suspended, [])
+})
+
+test('how long it held the run paused, for the monitor: while the agent works, left paused for the user, and across a second pause', async () => {
+  let clock = 1_000
+  let asked = 0
+  const env = interventions({
+    now: () => clock,
+    ask: async s => {
+      if (++asked === 1) {
+        clock += 30_000
+        assert.deepEqual(env.iv().heldPaused('run-1'), { ms: 30_000, now: true }, 'counting while the agent works')
+        env.iv().done(s, 'give-up', '要输入验证码，交给你')
+      } else {
+        clock += 5_000
+        env.iv().done(s, 'resolved', '点了「重新连接」')
+      }
+      return ''
+    },
+  })
+  assert.deepEqual(env.iv().heldPaused('run-1'), { ms: 0, now: false }, 'never paused')
+  await env.iv().handle(incident, 'act', undefined)
+  clock += 60_000
+  assert.deepEqual(env.iv().heldPaused('run-1'), { ms: 90_000, now: true }, 'given up, left paused for the user: still counting')
+  await env.iv().resumeRun('run-1')
+  clock += 10_000
+  assert.deepEqual(env.iv().heldPaused('run-1'), { ms: 90_000, now: false }, 'resumed: the clock stops')
+  await env.iv().handle({ ...incident, id: 'inc-2' }, 'act', undefined)
+  assert.deepEqual(env.iv().heldPaused('run-1'), { ms: 95_000, now: false }, 'a second pause adds to it, and resolving resumes')
+  assert.deepEqual(env.iv().heldPaused('run-2'), { ms: 0, now: false }, 'another run: none')
 })
 
 test('no image-capable model, a timeout, and a takeover', async () => {

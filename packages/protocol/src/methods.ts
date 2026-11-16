@@ -148,6 +148,22 @@ export const ModelSelection = z.object({
 export type ModelSelection = z.infer<typeof ModelSelection>
 
 /**
+ * Which model each agent works with (设置 → 模型). Each layer follows the one
+ * above until it is set: an agent's own conversations the default model (助手's
+ * own); its sub-agents `subAgentsOf`, then `subAgents`, then whatever the
+ * agent that opened them is using.
+ */
+export const AgentModels = z.object({
+  /** Role agents' own models, by agent id. */
+  agents: z.record(z.string(), ModelSelection),
+  /** Every agent's sub-agents. */
+  subAgents: ModelSelection.nullable(),
+  /** One agent's sub-agents, by agent id (`main`: 助手's). */
+  subAgentsOf: z.record(z.string(), ModelSelection),
+})
+export type AgentModels = z.infer<typeof AgentModels>
+
+/**
  * `agents`: each agent's one conversation, the work they hand each other and
  * the reminders they set themselves (docs/design/agent-roles.md §10).
  */
@@ -511,16 +527,21 @@ export const Requests = {
     params: ModelSelection,
     result: Empty,
   },
-  /** The model role agents' sessions use (干预, 游戏, …); null: none chosen, they use what they always did. */
-  'models/roleModel': {
-    capability: 'role-model',
+  /** Which model each agent and its sub-agents use; what is not set follows the layer above (AgentModels). */
+  'models/agentModels': {
+    capability: 'agent-models',
     params: Empty,
-    result: z.object({ model: ModelSelection.nullable() }),
+    result: AgentModels,
   },
-  /** Choose it (null: none); `warning` when the model cannot see images, which their screenshots need. */
-  'models/setRoleModel': {
-    capability: 'role-model',
-    params: z.object({ model: ModelSelection.nullable() }),
+  /**
+   * Set one layer (null: follow the one above again): an agent's own model (`agentId`; 助手's is the default
+   * model, set with models/setDefault), its sub-agents' (`agentId` and `sub`), or every sub-agent's (`sub` alone).
+   * The agent's own conversation switches at its next request. `warning`: the model cannot see images, and the
+   * agent's work looks at screenshots.
+   */
+  'models/setAgentModel': {
+    capability: 'agent-models',
+    params: z.object({ agentId: z.string().optional(), sub: z.boolean().optional(), model: ModelSelection.nullable() }),
     result: z.object({ warning: z.string().optional() }),
   },
   'models/catalog': {
@@ -710,6 +731,8 @@ export const Notifications = {
   'reminders/changed': z.object({}),
   /** Provider routes or their models changed; re-read `providers/list` and `models/catalog`. */
   'providers/changed': z.object({}),
+  /** Someone set an agent's or sub-agents' model. */
+  'models/agentModelsChanged': AgentModels,
   /** A session's model selection changed. */
   'session/model': SessionModel.extend({ sessionId: z.string() }),
   ...ScriptNotifications,

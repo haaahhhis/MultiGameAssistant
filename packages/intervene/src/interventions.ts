@@ -81,6 +81,7 @@ export const INTERVENE_ROLE: RoleSpec = {
   description: '脚本出错、卡住时处理',
   order: 10,
   titles: ['干预'],
+  handedImages: true,
   // The screen, the script's run and its settings; no installing, games or pipelines.
   tools: [
     'screen_*', 'window_*', 'emulator_*', 'game_launch', 'game_close', 'game_locate',
@@ -109,11 +110,39 @@ export class Interventions {
   readonly #bySession = new Map<string, string[]>()
   /** The latest screenshot of each recent session, for whoever wants to keep it as evidence. */
   readonly #shots = new Map<string, Buffer>()
+  /** How long each run has been held paused: past pauses' `total`, and `since` while one is going on. */
+  readonly #held = new Map<string, { total: number; since?: number | undefined }>()
   #seq = 0
 
   constructor(deps: InterventionDeps) {
     this.#deps = deps
     this.#now = deps.now ?? Date.now
+  }
+
+  /**
+   * How long interventions have held the run paused so far (the stretch going on included), and whether one is
+   * now: the monitor counts neither as the script's quiet time nor its running time.
+   */
+  heldPaused(runId: string): { ms: number; now: boolean } {
+    const held = this.#held.get(runId)
+    if (held === undefined) return { ms: 0, now: false }
+    return { ms: held.total + (held.since === undefined ? 0 : this.#now() - held.since), now: held.since !== undefined }
+  }
+
+  /** Every change to whether an intervention holds its run paused goes through here, so `heldPaused` keeps time. */
+  #setPaused(item: Intervention, paused: boolean): void {
+    item.paused = paused
+    if (item.runId === undefined) return
+    const held = this.#held.get(item.runId) ?? { total: 0 }
+    const now = this.#now()
+    if (paused) held.since ??= now
+    else if (held.since !== undefined) {
+      held.total += now - held.since
+      held.since = undefined
+    }
+    this.#held.delete(item.runId)
+    this.#held.set(item.runId, held)
+    while (this.#held.size > KEEP) this.#held.delete(this.#held.keys().next().value!)
   }
 
   async load(): Promise<void> {
@@ -189,13 +218,14 @@ export class Interventions {
       : this.#deps.settle(item.incidentId, action).catch(() => false)
     if (result === 'retry') {
       if (!(await settle('retry'))) await this.#deps.runner.restart(item.runId, `agent 处理后重新运行：${summary}`)
-      Object.assign(item, { state: 'retried', paused: false })
+      item.state = 'retried'
+      this.#setPaused(item, false)
       this.#changed(item)
       return '已经重新运行这个任务（异常也标为已处理）。现在结束这一轮回复。'
     }
     if (item.paused) {
       if (!(await settle('resume'))) await this.#resume(item)
-      item.paused = false
+      this.#setPaused(item, false)
     } else {
       await settle('resolve')
     }
@@ -249,7 +279,7 @@ export class Interventions {
       const pid = this.#deps.runner.processId(incident.runId)
       if (pid !== undefined) {
         const changed = await this.#deps.suspend(pid, false).catch(error => { this.#deps.log.warn(`pausing ${incident.runId} failed: ${String(error)}`); return 0 })
-        item.paused = changed > 0
+        this.#setPaused(item, changed > 0)
         if (item.paused) this.#deps.runner.note(incident.runId, 'agent 正在处理异常，脚本已暂停')
       }
     }
@@ -300,7 +330,7 @@ export class Interventions {
     if (done.result === 'retry') {
       try {
         await this.#deps.runner.restart(incident.runId, `agent 处理后重新运行：${done.summary}`)
-        item.paused = false
+        this.#setPaused(item, false)
         return finish('retried', done.summary)
       } catch (error) {
         return finish('gave-up', `${done.summary}（重新运行没有成功：${error instanceof Error ? error.message : String(error)}）`, imageOf(active, screenshot))
@@ -339,8 +369,8 @@ export class Interventions {
     if (item.state === 'running') this.takeover(id)
     if (item.runId === undefined) return item
     if (then === 'resume') await this.#resume(item)
-    else if (then === 'restart') { await this.#deps.runner.restart(item.runId, '处理完后重新运行', { byUser: true }); item.paused = false }
-    else { await this.#deps.runner.stop(item.runId, '处理异常后停止'); item.paused = false }
+    else if (then === 'restart') { await this.#deps.runner.restart(item.runId, '处理完后重新运行', { byUser: true }); this.#setPaused(item, false) }
+    else { await this.#deps.runner.stop(item.runId, '处理异常后停止'); this.#setPaused(item, false) }
     this.#changed(item)
     return item
   }
@@ -358,7 +388,7 @@ export class Interventions {
     if (!item.paused || item.runId === undefined) return
     const pid = this.#deps.runner.processId(item.runId)
     if (pid !== undefined) await this.#deps.suspend(pid, true)
-    item.paused = false
+    this.#setPaused(item, false)
     try { this.#deps.runner.note(item.runId, '异常已处理，脚本继续运行') } catch { /* the run is gone */ }
   }
 

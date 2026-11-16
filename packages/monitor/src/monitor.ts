@@ -59,6 +59,11 @@ export interface InterventionPort {
    * `raised`: titles brought into sight; `hidden`: still out of sight.
    */
   captureDesktop?(runId: string): Promise<{ png: Buffer; raised: readonly string[]; hidden: readonly string[] }>
+  /**
+   * How long an intervention has held the run paused so far (`ms`, the stretch going on included), and whether
+   * it is paused now. A paused script can neither write a log line nor finish: that time is not its own.
+   */
+  heldPaused?(runId: string): { ms: number; now: boolean }
 }
 
 export interface MonitorDeps {
@@ -111,6 +116,8 @@ interface Watched {
   /** The first run of its restart chain. */
   chain: string
   lastScriptLineAt: number
+  /** How long the run had been held paused (InterventionPort.heldPaused) at its last script line. */
+  heldAtLine: number
   sawScriptLine: boolean
   stalled?: string | undefined
   overtime: boolean
@@ -301,20 +308,29 @@ export class Monitor {
       if (run.endedAt !== undefined || run.state !== 'running') continue
       const manifest = this.#deps.packOf(run.scriptId)?.manifest
       const stall = this.stallFor(run.scriptId)
+      // Held paused by an intervention: its silence and its time are the pause's (and the agent is on it already).
+      const held = this.#held(run.id)
+      if (held.now) continue
       const stallMs = stall.seconds > 0 && (watched.sawScriptLine || stall.source !== 'default') ? stall.seconds * 1000 : undefined
-      if (stallMs !== undefined && watched.stalled === undefined && now - watched.lastScriptLineAt > stallMs) {
-        const text = `已经 ${quiet(now - watched.lastScriptLineAt)}没有新的日志，可能卡住了（这个脚本超过 ${quiet(stallMs)}没动静就算卡住${stall.source === 'default' ? '，默认值' : ''}）`
+      const quietMs = now - watched.lastScriptLineAt - (held.ms - watched.heldAtLine)
+      if (stallMs !== undefined && watched.stalled === undefined && quietMs > stallMs) {
+        const text = `已经 ${quiet(quietMs)}没有新的日志，可能卡住了（这个脚本超过 ${quiet(stallMs)}没动静就算卡住${stall.source === 'default' ? '，默认值' : ''}）`
         this.#deps.runner.warn(run.id, text)
         watched.stalled = this.#raise(run, 'stalled', 'stalled', text).id
       }
       const expected = parseDuration(manifest?.tasks.find(t => t.id === run.taskId)?.expectedDuration)
-      if (expected !== undefined && !watched.overtime && now - run.startedAt > expected * 2) {
+      if (expected !== undefined && !watched.overtime && now - run.startedAt - held.ms > expected * 2) {
         watched.overtime = true
         const text = `已运行超过预计时长的 2 倍（预计 ${manifest?.tasks.find(t => t.id === run.taskId)?.expectedDuration}）`
         this.#deps.runner.warn(run.id, text)
         this.#raise(run, 'overtime', 'overtime', text)
       }
     }
+  }
+
+  /** How long an intervention has held this run paused (InterventionPort.heldPaused). */
+  #held(runId: string): { ms: number; now: boolean } {
+    return this.#deps.intervene?.()?.heldPaused?.(runId) ?? { ms: 0, now: false }
   }
 
   // ── runner feed ───────────────────────────────────────────────────────
@@ -324,7 +340,7 @@ export class Monitor {
     if (watched === undefined) {
       const chain = run.retryOf === undefined ? run.id : this.#chains.get(run.retryOf) ?? run.retryOf
       this.#chains.set(run.id, chain)
-      watched = { run, chain, lastScriptLineAt: this.#now(), sawScriptLine: false, overtime: false, longestQuietMs: 0, troubled: false }
+      watched = { run, chain, lastScriptLineAt: this.#now(), heldAtLine: this.#held(run.id).ms, sawScriptLine: false, overtime: false, longestQuietMs: 0, troubled: false }
       this.#watched.set(run.id, watched)
     }
     watched.run = run
@@ -337,6 +353,7 @@ export class Monitor {
     if (line.source !== 'adg') {
       if (watched.sawScriptLine) watched.longestQuietMs = Math.max(watched.longestQuietMs, line.at - watched.lastScriptLineAt)
       watched.lastScriptLineAt = line.at
+      watched.heldAtLine = this.#held(run.id).ms
       watched.sawScriptLine = true
       if (watched.stalled !== undefined) {
         const stalled = this.#incidents.find(i => i.id === watched.stalled)
