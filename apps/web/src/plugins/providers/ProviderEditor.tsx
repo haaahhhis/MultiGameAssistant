@@ -5,6 +5,15 @@ import { apiKeyProblem } from '../settings/ApiKeysPage.tsx'
 import type { ProviderPreset } from './presets.ts'
 import { ID_PATTERN, PROTOCOLS, formatContext, isHttpUrl, keyRefFor, protocolInfo, slugify } from './protocols.ts'
 
+/**
+ * What the 「1M」 flag sets: the smallest of the windows model cards print as
+ * 1M (Claude's 1,000,000; GPT-4.1 and Gemini have a little more), so it never
+ * claims more than the model takes. Without a size, dsh counts a model on a
+ * custom route at 262,144 tokens, which compaction then works to.
+ */
+const ONE_M_CONTEXT = 1_000_000
+const hasOneM = (m: ProviderModel) => (m.contextWindow ?? 0) >= ONE_M_CONTEXT
+
 export function ProviderEditor({ client, profile, preset, taken, revision, readOnly, onDone }: {
   client: AdgClient
   /** Absent when creating. */
@@ -253,6 +262,15 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
     onChange(models.map(m => (m.id !== id ? m : { ...m, input: m.input?.includes('image') === true ? ['text'] : ['text', 'image'] })))
   }
 
+  /** Off drops the size, so the model is counted at dsh's default again. */
+  const toggleOneM = (id: string) => {
+    onChange(models.map(m => {
+      if (m.id !== id) return m
+      if (hasOneM(m)) { const { contextWindow: _c, ...rest } = m; return rest }
+      return { ...m, contextWindow: ONE_M_CONTEXT }
+    }))
+  }
+
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase()
     return (candidates ?? []).filter(m => q === '' || m.id.toLowerCase().includes(q) || (m.name ?? '').toLowerCase().includes(q))
@@ -280,7 +298,7 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
       <div className="card-head">
         <div>
           <h3>模型</h3>
-          <div className="muted small">已选 {models.length} 个。只有选中的模型会出现在模型选择器里。能看图的模型点亮「图片」，否则 dsh 会拒绝发送图片；支持调思考强度的模型（如 GPT-5、o 系列、Claude、DeepSeek R 系列）点亮「思考」，对话里就能选强度。</div>
+          <div className="muted small">已选 {models.length} 个。只有选中的模型会出现在模型选择器里。能看图的模型点亮「图片」，否则 dsh 会拒绝发送图片；支持调思考强度的模型（如 GPT-5、o 系列、Claude、DeepSeek R 系列）点亮「思考」，对话里就能选强度；支持 1M 上下文的模型（如 gpt-4.1、Gemini）点亮「1M」，对话按 1M 计算、快满才压缩，模型本身不支持时别点亮，否则对话会超长出错。</div>
         </div>
         <button type="button" onClick={() => void pull()} disabled={disabled || busy || probeBlocked !== null} title={probeBlocked ?? undefined}>
           {busy ? '拉取中…' : candidates === null ? '拉取模型列表' : '重新拉取'}
@@ -293,7 +311,7 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
           {models.map(m => (
             <span key={m.id} className="chip removable">
               {m.id}
-              {formatContext(m.contextWindow) !== null && <span className="muted"> · {formatContext(m.contextWindow)}</span>}
+              {!hasOneM(m) && formatContext(m.contextWindow) !== null && <span className="muted"> · {formatContext(m.contextWindow)}</span>}
               <button
                 type="button" className={`chip-flag${m.input?.includes('image') === true ? ' on' : ''}`} onClick={() => toggleImages(m.id)} disabled={disabled}
                 aria-pressed={m.input?.includes('image') === true} title={m.input?.includes('image') === true ? '支持图片输入（点击关闭）' : '不支持图片输入（点击开启）'}
@@ -305,6 +323,15 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
                 aria-pressed={(m.efforts?.length ?? 0) > 0} title={(m.efforts?.length ?? 0) > 0 ? `可选思考强度：${m.efforts!.join(' / ')}（点击关闭）` : '没有声明思考强度（点击开启：不思考 / 低 / 中 / 高）'}
               >
                 思考
+              </button>
+              <button
+                type="button" className={`chip-flag${hasOneM(m) ? ' on' : ''}`} onClick={() => toggleOneM(m.id)} disabled={disabled}
+                aria-pressed={hasOneM(m)}
+                title={hasOneM(m) ? '按 1M 上下文计算，快满时才压缩（点击关闭）'
+                  : m.contextWindow !== undefined ? `上下文 ${formatContext(m.contextWindow)}（点击改为 1M）`
+                  : '上下文大小未知，按默认的 262K 计算（点击改为 1M）'}
+              >
+                1M
               </button>
               <button type="button" className="chip-x" onClick={() => onChange(models.filter(x => x.id !== m.id))} disabled={disabled} aria-label={`移除 ${m.id}`}>×</button>
             </span>
