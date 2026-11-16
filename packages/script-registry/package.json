@@ -35,13 +35,13 @@
   "devDependencies": {
     "@adg/gateway": "workspace:*",
     "@adg/test-kit": "workspace:*",
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-credentials": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-skill": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-user-approval": "0.2.1-rc.5",
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-credentials": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-skill": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-user-approval": "0.2.2-rc.3",
     "@types/node": "^24.13.3"
   }
 }

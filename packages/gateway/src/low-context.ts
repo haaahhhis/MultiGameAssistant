@@ -48,6 +48,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ContentBlock, FinishReason, GenerateOptions, LlmFailure, Message, RequestMessage, StreamChunk, TextBlock, TokenUsage, ToolCallBlock, ToolHistory, ToolSchema } from '@deepseek-ai/dsh-llm'
 import { ARCHIVE_MARK, LOW_CONTEXT_WINDOW_MS, MAX_ARCHIVE_DAYS, MIN_ARCHIVE_DAYS } from '@adg/protocol'
 
+// The summary call is a compaction request, as dsh-compaction-basic's own (which declares the same purpose).
+declare module '@deepseek-ai/dsh-llm/types' {
+  interface LlmRequestPurposeMap {
+    'compaction': true
+  }
+}
+
 export const name = 'adg-low-context'
 export const inject = ['compaction']
 

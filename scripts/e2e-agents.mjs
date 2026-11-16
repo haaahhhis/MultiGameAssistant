@@ -84,7 +84,11 @@ const llm = await startFakeLlm({
         seen.reminded = said
         return call('agent_message', { thread: talkId, kind: 'update', text: 'E2E-SECOND' })
       }
-      if (last?.role === 'tool' && lastTool(body) === 'agent_message' && lastArgs(body).includes('E2E-FIRST')) return call('schedule_create', { title: '补一句', prompt: 'E2E-REMIND 到点了', after_seconds: 3 })
+      if (last?.role === 'tool' && lastTool(body) === 'agent_message' && lastArgs(body).includes('E2E-FIRST')) {
+        // Once, 3 seconds from now (schedule_create takes an RRULE: 20261116T101503Z).
+        const at = new Date(Date.now() + 3000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+        return call('schedule_create', { title: '补一句', prompt: 'E2E-REMIND 到点了', rrule: `DTSTART:${at}\nRRULE:FREQ=DAILY;COUNT=1`, target: 'this_session' })
+      }
       if (last?.role === 'tool' && lastTool(body) === 'schedule_create') return { text: 'E2E-CONCLUDED 先做到这，后面的到点再说' }
       return { text: '说完了。' }
     }

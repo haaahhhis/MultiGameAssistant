@@ -198,13 +198,19 @@ interface PresetService {
 interface LiveAgent {
   readonly session: { readonly id: string; readonly seq?: number; readonly header?: { readonly parentSession?: string; readonly origin?: string } }
   readonly ctx: Context
+  /** dsh-agent's model choice for the agent's next steps (agent.model). */
+  readonly model?: {
+    current(): Readonly<{ provider: string; model: string; reasoningEffort?: string }> | undefined
+    select(selection: Readonly<{ provider: string; model: string; reasoningEffort?: string }>): void
+  }
   whenIdle?(): Promise<void>
 }
 
 /** The slice of dsh's subagent service a hand-off needs. */
 interface SubagentService {
-  waitForChildren(parent: LiveAgent): Promise<boolean>
-  interrupt(targetSessionId: string, authority: { kind: 'user'; parentSessionId: string }): void
+  /** Joins the work still going on in the tree under `root`; true: some was joined (look at the root again). */
+  waitForTreeWork(root: LiveAgent): Promise<boolean>
+  interrupt(targetSessionId: string, authority: { kind: 'user' }): void
 }
 
 /** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
@@ -278,7 +284,7 @@ export class AdgGateway extends Service {
   private readonly registry = new CapabilityRegistry()
   private readonly workspace: string | undefined
   private archived = new Set<string>()
-  /** The latest context projections per session (control frames carry one key at a time). */
+  /** The latest context projections per session (a control frame carries only the keys its event changed). */
   private readonly contexts = new Map<string, { pressure?: unknown; breakdown?: unknown }>()
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
@@ -504,10 +510,11 @@ export class AdgGateway extends Service {
     ctx.on('session/created' as never, ((session: PresetSession) => { void this.permissionsReady.then(() => presetFor(session)) }) as never)
 
     // A role session's agent sees only its role's tools and is told its duty (roles.ts); again when it resumes.
-    ctx.on('agent/created' as never, ((payload: { agent: LiveAgent }) => {
+    // dsh awaits these listeners before the agent takes its first input, so its first step already runs the model chosen here.
+    ctx.on('agent/created' as never, (async (payload: { agent: LiveAgent }) => {
       this.agents.set(payload.agent.session.id, payload.agent)
       this.narrow(payload.agent)
-      this.routeSubAgent(payload.agent)
+      await this.routeSubAgent(payload.agent)
     }) as never)
     // A reminder set while working on a thread says where its words go: by the time it comes, the agent may not remember.
     ctx.on('tools/execute' as never, ((exec: { name: string; agent?: { session: { id: string } }; arguments: { prompt?: unknown } }, next: () => unknown) => {
@@ -674,7 +681,8 @@ export class AdgGateway extends Service {
           const schedule = this.schedule()
           const entry = (await schedule?.catalog())?.find(e => e.id === id)
           if (schedule === undefined || entry === undefined) throw new RpcError(ErrorCode.InvalidParams, '没有这个提醒（可能已经到点或删掉了）')
-          await schedule.delete({ sessionId: entry.sessionId, id })
+          const result = await schedule.edit({ id, action: 'delete' })
+          if (result.deleted !== true && result.code !== 'schedule_not_found') throw new RpcError(ErrorCode.InternalError, `没删掉这个提醒（${result.code ?? '原因不明'}），再试一次`)
           return {}
         },
       },
@@ -1350,7 +1358,7 @@ Content-Length: 0
       await Promise.race([agent.whenIdle?.(), stopped])
       if (signal.aborted) return
       const before = agent.session.seq
-      const joined = await Promise.race([subagents?.waitForChildren(agent) ?? false, stopped.then(() => false)])
+      const joined = await Promise.race([subagents?.waitForTreeWork(agent) ?? false, stopped.then(() => false)])
       await Promise.race([agent.whenIdle?.(), stopped])
       if (!joined && agent.session.seq === before) return
     }
@@ -1360,7 +1368,7 @@ Content-Length: 0
   stopSubAgent(sessionId: string): void {
     const parent = this.agents.get(sessionId)?.session.header?.parentSession
     if (parent === undefined) return
-    ;((this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined)?.interrupt(sessionId, { kind: 'user', parentSessionId: parent })
+    ;((this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined)?.interrupt(sessionId, { kind: 'user' })
   }
 
   /** Stop the sub-agents working under this session's agent (a hand-off called off stops them with it). */
@@ -1440,35 +1448,27 @@ Content-Length: 0
 
   /**
    * A sub-agent works with its agent's sub-agent model when one is set
-   * (agent-models.ts); else dsh gives it its parent's. Its requests go to that
-   * model from the first (agent/request, as dsh's own model choice does) and its
-   * system prompt names it. A model that cannot be used now (its service gone)
-   * leaves it on its parent's rather than failing the work.
+   * (agent-models.ts); else dsh gives it its parent's. The choice is made as
+   * the sub-agent is created (agent.model, as dsh's own model choice is), so its
+   * steps use that model from the first and its system prompt names it. A model
+   * that cannot be used now (its service gone) leaves it on its parent's rather
+   * than failing the work. Never throws: a throw would fail the sub-agent.
    */
-  private routeSubAgent(agent: LiveAgent): void {
+  private async routeSubAgent(agent: LiveAgent): Promise<void> {
     if (agent.session.header?.origin !== 'subagent' || !this.isOwn(agent.session.id)) return
     const spec = this.specOf(agent.session.id)
     if (spec?.subAgentOf === undefined) return
     const model = this.subAgentModel(memoryOwnerOf(spec))
-    if (model === undefined) return
+    if (model === undefined || agent.model === undefined) return
     const route = { provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }
     const llm = this.ctx.get('llm')
-    const usable = llm === undefined
-      ? Promise.resolve(false)
-      : llm.resolveCallConfig(route as never, AbortSignal.timeout(10_000)).then(() => true, (error: unknown) => {
-        this.log.warn(`the sub-agent model ${model.provider}/${model.model} cannot be used now, ${agent.session.id} keeps its parent's: ${error instanceof Error ? error.message : String(error)}`)
-        return false
-      })
-    agent.ctx.on('system-prompt/assemble' as never, (async (_assembly: unknown, _context: unknown, next: () => Promise<{ variables?: Record<string, unknown> }>) => {
-      const assembled = await next()
-      return await usable ? { ...assembled, variables: { ...assembled.variables, provider: route.provider, model: route.model } } : assembled
-    }) as never)
-    agent.ctx.on('agent/request' as never, (async (_payload: unknown, next: () => Promise<Record<string, unknown>>) => {
-      const resolved = await next()
-      if (!await usable) return resolved
-      const { reasoningEffort: _parents, ...rest } = resolved
-      return { ...rest, ...route }
-    }) as never)
+    if (llm === undefined) return
+    try {
+      await llm.resolveCallConfig(route as never, AbortSignal.timeout(10_000))
+      agent.model.select(route)
+    } catch (error) {
+      this.log.warn(`the sub-agent model ${model.provider}/${model.model} cannot be used now, ${agent.session.id} keeps its parent's: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /** Why a model chosen for this layer will not do: it cannot see images and the work there looks at screenshots. */
@@ -1675,20 +1675,26 @@ Content-Length: 0
       try {
         for await (const frame of this.ctx.sessionController.control(signal)) {
           if (frame.type !== 'projection' || !this.isOwn(frame.sessionId)) continue
-          if (frame.key === 'title') {
-            const title = typeof frame.value === 'string' ? frame.value : null
+          // One frame per committed event, with every key it changed.
+          const changed = new Map(frame.changes.map(change => [change.key, change.val]))
+          if (changed.has('title')) {
+            const value = changed.get('title')
+            const title = typeof value === 'string' ? value : null
             this.broadcast('session/title', { sessionId: frame.sessionId, title })
             const role = this.roles.of(frame.sessionId, title)
             const home = this.homes.agentOf(frame.sessionId)
             this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title, ...(role === undefined ? {} : { role }), ...(home === undefined ? {} : { home }) } })
-          } else if (frame.key === 'modelSelection') {
-            this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(frame.value) })
-          } else if (frame.key === 'inbox') {
-            this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(frame.value) })
-          } else if (frame.key === 'contextPressure' || frame.key === 'contextBreakdown') {
-            // The two arrive separately; the meter needs both.
+          }
+          if (changed.has('modelSelection')) this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(changed.get('modelSelection')) })
+          if (changed.has('inbox')) this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(changed.get('inbox')) })
+          if (changed.has('contextPressure') || changed.has('contextBreakdown')) {
+            // Either may change without the other; the meter needs both.
             const known = this.contexts.get(frame.sessionId) ?? {}
-            const next = frame.key === 'contextPressure' ? { ...known, pressure: frame.value } : { ...known, breakdown: frame.value }
+            const next = {
+              ...known,
+              ...(changed.has('contextPressure') ? { pressure: changed.get('contextPressure') } : {}),
+              ...(changed.has('contextBreakdown') ? { breakdown: changed.get('contextBreakdown') } : {}),
+            }
             this.contexts.set(frame.sessionId, next)
             this.broadcast('session/context', { sessionId: frame.sessionId, context: toContext(next.pressure, next.breakdown) ?? null })
           }

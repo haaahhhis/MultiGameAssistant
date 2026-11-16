@@ -9,7 +9,7 @@
 
 export const NAME = 'dsh-multigameassistant'
 /** The dsh this was built and tested against, up to the next minor (dsh changes its plugin APIs between minors). */
-export const DSH_RANGE = '>=0.2.1-rc.5 <0.3.0-0'
+export const DSH_RANGE = '>=0.2.2-rc.3 <0.3.0-0'
 /** Where the manifest and patch are kept in the repository. */
 export const PLUGIN_DIR = 'packages/dsh-plugin'
 
@@ -93,7 +93,7 @@ export function pluginManifest({ version, plugins, peers }) {
       './package.json': './package.json',
     },
     files: ['lib', 'skills', 'web', 'cordis.patch.yml', 'README.md', 'LICENSE'],
-    engines: { dsh: DSH_RANGE, node: '>=22' },
+    engines: { dsh: DSH_RANGE, node: '>=24.9' },
     os: ['win32'],
     peerDependencies: Object.fromEntries([...peers].sort().map(name => [name, peerRange(name)])),
     dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },

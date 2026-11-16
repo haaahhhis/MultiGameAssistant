@@ -9,7 +9,8 @@ import { ID_PATTERN, PROTOCOLS, formatContext, isHttpUrl, keyRefFor, protocolInf
  * What the 「1M」 flag sets: the smallest of the windows model cards print as
  * 1M (Claude's 1,000,000; GPT-4.1 and Gemini have a little more), so it never
  * claims more than the model takes. Without a size, dsh counts a model on a
- * custom route at 262,144 tokens, which compaction then works to.
+ * custom route at 1,000,000 tokens too (since dsh 0.2.2; 262,144 before),
+ * which compaction then works to: on, the size is written down.
  */
 const ONE_M_CONTEXT = 1_000_000
 const hasOneM = (m: ProviderModel) => (m.contextWindow ?? 0) >= ONE_M_CONTEXT
@@ -329,7 +330,7 @@ function ModelsSection({ client, models, onChange, probe, probeBlocked, disabled
                 aria-pressed={hasOneM(m)}
                 title={hasOneM(m) ? '按 1M 上下文计算，快满时才压缩（点击关闭）'
                   : m.contextWindow !== undefined ? `上下文 ${formatContext(m.contextWindow)}（点击改为 1M）`
-                  : '上下文大小未知，按默认的 262K 计算（点击改为 1M）'}
+                  : '上下文大小未知，dsh 默认按 1M 计算（点击写明 1M）'}
               >
                 1M
               </button>

@@ -11,7 +11,7 @@ description: 把几个游戏脚本编成一条流水线（每天自动跑、一�
 
 ## 规则
 
-- **用本应用的流水线工具**：`script_list`、`script_tasks`、`system_info`、`pipeline_list`、`pipeline_get`、`pipeline_save` / `pipeline_draft`、`pipeline_run`。不要用 `workflow`、`schedule_create` / `schedule_update` 之类的通用工具来编排游戏，它们不会排队资源，也不会出现在「编排」页。
+- **用本应用的流水线工具**：`script_list`、`script_tasks`、`system_info`、`pipeline_list`、`pipeline_get`、`pipeline_save` / `pipeline_draft`、`pipeline_run`。不要用 `workflow`、`schedule_create` / `schedule_edit` 之类的通用工具来编排游戏，它们不会排队资源，也不会出现在「编排」页。
 - **先看硬件再并行**：资源不冲突（不抢鼠标、不抢同一台模拟器）只说明不会互相干扰，不说明电脑带得动。每个游戏客户端都吃 CPU、显卡和内存，模拟器本身还要 3–4 GB 内存。并行之前一定先调用 `system_info`，按它的建议决定；没法判断时就串行。
 - **不改脚本、不擅自运行**：只用脚本现有的任务和配置；保存好后告诉用户，等用户说再运行或设定时间。
 - **改已有的流水线**：先 `pipeline_get` 读出现在的定义，只动要改的地方，节点和连线照原样写全再保存（没写的会被去掉）；定时和画布位置会保留。保存后看返回的定义，确认改动在。

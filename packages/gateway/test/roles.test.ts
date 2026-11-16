@@ -43,11 +43,11 @@ test("a sub-agent has its parent's tools for the work, and none for working with
 test("a sub-agent of the agent pipelines belong to saves and times them too; other timers stay its lead's", () => {
   const pipelines = { id: 'pipelines', name: '编排', description: '', order: 40, tools: ['pipeline_save', 'pipeline_get', 'schedule_set', 'schedule_task_*'] }
   const app = new Set(['pipeline_save', 'pipeline_get', 'pipeline_draft', 'schedule_set', 'schedule_task_save', 'schedule_task_list'])
-  const visible = [...app, 'schedule_create', 'schedule_update', 'schedule_delete', 'schedule_list', 'read']
+  const visible = [...app, 'schedule_create', 'schedule_list', 'schedule_view', 'schedule_edit', 'read']
   assert.deepEqual(hiddenTools(pipelines, app, visible, true), ['pipeline_draft'], 'in its own conversation: everything of pipelines and timers but the draft tool')
   const hidden = hiddenTools(subAgentSpec(pipelines), app, visible)
   for (const tool of ['pipeline_save', 'pipeline_get', 'schedule_set', 'read']) assert.ok(!hidden.includes(tool), `its sub-agent has ${tool}`)
-  for (const tool of ['pipeline_draft', 'schedule_task_save', 'schedule_task_list', 'schedule_create', 'schedule_update', 'schedule_delete', 'schedule_list']) assert.ok(hidden.includes(tool), `${tool} is not a sub-agent's`)
+  for (const tool of ['pipeline_draft', 'schedule_task_save', 'schedule_task_list', 'schedule_create', 'schedule_list', 'schedule_view', 'schedule_edit']) assert.ok(hidden.includes(tool), `${tool} is not a sub-agent's`)
   // A lead without it (脚本) gives its sub-agents none of it.
   const scripts = subAgentSpec({ id: 'scripts', name: '脚本', description: '', order: 30, tools: ['script_*'] })
   for (const tool of ['pipeline_save', 'schedule_set']) assert.ok(hiddenTools(scripts, app, visible).includes(tool), `脚本's sub-agent has no ${tool}`)

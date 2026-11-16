@@ -53,15 +53,15 @@
     "LICENSE"
   ],
   "engines": {
-    "dsh": ">=0.2.1-rc.5 <0.3.0-0",
-    "node": ">=22"
+    "dsh": ">=0.2.2-rc.3 <0.3.0-0",
+    "node": ">=24.9"
   },
   "os": [
     "win32"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-credentials": ">=0.2.1-rc.5 <0.3.0-0"
+    "@deepseek-ai/dsh-credentials": ">=0.2.2-rc.3 <0.3.0-0"
   },
   "dsh": {
     "bundle": {
