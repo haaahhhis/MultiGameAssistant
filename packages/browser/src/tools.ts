@@ -73,7 +73,7 @@ export function browserTools(deps: BrowserToolDeps): ToolDefinition[] {
   return [
     tool({
       name: BROWSER_TOOLS.navigate,
-      description: '在内置浏览器里打开网页（用户能在多游戏助手的浏览器面板里看到，也能接手），或者后退、前进、刷新。适合要点击、填写、翻页、登录后才能看的网页，或者用户让你在浏览器里操作；只是读一篇公开文章用 web_fetch 更省。每个对话有自己的标签页；返回页面内容：角色和文字按层级列出，能操作的元素带 [ref=…]，接着用 browser_click / browser_type 操作它们。内置浏览器是隔离的：不保存登录、不能下载文件，只开 http / https 网页。',
+      description: '在内置浏览器里打开网页（用户能在多游戏助手的浏览器面板里看到，也能接手），或者后退、前进、刷新。适合 web_fetch 只拿到标题或空壳的网页（前端渲染的官网、公告页、活动页），要点击、翻页、展开才看得到的内容，或者用户让你在浏览器里操作；普通的静态页面和 JSON 接口用 web_fetch 更省。读文字用 browser_text。每个对话有自己的标签页；返回页面内容：角色和文字按层级列出，能操作的元素带 [ref=…]，接着用 browser_click / browser_type 操作它们。内置浏览器是隔离的：不保存登录、不能下载文件，只开 http / https 网页。',
       properties: {
         url: { type: 'string', description: '要打开的网址（不写 https:// 也行）。' },
         action: { type: 'string', enum: ['back', 'forward', 'reload'], description: '不给 url 时：后退、前进或刷新。' },

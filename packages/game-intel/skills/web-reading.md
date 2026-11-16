@@ -21,6 +21,8 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
    - 读一个页面的正文：`api.php?action=parse&page=页面名&prop=wikitext&format=json`
    - 搜页面：`api.php?action=opensearch&search=关键词&limit=10`
 4. **官方公告页**：官网新闻（游戏包 `sources` 里的 `homepage`）。先读**列表页**找到目标公告的链接，再只读那一篇；不要一页一页往下翻。
+   - 很多官网是前端渲染的，`web_fetch` 只拿到标题或空壳：这时用**内置浏览器**——`browser_navigate` 打开列表页，`browser_text` 读渲染后的文字，`browser_click` 点进那篇公告再 `browser_text`。用户能在浏览器面板里看到你打开的页面。
+   - 你的对话里没有 `browser_*`（主 agent 的对话不直接操作）：开子 agent 去读，任务里写明「用内置浏览器（browser_navigate、browser_text）」。
 5. **搜索**：前面都没有时才用 `web_search`，关键词带上游戏名、版本号、「公告」等，优先点官方域名和 Wiki。
 
 ## 读网页时

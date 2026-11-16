@@ -120,6 +120,8 @@ export function subAgentSpec(parent: RoleSpec): RoleSpec {
       `你的回复只有「${name}」读，用户看不到：用工具把事做完，最后一段回复写结果，写它要的东西，不寒暄。`,
       `你问不了用户，也不能交给别的 agent：缺什么就写进回复，由「${name}」去问。需要用户批准的操作会请用户批准，等结果就是；被拒绝了不要换个办法绕过去，把没做成的和原因写进回复。`,
       '能用工具、命令行、读文件（配置、日志、版本号）或脚本自己的命令和设置做到、确认到的，就这样做；截图、看画面、点屏幕是最后的办法。',
+      // Only where the parent's tools take the browser in (and it may be missing: dsh's own app has none).
+      ...(keeps(parent.tools, 'browser_navigate') ? ['你有内置浏览器（browser_* 工具）：要读的网页用 web_fetch 只拿到标题或空壳（前端渲染的官网、公告页常这样），或者要点开、翻页、展开才看得到时，就用它——browser_navigate 打开，browser_text 读渲染后的全部文字，browser_click / browser_scroll 翻找。读到要的就停，回复里只写要的内容和出处，不复述整页。不登录、不填个人信息、不付款；遇到登录或验证码就停下写进回复。'] : []),
       ...(parent.duty === undefined ? [] : [`下面是「${name}」的职责，你在这个范围里做事；收尾和对外说明由它来做：`, parent.duty.replace(/^# .*\n/, '')]),
     ].join('\n'),
   }
@@ -142,7 +144,11 @@ export interface TeamMember {
  * @param main - 助手, the top agent.
  * @param leads - the lead agents, this one among them or not.
  */
-export function teamPrompt(self: TeamMember, main: TeamMember, leads: readonly TeamMember[]): string {
+/**
+ * @param self - this agent; its role's `tools` say whether its sub-agents have the built-in browser.
+ * @param options.browser - the built-in browser is here (the desktop app's; dsh's own app has none).
+ */
+export function teamPrompt(self: TeamMember & { readonly tools?: readonly string[] | undefined }, main: TeamMember, leads: readonly TeamMember[], options: { readonly browser?: boolean } = {}): string {
   const who = (m: TeamMember) => `「${m.name}」（${m.id}${m.alias === undefined ? '' : `，用户也叫它「${m.alias}」`}）`
   const line = (m: TeamMember) => `- ${who(m)}${m.description === '' ? '' : `：${m.description}`}`
   const colleagues = leads.filter(m => m.id !== self.id)
@@ -154,6 +160,9 @@ export function teamPrompt(self: TeamMember, main: TeamMember, leads: readonly T
       : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是${who(main)}：它和用户对话、分发任务、做决定。`,
     colleagues.length === 0 ? (isMain ? '现在没有其他主 agent。' : '现在没有其他同事。') : `${isMain ? '下面的主 agent' : '同事'}：\n${colleagues.map(line).join('\n')}`,
     '具体的活都由子 agent 做（subagent）：运行命令、改文件、截图点击、运行和安装脚本、启动游戏，这些工具不在你的对话里，只有子 agent 有；别处提到这些工具，也是让子 agent 去用。你的对话留给判断和汇总：要做什么就开一个子 agent，把任务写完整（它看不到你的对话），结果交回后由你判断、汇总。查状态、读一下文件这种看一眼的事可以自己来。几件互不相关的事可以同时开。开了以后只剩等结果时，用 wait_agent 等（timeout_ms 按它大概要多久填），或者结束这一轮，结果会作为新消息发来；要等一次脚本运行结束，用 script_runs 带上 run_id 和 wait_seconds，它等到结束（重新运行的话跟到最后那次）才返回。不要用 glob、list_agents、script_runs、window_list 一遍遍查做到哪了：你对话里的每一步都要把整个对话重新发给模型一次，这样等最费。子 agent 只对你负责，只把结果交回给你；它要用户批准的操作，会在你的对话里请用户批准。',
+    options.browser === true && keeps(self.tools, 'browser_navigate')
+      ? '网页也一样：web_fetch 只拿到空壳（前端渲染的官网、公告页常这样）或要点开、翻页才看得到时，开子 agent 用内置浏览器去读，任务里写明「用内置浏览器（browser_navigate 打开，browser_text 读渲染后的文字）」。它打开的页面用户在浏览器面板里看得到。'
+      : '',
     isMain ? '' : `需要同事的那部分，用 agent_delegate 直接交给它，不用绕过「${main.name}」。交给你的事没说清楚时，用 agent_message 问交给你的一方，不要自己去问用户（要不要问用户由对方决定），问清楚再做；做完用 agent_message 的 done 交回结论，或者把结论写在这一轮最后一段回复里。`,
     '和其他 agent 说话不是一问一答：做的过程中要让对方知道的，用 agent_message 的 update，马上送到它的对话里，说几次都行；一件事交回结论以后还有话（比如定时提醒到了），同样用 agent_message 发到那条线索，你的普通回复对方看不到。',
     '和其他 agent 以前说过的事不只在这个对话里：对话被压缩或换过，agent_threads（with 填对方）也能看到你们以前的来往，别的 agent 交给你事时也会附上最近几条。接着以前的事找它之前先看一眼，不要让它从头来。',

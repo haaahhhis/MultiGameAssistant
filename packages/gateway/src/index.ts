@@ -1230,7 +1230,7 @@ Content-Length: 0
       if (spec.subAgentOf === undefined) {
         const persona = this.persona
         const known = (member: { readonly id: string; readonly name: string; readonly description: string }) => ({ ...member, alias: persona?.of(member.id).name })
-        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:team', order: 10_096, interpolate: false, text: () => teamPrompt(spec, known(MAIN_AGENT_MEMBER), this.roles.list().map(known)) }))
+        disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:team', order: 10_096, interpolate: false, text: () => teamPrompt(spec, known(MAIN_AGENT_MEMBER), this.roles.list().map(known), { browser: this.parts.tools.has('browser_navigate') }) }))
         if (persona !== undefined) disposers.push(agent.ctx.systemPrompt.section({ name: 'adg:persona', order: 10_100, interpolate: false, text: () => personaPrompt(persona.of(spec.id)) }))
       }
     } catch (error) {

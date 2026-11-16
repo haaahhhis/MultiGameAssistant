@@ -161,3 +161,14 @@ test("a role whose plugin is not loaded gives its sessions back to the main agen
   drop()
   assert.equal(roles.of('s1', '干预：x'), undefined)
 })
+
+test('the built-in browser is named to sub-agents that have it, and to agents whose sub-agents do, when it is there', () => {
+  const games = { id: 'games', name: '游戏', description: '', order: 20, tools: ['game_*', 'browser_*'] }
+  const intervene = { id: 'intervene', name: '干预', description: '', order: 40, tools: ['screen_*'] }
+  assert.match(subAgentSpec(games).duty!, /内置浏览器（browser_\* 工具）/)
+  assert.doesNotMatch(subAgentSpec(intervene).duty!, /内置浏览器/)
+  const main = { id: 'main', name: '助手', description: '' }
+  assert.match(teamPrompt(games, main, [games], { browser: true }), /开子 agent 用内置浏览器去读/)
+  assert.doesNotMatch(teamPrompt(games, main, [games]), /内置浏览器/, 'no browser in this app (dsh\'s own): not mentioned')
+  assert.doesNotMatch(teamPrompt(intervene, main, [intervene], { browser: true }), /内置浏览器/)
+})

@@ -609,7 +609,7 @@ export class AdgGameIntel extends Service {
     for (const { manifest } of games) {
       const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined)
       if (sources.length === 0) {
-        results.push({ game: manifest.id, ok: false, count: 0, detail: `没有能直接读的数据站：用 web_fetch 看 ${manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'}，再用 game_record（source=site）记下` })
+        results.push({ game: manifest.id, ok: false, count: 0, detail: `没有能直接读的数据站：用 web_fetch（只拿到空壳时用内置浏览器）看 ${manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'}，再用 game_record（source=site）记下` })
         continue
       }
       const failures: string[] = []
