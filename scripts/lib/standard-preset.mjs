@@ -1,20 +1,36 @@
 /**
- * The app's override of dsh's `standard` agent preset (packages/bundle/cordis.patch.yml):
- * dsh-web-app's own presets/standard.patch.yml, changed in one place. Its
- * compaction-basic row gets `auto`, `thresholdRatio` and `retainRatio` from
- * the app's compaction.json (设置 → 对话压缩, packages/gateway/src/compaction-settings.ts),
- * read when the agent service starts, and the compaction group gets the app's
- * low-context mode (packages/gateway/src/low-context.ts), which reads the same
- * file before every step. A preset is overridden whole (dsh does not
- * merge plugin lists), so the rest must stay exactly dsh's: the override is made
- * from the installed file, and scripts/test/standard-preset.test.mjs fails when
- * the two drift apart (a dsh update): run `node scripts/sync-standard-preset.mjs`.
+ * The app's overrides of dsh's `standard` and `ptc` agent presets
+ * (packages/bundle/cordis.patch.yml): dsh-web-app's own presets/*.patch.yml,
+ * each changed in the same places. Its compaction-basic row gets `auto`,
+ * `thresholdRatio` and `retainRatio` from the app's compaction.json
+ * (设置 → 对话压缩, packages/gateway/src/compaction-settings.ts), read when the
+ * agent service starts, and the compaction group gets the app's low-context
+ * mode (packages/gateway/src/low-context.ts), which reads the same file before
+ * every step.
+ *
+ * Sub-agents run the `ptc` preset (`ptcSubagents`, on unless turned off):
+ * standard's `subagent` row starts every child under it. There a child calls
+ * its tools from a program (run_code), and only what the program returns or
+ * prints comes back into its conversation, so waiting for a run, reading a
+ * long log or a list of runs costs a few lines instead of the whole output at
+ * every step. The agents' own conversations stay on `standard`: hand-offs,
+ * approvals and the cards they show work on single tool calls.
+ *
+ * A preset is overridden whole (dsh does not merge plugin lists), so the rest
+ * must stay exactly dsh's: the override is made from the installed file, and
+ * scripts/test/standard-preset.test.mjs fails when the two drift apart (a dsh
+ * update): run `node scripts/sync-standard-preset.mjs`.
  */
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-export const BEGIN = '# >>> preset-standard'
-export const END = '# <<< preset-standard'
+/** The presets the app overrides, in the order their blocks stand in the patch. */
+export const PRESETS = ['standard', 'ptc']
+
+export const begin = id => `# >>> preset-${id}`
+export const end = id => `# <<< preset-${id}`
+export const BEGIN = begin('standard')
+export const END = end('standard')
 
 /** The settings file as an expression: the parsed object, or {} when it is missing or broken. */
 const SETTINGS = "(() => { try { return JSON.parse(process.getBuiltinModule('node:fs').readFileSync((process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json', 'utf8')) } catch { return {} } })()"
@@ -23,28 +39,38 @@ const SETTINGS = "(() => { try { return JSON.parse(process.getBuiltinModule('nod
 const RATIO = `(Math.min(100, Math.max(5, Number(${SETTINGS}.threshold) || 80)) / 100)`
 /** The file itself, for the low-context row. */
 const FILE = "(process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json'"
+/** The preset sub-agents start under: `ptc` unless turned off (undefined: the parent's own). */
+const CHILD_PRESET = `${SETTINGS}.ptcSubagents === false ? undefined : 'ptc'`
 
-/** dsh-web-app's standard.patch.yml as installed with dsh. */
-export function upstreamStandard(root) {
+/** dsh-web-app's presets/<id>.patch.yml as installed with dsh. */
+export function upstreamPreset(root, id) {
   const dsh = realpathSync(join(root, 'node_modules', '@deepseek-ai', 'dsh'))
-  return readFileSync(join(dirname(dsh), 'dsh-web-app', 'presets', 'standard.patch.yml'), 'utf8')
+  return readFileSync(join(dirname(dsh), 'dsh-web-app', 'presets', `${id}.patch.yml`), 'utf8')
+}
+export const upstreamStandard = root => upstreamPreset(root, 'standard')
+
+/** The row `name` stands on, with its indent; throws when dsh moved it. */
+function rowOf(row, name, id) {
+  const at = row.findIndex(l => l.trim() === `name: '${name}'`)
+  if (at === -1) throw new Error(`${id}.patch.yml has no ${name} row: update scripts/lib/standard-preset.mjs`)
+  return { at, indent: row[at].match(/^ */)[0] }
 }
 
-/** The override block (markers included) made from `upstream`. */
-export function standardOverride(upstream) {
+/** The override block (markers included) of preset `id`, made from `upstream`. */
+export function presetOverride(upstream, id) {
   const lines = upstream.replace(/\r\n/g, '\n').split('\n')
-  const start = lines.findIndex(l => l === '    - id: preset-standard')
-  if (start === -1 || lines[start - 1] !== '- insert:') throw new Error('standard.patch.yml no longer starts with an insert of preset-standard: update scripts/lib/standard-preset.mjs')
+  const start = lines.findIndex(l => l === `    - id: preset-${id}`)
+  if (start === -1 || lines[start - 1] !== '- insert:') throw new Error(`${id}.patch.yml no longer starts with an insert of preset-${id}: update scripts/lib/standard-preset.mjs`)
   const row = lines.slice(start).map(l => l.replace(/^ {4}/, ''))
   while (row.at(-1) === '') row.pop()
-  const name = row.findIndex(l => l.trim() === "name: '@deepseek-ai/dsh-compaction-basic'")
-  if (name === -1) throw new Error('standard.patch.yml has no dsh-compaction-basic row: update scripts/lib/standard-preset.mjs')
-  const indent = row[name].match(/^ */)[0]
-  const next = row[name + 1]
+
+  const compaction = rowOf(row, '@deepseek-ai/dsh-compaction-basic', id)
+  const { indent } = compaction
+  const next = row[compaction.at + 1]
   if (next !== undefined && next.startsWith(indent) && !next.startsWith(`${indent}- `) && next.length > indent.length && next[indent.length] !== '-') {
-    throw new Error('dsh-compaction-basic now has its own config in standard.patch.yml: merge it in scripts/lib/standard-preset.mjs')
+    throw new Error(`dsh-compaction-basic now has its own config in ${id}.patch.yml: merge it in scripts/lib/standard-preset.mjs`)
   }
-  const config = [
+  const compactionConfig = [
     `${indent}config:`,
     `${indent}  # 设置 → 对话压缩 (compaction.json in the app's data); read when the agent service starts.`,
     `${indent}  auto: !!js "${SETTINGS}.auto !== false"`,
@@ -57,21 +83,36 @@ export function standardOverride(upstream) {
     `${indent}config:`,
     `${indent}  file: !!js "${FILE}"`,
   ]
+  const inserts = [{ after: compaction.at, lines: compactionConfig }]
+
+  if (id === 'standard') {
+    // The children of standard's agents run under ptc (设置 → 对话压缩 → 子 agent 用代码调用工具).
+    const subagent = rowOf(row, '@deepseek-ai/dsh-tool-subagent', id)
+    const config = row[subagent.at + 1]
+    if (config !== `${subagent.indent}config:` || row[subagent.at + 2]?.trim() !== 'provider: spawn') {
+      throw new Error(`the subagent row of ${id}.patch.yml is no longer a spawn with its own config: update scripts/lib/standard-preset.mjs`)
+    }
+    inserts.push({ after: subagent.at + 1, lines: [`${subagent.indent}  # Sub-agents call their tools from a program (run_code); read when the agent service starts.`, `${subagent.indent}  agentPreset: !!js "${CHILD_PRESET}"`] })
+  }
+
+  const body = [...row]
+  for (const { after, lines: added } of inserts.sort((a, b) => b.after - a.after)) body.splice(after + 1, 0, ...added)
+  const what = id === 'standard'
+    ? ["# dsh's standard agent preset, whole (a preset is overridden whole), with automatic compaction", '# following 设置 → 对话压缩, and sub-agents under the ptc preset.']
+    : ["# dsh's ptc agent preset, whole: what sub-agents run (tools called from run_code programs), with", '# automatic compaction following 设置 → 对话压缩.']
   return [
-    `${BEGIN} (made by scripts/sync-standard-preset.mjs from dsh-web-app's presets/standard.patch.yml: do not edit by hand)`,
-    "# dsh's standard agent preset, whole (a preset is overridden whole), with automatic compaction",
-    '# following 设置 → 对话压缩.',
-    ...row.slice(0, name + 1),
-    ...config,
-    ...row.slice(name + 1),
-    END,
+    `${begin(id)} (made by scripts/sync-standard-preset.mjs from dsh-web-app's presets/${id}.patch.yml: do not edit by hand)`,
+    ...what,
+    ...body,
+    end(id),
   ].join('\n')
 }
+export const standardOverride = upstream => presetOverride(upstream, 'standard')
 
-/** The block as it is in `patch` (the bundle's cordis.patch.yml), or undefined. */
-export function currentBlock(patch) {
+/** The block of preset `id` (markers included) as it is in `patch`, or undefined. */
+export function currentBlock(patch, id = 'standard') {
   const text = patch.replace(/\r\n/g, '\n')
-  const begin = text.indexOf(BEGIN)
-  const end = text.indexOf(END)
-  return begin === -1 || end === -1 ? undefined : text.slice(begin, end + END.length)
+  const from = text.indexOf(begin(id))
+  const to = text.indexOf(end(id))
+  return from === -1 || to === -1 ? undefined : text.slice(from, to + end(id).length)
 }

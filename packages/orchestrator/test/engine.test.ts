@@ -348,6 +348,33 @@ test('a run restarted after it failed (the monitor, the agent, 重试) is follow
   engine.dispose()
 })
 
+test('a rerun that has failed too by the time it is reached, and was rerun again, is followed to the end: no run after the one that succeeded', async () => {
+  const flaky = script('flaky3', 'none', { t: [{ once: 'debug/.one', steps: [{ log: 'boom' }, { exit: 2 }] }, { once: 'debug/.two', steps: [{ log: 'boom again' }, { exit: 2 }] }, { log: 'working' }, { sleepMs: 300 }, { exit: 0 }] })
+  const { engine, runner } = setup([flaky])
+  // As on 11-16: the first run is held while its rerun fails and is rerun in turn; the hold goes only after that.
+  const seen = new Set<string>()
+  let releaseFirst: (() => void) | undefined
+  const off = runner.watch({ state: run => {
+    if (run.state !== 'failed' || seen.has(run.id)) return
+    seen.add(run.id)
+    if (run.retryOf === undefined) {
+      releaseFirst = runner.hold(run.id)
+      setTimeout(() => { void runner.restart(run.id, '第一次重跑') }, 50)
+    } else {
+      const release = runner.hold(run.id)
+      void runner.restart(run.id, '第二次重跑').then(() => { release(); releaseFirst?.() })
+    }
+  } })
+  const p = pipeline({ nodes: [{ id: 'a', kind: 'script-task', scriptId: 'flaky3', taskId: 't', onFailure: { retries: 1, then: 'continue' } }] })
+  const run = await engine.finished(engine.start(p, { kind: 'manual' }).id)
+  off()
+  assert.equal(run.nodes['a']!.state, 'succeeded', run.nodes['a']!.detail)
+  assert.equal(run.nodes['a']!.runIds.length, 3, 'R1, R2 and R3, the one that succeeded')
+  assert.equal(run.nodes['a']!.attempts, 1, 'no retry started after the success')
+  assert.equal(runner.list('flaky3').length, 3, 'no fourth run')
+  engine.dispose()
+})
+
 test('closing games afterwards: each game where it played, none in an emulator that is shut down anyway', async () => {
   const maa = script('maa', 'adb', { daily: ok(200) })
   const m7 = script('m7', 'desktop', { main: ok(200) })

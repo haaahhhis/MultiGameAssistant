@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { ARCHIVE_MARK } from '@adg/protocol'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { apply, archiveRange, assemble, coverOf, isMessage, isPointer, keepSummaries, lowContextRange, MIN_SPAN_TOKENS, ownSummaries, parseArchiveDays, parseLowContext, pointerStep, pointerText, Refusals, refusedForSize, settingsReader, spanChars, spanTokens, summariesReader, summarizeSpan, summaryBudget, summaryInstruction, SummaryError, summaryTarget, taskOver, type StoppingAgent, type SurfaceEvent, type SurfaceView } from '../src/low-context.ts'
+import { apply, archiveRange, assemble, coverOf, IDLE_COMPACT_MS, idleRange, isMessage, isPointer, keepSummaries, lowContextRange, MIN_PRUNE_CHARS, MIN_SPAN_TOKENS, ownSummaries, parseArchiveDays, parseLowContext, pointerStep, pointerText, prunableChars, pruneStale, Refusals, refusedForSize, settingsReader, spanChars, spanTokens, summariesReader, summarizeSpan, summaryBudget, summaryInstruction, SummaryError, summaryTarget, taskOver, type StoppingAgent, type SurfaceEvent, type SurfaceView } from '../src/low-context.ts'
 
 const HOUR = 60 * 60_000
 const NOW = Date.parse('2026-11-13T12:00:00Z')
@@ -434,4 +434,126 @@ test('at the end of a task, a span too small to condense waits, and one dsh refu
   await freshEnd()
   await freshEnd()
   assert.equal(calls.length - before, 2, 'another failure is tried again at the next task end')
+})
+
+test('after a long silence the whole conversation so far is the span, the summaries at the start aside, whole turns only', () => {
+  const quiet = session([{ at: NOW - 30 * HOUR }, { at: NOW - 6 * HOUR }])
+  assert.deepEqual(idleRange(quiet, { now: NOW }), { start: quiet.surface.nodes[1], end: quiet.surface.nodes.at(-1) }, 'both turns, the latest too: the new message is not on the surface yet')
+  assert.equal(idleRange(quiet, { now: NOW - 3 * HOUR }), null, 'quiet for under four hours: still the same stretch of work')
+  assert.equal(IDLE_COMPACT_MS, 4 * HOUR)
+  const summarized = session([{ at: NOW - 40 * HOUR, summary: true }, { at: NOW - 6 * HOUR }])
+  assert.deepEqual(idleRange(summarized, { now: NOW }), { start: summarized.surface.nodes[1], end: summarized.surface.nodes.at(-1) }, 'a summary stays in the span: it is condensed again')
+  assert.deepEqual(idleRange(summarized, { now: NOW, separate: true }), { start: summarized.surface.nodes[2], end: summarized.surface.nodes.at(-1) }, 'archiving: the summary stays as it is')
+  assert.equal(idleRange(session([{ at: NOW - 40 * HOUR, summary: true }]), { now: NOW, separate: true }), null, 'only a summary: nothing new to compact')
+  assert.equal(idleRange(session([]), { now: NOW }), null)
+})
+
+test('a conversation that did not end with a reply is not compacted at a turn start', () => {
+  const cut = session([{ at: NOW - 6 * HOUR }])
+  const events = cut.surface.nodes.map(seq => cut.eventAt(seq)!)
+  const open = { ...cut, surface: { nodes: cut.surface.nodes.slice(0, -1) }, eventAt: (seq: number) => events[cut.surface.nodes.indexOf(seq)] }
+  assert.equal(idleRange(open, { now: NOW }), null, 'it ends on a tool result: the step is still open')
+})
+
+/** A session whose tool results have these sizes, as dsh's pruner measures them. */
+function withResults(sizes: readonly number[]) {
+  const events: SurfaceEvent[] = [{ type: 'system/message', time: 0 }, ...sizes.map((size, i): SurfaceEvent => ({ type: 'tool/result', time: i + 1, data: { size } }))]
+  return {
+    id: 's1',
+    surface: { nodes: events.map((_, i) => i) },
+    eventAt: (seq: number) => events[seq],
+    deriveEventMessage: (event: SurfaceEvent) => ({ content: [{ type: 'text', text: 'x'.repeat((event.data as { size: number }).size) }] }),
+  }
+}
+const prunerFor = () => {
+  const cut: unknown[] = []
+  return {
+    cut,
+    config: { thresholdChars: 8192 },
+    measureContent: (blocks: readonly { text?: string }[]) => blocks.reduce((sum, block) => sum + (block.text?.length ?? 0), 0),
+    pruneSession(session: unknown) { cut.push(session); return { pruned: [{}], charsRemoved: 31_000 } },
+  }
+}
+
+test('long tool results are trimmed when a task is over, once enough would go to be worth losing the prompt cache for', () => {
+  const small = withResults([100, 8000, 20_000])
+  const pruner = prunerFor()
+  assert.equal(prunableChars(pruner, small), 20_000 - 8192, 'what each result runs over the pruner budget by')
+  assert.equal(pruneStale(pruner, small), 0, `${20_000 - 8192} characters: under ${MIN_PRUNE_CHARS}, left alone`)
+  assert.equal(pruner.cut.length, 0)
+  const big = withResults([184_000, 12_000])
+  assert.equal(pruneStale(pruner, big), 31_000)
+  assert.equal(pruner.cut.length, 1)
+  assert.equal(pruneStale(undefined, big), 0, 'no pruner service: nothing to do')
+  assert.equal(pruneStale({} as never, big), 0)
+})
+
+test('a turn that starts after a long silence is compacted first, the compaction is not retried for nothing, and failures never stop the turn', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-low-context-idle-'))
+  const file = join(dir, 'compaction.json')
+  writeFileSync(file, JSON.stringify({ auto: true, threshold: 80, lowContext: true }))
+  const now = Date.now()
+  const view = session([{ at: now - 30 * HOUR }, { at: now - 6 * HOUR }])
+  const calls: string[] = []
+  const warnings: string[] = []
+  let failure: Error | undefined
+  let busy = false
+  let preStep: ((payload: { agent: StoppingAgent; signal: AbortSignal }, next: () => Promise<string>) => Promise<string>) | undefined
+  const ctx = {
+    logger: () => ({ info: () => {}, warn: (text: string) => warnings.push(text) }),
+    compaction: {
+      async compactRegion(start: number, end: number) {
+        calls.push(`${start}-${end}`)
+        if (failure !== undefined) throw failure
+        return { shadowedSeqs: [start, end] }
+      },
+    },
+    effect: () => {},
+    get: (name: string) => (name === 'tokenMeter' ? { measure: () => ({ nodes: view.surface.nodes.map(seq => ({ seq, tokens: 1000 })) }) } : name === 'adgGateway' ? { workPending: () => busy } : undefined),
+    on: (name: string, handler: typeof preStep) => { if (name === 'agent/pre-step') preStep = handler },
+  }
+  apply(ctx as never, { file })
+  const agent = { session: view, inbox: {} } as unknown as StoppingAgent
+  const step = () => preStep!({ agent, signal: new AbortController().signal }, async () => 'enter')
+  assert.equal(await step(), 'enter', 'the step goes on after it')
+  assert.deepEqual(calls, [`${view.surface.nodes[1]}-${view.surface.nodes.at(-1)}`], 'all of it, before the new message')
+  busy = true
+  await step()
+  assert.equal(calls.length, 1, 'a hand-off still waiting: the same task is coming back')
+  busy = false
+  failure = new Error('fetch failed')
+  assert.equal(await step(), 'enter', 'a failed summary does not stop the turn')
+  assert.match(warnings.join('\n'), /before the turn.*fetch failed/)
+  failure = new Error('summary is not smaller than the shadowed content (6100 estimated framed tokens >= 6000)')
+  await step()
+  const refusedAt = calls.length
+  await step()
+  assert.equal(calls.length, refusedAt, 'refused for size: not tried again until it changes')
+  const before = calls.length
+  writeFileSync(file, JSON.stringify({ auto: true, threshold: 80, lowContext: false }))
+  appendFileSync(file, ' ')
+  failure = undefined
+  await step()
+  assert.equal(calls.length, before, 'low-context mode off: nothing is compacted before the turn')
+})
+
+test('at the end of a task the long tool results are trimmed, also when nothing needed compacting', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-low-context-prune-'))
+  const file = join(dir, 'compaction.json')
+  writeFileSync(file, JSON.stringify({ auto: true, threshold: 80, lowContext: true }))
+  const view = Object.assign(withResults([184_000, 12_000]), { id: 's1' })
+  const pruner = prunerFor()
+  let stopping: ((event: { agent: StoppingAgent; signal: AbortSignal }) => Promise<void>) | undefined
+  const ctx = {
+    logger: () => ({ info: () => {}, warn: () => {} }),
+    compaction: { async compactRegion() { throw new Error('nothing to compact') } },
+    effect: () => {},
+    get: (name: string) => (name === 'toolResultPruner' ? pruner : undefined),
+    on: (name: string, handler: typeof stopping) => { if (name === 'agent/turn-stopping') stopping = handler },
+  }
+  apply(ctx as never, { file })
+  await stopping!({ agent: { session: view as never, inbox: {} }, signal: new AbortController().signal })
+  assert.equal(pruner.cut.length, 1)
+  await stopping!({ agent: { session: view as never, inbox: { nextTurn: ['又来一条'] } }, signal: new AbortController().signal })
+  assert.equal(pruner.cut.length, 1, 'the task is not over (a message is queued): nothing is rewritten under it')
 })

@@ -308,9 +308,14 @@ export class Engine {
       case 'script-task': {
         // Stopping the pipeline stops the run also while it is still starting (emulator, game): the run has no id here yet.
         let current: RunInfo = await this.#deps.runner.start(node.scriptId, node.taskId, node.params, { profile: node.profile, signal })
+        // A run that failed as it started never ran. A restart that has failed already by the time it is reached may
+        // have been restarted in turn (R1 → R2 failed → R3 succeeded): the chain is followed to its end either way.
+        if (current.endedAt !== undefined && current.state === 'failed') {
+          this.#addRun(active, node.id, current)
+          return { ok: false, detail: current.outcome ?? '没有启动' }
+        }
         for (;;) {
           this.#addRun(active, node.id, current)
-          if (current.endedAt !== undefined && current.state === 'failed') return { ok: false, detail: current.outcome ?? '没有启动' }
           const ended = await this.#deps.runner.finished(current.id)
           // The monitor (or the agent, or the user) may still restart it: wait for that before going on.
           if (this.#deps.runner.held?.(current.id) === true) this.#set(active, node.id, { detail: '运行出了问题，正在处理：处理好、重新跑成功，或你选「重试」「忽略」之后再往下走' })

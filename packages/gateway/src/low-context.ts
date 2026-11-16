@@ -36,6 +36,26 @@
  * with the pointer instead of a model call), so the log records what it
  * replaced like any other summary.
  *
+ * Idle (`IDLE_COMPACT_MS`): the 12-hour window is by the age of messages, and
+ * it is applied as a turn ends, so the first task after a long silence used to
+ * run on the whole stale conversation and only then compact it (a day-old 175K
+ * context carried through 27 requests in the logs of 11-14 to 11-16). Now, as
+ * a turn's first step is proposed after the conversation has been quiet that
+ * long, everything before the new message is compacted first (the turn is open
+ * and the new message not yet in the history, so the whole surface before it
+ * goes, whole turns), and the agent starts from the summary plus the pointer:
+ * what it needs it reads back with history_search / history_read. The prompt
+ * cache is not always cold by then (DeepSeek's still served 170K of that
+ * day-old context), but one summary call over cached tokens costs far less than
+ * carrying the whole span through every step of the new task.
+ *
+ * Tool results (`pruneStale`): when a task is over, the tool results that run
+ * long (dsh's tool-result pruner: head and tail kept, the middle cut) are
+ * trimmed once together, so a log dump read during a task does not ride along
+ * in every request of the tasks after it. Only when enough would go
+ * (`MIN_PRUNE_CHARS`), because rewriting the history costs the prompt cache
+ * from the first trimmed result on.
+ *
  * Mounted in the agent preset's compaction group, next to dsh-compaction-basic
  * (scripts/lib/standard-preset.mjs), so it reaches that group's engine. It
  * reads compaction.json each time (a stat, and the file only when it
@@ -172,6 +192,71 @@ export function lowContextRange(session: SurfaceView, options: { now: number; wi
   if (events.slice(first, keepFrom).every(event => event === undefined || isReplace(event) || event.type === 'system/message')) return null
   if (options.separate === true && events[messages[0]!]!.time >= cutoff - (options.batchMs ?? 0)) return null
   return { start: nodes[first]!, end: nodes[keepFrom - 1]! }
+}
+
+/**
+ * A turn that starts after the conversation was quiet this long begins from its
+ * summary: what came before it is compacted first (idle compaction).
+ */
+export const IDLE_COMPACT_MS = 4 * 60 * 60_000
+
+/**
+ * Trimming long tool results waits until at least this many characters would go
+ * (about 6,000 tokens): the history is rewritten, and the provider's prompt
+ * cache is lost from the first trimmed result on.
+ */
+export const MIN_PRUNE_CHARS = 24_000
+
+/**
+ * The span to compact when a turn starts after a long silence: everything on the
+ * surface after the system prompt (and, with `separate`, after the summaries at
+ * the start, which stay as they are) up to the end of the last turn. The new
+ * message is not on the surface yet. Null when the conversation was not quiet for
+ * `idleMs` (by its last record), did not end with a reply (a turn cut off, tool
+ * calls without their results), or holds nothing but summaries.
+ */
+export function idleRange(session: SurfaceView, options: { now: number; idleMs?: number; separate?: boolean }): { start: number; end: number } | null {
+  const nodes = session.surface.nodes
+  const lastSeq = nodes[nodes.length - 1]
+  const last = lastSeq === undefined ? undefined : session.eventAt(lastSeq)
+  if (last === undefined || last.type !== 'assistant/message') return null
+  if (options.now - last.time < (options.idleMs ?? IDLE_COMPACT_MS)) return null
+  const events = nodes.map(seq => session.eventAt(seq))
+  let first = events[0]?.type === 'system/message' ? 1 : 0
+  if (options.separate === true) while (first < events.length && events[first] !== undefined && isSummaryNode(events[first]!)) first++
+  if (!events.slice(first).some(event => event !== undefined && isMessage(event))) return null
+  return { start: nodes[first]!, end: lastSeq! }
+}
+
+/** The slice of dsh's tool-result pruner (the `toolResultPruner` service) this reads. */
+export interface ToolResultPruner {
+  readonly config: { readonly thresholdChars: number }
+  measureContent(blocks: readonly { type: string; text?: string }[]): number
+  pruneSession(session: unknown): { readonly pruned: readonly unknown[]; readonly charsRemoved: number }
+}
+
+/** The slice of a dsh session the pruner's pre-check reads. */
+export interface PrunableSession extends SurfaceView {
+  deriveEventMessage(event: SurfaceEvent): { readonly content: readonly { type: string; text?: string }[] }
+}
+
+/** How many characters the pruner would cut from the tool results on the surface, at most (it keeps the head and tail of each, so a little less). */
+export function prunableChars(pruner: ToolResultPruner, session: PrunableSession): number {
+  let chars = 0
+  for (const seq of session.surface.nodes) {
+    const event = session.eventAt(seq)
+    if (event?.type !== 'tool/result') continue
+    const size = pruner.measureContent(session.deriveEventMessage(event).content)
+    if (size > pruner.config.thresholdChars) chars += size - pruner.config.thresholdChars
+  }
+  return chars
+}
+
+/** Trim long tool results once enough would go. @returns the characters cut; 0 when it waited or there was nothing. */
+export function pruneStale(pruner: ToolResultPruner | undefined, session: PrunableSession, minChars = MIN_PRUNE_CHARS): number {
+  if (typeof pruner?.pruneSession !== 'function' || typeof pruner.measureContent !== 'function') return 0
+  if (prunableChars(pruner, session) < minChars) return 0
+  return pruner.pruneSession(session).charsRemoved
 }
 
 /** What a summary stands for: the time and the numbers (#seq) of the first and last messages it replaced. */
@@ -732,6 +817,36 @@ export function apply(ctx: Context, config: Config = {}): void {
     return own.run(range, agent, (input, owner, abort) => summarizeSpan(llm, engine.config, input, owner, abort), signal)
   }
 
+  const work = () => service<WorkView>('adgGateway')
+
+  // A turn's first step after a long silence: its turn is open (dsh opens it before proposing the step) and the new
+  // message is still in the inbox, so the whole conversation so far is compacted before the agent sees the message.
+  // A waterfall: the compaction is done before the listeners after this one assemble the step.
+  ctx.on('agent/pre-step' as never, (async (payload: { agent: StoppingAgent; signal: AbortSignal }, next: () => Promise<unknown>) => {
+    try {
+      const { lowContext, archiveDays } = settings()
+      if (lowContext && !payload.signal.aborted) {
+        const archiving = archiveDays !== null && own !== undefined && summariesFile !== undefined
+        const sessionId = payload.agent.session.id
+        const range = idleRange(payload.agent.session, { now: Date.now(), ...(archiving ? { separate: true } : {}) })
+        // A hand-off still waiting for an answer, or a sub-agent working, is the same task coming back.
+        if (range !== null && work()?.workPending?.(sessionId) !== true && !refused.has(sessionId, 'idle', range)) {
+          const tokens = spanTokens(meter(), payload.agent.session, range)
+          if (tokens === undefined || tokens >= MIN_SPAN_TOKENS) {
+            const result = await compact(range, payload.agent, payload.signal).catch((error: unknown): never => {
+              if (refusedForSize(error)) refused.add(sessionId, 'idle', range)
+              throw error
+            })
+            log.info(`low-context: compacted ${result.shadowedSeqs.length} records (seqs ${range.start}-${range.end}, ${tokens ?? '?'} tokens) of ${sessionId} before its turn: quiet for over ${IDLE_COMPACT_MS / 3_600_000} hours`)
+          }
+        }
+      }
+    } catch (error) {
+      log.warn(`low-context compaction before the turn of ${payload.agent.session.id} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return next()
+  }) as never)
+
   // The turn is still open here, so the compaction belongs to it (as dsh's own automatic one does).
   ctx.on('agent/turn-stopping' as never, (async ({ agent, signal }: { agent: StoppingAgent; signal: AbortSignal }) => {
     const { lowContext, archiveDays } = settings()
@@ -758,6 +873,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
     } catch (error) {
       log.warn(`low-context compaction of ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    // What a task read (logs, run records) need not be carried word for word into the next one.
+    try {
+      const cut = pruneStale(service<ToolResultPruner>('toolResultPruner'), agent.session as unknown as PrunableSession)
+      if (cut > 0) log.info(`low-context: trimmed long tool results of ${sessionId} (${cut} characters)`)
+    } catch (error) {
+      log.warn(`low-context trimming of tool results of ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (!archiving || signal.aborted) return
     try {

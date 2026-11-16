@@ -23450,13 +23450,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "ptcSubagents": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
             "auto",
             "threshold",
             "lowContext",
-            "archiveDays"
+            "archiveDays",
+            "ptcSubagents"
           ],
           "additionalProperties": false
         },
@@ -23486,13 +23491,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "ptcSubagents": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
             "auto",
             "threshold",
             "lowContext",
-            "archiveDays"
+            "archiveDays",
+            "ptcSubagents"
           ],
           "additionalProperties": false
         }
@@ -23533,13 +23543,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "ptcSubagents": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
             "auto",
             "threshold",
             "lowContext",
-            "archiveDays"
+            "archiveDays",
+            "ptcSubagents"
           ],
           "additionalProperties": false
         }
@@ -23579,13 +23594,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "ptcSubagents": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
             "auto",
             "threshold",
             "lowContext",
-            "archiveDays"
+            "archiveDays",
+            "ptcSubagents"
           ],
           "additionalProperties": false
         },
@@ -23615,13 +23635,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "ptcSubagents": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
             "auto",
             "threshold",
             "lowContext",
-            "archiveDays"
+            "archiveDays",
+            "ptcSubagents"
           ],
           "additionalProperties": false
         }

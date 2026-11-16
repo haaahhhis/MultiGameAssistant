@@ -8,6 +8,8 @@
  */
 
 export const NAME = 'dsh-multigameassistant'
+/** The app's agent preset in a shared dsh (packages/gateway/src/shared.ts AGENT_PRESET). */
+export const AGENT_PRESET = 'mga'
 /** The dsh this was built and tested against, up to the next minor (dsh changes its plugin APIs between minors). */
 export const DSH_RANGE = '>=0.2.2-rc.3 <0.3.0-0'
 /** Where the manifest and patch are kept in the repository. */
@@ -36,14 +38,25 @@ export function pluginPatch(bundlePatch) {
   }
   const gatewayEntry = "      name: '@adg/gateway'\n      config:\n"
   const presetHead = '    id: standard\n    order: 1\n'
+  const ptcHead = '    id: ptc\n    order: 2\n'
+  // Standard's sub-agents start under ptc; the app's start under its own copy of it, which has the app's tools.
+  const childPreset = ": 'ptc'\"\n"
   const rows = cut('\n- insert:\n', '\n# M4 of the plan')
   const preset = cut('\n- id: preset-standard\n', '\n# <<< preset-standard')
-  if (!rows.includes(gatewayEntry) || !preset.includes(presetHead)) throw new Error('packages/bundle/cordis.patch.yml: the gateway or the standard preset changed shape')
-  const appPreset = `${preset
-    .replace('- id: preset-standard\n', '- id: preset-mga\n')
-    .replace(presetHead, '    id: mga\n    name: 多游戏助手\n    description: MultiGameAssistant：安装、运行和编排游戏脚本，处理运行中的问题，查活动\n    order: 50\n')}
+  const ptc = cut('\n- id: preset-ptc\n', '\n# <<< preset-ptc')
+  if (!rows.includes(gatewayEntry) || !preset.includes(presetHead) || !preset.includes(childPreset) || !ptc.includes(ptcHead)) {
+    throw new Error('packages/bundle/cordis.patch.yml: the gateway, the standard preset or the ptc preset changed shape')
+  }
+  const agentRow = `
       - id: adg-agent
         name: '@adg/gateway/agent'`
+  const appPreset = `${preset
+    .replace('- id: preset-standard\n', '- id: preset-mga\n')
+    .replace(presetHead, '    id: mga\n    name: 多游戏助手\n    description: MultiGameAssistant：安装、运行和编排游戏脚本，处理运行中的问题，查活动\n    order: 50\n')
+    .replace(childPreset, `: '${AGENT_PRESET}-ptc'"\n`)}${agentRow}`
+  const childAppPreset = `${ptc
+    .replace('- id: preset-ptc\n', `- id: preset-${AGENT_PRESET}-ptc\n`)
+    .replace(ptcHead, `    id: ${AGENT_PRESET}-ptc\n    name: 多游戏助手 · 子 agent\n    description: 多游戏助手的子 agent 自动用的（用代码调用工具），不用自己选\n    order: 51\n`)}${agentRow}`
   return [
     `# ${NAME}: the app's plugins (packages/bundle/cordis.patch.yml, each @adg/<plugin> as ${NAME}/<plugin>)`,
     "# sharing the dsh with the person's other chats, and the app's agent preset (dsh's standard one with the app's",
@@ -57,6 +70,9 @@ export function pluginPatch(bundlePatch) {
     '',
     "    # The app's agent preset: its sessions run this one (the gateway creates them so).",
     appPreset.split('\n').map(line => line === '' ? line : `    ${line}`).join('\n'),
+    '',
+    "    # What the app's sub-agents run: dsh's ptc preset with the app's tools (设置 → 对话压缩 can turn it off).",
+    childAppPreset.split('\n').map(line => line === '' ? line : `    ${line}`).join('\n'),
     '',
   ].join('\n').replace(/name: '@adg\/gateway\/([a-z-]+)'/g, `name: '${NAME}/$1'`).replace(/name: '@adg\/([a-z-]+)'/g, `name: '${NAME}/$1'`)
 }
