@@ -90,7 +90,20 @@ export interface IncidentStore {
   saveSettings(settings: MonitorSettings): Promise<void>
   saveScreenshot(incidentId: string, png: Buffer): Promise<void>
   readScreenshot(incidentId: string): Promise<Buffer | undefined>
+  /** The saved screenshots and when each was taken (Unix ms); for {@link Monitor.tidyScreenshots}. */
+  screenshots?(): Promise<{ id: string; at: number }[]>
+  removeScreenshot?(incidentId: string): Promise<void>
 }
+
+/**
+ * Incident screenshots are kept this long. MAA deletes its old debug
+ * screenshots outright (only the newest ten or so per folder stay); these are
+ * kept a week, long enough to look back at what went wrong. The incident
+ * record stays, without its picture.
+ */
+export const KEEP_SCREENSHOTS_MS = 7 * 86_400_000
+/** How often the running monitor looks for screenshots past their time. */
+const TIDY_SCREENSHOTS_EVERY_MS = 6 * 60 * 60_000
 
 /** Seconds a script may be quiet before the agent steps in, until its own normal rhythm is known (`scriptStall`). */
 export const DEFAULT_STALL_SECONDS = 60
@@ -147,6 +160,9 @@ export class Monitor {
   /** Serializes work per run so recovery steps never interleave. */
   readonly #queues = new Map<string, Promise<void>>()
   #seq = 0
+  /** When screenshots were last tidied (tick does it every few hours). */
+  #shotsTidiedAt = 0
+  #tidyingShots: Promise<number> | undefined
 
   constructor(deps: MonitorDeps) {
     this.#deps = deps
@@ -162,6 +178,44 @@ export class Monitor {
     for (const run of this.#deps.runner.list()) if (run.endedAt === undefined) this.#track(run)
     this.#unwatch = this.#deps.runner.watch({ state: run => this.#onState(run), line: (run, line) => this.#onLine(run, line) })
     if (tickMs > 0) this.#timer = setInterval(() => this.tick(), tickMs)
+    void this.#tidyInBackground()
+  }
+
+  /**
+   * Delete screenshots past {@link KEEP_SCREENSHOTS_MS} and those of
+   * incidents no longer kept; incidents whose screenshot is gone say so
+   * (`screenshot: false`). A call while a pass is going waits for that one.
+   * @returns how many were deleted.
+   */
+  tidyScreenshots(): Promise<number> {
+    this.#tidyingShots ??= this.#tidyScreenshots().finally(() => { this.#tidyingShots = undefined })
+    return this.#tidyingShots
+  }
+
+  async #tidyScreenshots(): Promise<number> {
+    const store = this.#deps.store
+    if (store.screenshots === undefined || store.removeScreenshot === undefined) return 0
+    this.#shotsTidiedAt = this.#now()
+    const byId = new Map(this.#incidents.map(i => [i.id, i]))
+    const present = new Set<string>()
+    let removed = 0
+    for (const shot of await store.screenshots()) {
+      if (byId.has(shot.id) && this.#now() - shot.at < KEEP_SCREENSHOTS_MS) {
+        present.add(shot.id)
+        continue
+      }
+      await store.removeScreenshot(shot.id).then(() => { removed++ }, error => this.#deps.log.warn(`deleting the screenshot of ${shot.id} failed: ${message(error)}`))
+    }
+    // Being taken right now: the flag is set once the file is written, so it is not cleared here.
+    const gone = this.#incidents.filter(i => i.screenshot && !present.has(i.id) && this.#now() - i.createdAt > 60_000)
+    for (const incident of gone) incident.screenshot = false
+    if (gone.length > 0) await store.saveIncidents(this.#incidents).catch(error => this.#deps.log.warn(`saving incidents failed: ${message(error)}`))
+    if (removed > 0) this.#deps.log.info(`deleted ${removed} incident screenshot(s) older than ${KEEP_SCREENSHOTS_MS / 86_400_000} days or of incidents no longer kept`)
+    return removed
+  }
+
+  #tidyInBackground(): Promise<void> {
+    return this.tidyScreenshots().then(() => {}, error => this.#deps.log.warn(`tidying incident screenshots failed: ${message(error)}`))
   }
 
   stop(): void {
@@ -303,6 +357,10 @@ export class Monitor {
   /** Check every running run for stalls and overtime. */
   tick(): void {
     const now = this.#now()
+    if (now - this.#shotsTidiedAt >= TIDY_SCREENSHOTS_EVERY_MS) {
+      this.#shotsTidiedAt = now
+      void this.#tidyInBackground()
+    }
     for (const watched of this.#watched.values()) {
       const { run } = watched
       if (run.endedAt !== undefined || run.state !== 'running') continue

@@ -316,7 +316,7 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.runLog,
-      description: '读一次运行保存下来的完整日志（包括程序重启前的运行），用来排查问题：可以按文字或 /正则/ 搜索、只看错误或警告、从某一行开始往后翻。script_runs 只给最后几行，这里能看全部。',
+      description: '读一次运行保存下来的完整日志（包括程序重启前的运行），用来排查问题：可以按文字或 /正则/ 搜索、只看错误或警告、从某一行开始往后翻。script_runs 只给最后几行，这里能看全部。日志按保留规则清理：每个脚本只留最近约 64 MiB（压缩后）的运行日志，一次运行的日志超过 64 MiB 时只留后面的部分，运行记录 30 天后删除。',
       properties: {
         run_id: { type: 'string', description: '运行 id（script_runs 或异常记录里有）。' },
         search: { type: 'string', description: '要找的文字，或 /正则/（不区分大小写）。' },

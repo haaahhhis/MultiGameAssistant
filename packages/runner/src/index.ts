@@ -21,6 +21,7 @@ export { applyPatches, editText, setIn } from './patch.ts'
 export { ConfigProfiles, declaredFiles, type Injection, type ProfileStatus } from './profiles.ts'
 export { BusyError, ResourceLocks, describe as describeResource, type Holder } from './locks.ts'
 export { LogTail } from './tail.ts'
+export { KEEP_DAYS, LIVE_LOG_MAX, PACK_AFTER_MS, SCRIPT_LOG_BUDGET, readRunLog, tidyRuns, type TidyResult } from './retention.ts'
 export { PARAMS_SCHEMA, parseValue, runnerTools, taskParams, TOOL_NAMES } from './tools.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -36,6 +37,9 @@ const ConfigSchema = z.object({
   dataDir: z.string().min(1),
 })
 export type Config = z.input<typeof ConfigSchema>
+
+/** How often saved runs are tidied besides after each run. */
+const TIDY_EVERY_MS = 6 * 60 * 60_000
 
 export class AdgRunner extends Service {
   static inject = ['adgScripts']
@@ -60,8 +64,15 @@ export class AdgRunner extends Service {
       log: { info: m => log.info(m), warn: m => log.warn(m) },
     })
     const runner = this.runner
-    // Earlier runs and their saved logs, for the run list and the agent.
-    void runner.loadHistory().catch(error => log.warn(`loading run history failed: ${String(error)}`))
+    // Earlier runs and their saved logs, for the run list and the agent; then the retention rules (retention.ts),
+    // again after every run and every few hours (the app can stay up for weeks).
+    const tidy = () => runner.tidy().catch(error => log.warn(`tidying run logs failed: ${String(error)}`))
+    void runner.loadHistory().catch(error => log.warn(`loading run history failed: ${String(error)}`)).then(tidy)
+    ctx.effect(() => {
+      const every = setInterval(() => void tidy(), TIDY_EVERY_MS)
+      every.unref()
+      return () => clearInterval(every)
+    }, 'adg-runner run log retention')
     const library: LibraryView = { get: id => scripts.library.get(id), packOf: id => scripts.library.packOf(id) }
     // Pages showing a script's profiles (its config card, pipeline steps) re-read them.
     const profilesChanged = async (scriptId: string) => {

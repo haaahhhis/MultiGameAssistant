@@ -8,12 +8,18 @@
  * helpers such as platform-tools live in `<toolsDir>/_shared/`. Imported
  * directories stay where they are and are never moved or deleted.
  *
+ * When the tools directory moved (the desktop app puts scripts in its install
+ * folder), the earlier one is a former tools directory: what is installed
+ * there keeps working and is still the library's to prune and delete; a
+ * script moves over with its next update, whose new version goes to the new one.
+ *
  * A release that is a setup program (NSIS / Inno Setup) is not unpacked: it
  * waits in the downloads folder for the agent to run it (`runSetup`) and
  * import the folder it installed into, which finishes the install.
  *
  * Nothing here names a particular script: behaviour comes from Script Packs.
  */
+import { existsSync } from 'node:fs'
 import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
@@ -45,6 +51,8 @@ export type PreRunUpdate =
 
 export interface LibraryOptions {
   readonly toolsDir: string
+  /** Where scripts were installed before the tools directory moved (see the top of this file). */
+  readonly formerToolsDirs?: readonly string[]
   /** Holds `scripts.json` and the user's own packs (`packs/`). */
   readonly dataDir: string
   /** Built-in pack directories; `<dataDir>/packs` is appended as the user's. */
@@ -90,6 +98,7 @@ export interface InstallRequest {
 
 export class ScriptLibrary {
   readonly toolsDir: string
+  readonly formerToolsDirs: readonly string[]
   readonly #options: LibraryOptions
   readonly #store: StateStore
   readonly #jobs: JobBoard
@@ -104,13 +113,17 @@ export class ScriptLibrary {
   constructor(options: LibraryOptions) {
     this.#options = options
     this.toolsDir = resolve(options.toolsDir)
+    this.formerToolsDirs = (options.formerToolsDirs ?? []).map(dir => resolve(dir)).filter(dir => !samePath(dir, this.toolsDir))
     this.#store = new StateStore(join(options.dataDir, 'scripts.json'))
     this.#now = options.now ?? Date.now
     this.#jobs = new JobBoard(options.onJob, this.#now)
   }
 
   get sharedDir(): string {
-    return join(this.toolsDir, '_shared')
+    const own = join(this.toolsDir, '_shared')
+    // What was fetched before the tools directory moved (adb) stays in use until something is fetched into the new one.
+    if (!existsSync(own)) for (const former of this.formerToolsDirs) if (existsSync(join(former, '_shared'))) return join(former, '_shared')
+    return own
   }
 
   async start(): Promise<void> {
@@ -162,9 +175,9 @@ export class ScriptLibrary {
     return packId === undefined ? undefined : this.#packs.get(packId)
   }
 
-  /** Directories MultiGameAssistant must not let the agent rewrite: the tools directory and every imported directory. */
+  /** Directories MultiGameAssistant must not let the agent rewrite: the tools directories and every imported directory. */
   protectedDirs(): string[] {
-    return [this.toolsDir, ...this.#state.scripts.filter(s => s.source.kind === 'local').map(s => (s.source as { path: string }).path)]
+    return [this.toolsDir, ...this.formerToolsDirs, ...this.#state.scripts.filter(s => s.source.kind === 'local').map(s => (s.source as { path: string }).path)]
   }
 
   pack(id: string): LoadedPack | undefined {
@@ -1314,7 +1327,7 @@ export class ScriptLibrary {
 
   async #importLocal(path: string, request: { id?: string | undefined; name?: string | undefined; packId?: string | undefined }): Promise<ScriptInfo> {
     if (!(await stat(path).then(s => s.isDirectory(), () => false))) throw new Error(`不是一个存在的目录：${path}`)
-    if (this.#ownsDir(path)) throw new Error('这个目录在工具目录里，由安装器管理，不需要导入')
+    if (this.#ownsDir(path, false)) throw new Error('这个目录在工具目录里，由安装器管理，不需要导入')
     const same = this.#state.scripts.find(s => s.source.kind === 'local' && samePath(s.source.path, path))
     if (same !== undefined) return this.#info(same)
 
@@ -1362,12 +1375,14 @@ export class ScriptLibrary {
   async remove(id: string, deleteFiles = false): Promise<void> {
     const script = this.#script(id)
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请先取消`)
-    if (deleteFiles && script.source.kind !== 'local') {
-      const dir = join(this.toolsDir, id)
-      if (this.#ownsDir(dir)) await rm(dir, { recursive: true, force: true })
+    for (const root of [this.toolsDir, ...this.formerToolsDirs]) {
+      if (deleteFiles && script.source.kind !== 'local') {
+        const dir = join(root, id)
+        if (this.#ownsDir(dir)) await rm(dir, { recursive: true, force: true })
+      }
+      // A local import's own directory stays; the backups of its updates were ours.
+      if (script.source.kind === 'local') await rm(join(root, id, '.local-backup'), { recursive: true, force: true })
     }
-    // A local import's own directory stays; the backups of its updates were ours.
-    if (script.source.kind === 'local') await rm(join(this.toolsDir, id, '.local-backup'), { recursive: true, force: true })
     for (const setup of this.#state.setups.filter(s => s.scriptId === id)) await rm(setup.file, { force: true })
     this.#state.setups = this.#state.setups.filter(s => s.scriptId !== id)
     this.#state.scripts = this.#state.scripts.filter(s => s.id !== id)
@@ -1638,9 +1653,12 @@ export class ScriptLibrary {
     for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`
   }
 
-  #ownsDir(dir: string): boolean {
-    const rel = relative(this.toolsDir, resolve(dir))
-    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+  /** Inside the tools directory (or a former one, unless `former` is false): installed by the library, its to delete. */
+  #ownsDir(dir: string, former = true): boolean {
+    return [this.toolsDir, ...(former ? this.formerToolsDirs : [])].some(root => {
+      const rel = relative(root, resolve(dir))
+      return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+    })
   }
 
   /** Write the state; a script that moved past its pack's version is asked about once (onPackReview). */

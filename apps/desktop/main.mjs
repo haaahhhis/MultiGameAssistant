@@ -37,7 +37,10 @@ const here = dirname(fileURLToPath(import.meta.url))
  * Installed (scripts/package-desktop.mjs writes installed.json): dsh and the
  * bundle are in this folder's node_modules, the UI in web/, and the data in
  * %LOCALAPPDATA%\MultiGameAssistant (outside the install folder, so upgrades
- * and uninstalling keep it). Otherwise this runs from the repository.
+ * and uninstalling keep it). The scripts it downloads (MAA and the like, the
+ * big part) go in the folder chosen when installing, `<install folder>\scripts`
+ * (scriptsDir), which upgrades and uninstalling keep too (installer.nsh).
+ * Otherwise this runs from the repository.
  */
 const installed = readInstalled()
 /** Before the rename (2026-10) the app and its folders were called this. */
@@ -435,6 +438,35 @@ function readInstalled() {
   }
 }
 
+/** @type {string | null | undefined} null: no scripts folder of the install's own (see scriptsDir). */
+let scriptsDirChecked
+
+/**
+ * Installed: where scripts are installed, `<install folder>\scripts` — on the
+ * drive the user picked, not in %LOCALAPPDATA%. Undefined from the repository,
+ * when ADG_TOOLS_DIR is already set, or when the install folder cannot be
+ * written (then the default, <data>\adg\tools). Scripts installed before keep
+ * working where they are and move over with their next update
+ * (packages/script-registry, formerToolsDirs).
+ * @returns {string | undefined}
+ */
+function scriptsDir() {
+  if (scriptsDirChecked !== undefined) return scriptsDirChecked ?? undefined
+  scriptsDirChecked = null
+  if (installed === undefined || process.env.ADG_TOOLS_DIR) return undefined
+  const dir = join(dirname(process.execPath), 'scripts')
+  try {
+    mkdirSync(dir, { recursive: true })
+    const probe = join(dir, `.write-test-${process.pid}`)
+    writeFileSync(probe, '')
+    rmSync(probe, { force: true })
+    scriptsDirChecked = dir
+  } catch (error) {
+    startupLog(`[desktop] scripts stay in ${join(paths.home, 'adg', 'tools')}: the install folder cannot be written (${String(error)})`)
+  }
+  return scriptsDirChecked ?? undefined
+}
+
 /** Electron at a path that stays the same across installs (pnpm's link in apps/desktop/node_modules), when there is one. */
 function sourceElectron() {
   const linked = join(here, 'node_modules', 'electron', 'dist', basename(process.execPath))
@@ -513,6 +545,7 @@ async function launchHost() {
       ADG_LAUNCH_COMMAND: JSON.stringify(launchCommand),
       ADG_AUTOSTARTED: autoStarted && !everReady ? '1' : '0',
       ADG_APP_START: everReady || woken ? '0' : '1',
+      ...(scriptsDir() === undefined ? {} : { ADG_TOOLS_DIR: scriptsDir() }),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

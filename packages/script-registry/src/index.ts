@@ -49,6 +49,8 @@ declare module '@deepseek-ai/cordis' {
 const ConfigSchema = z.object({
   /** Where installed scripts live: `<toolsDir>/<id>/<version>/`. */
   toolsDir: z.string().min(1),
+  /** Where scripts were installed before `toolsDir` moved: still the library's (library.ts). */
+  formerToolsDirs: z.array(z.string().min(1)).optional(),
   /** Library state (`scripts.json`) and the user's packs (`packs/`). */
   dataDir: z.string().min(1),
   /** Built-in pack directories; default: the `@adg/packs` package. */
@@ -82,6 +84,7 @@ export class AdgScripts extends Service {
     this.optimizer = optimizer
     this.library = new ScriptLibrary({
       toolsDir: spec.toolsDir,
+      ...(spec.formerToolsDirs === undefined ? {} : { formerToolsDirs: spec.formerToolsDirs }),
       dataDir: spec.dataDir,
       packDirs: spec.packDirs ?? [PACKS_DIR],
       ...(spec.defaults === undefined ? {} : { defaults: stripUndefined(spec.defaults) }),

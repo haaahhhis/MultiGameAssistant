@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -8,6 +8,7 @@ import { parseManifest } from '@adg/pack-schema'
 import type { Incident, ScriptInfo } from '@adg/protocol'
 import { Runner, type EmulatorBridge } from '@adg/runner'
 import { DEFAULT_SETTINGS, DEFAULT_STALL_SECONDS, Monitor, type IncidentStore, type InterventionPort, type MonitorNotice } from '../src/monitor.ts'
+import { FileIncidentStore } from '../src/store.ts'
 
 const CLI = fileURLToPath(new URL('../../test-kit/src/fake-script-cli.ts', import.meta.url))
 const SAMPLES = fileURLToPath(new URL('./samples/', import.meta.url))
@@ -493,5 +494,47 @@ test("each script learns its own stall time from its clean runs; the agent can s
   assert.equal(monitor.stallFor('maa').seconds, 90, "the agent's value stays; later runs only add samples")
   assert.equal(monitor.stallFor('maa').entry?.samples.length, 2)
   assert.deepEqual(await monitor.setStall('maa', null, 'agent'), { seconds: 1, source: 'default' })
+  monitor.stop()
+})
+
+test('incident screenshots are kept 7 days; older ones and those of incidents no longer kept are deleted, and their incidents say so', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'adg-mon-shots-'))
+  const now = Date.UTC(2026, 10, 16, 6)
+  const incident = (id: string, daysAgo: number): Incident => ({
+    id, runId: 'run-1', scriptId: 'maa', scriptName: 'MAA', taskId: 'daily', taskTitle: '日常', kind: 'error', severity: 'error', tag: 'task-error',
+    title: 'MAA · 日常', detail: '任务出错', lines: [], status: 'resolved', createdAt: now - daysAgo * 86_400_000, updatedAt: now - daysAgo * 86_400_000, steps: [], screenshot: true,
+  })
+  mkdirSync(join(dataDir, 'monitor', 'shots'), { recursive: true })
+  writeFileSync(join(dataDir, 'monitor', 'incidents.json'), JSON.stringify([incident('inc-new', 1), incident('inc-old', 8), incident('inc-lost', 2)]))
+  const shot = (id: string, daysAgo: number) => {
+    const file = join(dataDir, 'monitor', 'shots', `${id}.png`)
+    writeFileSync(file, 'PNG')
+    const at = new Date(now - daysAgo * 86_400_000)
+    utimesSync(file, at, at)
+    return file
+  }
+  const fresh = shot('inc-new', 1)
+  const old = shot('inc-old', 8)
+  const orphan = shot('inc-dropped', 1) // its incident fell out of the kept list
+  const store = new FileIncidentStore(dataDir)
+  const monitor = new Monitor({
+    runner: { list: () => [], watch: () => () => {} } as never,
+    packOf: () => undefined,
+    emulators: () => undefined,
+    notices: () => undefined,
+    desktopScreenshot: async () => Buffer.alloc(0),
+    store,
+    onIncident: () => {},
+    now: () => now,
+    log: { info() {}, warn() {} },
+  })
+  await monitor.start(0)
+  await monitor.tidyScreenshots()
+  assert.ok(existsSync(fresh), 'a screenshot from yesterday stays')
+  assert.equal(existsSync(old), false, 'one from 8 days ago is deleted')
+  assert.equal(existsSync(orphan), false, 'one whose incident is gone is deleted')
+  const saved = (await store.load()).incidents
+  assert.deepEqual(saved.map(i => [i.id, i.screenshot]), [['inc-new', true], ['inc-old', false], ['inc-lost', false]], 'incidents whose picture is gone no longer offer it')
+  assert.equal(await store.readScreenshot('inc-old'), undefined)
   monitor.stop()
 })

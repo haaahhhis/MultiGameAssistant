@@ -24,6 +24,8 @@
       name: 'dsh-multigameassistant/script-registry'
       config:
         toolsDir: !!js "process.env.ADG_TOOLS_DIR || dshHomePath('adg/tools')"
+        # Scripts installed before ADG_TOOLS_DIR was set stay where they are until their next update.
+        formerToolsDirs: !!js "process.env.ADG_TOOLS_DIR ? [dshHomePath('adg/tools')] : []"
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
         defaults:
           downloadMirror: !!js "process.env.ADG_GITHUB_MIRROR || ''"

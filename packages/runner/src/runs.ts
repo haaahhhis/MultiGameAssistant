@@ -10,7 +10,7 @@
  * signals (the black-box rule).
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { renderTask, type LogRule, type ScriptManifest } from '@adg/pack-schema'
 import type { LaunchSettings, RunInfo, RunLogLine, ScriptInfo, TaskInfo } from '@adg/protocol'
@@ -22,6 +22,7 @@ import { ConfigProfiles, type ProfileEntry, type ProfileSource } from './profile
 import { lineSplitter, LogTail } from './tail.ts'
 import { sweepTree } from './sweep.ts'
 import { gameKeywords, locateGame, type GameCandidate } from './locate.ts'
+import { KEEP_DAYS, LIVE_LOG_MAX, LOG_FILE, PREV_LOG_FILE, readRunLog, runLogFile, SCRIPT_LOG_BUDGET, tidyRuns, type TidyResult } from './retention.ts'
 
 /** What the runner needs from the script library. */
 export interface LibraryView {
@@ -88,6 +89,8 @@ export interface RunnerOptions {
   >
   /** Game start hooks, injected in tests. */
   readonly game?: Pick<GameStart, 'processRunning' | 'startProgram' | 'stopProgram' | 'launchMaaEnd' | 'sleep'>
+  /** Smaller log limits for tests. @default LIVE_LOG_MAX, SCRIPT_LOG_BUDGET (retention.ts) */
+  readonly logLimits?: { readonly live?: number; readonly perScript?: number }
 }
 
 interface ActiveRun {
@@ -106,6 +109,12 @@ interface ActiveRun {
   controller: AbortController
   lines: RunLogLine[]
   pendingLines: RunLogLine[]
+  /** Lines (as JSON lines) not yet in the log file: written with each flush. */
+  logText: string[]
+  /** The log writes, in order; a run is over only once they are done. */
+  writing: Promise<void>
+  /** What the current log file holds, roughly (it starts over past LIVE_LOG_MAX). */
+  logBytes: number
   flushTimer?: ReturnType<typeof setTimeout> | undefined
   release: Array<() => void | Promise<void>>
   finished: Promise<RunInfo>
@@ -116,8 +125,6 @@ interface ActiveRun {
 
 const KEEP_RUNS = 50
 const KEEP_LINES = 2000
-/** Run folders (record, full log, config backups) are kept this long. */
-const KEEP_DAYS = 30
 
 /** What to pick out of a run's saved log. */
 export interface LogQuery {
@@ -146,6 +153,8 @@ export class Runner {
   readonly #successorAborts = new Map<string, AbortController>()
   /** Runs someone is still deciding about (the monitor handling an incident) → how many, and who waits. */
   readonly #holds = new Map<string, { count: number; waiters: (() => void)[] }>()
+  /** The retention pass going on (tidy). */
+  #tidying: Promise<unknown> = Promise.resolve()
   readonly #now: () => number
 
   constructor(options: RunnerOptions) {
@@ -277,15 +286,16 @@ export class Runner {
    * memory), also for runs from before a restart, searched and paged.
    */
   async readLog(runId: string, query: LogQuery = {}): Promise<{ file: string; total: number; matched: number; lines: (RunLogLine & { n: number })[] }> {
-    const file = join(this.#options.dataDir, 'runs', runId, 'log.jsonl')
-    let all: RunLogLine[]
-    try {
-      all = (await readFile(file, 'utf8')).split('\n').filter(l => l !== '').flatMap(l => { try { return [JSON.parse(l) as RunLogLine] } catch { return [] } })
-    } catch {
-      // Runs from before logs were saved as JSON lines.
-      all = this.#runs.get(runId)?.lines ?? []
-      if (all.length === 0 && !this.#runs.has(runId)) throw new Error(`没有运行记录 ${runId}`)
+    const dir = join(this.#options.dataDir, 'runs', runId)
+    let all = await readRunLog(dir)
+    if (all === undefined) {
+      // Nothing saved yet (a run just starting), or from before logs were saved as JSON lines.
+      const memory = this.#runs.get(runId)
+      if (memory !== undefined && (memory.archived !== true || memory.lines.length > 0)) all = memory.lines
+      else if (await stat(join(dir, 'run.json')).then(() => true, () => false)) throw new Error(`${runId} 的日志已按保留规则清理（每个脚本只留最近约 ${SCRIPT_LOG_BUDGET / 1024 / 1024} MiB 的运行日志）`)
+      else throw new Error(`没有运行记录 ${runId}`)
     }
+    const file = await runLogFile(dir)
     const pattern = query.search === undefined || query.search === '' ? undefined : toPattern(query.search)
     const numbered = all.map((line, i) => ({ ...line, n: i + 1 }))
       .filter(l => (query.levels === undefined || query.levels.length === 0 || (l.level !== undefined && query.levels.includes(l.level))) && (pattern === undefined || pattern.test(l.text)))
@@ -318,9 +328,32 @@ export class Runner {
       if (this.#runs.has(info.id)) continue
       this.#runs.set(info.id, {
         info, mode: info.kind === 'settings' ? 'settings' : 'task', stopRequested: false, doneSeen: false, controller: new AbortController(),
-        lines: [], pendingLines: [], release: [], finished: Promise.resolve(info), resolveFinished: () => {}, archived: true,
+        lines: [], pendingLines: [], logText: [], writing: Promise.resolve(), logBytes: 0, release: [], finished: Promise.resolve(info), resolveFinished: () => {}, archived: true,
       })
     }
+  }
+
+  /**
+   * Apply the retention rules (retention.ts) to the saved runs: logs gzipped,
+   * each script's within its budget, old run folders deleted. Runs still going
+   * or still being handled are left alone. One pass at a time.
+   */
+  tidy(): Promise<TidyResult> {
+    const pass = this.#tidying.catch(() => undefined).then(() => tidyRuns(join(this.#options.dataDir, 'runs'), {
+      now: this.#now(),
+      ...(this.#options.logLimits?.perScript === undefined ? {} : { budget: this.#options.logLimits.perScript }),
+      busy: id => {
+        const run = this.#runs.get(id)
+        return (run !== undefined && run.info.endedAt === undefined) || this.#holds.has(id)
+      },
+    }))
+    this.#tidying = pass
+    return pass.then(result => {
+      if (result.expired + result.packed + result.trimmed > 0) {
+        this.#options.log.info(`run logs tidied: ${result.packed} gzipped, ${result.trimmed} trimmed to the per-script budget, ${result.expired} old run folder(s) deleted; ${(result.freed / 1024 / 1024).toFixed(1)} MiB freed`)
+      }
+      return result
+    })
   }
 
   /** Settles when the run ends. */
@@ -482,7 +515,8 @@ export class Runner {
         ...(retryOf === undefined ? {} : { retryOf }),
       },
       mode,
-      stopRequested: false, doneSeen: false, controller: new AbortController(), lines: [], pendingLines: [], release: [], finished, resolveFinished,
+      stopRequested: false, doneSeen: false, controller: new AbortController(), lines: [], pendingLines: [], logText: [], writing: Promise.resolve(), logBytes: 0,
+      release: [], finished, resolveFinished,
     }
 
     const resources = task?.resources ?? { input: 'none' as const }
@@ -814,6 +848,7 @@ export class Runner {
   /** Stop everything (plugin unload). */
   async dispose(): Promise<void> {
     await Promise.all([...this.#runs.values()].filter(r => r.info.endedAt === undefined).map(r => this.stop(r.info.id).catch(() => {})))
+    await this.#tidying.catch(() => {})
   }
 
   #follow(run: ActiveRun, manifest: ScriptManifest, dir: string): void {
@@ -893,8 +928,11 @@ export class Runner {
     const runDir = join(this.#options.dataDir, 'runs', run.info.id)
     await mkdir(runDir, { recursive: true }).catch(() => {})
     await writeFile(join(runDir, 'run.json'), JSON.stringify(run.info, null, 2)).catch(() => {})
+    // Whoever waits for the end reads the whole log.
+    await run.writing
     this.#options.log.info(`run ${run.info.id} ${state}: ${reason}`)
     run.resolveFinished(run.info)
+    void this.tidy().catch(error => this.#options.log.warn(`tidying run logs failed: ${error instanceof Error ? error.message : String(error)}`))
   }
 
   #line(run: ActiveRun, source: string, text: string): void {
@@ -905,21 +943,36 @@ export class Runner {
     run.lines.push(line)
     if (run.lines.length > KEEP_LINES) run.lines.splice(0, run.lines.length - KEEP_LINES)
     run.pendingLines.push(line)
+    // The whole log, kept with the run (one file: log.jsonl, for the agent and the UI); written with the flush.
+    run.logText.push(`${JSON.stringify(line)}\n`)
     for (const listener of this.#listeners) {
       try { listener.line?.(run.info, line) } catch { /* a listener's problem, not the run's */ }
     }
-    // The whole log, kept with the run: log.jsonl for the agent and the UI, log.txt to read by hand.
-    const dir = join(this.#options.dataDir, 'runs', run.info.id)
-    void appendFile(join(dir, 'log.jsonl'), `${JSON.stringify(line)}\n`).catch(() => {})
-    void appendFile(join(dir, 'log.txt'), `${new Date(line.at).toISOString()} [${line.source}]${line.level === undefined ? '' : ` [${line.level}]`} ${line.text}\n`).catch(() => {})
     if (run.flushTimer === undefined) run.flushTimer = setTimeout(() => this.#flush(run), 100)
   }
 
   #flush(run: ActiveRun): void {
     clearTimeout(run.flushTimer)
     run.flushTimer = undefined
+    if (run.logText.length > 0) {
+      const text = run.logText.splice(0).join('')
+      run.writing = run.writing.then(() => this.#writeLog(run, text)).catch(error => {
+        this.#options.log.warn(`run ${run.info.id}: writing its log failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }
     if (run.pendingLines.length === 0) return
     this.#options.onLog(run.info.id, run.pendingLines.splice(0))
+  }
+
+  /** Append to the run's log; past LIVE_LOG_MAX it starts over, the part before kept as log.prev.jsonl (as MAA keeps asst.bak.log). */
+  async #writeLog(run: ActiveRun, text: string): Promise<void> {
+    const dir = join(this.#options.dataDir, 'runs', run.info.id)
+    await mkdir(dir, { recursive: true })
+    await appendFile(join(dir, LOG_FILE), text)
+    run.logBytes += Buffer.byteLength(text)
+    if (run.logBytes < (this.#options.logLimits?.live ?? LIVE_LOG_MAX)) return
+    await rename(join(dir, LOG_FILE), join(dir, PREV_LOG_FILE))
+    run.logBytes = 0
   }
 
   #publish(run: ActiveRun): void {

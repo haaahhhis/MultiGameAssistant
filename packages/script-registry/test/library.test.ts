@@ -207,3 +207,45 @@ test('the install tool asks for approval only for repositories no built-in pack 
     await github.close()
   }
 })
+
+test('after the tools folder moves, scripts in the former one keep working, move over with their next update, and are still pruned and removed', async () => {
+  const { root, github, library } = await setup([release('1.0.0', 1)])
+  const former = join(root, 'tools')
+  const moved = join(root, 'install', 'scripts')
+  try {
+    assert.equal((await library.install({ repo: 'Owner/Tool' }).done).phase, 'done')
+    writeFileSync(join(former, 'tool', '1.0.0', 'config', 'gui.json'), '{"mine":true}')
+    mkdirSync(join(former, '_shared', 'platform-tools'), { recursive: true })
+  } finally {
+    await github.close()
+  }
+  const next = await startFakeGitHub({ repos: { 'Owner/Tool': [release('1.0.0', 1), release('1.1.0', 2), release('1.2.0', 3)] } })
+  try {
+    const reopened = new ScriptLibrary({
+      toolsDir: moved, formerToolsDirs: [former], dataDir: join(root, 'data'), packDirs: [join(root, 'packs')],
+      defaults: { apiBase: next.url, keepVersions: 2 },
+      credential: async () => undefined, credentialConfigured: async () => false, envHost: noDotnet,
+      onChanged() {}, onJob() {}, log: { info() {}, warn() {} },
+    })
+    await reopened.start()
+    await reopened.setSettings({ apiBase: next.url })
+    assert.equal(reopened.get('tool').dir, join(former, 'tool', '1.0.0'), 'an installed script stays where it is')
+    assert.equal(reopened.sharedDir, join(former, '_shared'), 'adb fetched before the move is still used')
+    assert.deepEqual(reopened.protectedDirs().slice(0, 2), [moved, former], 'the agent may change neither folder')
+
+    const update = await reopened.update('tool')
+    assert.equal(update.upToDate, false)
+    if (!update.upToDate) assert.equal((await update.done).phase, 'done')
+    const info = reopened.get('tool')
+    assert.equal(info.dir, join(moved, 'tool', '1.2.0'), 'the new version goes to the new folder')
+    assert.equal(readFileSync(join(info.dir!, 'config', 'gui.json'), 'utf8'), '{"mine":true}', 'its config came along')
+
+    assert.equal((await reopened.install({ repo: 'Owner/Tool', tag: 'v1.1.0' }).done).phase, 'done')
+    assert.ok(!existsSync(join(former, 'tool', '1.0.0')), 'a version in the former folder is pruned like any other')
+
+    await reopened.remove('tool', true)
+    assert.ok(!existsSync(join(former, 'tool')) && !existsSync(join(moved, 'tool')), 'removing deletes it from both folders')
+  } finally {
+    await next.close()
+  }
+})

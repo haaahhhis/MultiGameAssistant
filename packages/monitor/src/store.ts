@@ -3,9 +3,9 @@
  *
  *   <dataDir>/monitor/incidents.json      the last few hundred incidents
  *   <dataDir>/monitor/settings.json       monitor settings
- *   <dataDir>/monitor/shots/<id>.png      screenshots taken for incidents
+ *   <dataDir>/monitor/shots/<id>.png      screenshots taken for incidents (kept 7 days, Monitor.tidyScreenshots)
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Incident, MonitorSettings } from '@adg/protocol'
 import { z } from 'zod'
@@ -44,6 +44,23 @@ export class FileIncidentStore implements IncidentStore {
 
   readScreenshot(incidentId: string): Promise<Buffer | undefined> {
     return readFile(join(this.dir, 'shots', `${safe(incidentId)}.png`)).catch(() => undefined)
+  }
+
+  /** Incident ids are word characters and dashes, so a file name is its incident's id. */
+  async screenshots(): Promise<{ id: string; at: number }[]> {
+    const dir = join(this.dir, 'shots')
+    const names = await readdir(dir).catch(() => [] as string[])
+    const out: { id: string; at: number }[] = []
+    for (const name of names) {
+      if (!name.toLowerCase().endsWith('.png')) continue
+      const at = await stat(join(dir, name)).then(s => s.mtimeMs, () => undefined)
+      if (at !== undefined) out.push({ id: name.slice(0, -'.png'.length), at })
+    }
+    return out
+  }
+
+  async removeScreenshot(incidentId: string): Promise<void> {
+    await rm(join(this.dir, 'shots', `${safe(incidentId)}.png`), { force: true })
   }
 
   private async write(name: string, text: string): Promise<void> {

@@ -56,7 +56,7 @@ export class AdgGuard extends Service {
         for (const version of script.versions) protectedDirs.push({ scriptId: script.id, dir: version.dir })
       }
       // Last, so a script's own entry names it; covers shared components and downloads too.
-      protectedDirs.push({ scriptId: TOOLS, dir: scripts.library.toolsDir })
+      for (const dir of [scripts.library.toolsDir, ...scripts.library.formerToolsDirs]) protectedDirs.push({ scriptId: TOOLS, dir })
       protectedDirs.push({ scriptId: APP_FILES, dir: APP_FILES_DIR })
       return { protectedDirs, allowed: [...open.values()].flatMap(g => g.dirs) }
     }
