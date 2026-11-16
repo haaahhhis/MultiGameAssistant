@@ -2,7 +2,8 @@
  * The automatic-compaction settings (compaction@1), kept in
  * `<dataDir>/compaction.json`. dsh reads the file itself when the agent
  * service starts: packages/bundle/cordis.patch.yml's preset-standard row turns
- * it into dsh-compaction-basic's `auto` and `thresholdRatio`. So what this
+ * it into dsh-compaction-basic's `auto` and `thresholdRatio`, and into the
+ * preset sub-agents start under (`ptcSubagents`). So what this
  * store reads at start is what is in effect (`applied`) until the next start.
  * Low-context mode and its archiving are read from the file each time it
  * might compact (low-context.ts), so they are in effect as soon as saved.
@@ -13,7 +14,7 @@ import { join } from 'node:path'
 import { CompactionSettings, DEFAULT_COMPACTION_THRESHOLD } from '@adg/protocol'
 
 export const COMPACTION_FILE = 'compaction.json'
-export const DEFAULT_COMPACTION: CompactionSettings = { auto: true, threshold: DEFAULT_COMPACTION_THRESHOLD, lowContext: false, archiveDays: null }
+export const DEFAULT_COMPACTION: CompactionSettings = { auto: true, threshold: DEFAULT_COMPACTION_THRESHOLD, lowContext: false, archiveDays: null, ptcSubagents: true }
 
 export class CompactionStore {
   readonly #file: string

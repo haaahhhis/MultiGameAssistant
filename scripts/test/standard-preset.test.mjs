@@ -3,35 +3,57 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { currentBlock, standardOverride, upstreamStandard } from '../lib/standard-preset.mjs'
+import { currentBlock, PRESETS, presetOverride, standardOverride, upstreamPreset, upstreamStandard } from '../lib/standard-preset.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const patch = readFileSync(join(root, 'packages', 'bundle', 'cordis.patch.yml'), 'utf8')
 
-test("the bundle's standard preset is dsh's own, with compaction from the app's settings", () => {
-  const block = currentBlock(readFileSync(join(root, 'packages', 'bundle', 'cordis.patch.yml'), 'utf8'))
-  assert.ok(block !== undefined, 'packages/bundle/cordis.patch.yml has no preset-standard override: run node scripts/sync-standard-preset.mjs')
-  assert.equal(block, standardOverride(upstreamStandard(root)), 'dsh changed its standard preset: run node scripts/sync-standard-preset.mjs and check the diff')
+test("the bundle's presets are dsh's own, with compaction from the app's settings", () => {
+  for (const id of PRESETS) {
+    const block = currentBlock(patch, id)
+    assert.ok(block !== undefined, `packages/bundle/cordis.patch.yml has no preset-${id} override: run node scripts/sync-standard-preset.mjs`)
+    assert.equal(block, presetOverride(upstreamPreset(root, id), id), `dsh changed its ${id} preset: run node scripts/sync-standard-preset.mjs and check the diff`)
+  }
 })
+
+test("standard's sub-agents start under ptc, whose tools are called from run_code; ptc's own sub-agents are left as dsh has them", () => {
+  const standard = standardOverride(upstreamStandard(root))
+  const ptc = presetOverride(upstreamPreset(root, 'ptc'), 'ptc')
+  assert.equal(standard.match(/agentPreset:/g)?.length, 1, 'once, on the spawn row')
+  assert.match(standard, /name: '@deepseek-ai\/dsh-tool-subagent'\n\s+config:\n\s+# .+\n\s+agentPreset: !!js ".+"\n\s+provider: spawn\n/)
+  assert.doesNotMatch(ptc, /agentPreset:/)
+  assert.match(ptc, /name: '@deepseek-ai\/dsh-tool-executor-ptc'/)
+  assert.match(ptc, /name: '@adg\/gateway\/low-context'/, 'the same compaction rows')
+})
+
+const expression = (block, key) => new RegExp(`${key}: !!js "(.+)"$`, 'm').exec(block)?.[1]
+const evaluate = (source, files) => {
+  const process = { env: {}, getBuiltinModule: () => ({ readFileSync: path => { if (files[path] === undefined) throw new Error('ENOENT'); return files[path] } }) }
+  return new Function('process', 'dshHomePath', `return ${source}`)(process, sub => `/home/${sub}`)
+}
+const file = '/home/adg/data/compaction.json'
 
 test('the settings expressions read compaction.json and fall back to dsh\'s defaults', () => {
   const block = standardOverride(upstreamStandard(root))
-  const expression = key => new RegExp(`${key}: !!js "(.+)"$`, 'm').exec(block)?.[1]
-  const evaluate = (source, files) => {
-    const process = { env: {}, getBuiltinModule: () => ({ readFileSync: path => { if (files[path] === undefined) throw new Error('ENOENT'); return files[path] } }) }
-    return new Function('process', 'dshHomePath', `return ${source}`)(process, sub => `/home/${sub}`)
-  }
-  const file = '/home/adg/data/compaction.json'
-  assert.equal(evaluate(expression('auto'), {}), true)
-  assert.equal(evaluate(expression('thresholdRatio'), {}), 0.8)
-  assert.equal(evaluate(expression('auto'), { [file]: '{"auto":false,"threshold":60}' }), false)
-  assert.equal(evaluate(expression('thresholdRatio'), { [file]: '{"auto":false,"threshold":60}' }), 0.6)
-  assert.equal(evaluate(expression('thresholdRatio'), { [file]: '{"threshold":20}' }), 0.2)
-  assert.equal(evaluate(expression('thresholdRatio'), { [file]: '{"threshold":1}' }), 0.05, 'no lower than 5%')
-  assert.equal(evaluate(expression('thresholdRatio'), { [file]: '{"threshold":150}' }), 1, 'no higher than 100%')
+  assert.equal(evaluate(expression(block, 'auto'), {}), true)
+  assert.equal(evaluate(expression(block, 'thresholdRatio'), {}), 0.8)
+  assert.equal(evaluate(expression(block, 'auto'), { [file]: '{"auto":false,"threshold":60}' }), false)
+  assert.equal(evaluate(expression(block, 'thresholdRatio'), { [file]: '{"auto":false,"threshold":60}' }), 0.6)
+  assert.equal(evaluate(expression(block, 'thresholdRatio'), { [file]: '{"threshold":20}' }), 0.2)
+  assert.equal(evaluate(expression(block, 'thresholdRatio'), { [file]: '{"threshold":1}' }), 0.05, 'no lower than 5%')
+  assert.equal(evaluate(expression(block, 'thresholdRatio'), { [file]: '{"threshold":150}' }), 1, 'no higher than 100%')
   // The verbatim tail stays below the threshold.
-  assert.equal(evaluate(expression('retainRatio'), {}), 0.16)
-  assert.equal(evaluate(expression('retainRatio'), { [file]: '{"threshold":20}' }), 0.1)
-  assert.equal(evaluate(expression('retainRatio'), { [file]: '{"threshold":5}' }), 0.025)
-  assert.equal(evaluate(expression('file'), {}), file, 'low-context mode reads the same file')
-  assert.equal(evaluate(expression('auto'), { [file]: 'not json' }), true)
+  assert.equal(evaluate(expression(block, 'retainRatio'), {}), 0.16)
+  assert.equal(evaluate(expression(block, 'retainRatio'), { [file]: '{"threshold":20}' }), 0.1)
+  assert.equal(evaluate(expression(block, 'retainRatio'), { [file]: '{"threshold":5}' }), 0.025)
+  assert.equal(evaluate(expression(block, 'file'), {}), file, 'low-context mode reads the same file')
+  assert.equal(evaluate(expression(block, 'auto'), { [file]: 'not json' }), true)
+})
+
+test('sub-agents run ptc unless 设置 turns it off; then they inherit their parent\'s preset', () => {
+  const source = expression(standardOverride(upstreamStandard(root)), 'agentPreset')
+  assert.equal(evaluate(source, {}), 'ptc', 'on by default')
+  assert.equal(evaluate(source, { [file]: '{"ptcSubagents":true}' }), 'ptc')
+  assert.equal(evaluate(source, { [file]: '{"ptcSubagents":false}' }), undefined)
+  assert.equal(evaluate(source, { [file]: 'not json' }), 'ptc')
 })

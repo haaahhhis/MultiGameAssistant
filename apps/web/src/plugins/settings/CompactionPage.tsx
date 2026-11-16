@@ -109,7 +109,7 @@ export function CompactionPage({ client }: { client: AdgClient }) {
             <input type="checkbox" checked={state.settings.lowContext} disabled={busy} onChange={e => void save({ ...state.settings, lowContext: e.target.checked })} />
             低上下文模式
           </label>
-          <p className="muted small">只保留最近 12 小时的对话，更早的在任务做完后压缩成摘要。</p>
+          <p className="muted small">只保留最近 12 小时的对话，更早的在任务做完后压缩成摘要；对话安静超过 4 小时后再来新消息，会先把之前的内容压成摘要再开始，agent 从摘要起步、需要时再查原文。任务做完时，过长的工具输出（日志、运行记录）也会截成头尾。</p>
           <label className="check-label compaction-archive">
             <input type="checkbox" checked={state.settings.archiveDays !== null} disabled={busy || !state.settings.lowContext}
               onChange={e => void save({ ...state.settings, archiveDays: e.target.checked ? 7 : null })} />
@@ -126,6 +126,22 @@ export function CompactionPage({ client }: { client: AdgClient }) {
           <p className="muted small">{state.settings.lowContext
             ? '打开后，每一段较早的对话单独写一份摘要（攒到大约一天写一次，不会把摘要再压成摘要）；对话过了上面的天数，它的摘要也移出上下文，只留一行说明。做过的事在「记忆」的日记里，agent 需要细节时会去查归档的摘要和原话。上下文最短，但 agent 要靠查才想得起来以前的事。'
             : '要先打开低上下文模式。'}</p>
+        </section>
+      )}
+      {state !== null && (
+        <section className="card">
+          <label className="check-label">
+            <input type="checkbox" checked={state.settings.ptcSubagents} disabled={busy} onChange={e => void save({ ...state.settings, ptcSubagents: e.target.checked })} />
+            子 agent 用代码调用工具
+          </label>
+          <p className="muted small">子 agent 写一小段程序来调用工具：等脚本跑完、翻日志、查运行记录都在程序里做，只把结果交回对话，不用每一步都把整段日志重新发给模型，用量少很多。关掉后子 agent 一次调用一个工具。各个 agent 自己的对话不受影响。不是「完全访问」时程序在沙箱里运行，如果子 agent 说代码执行环境起不来（Windows 文件权限挡住了），先关掉这个开关。</p>
+          {state.settings.ptcSubagents !== state.applied.ptcSubagents && (
+            <div className="notice left">
+              <Icon name="info" />
+              <span>改动要重启 agent 服务才生效（现在还是：{state.applied.ptcSubagents ? '用代码调用工具' : '一次调用一个工具'}）。{restartService === undefined ? '重启 MultiGameAssistant（或 dsh）后生效。' : ''}</span>
+              {restartService !== undefined && <button className="small-button" onClick={() => void restart()}>重启 agent 服务</button>}
+            </div>
+          )}
         </section>
       )}
       <section className="card">

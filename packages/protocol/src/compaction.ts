@@ -11,7 +11,11 @@
  * is older is compacted into the summary, and only once the agent's task is
  * over (its turn ends with nothing of it still going: no sub-agent, no
  * hand-off waiting for an answer). Never in the middle of a task, so the
- * model provider's prompt cache keeps working there. Only what was compacted
+ * model provider's prompt cache keeps working there. The exception is a turn
+ * that starts after the conversation was quiet for over 4 hours: everything
+ * before its first message is compacted first, so it starts from the summary.
+ * When a task is over, long tool results are also trimmed to their head and
+ * tail. Only what was compacted
  * leaves the agent's context; the agent reads it back with history_search /
  * history_read. It is read each time, so it applies at once.
  *
@@ -21,6 +25,9 @@
  * then leaves the context too, replaced by a one-line pointer, and is kept in
  * `<dataDir>/summaries.jsonl`, where history_search finds it. Off (null): the
  * one rolling summary stays, as before.
+ *
+ * `ptcSubagents` (in the same file, for the same reason: what the agents cost)
+ * starts sub-agents under dsh's ptc preset, read when the service starts.
  */
 import { z } from 'zod'
 
@@ -54,6 +61,12 @@ export const CompactionSettings = z.object({
   lowContext: z.boolean(),
   /** With low-context mode: summaries of conversation older than this many days leave the context too; null: they stay. */
   archiveDays: z.number().int().min(MIN_ARCHIVE_DAYS).max(MAX_ARCHIVE_DAYS).nullable().default(null),
+  /**
+   * Sub-agents call their tools from a program (dsh's ptc preset, run_code): only what the program returns or
+   * prints enters their conversation, so polling a run or reading a long log costs a few lines, not every result
+   * at every step. Off: they run the standard preset, one tool call per step. Read when the agent service starts.
+   */
+  ptcSubagents: z.boolean().default(true),
 })
 export type CompactionSettings = z.infer<typeof CompactionSettings>
 

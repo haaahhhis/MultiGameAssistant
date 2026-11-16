@@ -345,7 +345,7 @@ const HOW_TO_WRITE = [
 /** Where the words of earlier conversations are (history.ts), when the summary and the memory are not enough. */
 const HISTORY = [
   '## 以前的对话',
-  '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近 12 小时的对话；开了归档时，更早的摘要也会移出上下文，只留一行说明），更早的对话你也看不到。日记是你做过的事的索引：标着「可查原文」的记忆，用 history_read 的 memory_id 就能读到当时的对话。摘要和记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文和归档的摘要，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
+  '对话较早的部分可能已经压缩成了摘要（打开了低上下文模式时，只留最近 12 小时的对话；对话安静超过 4 小时后再来新消息，之前的内容会先全部压成摘要，你从摘要开始；开了归档时，更早的摘要也会移出上下文，只留一行说明），更早的对话你也看不到。日记是你做过的事的索引：标着「可查原文」的记忆，用 history_read 的 memory_id 就能读到当时的对话。摘要和记忆不够用时——要用户的原话、具体的数字和名字、当时的输出——用 history_search 按关键词查以前的对话原文和归档的摘要，再用 history_read 按 #编号读那一段的前后文。不要凭印象猜以前说过什么。',
 ].join('\n')
 
 /** How the memory section starts: memory-view.ts finds a conversation's section in the prompt it was sent. */
