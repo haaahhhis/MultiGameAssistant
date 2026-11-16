@@ -30,7 +30,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
-import { addRetryPolicies, providersCapability } from './providers.ts'
+import { addRouteDefaults, providersCapability } from './providers.ts'
 import { aboutCapability } from './about.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
@@ -572,10 +572,10 @@ export class AdgGateway extends Service {
           this.broadcast('providers/changed', {})
         })
       }
-      // Routes saved before the retry policy existed get it once (see RETRY_POLICY).
-      void addRetryPolicies(scoped.settings, config.providersNamespace ?? 'llm-pi-ai')
-        .then(n => { if (n > 0) ctx.logger('adg-gateway').info(`added the retry policy to ${n} model route(s)`) })
-        .catch(error => ctx.logger('adg-gateway').warn(`adding the retry policy failed: ${String(error)}`))
+      // Routes saved before the retry policy and the `system` role existed get them once (see addRouteDefaults).
+      void addRouteDefaults(scoped.settings, config.providersNamespace ?? 'llm-pi-ai')
+        .then(n => { if (n > 0) ctx.logger('adg-gateway').info(`updated ${n} model route(s) with the retry policy or the system role`) })
+        .catch(error => ctx.logger('adg-gateway').warn(`updating model routes failed: ${String(error)}`))
       scoped.effect(() => this.registry.register(providersCapability({
         settings: scoped.settings,
         llm: scoped.llm,

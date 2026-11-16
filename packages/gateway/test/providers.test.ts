@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { addRetryPolicies, deriveKeyRef, providersCapability, RETRY_POLICY, toProviderBalance, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
+import { addRouteDefaults, deriveKeyRef, needsSystemRole, providersCapability, RETRY_POLICY, toProviderBalance, toProviderModel, type ProvidersDeps } from '../src/providers.ts'
 import type { MethodContext } from '../src/registry.ts'
 
 type Ops = { op: 'set' | 'unset'; path: readonly string[]; value?: unknown }[]
@@ -96,6 +96,7 @@ test('create writes one whole profile, then stores the key under its reference',
     value: {
       displayName: 'Acme', apiKeyEnv: 'ACME_API_KEY', api: 'openai-completions', baseURL: 'https://gw.example/v1', models: [{ id: 'm1', contextWindow: 128000 }],
       retryPolicy: RETRY_POLICY,
+      compat: { supportsDeveloperRole: false },
     },
   }]])
   assert.equal(host.stored.get('ACME_API_KEY'), 'sk-test')
@@ -129,11 +130,34 @@ test('edit sets fields one by one so unshown settings survive', async () => {
 })
 
 test('routes saved before the retry policy get it once; a route with its own keeps it', async () => {
-  const host = fakeHost({ acme: { api: 'openai-completions', models: [] }, own: { api: 'openai-completions', models: [], retryPolicy: { mode: 'always' } } })
-  assert.equal(await addRetryPolicies(host.settings, 'llm-pi-ai'), 1)
+  const host = fakeHost({ acme: { api: 'anthropic-messages', models: [] }, own: { api: 'anthropic-messages', models: [], retryPolicy: { mode: 'always' } } })
+  assert.equal(await addRouteDefaults(host.settings, 'llm-pi-ai'), 1)
   assert.deepEqual((host.user().providers as any).acme.retryPolicy, RETRY_POLICY)
   assert.deepEqual((host.user().providers as any).own.retryPolicy, { mode: 'always' })
-  assert.equal(await addRetryPolicies(host.settings, 'llm-pi-ai'), 0)
+  assert.equal(await addRouteDefaults(host.settings, 'llm-pi-ai'), 0)
+})
+
+test('Chat Completions gateways send the system prompt as system, not developer', async () => {
+  const host = fakeHost({
+    tokenplus: { api: 'openai-completions', baseURL: 'https://api.tokenplus.cn/v1', models: [], retryPolicy: RETRY_POLICY },
+    openai: { api: 'openai-completions', baseURL: 'https://api.openai.com/v1', models: [], retryPolicy: RETRY_POLICY },
+    chosen: { api: 'openai-completions', baseURL: 'https://gw.example/v1', models: [], retryPolicy: RETRY_POLICY, compat: { supportsDeveloperRole: true } },
+    claude: { api: 'anthropic-messages', baseURL: 'https://gw.example', models: [], retryPolicy: RETRY_POLICY },
+  })
+  assert.equal(await addRouteDefaults(host.settings, 'llm-pi-ai'), 1)
+  const routes = host.user().providers as any
+  assert.deepEqual(routes.tokenplus.compat, { supportsDeveloperRole: false })
+  assert.equal(routes.openai.compat, undefined, "OpenAI's own API keeps pi-ai's default")
+  assert.deepEqual(routes.chosen.compat, { supportsDeveloperRole: true }, 'an explicit choice stays')
+  assert.equal(routes.claude.compat, undefined)
+  assert.equal(await addRouteDefaults(host.settings, 'llm-pi-ai'), 0)
+})
+
+test('an edit onto a Chat Completions gateway sets the system role; other compat survives', async () => {
+  const host = fakeHost({ acme: { api: 'anthropic-messages', baseURL: 'https://old', models: [], retryPolicy: RETRY_POLICY, compat: { supportsStore: false } } })
+  await host.call('providers/save', { ...draft, create: false })
+  assert.deepEqual((host.user().providers as any).acme.compat, { supportsStore: false, supportsDeveloperRole: false })
+  assert.equal(needsSystemRole({ api: 'openai-responses', baseURL: 'https://gw.example/v1' }), false)
 })
 
 test('a stale revision is refused by the settings service', async () => {

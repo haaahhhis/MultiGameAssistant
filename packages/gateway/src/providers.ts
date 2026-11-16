@@ -53,6 +53,7 @@ interface StoredProfile {
   readonly apiKeyEnv?: unknown
   readonly models?: unknown
   readonly retryPolicy?: unknown
+  readonly compat?: unknown
 }
 
 interface Section {
@@ -110,21 +111,55 @@ export function toProviderModel(entry: unknown): ProviderModel | undefined {
  */
 export const RETRY_POLICY = { mode: 'normal', maxRetries: 3, retryableCodes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'PI_AI_ERROR'] } as const
 
-/** Give routes saved before RETRY_POLICY existed the policy, once. @returns how many were updated. */
-export async function addRetryPolicies(settings: ProvidersDeps['settings'], namespace: string): Promise<number> {
+/**
+ * Whether a route's system prompt must go as `system`. pi-ai sends it to a
+ * reasoning model as OpenAI's newer `developer` role on any Chat Completions
+ * endpoint it does not recognize, and most compatible gateways and relays
+ * (TokenPlus, 硅基流动, OneAPI / NewAPI …) answer that with HTTP 400 on
+ * `messages[0].role`. Only OpenAI's own API keeps pi-ai's default; a route
+ * that already sets the switch keeps its own choice.
+ */
+export function needsSystemRole(profile: { readonly api?: unknown; readonly baseURL?: unknown; readonly compat?: unknown }): boolean {
+  if (profile.api !== 'openai-completions') return false
+  if (originOf(str(profile.baseURL)) === OPENAI_ORIGIN) return false
+  const compat = profile.compat as { supportsDeveloperRole?: unknown } | undefined
+  return compat?.supportsDeveloperRole === undefined
+}
+
+const SYSTEM_ROLE_OP = (id: string): SettingsPathOp =>
+  ({ op: 'set', path: ['providers', id, 'compat', 'supportsDeveloperRole'], value: false })
+
+/**
+ * Give routes saved before these defaults existed the retry policy
+ * (RETRY_POLICY) and the `system` role (needsSystemRole), once.
+ * @returns how many routes were updated.
+ */
+export async function addRouteDefaults(settings: ProvidersDeps['settings'], namespace: string): Promise<number> {
   const descriptor = settings.describe({ redactSecrets: true }).find(d => d.ns === namespace)
   if (descriptor === undefined) return 0
-  const ops: SettingsPathOp[] = Object.entries(routesOf(descriptor.user))
-    .filter(([, profile]) => profile.retryPolicy === undefined)
-    .map(([id]) => ({ op: 'set', path: ['providers', id, 'retryPolicy'], value: structuredClone(RETRY_POLICY) as unknown as Record<string, unknown> }))
+  let routes = 0
+  const effective = routesOf(descriptor.value)
+  const ops: SettingsPathOp[] = Object.entries(routesOf(descriptor.user)).flatMap(([id, profile]) => {
+    const route: SettingsPathOp[] = [
+      ...(profile.retryPolicy === undefined
+        ? [{ op: 'set' as const, path: ['providers', id, 'retryPolicy'], value: structuredClone(RETRY_POLICY) as unknown as Record<string, unknown> }]
+        : []),
+      // The effective value, so a base layer's api or baseURL counts too.
+      ...(needsSystemRole(effective[id] ?? profile) ? [SYSTEM_ROLE_OP(id)] : []),
+    ]
+    if (route.length > 0) routes += 1
+    return route
+  })
   if (ops.length > 0) await settings.mutate(namespace, ops, descriptor.revision)
-  return ops.length
+  return routes
 }
 
 /** dsh's own DeepSeek route and where its endpoint settings live (dsh-llm-deepseek-api-key). */
 const OFFICIAL_PROVIDER = 'deepseek-official'
 const OFFICIAL_NAMESPACE = 'llm-deepseek-api-key'
 const DEEPSEEK_ORIGIN = 'https://api.deepseek.com'
+/** OpenAI's own API, the one Chat Completions endpoint known to take the `developer` role. */
+const OPENAI_ORIGIN = 'https://api.openai.com'
 /** DeepSeek's balance API. The only place a key goes for this query, so a relay's key never reaches DeepSeek. */
 const BALANCE_URL = `${DEEPSEEK_ORIGIN}/user/balance`
 const BALANCE_TIMEOUT_MS = 15_000
@@ -312,6 +347,7 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
           baseURL: params.baseURL,
           models,
           retryPolicy: structuredClone(RETRY_POLICY),
+          ...(needsSystemRole(params) ? { compat: { supportsDeveloperRole: false } } : {}),
         },
       }]
       // Field by field, so settings this form does not show (headers, compat, retry policy) survive an edit.
@@ -322,6 +358,8 @@ export function providersCapability(deps: ProvidersDeps): CapabilityRegistration
         { op: 'set', path: [...base, 'models'], value: models },
         ...(currentRef === undefined && apiKeyRef !== undefined ? [{ op: 'set' as const, path: [...base, 'apiKeyEnv'], value: apiKeyRef }] : []),
         ...(existing?.retryPolicy === undefined ? [{ op: 'set' as const, path: [...base, 'retryPolicy'], value: structuredClone(RETRY_POLICY) as unknown as Record<string, unknown> }] : []),
+        // Switched to Chat Completions, or moved off OpenAI's own API: its gateway may not take `developer`.
+        ...(needsSystemRole({ api: params.api, baseURL: params.baseURL, compat: existing?.compat }) ? [SYSTEM_ROLE_OP(params.id)] : []),
       ]
     const revision = await write(ops, params.expectedRevision)
     if (storesKey && apiKeyRef !== undefined) await credentials!.set(apiKeyRef, key)

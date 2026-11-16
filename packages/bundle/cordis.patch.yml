@@ -182,6 +182,12 @@
   config:
     defaultDirectory: !!js "process.env.ADG_WORKSPACE_DIR || dshHomePath('adg/workspace')"
 
+# dsh's right-Sidebar Browser (dsh-web-app's `ui-sidebar-browser`), which dsh
+# turns on only in its own desktop profile: on in dsh's page here as well, for
+# browsing beside a conversation. A view for the user; it gives the agent no tools.
+- id: ui-sidebar-browser
+  disabled: false
+
 # >>> preset-standard (made by scripts/sync-standard-preset.mjs from dsh-web-app's presets/standard.patch.yml: do not edit by hand)
 # dsh's standard agent preset, whole (a preset is overridden whole), with automatic compaction
 # following 设置 → 对话压缩, and sub-agents under the ptc preset.
