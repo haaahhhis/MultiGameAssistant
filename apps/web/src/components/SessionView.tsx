@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import type { AdgClient } from '@adg/client-core'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
@@ -7,7 +7,9 @@ import { desktop } from '../desktop.ts'
 import { BrowserPanel } from './BrowserPanel.tsx'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
-import { SessionTools } from './sessionTools.ts'
+import { SideBar } from './sessionTools.ts'
+import { CommandsPanel, SIDE_PANELS, SidePanelHost, TasksPanel, commandsOf, type SidePanelId } from './SidePanels.tsx'
+import { SubAgentPane, settledTasks, subAgentIds, taskLabels, useSubAgents, type OpenTask } from '../plugins/chat/SubTasks.tsx'
 
 export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
@@ -60,12 +62,25 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const active = views.find(v => v.id === tab) ?? views[0]
   useEffect(() => writeTab(tab), [tab])
   const readOnly = useReadOnly(item, state.running || state.queue.length > 0 || initialPrompt !== undefined)
-  // Where the view on screen puts its own controls, beside the tabs.
-  const [tools, setTools] = useState<HTMLElement | null>(null)
-  const browser = useBrowserPanel()
+  const side = useSidePanel()
+  const subAgents = useSubAgents(client, session.id)
+  const runningTasks = subAgents.filter(t => t.running).length
+  // The chat once more, for the sub-tasks' names and the commands: only while a panel that shows them is open.
+  const needsChat = side.panel === 'tasks' || side.panel === 'commands'
+  const built = useMemo(
+    () => needsChat ? buildChat(state.events, state.live, state.pending) : NO_ITEMS,
+    // `version` covers in-place live appends.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [needsChat, state.events, state.live, state.pending, state.version],
+  )
+  const childIds = useMemo(() => subAgentIds(state.events), [state.events])
+  const labels = useMemo(() => taskLabels(built, childIds), [built, childIds])
+  const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
+  const own = useMemo(() => commandsOf(built), [built])
+  const sideBar = useMemo(() => ({ openTask: side.openTask }), [side.openTask])
 
   return (
-    <section className={`main${browser.open ? ' with-browser' : ''}`}>
+    <section className="main">
       <header className="session-header">
         <div className="session-heading">
           {home ? (
@@ -89,11 +104,6 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
           </div>
         </div>
         <div className="session-actions">
-          <div className="session-tools" ref={setTools} />
-          {browser.bridge !== undefined && (
-            <button type="button" className={`small-button browser-toggle${browser.open ? ' active' : ''}`} aria-pressed={browser.open}
-              title="内置浏览器：看 agent 操作网页，也可以自己接手" onClick={() => browser.setOpen(!browser.open)}>浏览器</button>
-          )}
           <nav className="tabs" role="tablist" aria-label="会话视图">
             {views.map(view => (
               <button key={view.id} role="tab" aria-selected={view.id === active?.id}
@@ -102,15 +112,31 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
               </button>
             ))}
           </nav>
+          {/* What opens in the sidebar, as the Claude app has it: one icon each. */}
+          <div className="side-icons" role="toolbar" aria-label="侧栏">
+            {SIDE_PANELS.filter(p => p.id !== 'browser' || side.bridge !== undefined).map(p => {
+              const on = side.panel === p.id
+              const hint = p.id === 'tasks' && runningTasks > 0 ? `子任务：${runningTasks} 个进行中`
+                : p.id === 'browser' && side.working ? 'agent 正在操作内置浏览器' : p.hint
+              return (
+                <button key={p.id} type="button" className={`side-icon${on ? ' active' : ''}`} aria-pressed={on} aria-label={p.title} title={hint}
+                  onClick={() => side.setPanel(on ? null : p.id)}>
+                  <Icon name={p.icon} />
+                  {p.id === 'tasks' && runningTasks > 0 && <span className="side-icon-badge">{runningTasks}</span>}
+                  {p.id === 'browser' && side.working && <span className="side-icon-dot" />}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </header>
       {state.error !== null && <div className="banner error">{state.error}</div>}
-      <div className="session-body">
+      <div className={`session-body${side.panel !== null ? ' with-side' : ''}`}>
         <div className="session-column">
           <div className="view">
             {active === undefined
               ? <div className="empty">当前连接没有提供可用的视图插件。</div>
-              : <SessionTools.Provider value={tools}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SessionTools.Provider>}
+              : <SideBar.Provider value={sideBar}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SideBar.Provider>}
           </div>
           {readOnly ? (
             <div className="session-readonly">
@@ -125,45 +151,88 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
             </>
           )}
         </div>
-        {browser.open && browser.bridge !== undefined && (
-          <BrowserPanel bridge={browser.bridge} onClose={() => browser.setOpen(false)} />
+        {side.panel !== null && (
+          <div className={`side-slot side-${side.panel}`}>
+            {side.panel === 'browser' && side.bridge !== undefined
+              ? <BrowserPanel bridge={side.bridge} onClose={() => side.setPanel(null)} />
+              : side.panel === 'tasks' && side.task !== null
+              // Its close goes back to the list.
+              ? <SideBar.Provider value={sideBar}><SubAgentPane key={side.task.id} client={client} task={side.task} parent={agent.name} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => side.openTask(null)} /></SideBar.Provider>
+              : side.panel === 'tasks'
+              ? <SidePanelHost title="子任务" onClose={() => side.setPanel(null)}><TasksPanel tasks={subAgents} labels={labels} settled={settled} onOpen={side.openTask} /></SidePanelHost>
+              : <SidePanelHost title="命令" onClose={() => side.setPanel(null)}><CommandsPanel client={client} own={own} tasks={subAgents} labels={labels} /></SidePanelHost>}
+          </div>
         )}
       </div>
     </section>
   )
 }
 
+const NO_ITEMS: readonly ChatItem[] = []
+
 /**
- * The built-in browser panel beside the conversation (desktop app only): the
- * user opens and closes it, and it comes up by itself when an agent starts
- * working in the browser — unless the user closed it in the last minutes.
+ * The sidebar beside the conversation: which panel is open (kept in this
+ * browser), and the sub-task open in it. The browser comes up by itself when
+ * an agent starts working in it, unless another panel is open or the user
+ * closed the browser in the last minutes.
  */
-function useBrowserPanel() {
+function useSidePanel() {
   const bridge = desktop()?.browser
-  const [open, setOpenState] = useState(() => readBrowserOpen())
-  const [closedAt, setClosedAt] = useState(0)
-  const setOpen = (next: boolean) => {
-    setOpenState(next)
-    if (!next) setClosedAt(Date.now())
-    try { localStorage.setItem(BROWSER_KEY, next ? '1' : '0') } catch { /* storage unavailable */ }
+  const [chosen, setChosen] = useState<SidePanelId | null>(() => readPanel())
+  const panel = chosen === 'browser' && bridge === undefined ? null : chosen
+  const [task, setTask] = useState<OpenTask | null>(null)
+  const browserClosedAt = useRef(0)
+  const current = useRef(panel)
+  current.current = panel
+  const setPanel = (next: SidePanelId | null) => {
+    if (current.current === 'browser' && next !== 'browser') browserClosedAt.current = Date.now()
+    setChosen(next)
+    setTask(null)
+    writePanel(next)
   }
+  // Stable: the chat's cards open sub-tasks with it.
+  const openTask = useMemo(() => (next: OpenTask | null) => {
+    setTask(next)
+    if (next !== null) { setChosen('tasks'); writePanel('tasks') }
+  }, [])
+  // When an agent last acted in the browser, for the icon's dot.
+  const [agentAt, setAgentAt] = useState(0)
   useEffect(() => {
     if (bridge === undefined) return
     let seen: number | undefined
     return bridge.onChange(state => {
       const started = seen !== undefined && state.agentAt > seen
       seen = state.agentAt
-      if (started && Date.now() - closedAt > AUTO_OPEN_QUIET_MS) setOpenState(true)
+      setAgentAt(state.agentAt)
+      if (started && current.current === null && Date.now() - browserClosedAt.current > AUTO_OPEN_QUIET_MS) setChosen('browser')
     })
-  }, [bridge, closedAt])
-  return { bridge, open: open && bridge !== undefined, setOpen }
+  }, [bridge])
+  const working = Date.now() - agentAt < WORKING_MS
+  // The dot goes once the agent has been quiet a while: draw again then.
+  const [, redraw] = useState(0)
+  useEffect(() => {
+    if (!working) return
+    const timer = setTimeout(() => redraw(n => n + 1), agentAt + WORKING_MS - Date.now() + 50)
+    return () => clearTimeout(timer)
+  }, [working, agentAt])
+  return { bridge, panel, setPanel, task: panel === 'tasks' ? task : null, openTask, working }
 }
 
-const BROWSER_KEY = 'adg.browserPanel'
+const PANEL_KEY = 'adg.sidePanel'
 /** Closed by the user this recently: the agent's work does not bring it back. */
 const AUTO_OPEN_QUIET_MS = 3 * 60_000
-function readBrowserOpen(): boolean {
-  try { return localStorage.getItem(BROWSER_KEY) === '1' } catch { return false }
+/** An agent acted in the browser this recently: it is working there. */
+const WORKING_MS = 5_000
+function readPanel(): SidePanelId | null {
+  try {
+    const saved = localStorage.getItem(PANEL_KEY)
+    // Before the sidebar, the browser alone was kept open or not.
+    if (saved === null) return localStorage.getItem('adg.browserPanel') === '1' ? 'browser' : null
+    return SIDE_PANELS.some(p => p.id === saved) ? saved as SidePanelId : null
+  } catch { return null }
+}
+function writePanel(panel: SidePanelId | null): void {
+  try { localStorage.setItem(PANEL_KEY, panel ?? '') } catch { /* storage unavailable */ }
 }
 
 /** The conversation's name; the pencil (or a double-click) edits it in place. Enter saves, Esc cancels. */

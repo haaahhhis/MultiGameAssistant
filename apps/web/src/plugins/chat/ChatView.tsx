@@ -1,7 +1,6 @@
 import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
-import { createPortal } from 'react-dom'
 import { useFollowTail, useStayAtBottom } from '../../components/useFollowTail.ts'
-import { SessionTools } from '../../components/sessionTools.ts'
+import { SideBar } from '../../components/sessionTools.ts'
 import { buildChat, type ChatItem } from '@adg/client-core'
 import { prettyJson } from '@adg/trajectory'
 import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNote, splitSlash, summarizeToolArgs } from '@adg/protocol'
@@ -88,9 +87,9 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     })
   }, [rows])
   const [pane, setPane] = useState<OpenTask | null>(null)
-  // The sub-task list goes beside the 对话 / 轨迹 tabs; where there are none (a sub-agent's pane), above the chat.
-  const toolsSlot = useContext(SessionTools)
-  const tracker = ready && subAgentOf === null ? <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} /> : null
+  // A conversation with a sidebar lists its sub-tasks there and opens them there (SidePanels.tsx).
+  const side = useContext(SideBar)
+  const tracker = ready && subAgentOf === null && side === null ? <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} /> : null
   const showDetail = ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1)
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
@@ -125,14 +124,13 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
     <ConversationAgent.Provider value={agentName}>
-    <OpenSubTask.Provider value={setPane}>
+    <OpenSubTask.Provider value={side?.openTask ?? setPane}>
     <SettledTasks.Provider value={settled}>
     <SubAgentIds.Provider value={childIds}>
     <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
-    {tracker !== null && toolsSlot !== null && createPortal(tracker, toolsSlot)}
-    {(showDetail || (tracker !== null && toolsSlot === null)) && (
+    {(showDetail || tracker !== null) && (
       <div className="chat-corner">
-        {toolsSlot === null && tracker}
+        {tracker}
         {showDetail && <DetailSwitch detail={detail} onChange={setDetail} />}
       </div>
     )}
@@ -167,7 +165,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
         {ready && readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
-    {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={agentName} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => setPane(null)} />}
+    {pane !== null && side === null && <SubAgentPane key={pane.id} client={client} task={pane} parent={agentName} trail={agentId === MAIN_AGENT ? [] : [MAIN.name]} onClose={() => setPane(null)} />}
     </div>
     </SubAgentIds.Provider>
     </SettledTasks.Provider>

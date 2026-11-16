@@ -39,6 +39,8 @@ const paths = {
   power: 'M12 3.5v8M7.2 6.5a7 7 0 1 0 9.6 0',
   download: 'M12 4v11M7 10.5l5 5 5-5M5 20h14',
   compress: 'M12 3v6M9 6l3 3 3-3M12 21v-6M9 18l3-3 3 3M4 12h16',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3.5 9h17M3.5 15h17M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9Z',
+  list: 'M9 6h11M9 12h11M9 18h11M4.5 6v.01M4.5 12v.01M4.5 18v.01',
 } as const
 
 export type IconName = keyof typeof paths
