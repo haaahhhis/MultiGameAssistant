@@ -540,6 +540,10 @@ a.task-card.pipeline-line .muted { flex: 1; min-width: 0; overflow: hidden; text
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 7px 12px; }
 .markdown th { background: var(--surface); text-align: left; font-weight: 600; }
 .markdown img { max-width: 100%; height: auto; border-radius: var(--r-md); }
+/* An image a reply shows from a file, or under a link to one: click for the viewer. */
+.markdown img.md-image { display: block; max-width: min(100%, 560px); max-height: 420px; width: auto; object-fit: contain; margin: 6px 0; border: 1px solid var(--border); background: var(--sunken); cursor: zoom-in; }
+.markdown img.md-image.loading { width: 240px; height: 135px; cursor: default; }
+.md-image-missing { display: inline-block; margin: 4px 0; padding: 4px 10px; border: 1px dashed var(--border); border-radius: var(--r-md); color: var(--muted); font-size: 12px; }
 .code-block { margin: 0 0 .9em; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--code-bg); }
 .code-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; border-bottom: 1px solid var(--border); }
 .code-lang { font-family: var(--mono); font-size: 11.5px; color: var(--muted); text-transform: lowercase; }

@@ -32,6 +32,7 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
 import { addRouteDefaults, providersCapability } from './providers.ts'
 import { aboutCapability } from './about.ts'
+import { readImageFile } from './image-file.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -756,6 +757,7 @@ export class AdgGateway extends Service {
             const stored = await scoped.attachments.readImage({ attachmentId: p.attachmentId, mediaType: p.mediaType, bytes: p.bytes, width: p.width, height: p.height } as never)
             return { mediaType: stored.ref.mediaType, data: Buffer.from(stored.data).toString('base64') }
           },
+          'attachments/file': async params => readImageFile((params as RequestParams<'attachments/file'>).path, this.workspace),
         },
       }), 'adg-gateway capability attachments')
     })

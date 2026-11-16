@@ -1,7 +1,10 @@
-import { memo, useMemo, type MouseEvent } from 'react'
+import { memo, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import type { AdgClient } from '@adg/client-core'
 import { desktop } from '../desktop.ts'
+import { ImageViewer } from './ImageViewer.tsx'
+import { ImageClient } from './StoredImage.tsx'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import css from 'highlight.js/lib/languages/css'
@@ -64,14 +67,59 @@ export function localPath(href: string): string | undefined {
   return path.replace(/\//g, '\\').replace(/[#?].*$/, '')
 }
 
+/** A file name an image viewer shows: png, jpg, gif, webp, bmp. */
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|bmp)$/i
+/** Not a file on this computer: a web address, a link into the app, a page anchor. */
+const NOT_A_FILE = /^(#|\?|\/\/|[a-z][a-z0-9+.-]*:)/i
+
+/**
+ * Where an image (`![…](src)`) or a link to one points on this computer: a
+ * local path, or one relative to the agents' workspace (the gateway resolves
+ * it); undefined for web addresses.
+ */
+export function localImage(src: string): string | undefined {
+  const written = src.trim()
+  const local = localPath(written)
+  if (local !== undefined) return local
+  if (written === '' || NOT_A_FILE.test(written)) return undefined
+  return written
+}
+
+/**
+ * The sanitizer drops hrefs and srcs to files on this computer, and the page
+ * may only show its own and data: images: such images and links are kept
+ * aside here, and the Markdown component loads them through the gateway.
+ */
 DOMPurify.addHook('beforeSanitizeAttributes', node => {
+  if (node.tagName === 'IMG') {
+    const src = node.getAttribute('src') ?? ''
+    if (/^data:image\//i.test(src)) return
+    node.removeAttribute('src')
+    node.classList.add('md-image')
+    const local = localImage(src)
+    if (local !== undefined) node.setAttribute('data-local-image', local)
+    else if (/^https?:/i.test(src)) node.setAttribute('data-remote-image', src)
+    return
+  }
   if (node.tagName !== 'A') return
-  const path = localPath(node.getAttribute('href') ?? '')
-  if (path === undefined) return
-  node.removeAttribute('href')
-  node.setAttribute('data-local-path', path)
-  node.setAttribute('title', path)
-  node.classList.add('local-path')
+  const href = node.getAttribute('href') ?? ''
+  const path = localPath(href)
+  if (path !== undefined) {
+    node.removeAttribute('href')
+    node.setAttribute('data-local-path', path)
+    node.setAttribute('title', path)
+    node.classList.add('local-path')
+    if (IMAGE_FILE.test(path)) node.setAttribute('data-image-preview', path)
+    return
+  }
+  // An image named relative to the workspace (`[shot.png](shot.png)`): its preview, not a page of this app.
+  const relative = localImage(href)
+  if (relative !== undefined && IMAGE_FILE.test(relative)) {
+    node.removeAttribute('href')
+    node.setAttribute('data-image-preview', relative)
+    node.setAttribute('title', relative)
+    node.classList.add('local-path')
+  }
 })
 
 // Model output is untrusted: sanitize, and make every link open externally — except links into this app (#/…).
@@ -146,7 +194,90 @@ function legacyCopy(text: string): boolean {
   }
 }
 
+/** Image files already read, by the path as written; a file a reply shows rarely changes while it is on screen. */
+const files = new Map<string, Promise<string>>()
+
+function readImage(client: AdgClient, path: string): Promise<string> {
+  let url = files.get(path)
+  if (url === undefined) {
+    url = client.connection.call('attachments/file', { path }).then(r => `data:${r.mediaType};base64,${r.data}`)
+    url.catch(() => files.delete(path))
+    files.set(path, url)
+  }
+  return url
+}
+
+/**
+ * Show the images a reply kept aside (see the sanitizer hook): a local one is
+ * read through the gateway; a link to an image file gets its picture under
+ * it; a web image, which this page may not load, becomes a link to it.
+ */
+function showImages(root: HTMLElement, client: AdgClient | null): () => void {
+  let live = true
+  const available = client?.capabilities.get().has('attachments') === true
+  const fill = (img: HTMLImageElement, path: string) => {
+    if (!available || client === null) { img.replaceWith(missing(path, '当前后端不支持显示图片')); return }
+    img.classList.add('loading')
+    readImage(client, path).then(
+      src => { if (live) { img.src = src; img.classList.remove('loading') } },
+      e => { if (live) img.replaceWith(missing(path, e instanceof Error ? e.message : String(e))) },
+    )
+  }
+  for (const img of root.querySelectorAll<HTMLImageElement>('img[data-local-image]')) {
+    if (img.src === '') fill(img, img.dataset['localImage']!)
+  }
+  for (const link of root.querySelectorAll<HTMLAnchorElement>('a[data-image-preview]')) {
+    if (link.nextElementSibling?.classList.contains('md-link-preview') === true) continue
+    const img = document.createElement('img')
+    img.className = 'md-image md-link-preview'
+    img.alt = link.textContent ?? ''
+    img.dataset['localImage'] = link.dataset['imagePreview']!
+    link.after(img)
+    fill(img, img.dataset['localImage']!)
+  }
+  for (const img of root.querySelectorAll<HTMLImageElement>('img[data-remote-image]')) {
+    const link = document.createElement('a')
+    link.href = img.dataset['remoteImage']!
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.textContent = `🖼 ${img.alt !== '' ? img.alt : '网络图片'}`
+    link.title = link.href
+    img.replaceWith(link)
+  }
+  return () => { live = false }
+}
+
+function missing(path: string, why: string): HTMLElement {
+  const note = document.createElement('span')
+  note.className = 'md-image-missing'
+  note.textContent = `图片没能显示：${why}`
+  note.title = path
+  return note
+}
+
 export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
   const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false })), [text])
-  return <div className={`markdown ${className ?? ''}`} onClick={onCopy} dangerouslySetInnerHTML={{ __html: html }} />
+  const client = useContext(ImageClient)
+  const root = useRef<HTMLDivElement>(null)
+  const [zoomed, setZoomed] = useState<{ src: string; width: number; height: number; name: string } | null>(null)
+  useEffect(() => root.current === null ? undefined : showImages(root.current, client), [html, client])
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    const preview = target.closest<HTMLAnchorElement>('a[data-image-preview]:not([data-local-path])')
+    const img = target instanceof HTMLImageElement && target.classList.contains('md-image') && target.src !== '' ? target
+      : preview?.nextElementSibling instanceof HTMLImageElement && preview.nextElementSibling.src !== '' ? preview.nextElementSibling : null
+    if (img !== null) {
+      e.preventDefault()
+      const path = img.dataset['localImage'] ?? ''
+      setZoomed({ src: img.src, width: img.naturalWidth, height: img.naturalHeight, name: path.split(/[\\/]/).pop() || 'image.png' })
+      return
+    }
+    onCopy(e)
+  }
+  return (
+    <>
+      <div ref={root} className={`markdown ${className ?? ''}`} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
+      {zoomed !== null && <ImageViewer src={zoomed.src} width={zoomed.width} height={zoomed.height} name={zoomed.name} onClose={() => setZoomed(null)} />}
+    </>
+  )
 })

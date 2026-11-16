@@ -505,6 +505,16 @@ export const Requests = {
     params: z.object({ attachmentId: z.string(), mediaType: z.string(), bytes: z.number(), width: z.number(), height: z.number() }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
   },
+  /**
+   * The bytes of an image file on the gateway's computer that a reply shows
+   * (`![…](C:\…\shot.png)`) or links to; a relative path is in the agents'
+   * workspace. Image files only (png, jpg, gif, webp, bmp), up to 25 MB.
+   */
+  'attachments/file': {
+    capability: 'attachments',
+    params: z.object({ path: z.string().min(1) }),
+    result: z.object({ mediaType: z.string(), data: z.string(), path: z.string() }),
+  },
   /** Archived sessions: hidden from the session list, kept, restorable. */
   'sessions/archived': {
     capability: 'archive',
