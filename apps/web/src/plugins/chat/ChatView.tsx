@@ -14,7 +14,7 @@ import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
 import { SkillOffer } from './SkillOffer.tsx'
 import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
-import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentOf, SubAgentPane, SubTaskCard, SUBAGENT_TOOL, taskWords, useChatDetail, type ChatDetail, type OpenTask } from './SubTasks.tsx'
+import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentOf, SubAgentPane, SubTaskCard, SubTaskTracker, SUBAGENT_TOOL, taskLabels, taskWords, useChatDetail, useSubAgents, type ChatDetail, type OpenTask } from './SubTasks.tsx'
 
 /** Pixels from the bottom within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 80
@@ -49,6 +49,8 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // dsh's note that a sub-agent ended is for the model: its card says so.
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
   const settled = useMemo(() => settledTasks(built), [built])
+  const labels = useMemo(() => taskLabels(built), [built])
+  const subAgents = useSubAgents(client, session.id)
   const roles = useRoles(client)
   const item = useStore(client.sessions).items.find(i => i.id === session.id)
   const agentId = item === undefined ? MAIN_AGENT : agentIdOf(item, roles)
@@ -118,7 +120,12 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     <OpenSubTask.Provider value={setPane}>
     <SettledTasks.Provider value={settled}>
     <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
-    {ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
+    {ready && subAgentOf === null && (
+      <div className="chat-corner">
+        <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} />
+        {allRows.some(row => layerOf(row) > 1) && <DetailSwitch detail={detail} onChange={setDetail} />}
+      </div>
+    )}
     <div className="chat" ref={scroller} onScroll={onScroll} onWheel={tail.onWheel}>
       <div className="chat-inner">
         {ready && state.hasMore && (

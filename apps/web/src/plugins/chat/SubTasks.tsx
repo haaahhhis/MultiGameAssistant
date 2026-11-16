@@ -1,10 +1,11 @@
-import { createContext, useContext, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { summarizeToolArgs, type SessionItem } from '@adg/protocol'
 import { useLastReplies } from '../../agents.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
-import { useSessionHandle, useStore } from '../../hooks.ts'
+import { relativeTime } from '../../components/SessionList.tsx'
+import { useNow, useSessionHandle, useStore } from '../../hooks.ts'
 import { ChatView } from './ChatView.tsx'
 import { ConversationAgent } from './Delegation.tsx'
 
@@ -241,10 +242,116 @@ export function DetailSwitch({ detail, onChange }: { detail: ChatDetail; onChang
   )
 }
 
+/** What each sub-agent opened in a conversation was given to do, by its id (the card's words). */
+export function taskLabels(items: readonly ChatItem[]): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>()
+  for (const item of items) {
+    if (item.kind !== 'tool' || item.name !== SUBAGENT_TOOL) continue
+    const id = STARTED.exec(item.result ?? '')?.[1]
+    if (id === undefined) continue
+    const { description, prompt } = argsOf(item.arguments)
+    const label = description !== '' ? description : (prompt.split('\n')[0] ?? '')
+    if (label !== '') labels.set(id, label)
+  }
+  return labels
+}
+
+/** The sub-agents a conversation opened. */
+export function useSubAgents(client: AdgClient, parent: string): SessionItem[] {
+  const items = useStore(client.sessions).items
+  return useMemo(() => items.filter(i => i.origin === 'subagent' && i.parentId === parent), [items, parent])
+}
+
+/** A thread's sub-agents: its agent's opened while the thread was open (a thread ends only once its sub-agents have). */
+function inThread(item: SessionItem, session: string, from: number, to: number | undefined): boolean {
+  return item.origin === 'subagent' && item.parentId === session && item.updatedAt >= from && (to === undefined || item.updatedAt <= to + 2_000)
+}
+
+/** The sub-agents opened on these threads (two agents' conversation). */
+export function useThreadSubAgents(client: AdgClient, threads: readonly { toSession: string; startedAt: number; endedAt?: number | undefined }[]): SessionItem[] {
+  const items = useStore(client.sessions).items
+  return useMemo(() => items.filter(i => threads.some(t => inThread(i, t.toSession, t.startedAt, t.endedAt))), [items, threads])
+}
+
+/** Ended sub-tasks the list shows, latest first; the rest are in the conversation. */
+const ENDED_SHOWN = 30
+
+/**
+ * How many sub-tasks are going and how many have ended, at the top of a
+ * conversation; it opens to the list of them, 进行中 and 已结束 apart, and
+ * each opens its window beside the conversation.
+ */
+export function SubTaskTracker({ tasks, labels, current, onOpen }: {
+  tasks: readonly SessionItem[]
+  /** What each was given to do, where the conversation says. */
+  labels: ReadonlyMap<string, string>
+  /** The one open beside the conversation. */
+  current: string | undefined
+  onOpen: (task: OpenTask) => void
+}) {
+  const ended = useContext(SettledTasks)
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const now = useNow(60_000)
+  useEffect(() => {
+    if (!open) return
+    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', away)
+    document.addEventListener('keydown', escape)
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', escape) }
+  }, [open])
+  const latest = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt)
+  const running = latest.filter(t => t.running)
+  const done = latest.filter(t => !t.running)
+  if (tasks.length === 0) return null
+  const label = (task: SessionItem) => labels.get(task.id) ?? (taskWords(task.title ?? '') || '子任务')
+  const row = (task: SessionItem) => {
+    const state = task.running ? RUNNING : ended.get(task.id) ?? DONE
+    const words = label(task)
+    return (
+      <li key={task.id}>
+        <button className={`subtask-tracker-row ${task.id === current ? 'active' : ''}`} title={words} onClick={() => { setOpen(false); onOpen({ id: task.id, label: words }) }}>
+          {task.running ? <span className="tool-spinner" aria-hidden /> : <Icon name={state === DONE ? 'check' : 'alert'} className={`tone-${state.tone}`} />}
+          <span className="subtask-tracker-label">{words}</span>
+          <span className={`delegation-state tone-${state.tone}`}>{task.running ? state.label : `${state.label} · ${relativeTime(task.updatedAt, now)}`}</span>
+          <Icon name="chevron" className="exchange-open" />
+        </button>
+      </li>
+    )
+  }
+  const summary = running.length > 0 ? `${running.length} 个子任务在跑` : '子任务'
+  return (
+    <div ref={root} className="subtask-tracker">
+      <button type="button" className={`subtask-tracker-toggle ${running.length > 0 ? 'tone-running' : ''}`} aria-haspopup="dialog" aria-expanded={open}
+        title={`进行中 ${running.length} 个，已结束 ${done.length} 个；点开看每一个的窗口`} onClick={() => setOpen(o => !o)}>
+        {running.length > 0 ? <span className="tool-spinner" aria-hidden /> : <Icon name="flow" />}
+        <span>{summary}</span>
+        {done.length > 0 && <span className="subtask-tracker-ended">已结束 {done.length}</span>}
+        <Icon name="chevron-down" className="subtask-tracker-chevron" />
+      </button>
+      {open && (
+        <div className="subtask-tracker-panel" role="dialog" aria-label="子任务">
+          <section>
+            <div className="subtask-tracker-head">进行中<span className="skills-count">{running.length}</span></div>
+            {running.length === 0 ? <p className="muted small subtask-tracker-empty">现在没有在跑的子任务</p> : <ul>{running.map(row)}</ul>}
+          </section>
+          {done.length > 0 && (
+            <section>
+              <div className="subtask-tracker-head">已结束<span className="skills-count">{done.length}</span></div>
+              <ul>{done.slice(0, ENDED_SHOWN).map(row)}</ul>
+              {done.length > ENDED_SHOWN && <p className="muted small subtask-tracker-empty">更早的 {done.length - ENDED_SHOWN} 个在对话里</p>}
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** The sub-tasks of a thread, on its page: a compact row each. */
 export function ThreadSubTasks({ client, session, from, to, onOpen }: { client: AdgClient; session: string; from: number; to: number | undefined; onOpen: (task: OpenTask) => void }) {
-  // A thread ends only once its sub-agents have, so one last touched after that is from later.
-  const items = useStore(client.sessions).items.filter(i => i.origin === 'subagent' && i.parentId === session && i.updatedAt >= from && (to === undefined || i.updatedAt <= to + 2_000))
+  const items = useStore(client.sessions).items.filter(i => inThread(i, session, from, to))
   if (items.length === 0) return null
   return (
     <div className="delegation thread-subtasks">

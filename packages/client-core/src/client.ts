@@ -64,6 +64,13 @@ export class AdgClient {
 
     c.on('sessions/changed', change => {
       if (change.kind === 'removed') {
+        // "Removed" is a session leaving the live registry. A sub-agent leaves it when it ends, and is
+        // still there to read (the parent's 子任务 list): kept as ended, and the list read again to be sure.
+        if (this.sessions.get().items.some(i => i.id === change.sessionId && i.origin === 'subagent')) {
+          this.sessions.set(s => ({ ...s, items: s.items.map(i => (i.id === change.sessionId ? { ...i, running: false, live: false } : i)) }))
+          this.#queueRefresh()
+          return
+        }
         this.sessions.set(s => ({ ...s, items: s.items.filter(i => i.id !== change.sessionId) }))
         return
       }

@@ -6,7 +6,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
-import { OpenSubTask, SubAgentPane, ThreadSubTasks, type OpenTask } from './SubTasks.tsx'
+import { OpenSubTask, SubAgentPane, SubTaskTracker, ThreadSubTasks, useThreadSubAgents, type OpenTask } from './SubTasks.tsx'
 
 /**
  * What agents say to each other (docs/design/agent-roles.md §10, §11). In
@@ -279,6 +279,7 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
   const from = useAgent(client, item?.by ?? '')
   const to = useAgent(client, item?.to ?? '')
   const { threads, ready } = useConversation(client, item)
+  const subAgents = useThreadSubAgents(client, threads)
   const nameOf = (nameOrId: string) => roles.find(r => r.id === nameOrId)?.name ?? (nameOrId === MAIN.id ? MAIN.name : nameOrId)
   const agentNamed = (name: string): Agent | undefined => {
     const role = roles.find(r => r.name === name || r.id === name)
@@ -343,6 +344,7 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
       <div className="view">
         <OpenSubTask.Provider value={setPane}>
         <div className={`chat-split ${pane === null ? '' : 'with-pane'}`}>
+        {subAgents.length > 0 && <div className="chat-corner"><SubTaskTracker tasks={subAgents} labels={NO_LABELS} current={pane?.id} onOpen={setPane} /></div>}
         <div className="chat" ref={scroller}><div className="chat-inner">{rows}</div></div>
         {pane !== null && <SubAgentPane key={pane.id} client={client} task={pane} parent={toName} trail={item.by === toName ? [] : [item.by]} onClose={() => setPane(null)} />}
         </div>
@@ -354,5 +356,7 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
     </section>
   )
 }
+
+const NO_LABELS: ReadonlyMap<string, string> = new Map()
 
 const KIND_LABEL: Readonly<Record<ThreadMessage['kind'], string>> = { question: '问', answer: '答', update: '说', done: '结论' }
