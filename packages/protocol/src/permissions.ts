@@ -29,7 +29,7 @@ export interface AgentArea {
 
 /** Everything the agent can do on its own, by area (tool names as the agent sees them). */
 export const AGENT_AREAS: readonly AgentArea[] = [
-  { id: 'pipelines-edit', title: '编辑流水线和定时', description: '起草流水线，「编排」直接修改、保存流水线（pipeline_save），设定时间（schedule_set），以及 dsh 自己的定时任务。', tools: ['pipeline_draft', 'pipeline_save', 'schedule_set', 'schedule_create', 'schedule_update', 'schedule_delete'] },
+  { id: 'pipelines-edit', title: '编辑流水线和定时', description: '起草流水线，「编排」直接修改、保存流水线（pipeline_save），设定时间（schedule_set），以及 dsh 自己的定时任务。', tools: ['pipeline_draft', 'pipeline_save', 'schedule_set', 'schedule_create', 'schedule_edit'] },
   { id: 'run', title: '运行流水线和脚本', description: '启动、停止流水线和脚本任务。', tools: ['pipeline_run', 'script_run', 'script_stop'] },
   { id: 'scripts-config', title: '改脚本配置', description: '修改脚本的配置副本、导入配置、新建选项、打开脚本自己的设置界面、设置游戏位置。', tools: ['script_config_set', 'script_config_import', 'script_choice_create', 'script_settings', 'game_path_set'] },
   { id: 'scripts-install', title: '安装、更新、删除脚本', description: '从 GitHub 安装、更新、回滚、删除脚本，运行脚本的安装程序，导入本地脚本，修复运行环境，写、改脚本包（pack_propose，直接生效）。', tools: ['script_install', 'script_update', 'script_rollback', 'script_remove', 'script_setup_run', 'script_import', 'script_env_fix', 'pack_propose'] },
