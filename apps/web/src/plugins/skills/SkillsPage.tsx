@@ -55,7 +55,7 @@ interface Draft { original?: string; name: string; description: string; content:
  * with /name, and its instructions. Skills kept in this app's skills folder can
  * be made, changed and deleted here.
  */
-export function SkillsPage({ client, arg, openSession }: PageProps) {
+export function SkillsPage({ client, arg }: PageProps) {
   const status = useStore(client.connection.status)
   const capabilities = useStore(client.capabilities)
   // #/p/skills/hub (or hub:<name>, from the game page) opens the skills repository.
@@ -203,7 +203,7 @@ export function SkillsPage({ client, arg, openSession }: PageProps) {
         </div>
       </header>
       {tab === 'hub' && capabilities.has('skillhub') ? (
-        <div className="skill-hub-body"><SkillHubPanel client={client} focus={focus} openSession={openSession} openSkill={name => { setSelected(name); setTab('mine') }} /></div>
+        <div className="skill-hub-body"><SkillHubPanel client={client} focus={focus} openSkill={name => { setSelected(name); setTab('mine') }} /></div>
       ) : (
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="技能列表">

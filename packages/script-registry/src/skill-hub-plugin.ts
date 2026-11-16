@@ -1,7 +1,7 @@
 /**
  * The skills repository inside the host: its downloaded skills registered
- * with the agents, the `skillhub@1` capability for the 技能 page, the agent
- * tools, and merging a changed skill with a newer one through the agent.
+ * with the agents, the `skillhub@1` capability for the 技能 page, and the
+ * agent tools.
  */
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -9,13 +9,11 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-skill'
 import type { CapabilityRegistration } from '@adg/gateway'
-import { sessionConversations } from '@adg/notify'
-import { SKILLHUB_CAPABILITY, type RequestParams, taskMessage } from '@adg/protocol'
+import { SKILLHUB_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import type { ScriptLibrary } from './library.ts'
-import { SkillHub, type HubItem } from './skill-hub.ts'
+import { SkillHub } from './skill-hub.ts'
 import type { Approve } from './tools.ts'
-import { SCRIPT_ROLE } from './role.ts'
 
 /** Where each kind of skill comes from, in the words of "已有同名的…". */
 function takenLabel(source: string): string {
@@ -24,8 +22,6 @@ function takenLabel(source: string): string {
   if (source.startsWith('user-')) return '技能（你的技能文件夹）'
   return '技能'
 }
-
-const MERGE_TIMEOUT_MS = 10 * 60_000
 
 export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promise<void>, approve: Approve, log: { info(m: string): void; warn(m: string): void }): SkillHub {
   const entries = new Map<string, { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } }>()
@@ -75,32 +71,6 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     }, 'adg-skill-hub skills')
   })
 
-  /** Have the agent merge the repository's newer version into the user's changed skill. */
-  const merge = async (name: string, signal?: AbortSignal): Promise<{ sessionId: string; item: HubItem }> => {
-    const sessions = ctx.get('sessionController')
-    if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const { base, mine, theirs, file, skill } = await hub.mergeInputs(name, signal)
-    const conversations = sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), undefined, () => ctx.get('adgGateway'))
-    const sessionId = await conversations.home(SCRIPT_ROLE.id)
-    const prompt = [
-      `技能库里的技能「${name}」有了新版本，但用户改过自己的这份。把新版本的改动合并进用户的版本，写回 ${file}（只改这一个文件）。`,
-      '规则：用户改过的地方保留用户的；新版本新增或修正、用户没碰过的地方用新版本的；两边改了同一处时以用户的为主，把新版本里有用的信息补进去。保持开头的 frontmatter（name 不变）。写完用一两句话说明合并了什么、哪里两边冲突以及怎么处理的。',
-      '',
-      '下载时的版本（共同的起点）：',
-      '```markdown', base, '```',
-      '用户现在的版本：',
-      '```markdown', mine, '```',
-      '技能库的新版本：',
-      '```markdown', theirs, '```',
-    ].join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `合并技能：${name}`, prompt), AbortSignal.timeout(MERGE_TIMEOUT_MS)).then(
-      async () => { await hub.merged(name, skill); changed() },
-      error => log.warn(`skill hub: merging ${name} failed: ${error instanceof Error ? error.message : String(error)}`),
-    )
-    const { items } = await hub.list()
-    return { sessionId, item: items.find(i => i.name === name)! }
-  }
-
   ctx.inject(['adgGateway'], scoped => {
     const methods: CapabilityRegistration['methods'] = {
       'skillhub/list': (params, call) => hub.list({ refresh: (params as RequestParams<'skillhub/list'>).refresh === true, signal: call.signal }),
@@ -111,13 +81,10 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
         return item
       },
       'skillhub/update': async (params, call) => {
-        const p = params as RequestParams<'skillhub/update'>
-        if (p.resolve === 'merge') return { state: 'merging', ...(await merge(p.name, call.signal)) }
-        const result = await hub.update(p.name, p.resolve, call.signal)
+        const result = await hub.update((params as RequestParams<'skillhub/update'>).name, call.signal)
         changed()
         return result
       },
-      'skillhub/diff': (params, call) => hub.diff((params as RequestParams<'skillhub/diff'>).name, call.signal),
       'skillhub/remove': async params => {
         await hub.remove((params as RequestParams<'skillhub/remove'>).name)
         changed()
@@ -187,7 +154,7 @@ function hubTools(hub: SkillHub, approve: Approve, changed: () => void): ToolDef
     },
     {
       name: 'skill_hub_install',
-      description: '从技能库下载一个技能（会先请用户确认）。下载后 agent 马上就能用；下载的技能放在数据目录里，可以改，更新时不会覆盖改动。',
+      description: '从技能库下载一个技能（会先请用户确认）。下载后 agent 马上就能用；下载的技能跟着技能库走，更新时整个换成技能库的新版本，在这里改的不保留。',
       parameters: {
         type: 'object',
         properties: { name: { type: 'string', description: '技能名（skill_hub_list 可查）。' } },

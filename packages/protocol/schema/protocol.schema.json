@@ -519,9 +519,6 @@
     "skillhub/update": {
       "capability": "skillhub"
     },
-    "skillhub/diff": {
-      "capability": "skillhub"
-    },
     "skillhub/remove": {
       "capability": "skillhub"
     },
@@ -22727,16 +22724,12 @@
                   "at": {
                     "type": "number"
                   },
-                  "modified": {
-                    "type": "boolean"
-                  },
                   "update": {
                     "type": "boolean"
                   }
                 },
                 "required": [
                   "at",
-                  "modified",
                   "update"
                 ],
                 "additionalProperties": false
@@ -22864,16 +22857,12 @@
             "at": {
               "type": "number"
             },
-            "modified": {
-              "type": "boolean"
-            },
             "update": {
               "type": "boolean"
             }
           },
           "required": [
             "at",
-            "modified",
             "update"
           ],
           "additionalProperties": false
@@ -22901,14 +22890,6 @@
         "name": {
           "type": "string",
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        },
-        "resolve": {
-          "type": "string",
-          "enum": [
-            "keep",
-            "replace",
-            "merge"
-          ]
         }
       },
       "required": [
@@ -22924,10 +22905,7 @@
           "type": "string",
           "enum": [
             "current",
-            "updated",
-            "kept",
-            "conflict",
-            "merging"
+            "updated"
           ]
         },
         "item": {
@@ -22977,16 +22955,12 @@
                 "at": {
                   "type": "number"
                 },
-                "modified": {
-                  "type": "boolean"
-                },
                 "update": {
                   "type": "boolean"
                 }
               },
               "required": [
                 "at",
-                "modified",
                 "update"
               ],
               "additionalProperties": false
@@ -23006,48 +22980,11 @@
             "hash"
           ],
           "additionalProperties": false
-        },
-        "backup": {
-          "type": "string"
-        },
-        "sessionId": {
-          "type": "string"
         }
       },
       "required": [
         "state",
         "item"
-      ],
-      "additionalProperties": false
-    },
-    "skillhub/diff.params": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "additionalProperties": false
-    },
-    "skillhub/diff.result": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "mine": {
-          "type": "string"
-        },
-        "theirs": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "mine",
-        "theirs"
       ],
       "additionalProperties": false
     },

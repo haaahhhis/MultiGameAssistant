@@ -1,8 +1,9 @@
 /**
  * `skillhub@1`: the skills repository (技能库) — skills for particular games
  * and scripts, downloaded from a GitHub repository when the user wants them.
- * Core skills ship with the app and cannot be changed; the user's own skills
- * are not tracked. Served by `@adg/script-registry`.
+ * A downloaded skill follows the repository: an update replaces it. Core
+ * skills ship with the app and cannot be changed; the user's own skills are
+ * not tracked. Served by `@adg/script-registry`.
  */
 import { z } from 'zod'
 import { GitHubRepo } from './scripts.ts'
@@ -26,8 +27,6 @@ export const HubItem = z.object({
   hash: z.string(),
   installed: z.object({
     at: z.number(),
-    /** The user changed it since it was downloaded. */
-    modified: z.boolean(),
     /** The repository has a newer version. */
     update: z.boolean(),
   }).optional(),
@@ -50,21 +49,11 @@ export const SkillHubRequests = {
     params: ByName.extend({ repo: GitHubRepo.optional() }),
     result: HubItem,
   },
-  /**
-   * Take the newer version. A skill the user changed gives `conflict` unless
-   * `resolve` says: `keep` theirs (and skip this version), `replace` it
-   * (theirs backed up), or `merge` (the agent merges the two in a session).
-   */
+  /** Take the newer version in place of the downloaded one, changed here or not. */
   'skillhub/update': {
     capability: SKILLHUB_CAPABILITY,
-    params: ByName.extend({ resolve: z.enum(['keep', 'replace', 'merge']).optional() }),
-    result: z.object({ state: z.enum(['current', 'updated', 'kept', 'conflict', 'merging']), item: HubItem, backup: z.string().optional(), sessionId: z.string().optional() }),
-  },
-  /** The user's version and the repository's newer one, to show what differs. */
-  'skillhub/diff': {
-    capability: SKILLHUB_CAPABILITY,
     params: ByName,
-    result: z.object({ mine: z.string(), theirs: z.string() }),
+    result: z.object({ state: z.enum(['current', 'updated']), item: HubItem }),
   },
   'skillhub/remove': {
     capability: SKILLHUB_CAPABILITY,

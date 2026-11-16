@@ -7,16 +7,15 @@
  *   mirror), at most once a day unless asked. Its `index.json` lists the
  *   skills (`name`, `path`, `kind`, `games`, `scripts`); without one every
  *   `SKILL.md` in it is a skill. A skill's description is its frontmatter's.
- * - A downloaded skill lives in `<dataDir>/skill-hub/skills/<name>/` with a
- *   copy of what was downloaded (`base/`), so the user may change it: an
- *   update replaces it only when it is unchanged; changed, the user keeps
- *   theirs, takes the new one (theirs kept as a backup), or has the agent
- *   merge the two.
+ * - A downloaded skill lives in `<dataDir>/skill-hub/skills/<name>/` and
+ *   follows the repository: an update replaces it with the repository's
+ *   version whether or not it was changed here. What should last is saved as
+ *   one of the user's own skills.
  * - The user's own skills (`skill_save`, their folders) are not tracked here,
  *   and a skill named like one of them, or like a core skill, is not taken.
  */
 import { createHash } from 'node:crypto'
-import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
 import { z } from 'zod'
@@ -49,9 +48,7 @@ export interface HubSkill {
 export interface HubItem extends HubSkill {
   readonly installed?: {
     readonly at: number
-    /** The user changed it since it was downloaded (or merged). */
-    readonly modified: boolean
-    /** The repository has another version (not one the user chose to skip). */
+    /** The repository has another version. */
     readonly update: boolean
   }
   /** Why it cannot be downloaded: a core or the user's own skill has the name. */
@@ -60,7 +57,7 @@ export interface HubItem extends HubSkill {
 
 /** Games and scripts the user put a downloaded skill under, instead of the repository's. */
 const Owner = z.object({ games: z.array(z.string()).optional(), scripts: z.array(z.string()).optional() })
-const Installed = z.object({ repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), skipped: z.string().optional(), owner: Owner.optional() })
+const Installed = z.object({ repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), owner: Owner.optional() })
 const State = z.object({
   repos: z.array(z.object({ repo: z.string(), branch: z.string() })).optional(),
   installed: z.record(z.string(), Installed).default({}),
@@ -115,6 +112,8 @@ export class SkillHub {
       try {
         this.#state = State.parse(JSON.parse(await readFile(join(this.#options.dir, 'state.json'), 'utf8')))
       } catch { /* none yet */ }
+      // Copies of what was downloaded, once kept for merging the user's changes: no longer used.
+      await rm(join(this.#options.dir, 'base'), { recursive: true, force: true })
       for (const name of Object.keys(this.#state.installed)) await this.#register(name)
     })()
     return this.#loading
@@ -169,7 +168,7 @@ export class SkillHub {
       if (items.some(i => i.name === name)) continue
       const content = await readFile(join(this.skillsDir, name, SKILL_FILE), 'utf8').catch(() => '')
       const front = frontmatter(content)
-      items.push({ name, description: front?.description ?? '', kind: 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: { at: record.at, modified: hash(content) !== record.hash, update: false } })
+      items.push({ name, description: front?.description ?? '', kind: 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: { at: record.at, update: false } })
     }
     return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }) }
   }
@@ -184,73 +183,19 @@ export class SkillHub {
     return this.#item(skill, await this.#options.taken())
   }
 
-  /**
-   * Take the repository's newer version. Unchanged here: replaced. Changed:
-   * `conflict`, unless `resolve` says what to do — `keep` the user's (and
-   * stop offering this version), or `replace` it (the user's kept in
-   * `backup/`).
-   */
-  async update(name: string, resolve?: 'keep' | 'replace', signal?: AbortSignal): Promise<{ state: 'current' | 'updated' | 'kept' | 'conflict'; item: HubItem; backup?: string }> {
+  /** Take the repository's newer version, in place of this one (changed here or not). */
+  async update(name: string, signal?: AbortSignal): Promise<{ state: 'current' | 'updated'; item: HubItem }> {
     const record = this.#record(name)
     const skill = await this.#find(name, record.repo, signal)
-    const taken = await this.#options.taken()
-    if (skill.hash === record.hash) return { state: 'current', item: await this.#item(skill, taken) }
-    const file = join(this.skillsDir, name, SKILL_FILE)
-    const mine = await readFile(file, 'utf8').catch(() => undefined)
-    const modified = mine !== undefined && hash(mine) !== record.hash
-    if (modified && resolve === undefined) return { state: 'conflict', item: await this.#item(skill, taken) }
-    if (modified && resolve === 'keep') {
-      this.#state.installed[name] = { ...record, skipped: skill.hash }
-      await this.#save()
-      return { state: 'kept', item: await this.#item(skill, taken) }
-    }
-    let backup: string | undefined
-    if (modified) {
-      backup = join(this.#options.dir, 'backup', `${name}-${this.#now()}.md`)
-      await mkdir(join(this.#options.dir, 'backup'), { recursive: true })
-      await writeFile(backup, mine!)
-    }
+    if (skill.hash === record.hash) return { state: 'current', item: await this.#item(skill, await this.#options.taken()) }
     await this.#put(skill)
-    return { state: 'updated', item: await this.#item(skill, taken), ...(backup === undefined ? {} : { backup }) }
-  }
-
-  /**
-   * The three versions for merging a changed skill with the repository's
-   * newer one: what was downloaded (`base`), the user's, the new one.
-   */
-  async mergeInputs(name: string, signal?: AbortSignal): Promise<{ base: string; mine: string; theirs: string; file: string; skill: HubSkill }> {
-    const record = this.#record(name)
-    const skill = await this.#find(name, record.repo, signal)
-    const file = join(this.skillsDir, name, SKILL_FILE)
-    const [base, mine, theirs] = await Promise.all([
-      readFile(join(this.#options.dir, 'base', name, SKILL_FILE), 'utf8').catch(() => ''),
-      readFile(file, 'utf8'),
-      readFile(this.#repoFile(skill), 'utf8'),
-    ])
-    return { base, mine, theirs, file, skill }
-  }
-
-  /** After a merge was written into the user's file: the new version counts as taken (the file stays the user's). */
-  async merged(name: string, skill: HubSkill): Promise<void> {
-    const record = this.#record(name)
-    await mkdir(join(this.#options.dir, 'base', name), { recursive: true })
-    await cp(this.#repoFile(skill), join(this.#options.dir, 'base', name, SKILL_FILE))
-    this.#state.installed[name] = { repo: record.repo, path: record.path, hash: skill.hash, at: this.#now() }
-    await this.#save()
-    await this.#register(name)
-  }
-
-  /** The user's version and the repository's, for showing what differs. */
-  async diff(name: string, signal?: AbortSignal): Promise<{ mine: string; theirs: string }> {
-    const { mine, theirs } = await this.mergeInputs(name, signal)
-    return { mine, theirs }
+    return { state: 'updated', item: await this.#item(skill, await this.#options.taken()) }
   }
 
   async remove(name: string): Promise<void> {
     this.#record(name)
     this.#options.register(name, undefined)
     await rm(join(this.skillsDir, name), { recursive: true, force: true })
-    await rm(join(this.#options.dir, 'base', name), { recursive: true, force: true })
     delete this.#state.installed[name]
     await this.#save()
   }
@@ -302,16 +247,13 @@ export class SkillHub {
     return join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'), SKILL_FILE)
   }
 
-  /** Copy the repository's version in as the downloaded skill (and as the base for later merges). */
+  /** Copy the repository's version in as the downloaded skill. */
   async #put(skill: HubSkill): Promise<void> {
     const from = join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'))
     const to = join(this.skillsDir, skill.name)
     await rm(to, { recursive: true, force: true })
     await mkdir(this.skillsDir, { recursive: true })
     await cp(from, to, { recursive: true })
-    await rm(join(this.#options.dir, 'base', skill.name), { recursive: true, force: true })
-    await mkdir(join(this.#options.dir, 'base', skill.name), { recursive: true })
-    await cp(join(from, SKILL_FILE), join(this.#options.dir, 'base', skill.name, SKILL_FILE))
     // Where the user put it stays across updates.
     const owner = this.#state.installed[skill.name]?.owner
     this.#state.installed[skill.name] = { repo: skill.repo, path: skill.path, hash: skill.hash, at: this.#now(), ...(owner === undefined ? {} : { owner }) }
@@ -344,11 +286,7 @@ export class SkillHub {
       const blocked = taken.get(skill.name)
       return { ...skill, ...(blocked === undefined ? {} : { blocked: `已有同名的${blocked}` }) }
     }
-    const content = await readFile(join(this.skillsDir, skill.name, SKILL_FILE), 'utf8').catch(() => '')
-    return {
-      ...skill,
-      installed: { at: record.at, modified: hash(content) !== record.hash, update: skill.repo === record.repo && skill.hash !== record.hash && skill.hash !== record.skipped },
-    }
+    return { ...skill, installed: { at: record.at, update: skill.repo === record.repo && skill.hash !== record.hash } }
   }
 
   /** Download the repository and list its skills; the copy replaces the one before. */

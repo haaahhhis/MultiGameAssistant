@@ -96,7 +96,7 @@ export function denialReason(verdict: Verdict, scriptName: string): string {
   if (verdict.scriptId === APP_FILES) {
     return [
       `已拦截：这是 MultiGameAssistant 自带的文件（内置技能、脚本包、游戏包），不能修改（${verdict.target}）。`,
-      '软件更新时会整体替换它们。要补充做法，用 skill_save 另存一个自己的技能；技能库下载的技能在数据目录里，可以改，更新时不会被覆盖。',
+      '软件更新时会整体替换它们。要补充做法，用 skill_save 另存一个自己的技能（技能库下载的技能也一样：它跟着技能库更新，在本地改了会被新版本换掉）。',
     ].join('')
   }
   return [

@@ -68,14 +68,15 @@ test('the repository is read as one zip, at most daily; its index says each skil
   await assert.rejects(hub.install('maa'), /已有同名的内置技能/)
 })
 
-test('downloaded, changed by the user, updated: unchanged is replaced, changed is the user\'s call', async () => {
+test('downloaded and updated: an update takes the repository version, changed here or not; removing forgets it', async () => {
   const { hub, dir, state } = setup()
   const item = await hub.install('game-arknights')
-  assert.deepEqual(item.installed && { modified: item.installed.modified, update: item.installed.update }, { modified: false, update: false })
+  assert.deepEqual(item.installed && { update: item.installed.update }, { update: false })
   const file = join(dir, 'skills', 'game-arknights', 'SKILL.md')
   assert.match(readFileSync(file, 'utf8'), /活动页在右上角/)
   assert.match(state.registered.get('game-arknights') ?? '', /活动页在右上角/, 'registered with the agents')
   assert.deepEqual(state.owners.get('game-arknights'), { games: ['arknights'] }, 'only for the sessions working on its game (skill isolation)')
+  assert.ok(!existsSync(join(dir, 'base')), 'no copy kept for merging')
 
   // A new version, nothing changed here: replaced.
   state.files['games/arknights/SKILL.md'] = skill('game-arknights', '明日方舟的活动和进度', '# 明日方舟\n活动页在右上角。\n商店在左下。\n')
@@ -85,53 +86,23 @@ test('downloaded, changed by the user, updated: unchanged is replaced, changed i
   assert.match(readFileSync(file, 'utf8'), /商店在左下/)
   assert.equal((await hub.update('game-arknights')).state, 'current')
 
-  // The user adds a line; the repository changes again: not overwritten without a word.
+  // Changed here, and the repository changes again: still replaced.
   writeFileSync(file, readFileSync(file, 'utf8') + '我的账号在 B 服。\n')
+  listed = (await hub.list()).items.find(i => i.name === 'game-arknights')!
+  assert.equal(listed.installed?.update, false, 'a change here is not a new version')
   state.files['games/arknights/SKILL.md'] = skill('game-arknights', '明日方舟的活动和进度', '# 明日方舟\n活动页在右上角。\n商店在左下。\n任务在主页。\n')
   listed = (await hub.list({ refresh: true })).items.find(i => i.name === 'game-arknights')!
-  assert.deepEqual(listed.installed && { modified: listed.installed.modified, update: listed.installed.update }, { modified: true, update: true })
-  assert.equal((await hub.update('game-arknights')).state, 'conflict')
-  assert.match(readFileSync(file, 'utf8'), /B 服/)
-  const diff = await hub.diff('game-arknights')
-  assert.match(diff.mine, /B 服/)
-  assert.match(diff.theirs, /任务在主页/)
+  assert.equal(listed.installed?.update, true)
+  assert.equal((await hub.update('game-arknights')).state, 'updated')
+  const now = readFileSync(file, 'utf8')
+  assert.match(now, /任务在主页/)
+  assert.doesNotMatch(now, /B 服/)
+  assert.match(state.registered.get('game-arknights') ?? '', /任务在主页/, 'the agents see the new version')
 
-  // Keep mine: this version is no longer offered.
-  assert.equal((await hub.update('game-arknights', 'keep')).state, 'kept')
-  listed = (await hub.list()).items.find(i => i.name === 'game-arknights')!
-  assert.equal(listed.installed?.update, false)
-  assert.match(readFileSync(file, 'utf8'), /B 服/)
-
-  // A later version, and this time take it: mine is kept as a backup.
-  state.files['games/arknights/SKILL.md'] = skill('game-arknights', '明日方舟的活动和进度', '# v4\n')
-  await hub.list({ refresh: true })
-  const replaced = await hub.update('game-arknights', 'replace')
-  assert.equal(replaced.state, 'updated')
-  assert.match(readFileSync(replaced.backup!, 'utf8'), /B 服/)
-  assert.match(readFileSync(file, 'utf8'), /# v4/)
-})
-
-test('after a merge the new version counts as taken and the user\'s file stays theirs; removing forgets it', async () => {
-  const { hub, dir, state } = setup()
-  await hub.install('maa')
-  const file = join(dir, 'skills', 'maa', 'SKILL.md')
-  writeFileSync(file, skill('maa', 'MAA 的安装与运行', '# 我的写法\n'))
-  state.files['scripts/maa/SKILL.md'] = skill('maa', 'MAA 的安装与运行', '# 新写法\n')
-  await hub.list({ refresh: true })
-  const inputs = await hub.mergeInputs('maa')
-  assert.match(inputs.base, /# 步骤/)
-  assert.match(inputs.mine, /我的写法/)
-  assert.match(inputs.theirs, /新写法/)
-  // The agent writes the merge into the file, then:
-  writeFileSync(file, skill('maa', 'MAA 的安装与运行', '# 我的写法\n# 新写法\n'))
-  await hub.merged('maa', inputs.skill)
-  const item = (await hub.list()).items.find(i => i.name === 'maa')!
-  assert.deepEqual(item.installed && { modified: item.installed.modified, update: item.installed.update }, { modified: true, update: false })
-  assert.match(state.registered.get('maa') ?? '', /新写法/)
-  await hub.remove('maa')
-  assert.ok(!existsSync(join(dir, 'skills', 'maa')))
-  assert.equal(state.registered.has('maa'), false)
-  assert.equal((await hub.list()).items.find(i => i.name === 'maa')?.installed, undefined)
+  await hub.remove('game-arknights')
+  assert.ok(!existsSync(join(dir, 'skills', 'game-arknights')))
+  assert.equal(state.registered.has('game-arknights'), false)
+  assert.equal((await hub.list()).items.find(i => i.name === 'game-arknights')?.installed, undefined)
 })
 
 test('a repository without index.json: every SKILL.md is a skill; one that cannot be read keeps what was read before', async () => {

@@ -1,8 +1,8 @@
 /**
  * 技能库: skills for games and scripts, downloaded from the skills
  * repository when the user wants them. Suggested for the games followed and
- * the scripts in the library; a downloaded skill the user changed is never
- * overwritten by an update without their word.
+ * the scripts in the library; a downloaded skill follows the repository, and
+ * an update replaces it.
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
@@ -14,11 +14,10 @@ import { errorText } from '../scripts/data.ts'
 
 const KIND: Readonly<Record<HubItem['kind'], string>> = { game: '游戏', script: '脚本', general: '通用' }
 
-export function SkillHubPanel({ client, focus, openSession, openSkill }: {
+export function SkillHubPanel({ client, focus, openSkill }: {
   client: AdgClient
   /** A skill to show first (a link from the game page). */
   focus?: string | undefined
-  openSession: (sessionId: string) => void
   openSkill: (name: string) => void
 }) {
   const now = useNow(60_000)
@@ -28,7 +27,6 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [diff, setDiff] = useState<{ name: string; mine: string; theirs: string } | null>(null)
   const [editingRepos, setEditingRepos] = useState(false)
 
   const load = async (refresh = false) => {
@@ -80,17 +78,9 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
     ].filter(g => g.items.length > 0)
   }, [data, mine, focus])
 
-  const update = (item: HubItem, resolve?: 'keep' | 'replace' | 'merge') => act(`update:${item.name}`, async () => {
-    const r = await client.connection.call('skillhub/update', { name: item.name, ...(resolve === undefined ? {} : { resolve }) })
-    setDiff(null)
-    if (r.state === 'merging' && r.sessionId !== undefined) {
-      openSession(r.sessionId)
-      return 'agent 正在合并，合并完会写回你的这份技能'
-    }
-    if (r.state === 'conflict') return '你改过这个技能：选「保留我的」「用新版」或「让 agent 合并」'
-    if (r.state === 'kept') return '已保留你的版本，这个新版本不再提示'
-    if (r.state === 'updated') return r.backup === undefined ? `${item.name} 已更新` : `${item.name} 已更新，你原来的那份备份在 ${r.backup}`
-    return '已是最新'
+  const update = (item: HubItem) => act(`update:${item.name}`, async () => {
+    const r = await client.connection.call('skillhub/update', { name: item.name })
+    return r.state === 'updated' ? `${item.name} 已更新` : '已是最新'
   })
 
   return (
@@ -100,7 +90,7 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
           <div>
             <h3>技能库</h3>
             <p className="muted small">
-              游戏和脚本的技能放在 {data?.repos.map(r => r.repo).join('、') ?? 'MultiGameAssistant/skills'}，按需下载；下载的可以改，更新时不会覆盖你的改动。软件自带的核心技能受保护，随软件更新。
+              游戏和脚本的技能放在 {data?.repos.map(r => r.repo).join('、') ?? 'MultiGameAssistant/skills'}，按需下载；下载的跟着技能库走，更新时整个换成新版本。要留下自己的做法，另存成自己的技能。软件自带的核心技能受保护，随软件更新。
             </p>
           </div>
           <div className="key-actions">
@@ -134,7 +124,6 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
                     <strong>{item.title ?? item.name}</strong>
                     {item.title !== undefined && <code className="muted small">{item.name}</code>}
                     <span className="badge">{KIND[item.kind]}</span>
-                    {item.installed?.modified === true && <span className="badge" title="你改过这个技能；更新时不会覆盖">你改过</span>}
                     {item.installed?.update === true && <span className="badge ok">有新版</span>}
                   </div>
                   <span className="muted small">{item.description}</span>
@@ -147,16 +136,8 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
                       return `已下载 ${item.name}，agent 现在就能用`
                     })}>{busy === `install:${item.name}` ? '下载中…' : '下载'}</button>
                   )}
-                  {item.installed?.update === true && item.installed.modified !== true && (
-                    <button className="primary small-button" disabled={busy !== null} onClick={() => void update(item)}>更新</button>
-                  )}
-                  {item.installed?.update === true && item.installed.modified === true && (
-                    <>
-                      <button className="small-button" disabled={busy !== null} onClick={() => void act(`diff:${item.name}`, async () => setDiff({ name: item.name, ...(await client.connection.call('skillhub/diff', { name: item.name })) }))}>看看哪里不同</button>
-                      <button className="small-button" disabled={busy !== null} onClick={() => void update(item, 'keep')}>保留我的</button>
-                      <button className="small-button" disabled={busy !== null} onClick={() => void update(item, 'replace')}>用新版</button>
-                      <button className="primary small-button" disabled={busy !== null} onClick={() => void update(item, 'merge')}>让 agent 合并</button>
-                    </>
+                  {item.installed?.update === true && (
+                    <button className="primary small-button" disabled={busy !== null} onClick={() => void update(item)}>{busy === `update:${item.name}` ? '更新中…' : '更新'}</button>
                   )}
                   {item.installed !== undefined && (
                     <>
@@ -168,7 +149,6 @@ export function SkillHubPanel({ client, focus, openSession, openSkill }: {
                     </>
                   )}
                 </div>
-                {diff?.name === item.name && <DiffView mine={diff.mine} theirs={diff.theirs} onClose={() => setDiff(null)} />}
               </li>
             ))}
           </ul>
@@ -199,41 +179,3 @@ function RepoEditor({ repos, disabled, onSave }: { repos: readonly HubRepo[]; di
   )
 }
 
-/** The user's version against the repository's, line by line. */
-function DiffView({ mine, theirs, onClose }: { mine: string; theirs: string; onClose: () => void }) {
-  const lines = useMemo(() => lineDiff(mine.split(/\r?\n/), theirs.split(/\r?\n/)), [mine, theirs])
-  return (
-    <div className="hub-diff">
-      <div className="key-actions">
-        <span className="muted small"><span className="diff-del">− 只在你的版本里</span>　<span className="diff-add">+ 只在新版本里</span></span>
-        <span className="spacer" />
-        <button className="ghost small-button" onClick={onClose}>收起</button>
-      </div>
-      <pre>{lines.map((l, i) => <div key={i} className={l.kind === '-' ? 'diff-del' : l.kind === '+' ? 'diff-add' : 'muted'}>{l.kind} {l.text}</div>)}</pre>
-    </div>
-  )
-}
-
-/** A plain line diff (longest common subsequence); unchanged runs far from a change are folded. */
-export function lineDiff(a: readonly string[], b: readonly string[]): { kind: ' ' | '-' | '+'; text: string }[] {
-  const n = a.length
-  const m = b.length
-  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!)
-  const out: { kind: ' ' | '-' | '+'; text: string }[] = []
-  let i = 0
-  let j = 0
-  while (i < n || j < m) {
-    if (i < n && j < m && a[i] === b[j]) { out.push({ kind: ' ', text: a[i]! }); i++; j++ }
-    else if (j < m && (i === n || lcs[i]![j + 1]! >= lcs[i + 1]![j]!)) { out.push({ kind: '+', text: b[j]! }); j++ }
-    else { out.push({ kind: '-', text: a[i]! }); i++ }
-  }
-  // Keep two lines of context around changes.
-  const near = (k: number) => out.slice(Math.max(0, k - 2), k + 3).some(l => l.kind !== ' ')
-  const folded: { kind: ' ' | '-' | '+'; text: string }[] = []
-  for (let k = 0; k < out.length; k++) {
-    if (out[k]!.kind !== ' ' || near(k)) folded.push(out[k]!)
-    else if (folded.at(-1)?.text !== '…') folded.push({ kind: ' ', text: '…' })
-  }
-  return folded
-}
