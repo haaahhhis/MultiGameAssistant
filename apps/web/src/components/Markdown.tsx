@@ -114,14 +114,18 @@ function onCopy(e: MouseEvent<HTMLDivElement>) {
   const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-copy]')
   const code = button?.closest('.code-block')?.querySelector('pre')
   if (button == null || code == null) return
-  const text = code.innerText
   const done = (ok: boolean) => {
     button.textContent = ok ? '已复制' : '复制失败'
     button.classList.toggle('copied', ok)
     setTimeout(() => { button.textContent = '复制'; button.classList.remove('copied') }, 1600)
   }
+  void copyText(code.innerText).then(done)
+}
+
+/** Put text on the clipboard. @returns whether it got there. */
+export function copyText(text: string): Promise<boolean> {
   const write = navigator.clipboard?.writeText(text) ?? Promise.reject(new Error('no clipboard'))
-  write.then(() => done(true), () => done(legacyCopy(text)))
+  return write.then(() => true, () => legacyCopy(text))
 }
 
 /** Clipboard API can be denied (embedded or non-secure contexts); fall back to a selection copy. */

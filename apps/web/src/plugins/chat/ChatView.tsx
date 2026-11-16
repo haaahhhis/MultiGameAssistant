@@ -6,6 +6,7 @@ import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNot
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
+import { CopyButton } from '../../components/CopyButton.tsx'
 import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -325,7 +326,15 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
   switch (item.kind) {
     case 'user': {
       // In a sub-agent's conversation, whoever speaks to it is the agent that opened it.
-      if (subAgentOf !== null) return <div className="msg user delegated"><div className="msg-from">{subAgentOf}交给的事</div><div className="bubble"><Markdown text={taskWords(item.text)} /></div></div>
+      if (subAgentOf !== null) {
+        return (
+          <div className="msg user delegated">
+            <div className="msg-from">{subAgentOf}交给的事</div>
+            <div className="bubble"><Markdown text={taskWords(item.text)} /></div>
+            <div className="msg-actions"><CopyButton text={taskWords(item.text)} /></div>
+          </div>
+        )
+      }
       // Not the person's words: a reply another agent sent back, or work handed here (Delegation.tsx).
       const relay = item.pending === undefined ? parseRelay(item.text) : undefined
       if (relay !== undefined && client !== null) return <RelayMessage client={client} note={relay} handOffs={handOffs} />
@@ -353,6 +362,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
               <button className="link-button" onClick={() => onDismiss(item.pending!.requestId)}>移除</button>
             </div>
           )}
+          {said.text.trim() !== '' && <div className="msg-actions"><CopyButton text={said.text} /></div>}
         </div>
       )
     }
@@ -370,6 +380,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
           {item.text !== '' && <Markdown text={item.text} />}
           {item.live && <span className="cursor" />}
           {item.interrupted && <div className="muted small">（已中断）</div>}
+          {!item.live && item.text.trim() !== '' && <div className="msg-actions"><CopyButton text={item.text} /></div>}
         </div>
       )
     case 'tool':
