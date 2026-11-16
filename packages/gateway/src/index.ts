@@ -65,6 +65,7 @@ import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
 import { createSockets, MOUNT, serveMounted, startServer, type Sockets } from './server.ts'
 import { copyLabel, Instances } from './instances.ts'
 import { AGENT_PRESET, AgentParts, OwnSessions, type AgentPart } from './shared.ts'
+import { NewInput, type InputWatch, type WaitingCall } from './new-input.ts'
 
 export type { CapabilityRegistration, MethodContext, MethodHandler } from './registry.ts'
 export type { ApprovalAnswerer, ApprovalOutcome } from './approvals.ts'
@@ -74,6 +75,7 @@ export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
+export { NEW_INPUT, type InputWatch, type WaitingCall } from './new-input.ts'
 export { SessionRoles, type RoleSpec } from './roles.ts'
 export { AgentModels, type AgentModelsState, type AgentModelTarget } from './agent-models.ts'
 export { clashes, copyLabel, Instances, INSTANCES_DIR, type CopyRecord, type Fact } from './instances.ts'
@@ -321,6 +323,7 @@ export class AdgGateway extends Service {
   handOffDesk: unknown
   private readonly homeMaking = new Map<string, Promise<string>>()
   private readonly parts: AgentParts
+  private readonly newInput: NewInput
   private readonly sockets: Sockets
   /** Bring one session's permission preset in line with the mode. */
   private presetOf: (sessionId: string) => void = () => {}
@@ -347,6 +350,7 @@ export class AdgGateway extends Service {
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
     this.parts = new AgentParts(log)
+    this.newInput = new NewInput(ctx)
     this.agentModels = new AgentModels(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-models.json'), config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     this.homes = new AgentHomes(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-homes.json'))
@@ -1623,6 +1627,16 @@ Content-Length: 0
 
   /** Send one notification to every initialized client. */
   /** Where sessions work when they do not say (the agent's own folder, never the app's). */
+  /**
+   * For this app's tools that wait (new-input.ts): a signal that aborts once
+   * the calling agent has new input at its next step — the user's message
+   * sent into the running turn above all — so the wait gives way to it, as
+   * dsh's wait_agent does. Dispose it when the wait is over.
+   */
+  watchInput(exec: WaitingCall): InputWatch {
+    return this.newInput.watch(exec)
+  }
+
   /**
    * Called by this app's tools before they act (most of them never ask for
    * approval on their own): an area set to 不允许 refuses, one set to 先问我

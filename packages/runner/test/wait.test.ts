@@ -29,7 +29,7 @@ test('a run that is over already: no wait', async () => {
   const { add, waiter } = fakeRuns()
   add('r1', true)
   const waited = await waitForRun(waiter, 'r1', 1000)
-  assert.deepEqual({ ...waited, ms: 0 }, { runId: 'r1', followed: [], timedOut: false, paused: false, ms: 0 })
+  assert.deepEqual({ ...waited, ms: 0 }, { runId: 'r1', followed: [], timedOut: false, paused: false, newInput: false, ms: 0 })
 })
 
 test('a running run is waited for until it ends', async () => {
@@ -77,8 +77,36 @@ test('the wait stops when the time is up or the call is cancelled, also while so
   const abort = new AbortController()
   setTimeout(() => abort.abort(), 20)
   const started = Date.now()
-  assert.equal((await waitForRun(waiter, 'r1', 60_000, abort.signal)).timedOut, true)
+  assert.equal((await waitForRun(waiter, 'r1', 60_000, { signal: abort.signal })).timedOut, true)
   assert.ok(Date.now() - started < 1000, 'cancelled, not left waiting')
+})
+
+test('the wait gives way to new input: the user\'s message is not kept waiting behind it', async () => {
+  const { add, waiter } = fakeRuns()
+  add('r1')
+  const input = new AbortController()
+  setTimeout(() => input.abort('new-input'), 20)
+  const started = Date.now()
+  const waited = await waitForRun(waiter, 'r1', 60_000, { input: input.signal })
+  assert.equal(waited.newInput, true)
+  assert.equal(waited.timedOut, false)
+  assert.ok(Date.now() - started < 1000)
+  assert.equal((await waitForRun(waiter, 'r1', 60_000, { input: input.signal })).newInput, true, 'input already there: no wait')
+})
+
+test('script_runs tells the agent a message is waiting, and stops watching afterwards', async () => {
+  const { add, waiter } = fakeRuns()
+  add('r1')
+  const runner = { ...waiter, logs: () => [], list: () => [] } as unknown as Runner
+  const input = new AbortController()
+  let disposed = 0
+  const watchInput = () => ({ signal: input.signal, dispose: () => { disposed += 1 } })
+  const runs = runnerTools(runner, { library: { get: () => { throw new Error('unused') }, packOf: () => undefined } as never, dataDir: '', watchInput }).find(t => t.name === TOOL_NAMES.runs)!
+  setTimeout(() => input.abort('new-input'), 20)
+  const result = await runs.execute({ run_id: 'r1', wait_seconds: 600 }, { signal: new AbortController().signal } as ToolRunContext) as { waited: { new_input?: boolean; note: string } }
+  assert.equal(result.waited.new_input, true)
+  assert.match(result.waited.note, /新消息/)
+  assert.equal(disposed, 1)
 })
 
 test('script_runs waits with run_id and wait_seconds, says what it waited for, and its time limit covers the longest wait', async () => {

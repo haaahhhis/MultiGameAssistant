@@ -120,6 +120,8 @@ export interface Waited {
   readonly timedOut: boolean
   /** Paused while someone handles its problem: it does not end while they do, so this did not wait. */
   readonly paused: boolean
+  /** Stopped early: new input (the user's message, above all) is waiting for the agent at its next step. */
+  readonly newInput: boolean
   readonly ms: number
 }
 
@@ -128,36 +130,48 @@ export interface Waited {
  * again; a run that was run again is followed to the last one, as a pipeline
  * follows it. A run paused while its incident is handled ends only once that
  * is done, often by the very agent asking, so that one is answered at once.
+ * @param signals.signal - cancels the wait (the tool call's own signal).
+ * @param signals.input - aborts when new input waits for the agent (gateway watchInput): the wait gives way to it.
  */
-export async function waitForRun(runner: RunWaiter, runId: string, ms: number, signal?: AbortSignal, now: () => number = Date.now): Promise<Waited> {
+export async function waitForRun(runner: RunWaiter, runId: string, ms: number, signals: { signal?: AbortSignal; input?: AbortSignal } = {}, now: () => number = Date.now): Promise<Waited> {
+  const { signal, input } = signals
   const started = now()
   const followed: string[] = []
   let current = runId
   const TIMED_OUT = Symbol('timed out')
-  const within = async <T>(promise: Promise<T>): Promise<T | typeof TIMED_OUT> => {
+  const NEW_INPUT = Symbol('new input')
+  const within = async <T>(promise: Promise<T>): Promise<T | typeof TIMED_OUT | typeof NEW_INPUT> => {
+    if (input?.aborted === true) return NEW_INPUT
     const left = started + ms - now()
     if (left <= 0 || signal?.aborted === true) return TIMED_OUT
     let timer: ReturnType<typeof setTimeout> | undefined
     let onAbort: (() => void) | undefined
-    const stop = new Promise<typeof TIMED_OUT>(resolve => {
+    let onInput: (() => void) | undefined
+    const stop = new Promise<typeof TIMED_OUT | typeof NEW_INPUT>(resolve => {
       timer = setTimeout(() => resolve(TIMED_OUT), left)
       onAbort = () => resolve(TIMED_OUT)
+      onInput = () => resolve(NEW_INPUT)
       signal?.addEventListener('abort', onAbort, { once: true })
+      input?.addEventListener('abort', onInput, { once: true })
     })
     try {
       return await Promise.race([promise, stop])
     } finally {
       clearTimeout(timer)
       if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
+      if (onInput !== undefined) input?.removeEventListener('abort', onInput)
     }
   }
-  const result = (timedOut: boolean, paused = false): Waited => ({ runId: current, followed, timedOut, paused, ms: now() - started })
+  const result = (timedOut: boolean, paused = false, newInput = false): Waited => ({ runId: current, followed, timedOut, paused, newInput, ms: now() - started })
   for (;;) {
     if (runner.get(current).endedAt === undefined) {
       if (runner.held(current)) return result(false, true)
-      if (await within(runner.finished(current)) === TIMED_OUT) return result(true)
+      const ended = await within(runner.finished(current))
+      if (ended === NEW_INPUT) return result(false, false, true)
+      if (ended === TIMED_OUT) return result(true)
     }
     const next = await within(runner.successor(current))
+    if (next === NEW_INPUT) return result(false, false, true)
     if (next === TIMED_OUT) return result(true)
     if (next === undefined) return result(false)
     current = next.id
@@ -168,17 +182,25 @@ export async function waitForRun(runner: RunWaiter, runId: string, ms: number, s
 /** What the agent is told about a wait, beside the run's details. */
 function waitedView(asked: string, waited: Waited) {
   const seconds = Math.round(waited.ms / 1000)
-  const note = waited.paused
+  const note = waited.newInput
+    ? `等了 ${seconds} 秒，有新消息（用户或别的 agent 发来的）在等你，先停下来看它。下面是这次运行现在的状态；看完还要等它就再调用一次。`
+    : waited.paused
     ? '这次运行暂停着，正在处理它出的问题（干预）：处理完之前它不会结束，所以没有等。'
     : waited.timedOut
       ? `等了 ${seconds} 秒还没结束${waited.runId === asked ? '' : '（这是重新运行的那次）'}；还要等就再调用一次。`
       : waited.followed.length > 0
         ? `运行被重新运行过 ${waited.followed.length} 次，下面是最后那次的结果。`
         : '运行已结束。'
-  return { seconds, timed_out: waited.timedOut, paused: waited.paused, ...(waited.followed.length > 0 ? { restarted_as: waited.followed } : {}), note }
+  return { seconds, timed_out: waited.timedOut, paused: waited.paused, ...(waited.newInput ? { new_input: true } : {}), ...(waited.followed.length > 0 ? { restarted_as: waited.followed } : {}), note }
 }
 
-export function runnerTools(runner: Runner, config: { library: LibraryView; dataDir: string; profilesChanged?: (scriptId: string) => Promise<unknown> }): ToolDefinition[] {
+export function runnerTools(runner: Runner, config: {
+  library: LibraryView
+  dataDir: string
+  profilesChanged?: (scriptId: string) => Promise<unknown>
+  /** The gateway's watchInput: a wait gives way to new input for the agent. */
+  watchInput?: (exec: ToolRunContext) => { readonly signal: AbortSignal; dispose(): void }
+}): ToolDefinition[] {
   const id = { type: 'string', description: '脚本库里的脚本 id（script_list 可查）。' } as const
   const profile = { type: 'string', description: '用哪份配置（script_profiles 可查，写名字或 id）；不填就是脚本当前使用的那份。' } as const
   const Profile = z.string().trim().min(1).max(64).nullish()
@@ -391,7 +413,8 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
         const a = parse(z.object({ id: ScriptId.nullish(), run_id: z.string().nullish(), wait_seconds: z.number().int().min(1).max(MAX_WAIT_SECONDS).nullish() }), args)
         if (a.run_id !== undefined && a.run_id !== null) {
           if (a.wait_seconds === undefined || a.wait_seconds === null) return brief(runner, a.run_id, 80)
-          const waited = await waitForRun(runner, a.run_id, a.wait_seconds * 1000, exec.signal)
+          const watch = config.watchInput?.(exec)
+          const waited = await waitForRun(runner, a.run_id, a.wait_seconds * 1000, { signal: exec.signal, ...(watch === undefined ? {} : { input: watch.signal }) }).finally(() => watch?.dispose())
           return { ...brief(runner, waited.runId, 30), waited: waitedView(a.run_id, waited) }
         }
         if (a.wait_seconds !== undefined && a.wait_seconds !== null) throw new Error('wait_seconds 要和 run_id 一起用：先用 script_runs 找到要等的那次运行')
