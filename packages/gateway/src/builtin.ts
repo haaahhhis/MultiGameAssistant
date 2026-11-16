@@ -148,8 +148,13 @@ export interface BuiltinDeps {
   readonly requestedByOf?: (sessionId: string) => string | undefined
   /** The agent whose one conversation a session is (homes.ts). */
   readonly homeOf?: (sessionId: string) => string | undefined
-  /** Put a new session under a role agent; returns the model role agents' sessions are created with, if one is chosen. */
-  readonly tagRole?: (sessionId: string, role: string) => Promise<ModelSelection | undefined>
+  /** Put a new session under a role agent, with that agent's model (agent-models.ts). */
+  readonly tagRole?: (sessionId: string, role: string) => Promise<void>
+  /**
+   * Choose a session's model for that session alone. dsh's own choice also
+   * makes it the default for every new session; without this, that is what happens.
+   */
+  readonly selectModel?: (sessionId: string, selection: ModelSelection) => Promise<ModelSelection>
   /** Sessions' last replies (last-reply.ts). */
   readonly lastReplies?: LastReplies
 }
@@ -199,8 +204,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
         const created = await sessions.create({ ...(cwd === undefined ? {} : { cwd }), ...(deps.agentPreset === undefined ? {} : { agentPreset: deps.agentPreset }) })
         await deps.adopt?.(created.sessionId)
         if (params.role !== undefined) {
-          const model = await deps.tagRole?.(created.sessionId, params.role)
-          if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
+          await deps.tagRole?.(created.sessionId, params.role)
         }
         if (params.focus !== undefined) await deps.focus?.(created.sessionId, params.focus)
         return { sessionId: created.sessionId }
@@ -362,18 +366,17 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
           failures: catalog.failures.map(f => ({ id: f.id, name: f.name, message: f.message })),
         }
       },
+      // The model picker beside the input: this conversation's model, not the default (that is set in 设置 → 模型).
       'session/selectModel': async (params: RequestParams<'session/selectModel'>) => {
-        const value = await sessions.selectModel({
-          sessionId: sid(params.sessionId),
-          provider: params.provider,
-          model: params.model,
-          ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }),
-        })
+        const wanted = { provider: params.provider, model: params.model, ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }) }
+        const selected = deps.selectModel !== undefined
+          ? await deps.selectModel(params.sessionId, wanted)
+          : (await sessions.selectModel({ sessionId: sid(params.sessionId), ...wanted })).selected
         return {
           selected: {
-            provider: value.selected.provider,
-            model: value.selected.model,
-            ...(value.selected.reasoningEffort === undefined ? {} : { reasoningEffort: value.selected.reasoningEffort }),
+            provider: selected.provider,
+            model: selected.model,
+            ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
           },
         }
       },

@@ -78,11 +78,11 @@
     "models/setDefault": {
       "capability": "model-default"
     },
-    "models/roleModel": {
-      "capability": "role-model"
+    "models/agentModels": {
+      "capability": "agent-models"
     },
-    "models/setRoleModel": {
-      "capability": "role-model"
+    "models/setAgentModel": {
+      "capability": "agent-models"
     },
     "models/catalog": {
       "capability": "models"
@@ -576,6 +576,7 @@
     "handoffs/changed",
     "reminders/changed",
     "providers/changed",
+    "models/agentModelsChanged",
     "session/model",
     "scripts/changed",
     "scripts/job",
@@ -5702,16 +5703,110 @@
       "properties": {},
       "additionalProperties": false
     },
-    "models/roleModel.params": {
+    "models/agentModels.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
       "additionalProperties": false
     },
-    "models/roleModel.result": {
+    "models/agentModels.result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "subAgents": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "reasoningEffort": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subAgentsOf": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "agents",
+        "subAgents",
+        "subAgentsOf"
+      ],
+      "additionalProperties": false
+    },
+    "models/setAgentModel.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "sub": {
+          "type": "boolean"
+        },
         "model": {
           "anyOf": [
             {
@@ -5744,43 +5839,7 @@
       ],
       "additionalProperties": false
     },
-    "models/setRoleModel.params": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "model": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "provider": {
-                  "type": "string"
-                },
-                "model": {
-                  "type": "string"
-                },
-                "reasoningEffort": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "provider",
-                "model"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "model"
-      ],
-      "additionalProperties": false
-    },
-    "models/setRoleModel.result": {
+    "models/setAgentModel.result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
@@ -25580,6 +25639,94 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "models/agentModelsChanged.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "subAgents": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "reasoningEffort": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subAgentsOf": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "agents",
+        "subAgents",
+        "subAgentsOf"
+      ],
       "additionalProperties": false
     },
     "session/model.notification": {

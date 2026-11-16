@@ -57,7 +57,8 @@ import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel 
 import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
-import { handsOn, HANDS_ON_REFUSAL, hiddenTools, RoleModel, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
+import { handsOn, HANDS_ON_REFUSAL, hiddenTools, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
+import { AgentModels, type AgentModelTarget } from './agent-models.ts'
 import { Peer } from './peer.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
@@ -73,7 +74,8 @@ export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
-export { RoleModel, SessionRoles, type RoleSpec } from './roles.ts'
+export { SessionRoles, type RoleSpec } from './roles.ts'
+export { AgentModels, type AgentModelsState, type AgentModelTarget } from './agent-models.ts'
 export { clashes, copyLabel, Instances, INSTANCES_DIR, type CopyRecord, type Fact } from './instances.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -239,6 +241,11 @@ function memoryOwnerOf(spec: RoleSpec): string {
   return spec.subAgentOf === undefined ? spec.id : spec.id.replace(/:sub$/, '')
 }
 
+/** The same model at the same thinking level. */
+function sameRoute(a: { provider: string; model: string; reasoningEffort?: unknown }, b: { provider: string; model: string; reasoningEffort?: unknown }): boolean {
+  return a.provider === b.provider && a.model === b.model && (a.reasoningEffort ?? undefined) === (b.reasoningEffort ?? undefined)
+}
+
 /** 助手 as the others know it. */
 const MAIN_AGENT_MEMBER = { id: MAIN_AGENT.id, name: MAIN_AGENT.name, description: '和用户对话，分发任务，做决定' }
 
@@ -297,8 +304,10 @@ export class AdgGateway extends Service {
   private readonly own: OwnSessions
   /** The role agents and which sessions are theirs (roles.ts). */
   readonly roles: SessionRoles
-  /** The model their sessions use (roles.ts). */
-  private readonly roleModelStore: RoleModel
+  /** Which model each agent and its sub-agents use (agent-models.ts). */
+  readonly agentModels: AgentModels
+  /** Choosing a session's model runs one at a time: each puts the default back as it found it (selectSessionModel). */
+  private modelChoices: Promise<unknown> = Promise.resolve()
   /** Each agent's one conversation, and the work they hand each other (homes.ts). */
   readonly homes: AgentHomes
   readonly handOffs: HandOffs
@@ -332,7 +341,7 @@ export class AdgGateway extends Service {
     this.shared = config.shared === true
     this.own = new OwnSessions(this.shared && config.dataDir !== undefined ? join(config.dataDir, 'own-sessions.json') : undefined)
     this.parts = new AgentParts(log)
-    this.roleModelStore = new RoleModel(config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
+    this.agentModels = new AgentModels(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-models.json'), config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     this.homes = new AgentHomes(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-homes.json'))
     this.handOffs = new HandOffs(config.dataDir === undefined ? undefined : join(config.dataDir, 'handoffs.json'), item => this.broadcast('handoffs/changed', { item }))
@@ -384,8 +393,9 @@ export class AdgGateway extends Service {
       // A task given on a role agent's page: you asked for it.
       tagRole: async (sessionId, role) => {
         await this.tagSession(sessionId, role, '你')
-        return this.roleModel(role)
+        await this.applyAgentModel(sessionId, role)
       },
+      selectModel: (sessionId, selection) => this.selectSessionModel(sessionId, selection),
       lastReplies: new LastReplies(ctx.sessionController),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
@@ -497,6 +507,7 @@ export class AdgGateway extends Service {
     ctx.on('agent/created' as never, ((payload: { agent: LiveAgent }) => {
       this.agents.set(payload.agent.session.id, payload.agent)
       this.narrow(payload.agent)
+      this.routeSubAgent(payload.agent)
     }) as never)
     // A reminder set while working on a thread says where its words go: by the time it comes, the agent may not remember.
     ctx.on('tools/execute' as never, ((exec: { name: string; agent?: { session: { id: string } }; arguments: { prompt?: unknown } }, next: () => unknown) => {
@@ -586,33 +597,40 @@ export class AdgGateway extends Service {
         methods: {
           'models/setDefault': async params => {
             const p = params as RequestParams<'models/setDefault'>
-            await scoped.agentDefaultModel.saveSelection({ provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) } as never)
+            const selection = { provider: p.provider, model: p.model, ...(p.reasoningEffort === undefined ? {} : { reasoningEffort: p.reasoningEffort }) }
+            await this.oneModelChoice(() => scoped.agentDefaultModel.saveSelection(selection as never))
             this.broadcast('providers/changed', {})
+            // 助手's conversation, and those of the agents that follow the default, switch too (not waited for: it may have to load them).
+            void this.refreshHomes([MAIN_AGENT.id, ...this.roles.list().map(r => r.id).filter(id => this.agentModels.of(id) === undefined)])
             return {}
           },
         },
       }), 'adg-gateway capability model-default')
     })
 
-    // 「角色 agent 的模型」: what role agents' sessions are created with (roles.ts RoleModel).
+    // Which model each agent and its sub-agents use (agent-models.ts).
     ctx.effect(() => this.registry.register({
-      id: 'role-model',
+      id: 'agent-models',
       version: 1,
       methods: {
-        'models/roleModel': async () => {
-          await this.roleModelStore.loaded
-          return { model: this.roleModelStore.get() ?? null }
+        'models/agentModels': async () => {
+          await this.agentModels.loaded
+          return this.agentModels.state()
         },
-        'models/setRoleModel': async params => {
-          const { model } = params as RequestParams<'models/setRoleModel'>
-          await this.roleModelStore.set(model ?? undefined)
-          if (model === null) return {}
-          // Interventions and game reading look at screenshots.
-          const info = await ctx.get('llm')?.resolveModelInfo(model.provider, model.model, AbortSignal.timeout(10_000)).catch(() => undefined)
-          return info !== undefined && info.inputModalities?.includes('image') !== true ? { warning: `${model.model} 不能看图片：干预和读游戏要看截图，换一个能看图的模型。` } : {}
+        'models/setAgentModel': async params => {
+          const { agentId, sub, model } = params as RequestParams<'models/setAgentModel'>
+          const target: AgentModelTarget = { agentId, sub }
+          if (agentId !== undefined && agentId !== MAIN_AGENT.id && this.roles.spec(agentId) === undefined) throw new RpcError(ErrorCode.InvalidParams, `没有这个 agent：${agentId}`)
+          if (agentId === MAIN_AGENT.id && sub !== true) throw new RpcError(ErrorCode.InvalidParams, '助手用默认模型：用 models/setDefault 设置')
+          if (agentId === undefined && sub !== true) throw new RpcError(ErrorCode.InvalidParams, '要说明是哪个 agent 的模型')
+          await this.agentModels.set(target, model)
+          this.broadcast('models/agentModelsChanged', this.agentModels.state())
+          // Its conversation switches at its next request (not waited for: it may have to load it); sub-agents take theirs when they start.
+          if (sub !== true && agentId !== undefined) void this.refreshHomes([agentId])
+          return model === null ? {} : await this.visionWarning(model, target)
         },
       },
-    }), 'adg-gateway capability role-model')
+    }), 'adg-gateway capability agent-models')
 
     // Each agent's one conversation, the work they hand each other, their reminders.
     ctx.effect(() => this.registry.register({
@@ -1364,10 +1382,105 @@ Content-Length: 0
     return remindersOf(entries, sessionId => this.homes.agentOf(sessionId) ?? this.roles.of(sessionId, undefined) ?? MAIN_AGENT.id)
   }
 
-  /** The model a role agent's new session is created with; undefined: none chosen (or no such role). */
-  roleModel(role: string): ModelSelection | undefined {
-    if (!this.roles.list().some(r => r.id === role)) return undefined
-    return this.roleModelStore.get()
+  /** The model set for an agent's own conversations; undefined: the default model (助手's always, and any agent not set). */
+  agentModel(agentId: string): ModelSelection | undefined {
+    if (agentId === MAIN_AGENT.id || this.roles.spec(agentId) === undefined) return undefined
+    return this.agentModels.of(agentId)
+  }
+
+  /** The model an agent's sub-agents are given: theirs, else every sub-agent's; undefined: whatever the agent is using. */
+  subAgentModel(agentId: string): ModelSelection | undefined {
+    return this.agentModels.subOf(agentId)
+  }
+
+  /** The model an agent's own conversations use now: its own, else the default. */
+  private effectiveModel(agentId: string): ModelSelection | undefined {
+    return this.agentModel(agentId) ?? this.ctx.get('agentDefaultModel')?.currentSelection() as ModelSelection | undefined
+  }
+
+  /** Give a new session of an agent's its model, when that is not the default (which it has already). */
+  async applyAgentModel(sessionId: string, agentId: string): Promise<void> {
+    const model = this.agentModel(agentId)
+    if (model === undefined) return
+    await this.selectSessionModel(sessionId, model).catch(error => this.log.warn(`giving ${sessionId} the model of ${agentId}: ${error instanceof Error ? error.message : String(error)}`))
+  }
+
+  /**
+   * Choose a session's model for that session alone. dsh's own choice also
+   * saves it as the default model, which would hand one agent's model (or a
+   * pick in one conversation) to every new session: the default is put back as
+   * it was. One choice at a time, so each finds the default as the person set it.
+   */
+  selectSessionModel(sessionId: string, selection: ModelSelection): Promise<ModelSelection> {
+    return this.oneModelChoice(async () => {
+      const defaults = this.ctx.get('agentDefaultModel')
+      const before = defaults?.currentSelection()
+      const { selected } = await this.ctx.sessionController.selectModel({ sessionId: sessionId as never, ...selection } as never)
+      if (defaults !== undefined && before !== undefined && !sameRoute(before, selected)) await defaults.saveSelection(before)
+      return { provider: selected.provider, model: selected.model, ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: String(selected.reasoningEffort) }) }
+    })
+  }
+
+  private oneModelChoice<T>(choose: () => Promise<T>): Promise<T> {
+    const result = this.modelChoices.then(choose)
+    this.modelChoices = result.catch(() => {})
+    return result
+  }
+
+  /** After a model setting changed: these agents' one conversations switch at their next request. Never throws. */
+  private async refreshHomes(agentIds: readonly string[]): Promise<void> {
+    await this.homes.loaded.catch(() => {})
+    for (const agentId of new Set(agentIds)) {
+      const sessionId = this.homes.get(agentId)
+      const model = this.effectiveModel(agentId)
+      if (sessionId === undefined || this.archived.has(sessionId) || model === undefined) continue
+      await this.selectSessionModel(sessionId, model).catch(error => this.log.warn(`switching the model of ${agentId}'s conversation: ${error instanceof Error ? error.message : String(error)}`))
+    }
+  }
+
+  /**
+   * A sub-agent works with its agent's sub-agent model when one is set
+   * (agent-models.ts); else dsh gives it its parent's. Its requests go to that
+   * model from the first (agent/request, as dsh's own model choice does) and its
+   * system prompt names it. A model that cannot be used now (its service gone)
+   * leaves it on its parent's rather than failing the work.
+   */
+  private routeSubAgent(agent: LiveAgent): void {
+    if (agent.session.header?.origin !== 'subagent' || !this.isOwn(agent.session.id)) return
+    const spec = this.specOf(agent.session.id)
+    if (spec?.subAgentOf === undefined) return
+    const model = this.subAgentModel(memoryOwnerOf(spec))
+    if (model === undefined) return
+    const route = { provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }
+    const llm = this.ctx.get('llm')
+    const usable = llm === undefined
+      ? Promise.resolve(false)
+      : llm.resolveCallConfig(route as never, AbortSignal.timeout(10_000)).then(() => true, (error: unknown) => {
+        this.log.warn(`the sub-agent model ${model.provider}/${model.model} cannot be used now, ${agent.session.id} keeps its parent's: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      })
+    agent.ctx.on('system-prompt/assemble' as never, (async (_assembly: unknown, _context: unknown, next: () => Promise<{ variables?: Record<string, unknown> }>) => {
+      const assembled = await next()
+      return await usable ? { ...assembled, variables: { ...assembled.variables, provider: route.provider, model: route.model } } : assembled
+    }) as never)
+    agent.ctx.on('agent/request' as never, (async (_payload: unknown, next: () => Promise<Record<string, unknown>>) => {
+      const resolved = await next()
+      if (!await usable) return resolved
+      const { reasoningEffort: _parents, ...rest } = resolved
+      return { ...rest, ...route }
+    }) as never)
+  }
+
+  /** Why a model chosen for this layer will not do: it cannot see images and the work there looks at screenshots. */
+  private async visionWarning(model: ModelSelection, target: AgentModelTarget): Promise<{ warning?: string }> {
+    // Sub-agents take the screenshots; an agent handed images with its work (干预's incidents) is shown them itself.
+    const handed = target.sub !== true && target.agentId !== undefined ? this.roles.spec(target.agentId) : undefined
+    if (target.sub !== true && handed?.handedImages !== true) return {}
+    const info = await this.ctx.get('llm')?.resolveModelInfo(model.provider, model.model, AbortSignal.timeout(10_000)).catch(() => undefined)
+    if (info === undefined || info.inputModalities === undefined || info.inputModalities.includes('image')) return {}
+    return { warning: target.sub === true
+      ? `${model.model} 不能看图片：子 agent 要截图看画面时用不了它（干预、读游戏都要），换一个能看图的模型。`
+      : `${model.model} 不能看图片：交给「${handed!.name}」的事带着截图，换一个能看图的模型。` }
   }
 
   /** Put a session the app opened under a role agent (`role`); `by`: who asked for its work (监控, 定时, 你, …). */
@@ -1410,8 +1523,7 @@ Content-Length: 0
     await this.homes.set(agentId, sessionId)
     if (role !== undefined) {
       await this.tagSession(sessionId, role.id)
-      const model = this.roleModel(role.id)
-      if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }).catch(() => {})
+      await this.applyAgentModel(sessionId, role.id)
     }
     await sessions.rename({ sessionId: created.sessionId, title: role?.name ?? MAIN_AGENT.name }).catch(() => {})
     // Its agent may be there already, and it has just become that agent's one conversation.

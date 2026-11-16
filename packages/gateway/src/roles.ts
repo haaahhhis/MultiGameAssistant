@@ -17,7 +17,7 @@
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { AGENT_AREAS, type ModelSelection, type Role } from '@adg/protocol'
+import { AGENT_AREAS, type Role } from '@adg/protocol'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 export interface RoleSpec extends Role {
@@ -34,6 +34,8 @@ export interface RoleSpec extends Role {
   readonly hide?: readonly string[]
   /** The agent whose sub-agent this is, by name (`subAgentSpec`). */
   readonly subAgentOf?: string
+  /** Work handed to it comes with screenshots (an incident's): its own model has to see images, not only its sub-agents'. */
+  readonly handedImages?: boolean
 }
 
 /** Does a role's `tools` keep this tool? */
@@ -264,47 +266,6 @@ export class SessionRoles {
       }
     } catch {
       // none yet
-    }
-  }
-}
-
-/**
- * The model role agents' sessions use (设置 → 模型 「角色 agent 的模型」),
- * kept in `<dataDir>/role-model.json`: a cheaper model for the screenshots,
- * logs and clicks they do, while your own conversations keep the default.
- * None set: role sessions get the model they always did.
- */
-export class RoleModel {
-  readonly #file: string | undefined
-  #selection: ModelSelection | undefined
-  readonly loaded: Promise<void>
-
-  constructor(file: string | undefined) {
-    this.#file = file
-    this.loaded = this.#load()
-  }
-
-  get(): ModelSelection | undefined {
-    return this.#selection
-  }
-
-  async set(selection: ModelSelection | undefined): Promise<void> {
-    await this.loaded
-    this.#selection = selection === undefined ? undefined : { provider: selection.provider, model: selection.model, ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }) }
-    if (this.#file === undefined) return
-    mkdirSync(dirname(this.#file), { recursive: true })
-    await writeFileAtomic(this.#file, `${JSON.stringify(this.#selection ?? null)}\n`)
-  }
-
-  async #load(): Promise<void> {
-    if (this.#file === undefined) return
-    try {
-      const saved = JSON.parse(await readFile(this.#file, 'utf8')) as { provider?: unknown; model?: unknown; reasoningEffort?: unknown } | null
-      if (typeof saved?.provider === 'string' && typeof saved.model === 'string') {
-        this.#selection = { provider: saved.provider, model: saved.model, ...(typeof saved.reasoningEffort === 'string' ? { reasoningEffort: saved.reasoningEffort } : {}) }
-      }
-    } catch {
-      // none chosen
     }
   }
 }

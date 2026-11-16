@@ -92,12 +92,16 @@ export class AdgIntervene extends Service {
         return sessions === undefined ? undefined : sessionConversations(sessions, () => ctx.get('adgGateway')?.workspaceDir(), (id, f) => ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => ctx.get('adgGateway'))
       },
       visionProblem: async () => {
-        // The model an intervention session is created with: the role agents' one, else the default.
-        const roleModel = ctx.get('adgGateway')?.roleModel(INTERVENE_ROLE.id)
-        const selection = roleModel ?? ctx.get('agentDefaultModel')?.currentSelection()
-        if (selection === undefined) return undefined
-        const which = roleModel === undefined ? '默认模型' : '角色 agent 的模型'
-        return (await sees(selection.provider, selection.model)) ? undefined : `${which} ${selection.model} 不能看图片，agent 没法查看截图；在「设置 → 模型」把${which}换成能看图的（例如 Claude、GPT-4o、Gemini、通义 VL）`
+        // 干预 is handed the incident's screenshot (its own model, else the default); its sub-agents take the next ones.
+        const gateway = ctx.get('adgGateway')
+        const own = gateway?.agentModel(INTERVENE_ROLE.id)
+        const lead = own ?? ctx.get('agentDefaultModel')?.currentSelection()
+        if (lead === undefined) return undefined
+        const fix = '在「设置 → 模型」换成能看图的（例如 Claude、GPT-4o、Gemini、通义 VL）'
+        if (!(await sees(lead.provider, lead.model))) return `${own === undefined ? '默认模型' : '「干预」的模型'} ${lead.model} 不能看图片，agent 没法查看截图；${fix}`
+        const sub = gateway?.subAgentModel(INTERVENE_ROLE.id)
+        if (sub !== undefined && !(await sees(sub.provider, sub.model))) return `「干预」的子 agent 用的 ${sub.model} 不能看图片，没法截图看画面；${fix}`
+        return undefined
       },
       revealWindows: async runId => process.platform === 'win32' ? (await screens.reveal(await ownerOf(runId))).windows : [],
       describeTargets: run => {
@@ -213,6 +217,11 @@ export class AdgIntervene extends Service {
 
   resumeRun(runId: string): Promise<boolean> {
     return this.interventions.resumeRun(runId)
+  }
+
+  /** How long interventions have held the run paused, for the monitor's stall and overtime clocks. */
+  heldPaused(runId: string): { ms: number; now: boolean } {
+    return this.interventions.heldPaused(runId)
   }
 }
 

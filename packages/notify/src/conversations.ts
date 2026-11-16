@@ -21,7 +21,10 @@ interface AppSessions {
   sessionPreset(): { agentPreset?: string }
   adopt(sessionId: string): Promise<void>
   tagSession(sessionId: string, role: string, by?: string): Promise<void>
-  roleModel(role: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
+  /** The model set for an agent's own conversations; undefined: the default. */
+  agentModel(agentId: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
+  /** Choose a session's model for it alone (dsh's own choice also makes it the default for every new session). */
+  selectSessionModel?(sessionId: string, selection: Selection): Promise<unknown>
   home(agentId: string): Promise<string>
   readonly handOffs: { put(item: HandOff): Promise<void>; all(): readonly HandOff[] }
   /** Resolves once the agent there is done, its sub-agents back and its reply to them given. */
@@ -104,16 +107,19 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     handOffRefusal: (fromSession, to, fromAgent, toName) => desk().refusal(fromSession, to, fromAgent, toName),
     askRefusal: sessionId => desk().askRefusal(sessionId),
     async create(title, options = {}) {
-      // A role agent's session: the model chosen for role agents, when there is one (设置 → 模型).
-      const chosen = options.role === undefined ? undefined : app?.()?.roleModel(options.role)
-      const roleModel: Selection | undefined = chosen === undefined ? undefined : { provider: chosen.provider, model: chosen.model, ...(chosen.reasoningEffort === undefined ? {} : { reasoningEffort: chosen.reasoningEffort }) }
-      const model = roleModel ?? (options.defaultModel === true ? undefined : await recentModel(sessions).catch(() => undefined))
+      // A role agent's session: that agent's model, when one is set (设置 → 模型).
+      const chosen = options.role === undefined ? undefined : app?.()?.agentModel(options.role)
+      const agentModel: Selection | undefined = chosen === undefined ? undefined : { provider: chosen.provider, model: chosen.model, ...(chosen.reasoningEffort === undefined ? {} : { reasoningEffort: chosen.reasoningEffort }) }
+      const model = agentModel ?? (options.defaultModel === true ? undefined : await recentModel(sessions).catch(() => undefined))
       const dir = cwd()
       const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...app?.()?.sessionPreset() })
       await app?.()?.adopt(created.sessionId)
       if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by)
       await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
-      if (model !== undefined) await sessions.selectModel({ sessionId: created.sessionId, ...model }).catch(() => {})
+      if (model !== undefined) {
+        const gateway = app?.()
+        await (gateway?.selectSessionModel !== undefined ? gateway.selectSessionModel(created.sessionId, model) : sessions.selectModel({ sessionId: created.sessionId, ...model })).catch(() => {})
+      }
       if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)
       return created.sessionId
     },

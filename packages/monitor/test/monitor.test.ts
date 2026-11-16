@@ -400,6 +400,55 @@ test('no new log line for the default minute: stalled, and to the agent; the sta
   monitor.stop()
 })
 
+test('while an intervention holds the script paused its silence is not a stall, nor its overtime; the clock runs again from the resume', async () => {
+  const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }').replace('    title: 日常\n', '    title: 日常\n    expectedDuration: 1m\n')
+  const steps = { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { logFile: 'debug/gui.log', line: '[ERR] 重连失败，连接断开！' }, { sleepMs: 60_000 }] }
+  let held = { ms: 0, now: false }
+  let release!: () => void
+  const handled: string[] = []
+  const port: InterventionPort = {
+    handle: async incident => {
+      handled.push(incident.kind)
+      if (handled.length > 1) return { state: 'gave-up', summary: '第二次', paused: false }
+      held = { ms: 0, now: true }
+      await new Promise<void>(resolve => { release = resolve })
+      return { state: 'resolved', summary: '点了「重新连接」', paused: false }
+    },
+    countToday: () => handled.length,
+    resumeRun: async () => true,
+    heldPaused: () => held,
+  }
+  const { runner, monitor, later } = setup(pack, { 'daily.json': steps }, port)
+  await monitor.start(0)
+  const run = await runner.start('maa', 'daily')
+  for (let i = 0; i < 100 && handled.length === 0; i++) await new Promise(r => setTimeout(r, 50))
+  assert.deepEqual(handled, ['error'])
+
+  // Ten paused minutes: past the stall time and past twice the expected minute.
+  later(600_000)
+  held = { ms: 600_000, now: true }
+  monitor.tick()
+  assert.deepEqual(monitor.incidents({ status: 'all' }).map(i => i.kind), ['error'], 'nothing new while it is paused')
+
+  held = { ms: 600_000, now: false }
+  release()
+  await monitor.idle()
+  monitor.tick()
+  assert.deepEqual(monitor.incidents({ status: 'all' }).map(i => `${i.kind}/${i.status}`), ['error/resolved'], 'just resumed: the pause is not quiet time')
+  later(45_000)
+  monitor.tick()
+  assert.deepEqual(monitor.incidents({ status: 'all' }).map(i => `${i.kind}/${i.status}`), ['error/resolved'], 'quiet for 45 s after the resume is fine')
+  later(20_000)
+  monitor.tick()
+  assert.deepEqual(monitor.incidents({ status: 'all' }).map(i => i.kind), ['stalled', 'error'], 'quiet for 65 s after the resume: stalled; a minute or so of running besides the pause is not overtime')
+  assert.match(monitor.incidents({ status: 'all' })[0]!.detail, /已经 6\d 秒没有新的日志/)
+  await monitor.idle()
+  assert.deepEqual(handled, ['error', 'stalled'], 'the stall after the resume is a new one, handed on as usual')
+  await runner.stop(run.id)
+  await monitor.idle()
+  monitor.stop()
+})
+
 test('saved settings with the old 30-second default get the minute; a learned time is never quicker than the default', async () => {
   const learned = { seconds: 45, by: 'learned' as const, samples: [30], at: 0 }
   const set = { seconds: 20, by: 'user' as const, samples: [], at: 0 }
