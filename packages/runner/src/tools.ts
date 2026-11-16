@@ -105,6 +105,79 @@ const brief = (runner: Runner, runId: string, lines = 15) => {
   }
 }
 
+/** The longest script_runs waits for a run in one call (a longer run: call it again). */
+export const MAX_WAIT_SECONDS = 3600
+
+/** The slice of the runner a wait reads. */
+export type RunWaiter = Pick<Runner, 'get' | 'finished' | 'successor' | 'held'>
+
+export interface Waited {
+  /** The run it ended on: the one asked for, or what replaced it when it was run again. */
+  readonly runId: string
+  /** The runs that replaced the one asked for, in order. */
+  readonly followed: readonly string[]
+  /** Not over yet when the time was up (or when the wait was cancelled). */
+  readonly timedOut: boolean
+  /** Paused while someone handles its problem: it does not end while they do, so this did not wait. */
+  readonly paused: boolean
+  readonly ms: number
+}
+
+/**
+ * Wait until a run is over: ended, and nobody still deciding whether it runs
+ * again; a run that was run again is followed to the last one, as a pipeline
+ * follows it. A run paused while its incident is handled ends only once that
+ * is done, often by the very agent asking, so that one is answered at once.
+ */
+export async function waitForRun(runner: RunWaiter, runId: string, ms: number, signal?: AbortSignal, now: () => number = Date.now): Promise<Waited> {
+  const started = now()
+  const followed: string[] = []
+  let current = runId
+  const TIMED_OUT = Symbol('timed out')
+  const within = async <T>(promise: Promise<T>): Promise<T | typeof TIMED_OUT> => {
+    const left = started + ms - now()
+    if (left <= 0 || signal?.aborted === true) return TIMED_OUT
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    const stop = new Promise<typeof TIMED_OUT>(resolve => {
+      timer = setTimeout(() => resolve(TIMED_OUT), left)
+      onAbort = () => resolve(TIMED_OUT)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([promise, stop])
+    } finally {
+      clearTimeout(timer)
+      if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
+    }
+  }
+  const result = (timedOut: boolean, paused = false): Waited => ({ runId: current, followed, timedOut, paused, ms: now() - started })
+  for (;;) {
+    if (runner.get(current).endedAt === undefined) {
+      if (runner.held(current)) return result(false, true)
+      if (await within(runner.finished(current)) === TIMED_OUT) return result(true)
+    }
+    const next = await within(runner.successor(current))
+    if (next === TIMED_OUT) return result(true)
+    if (next === undefined) return result(false)
+    current = next.id
+    followed.push(current)
+  }
+}
+
+/** What the agent is told about a wait, beside the run's details. */
+function waitedView(asked: string, waited: Waited) {
+  const seconds = Math.round(waited.ms / 1000)
+  const note = waited.paused
+    ? '这次运行暂停着，正在处理它出的问题（干预）：处理完之前它不会结束，所以没有等。'
+    : waited.timedOut
+      ? `等了 ${seconds} 秒还没结束${waited.runId === asked ? '' : '（这是重新运行的那次）'}；还要等就再调用一次。`
+      : waited.followed.length > 0
+        ? `运行被重新运行过 ${waited.followed.length} 次，下面是最后那次的结果。`
+        : '运行已结束。'
+  return { seconds, timed_out: waited.timedOut, paused: waited.paused, ...(waited.followed.length > 0 ? { restarted_as: waited.followed } : {}), note }
+}
+
 export function runnerTools(runner: Runner, config: { library: LibraryView; dataDir: string; profilesChanged?: (scriptId: string) => Promise<unknown> }): ToolDefinition[] {
   const id = { type: 'string', description: '脚本库里的脚本 id（script_list 可查）。' } as const
   const profile = { type: 'string', description: '用哪份配置（script_profiles 可查，写名字或 id）；不填就是脚本当前使用的那份。' } as const
@@ -303,14 +376,25 @@ export function runnerTools(runner: Runner, config: { library: LibraryView; data
     }),
     tool({
       name: TOOL_NAMES.runs,
-      description: '查看最近的运行记录和它们最后几行日志；带 run_id 时返回这一次运行的详情和更多日志。',
-      properties: { id: { ...id, description: '只看这个脚本的运行。' }, run_id: { type: 'string', description: '查看这一次运行。' } },
+      description: '查看最近的运行记录和它们最后几行日志；带 run_id 时返回这一次运行的详情和更多日志。要等一次运行（监控、流水线、重试或别的 agent 开的也行）结束，带上 run_id 和 wait_seconds：它会等到结束（被重新运行的话一直跟到最后那次）再返回，不要一遍遍查。',
+      properties: {
+        id: { ...id, description: '只看这个脚本的运行。' },
+        run_id: { type: 'string', description: '查看这一次运行。' },
+        wait_seconds: { type: 'integer', description: `和 run_id 一起用：最多等这么多秒（1–${MAX_WAIT_SECONDS}），运行结束就立刻返回。在 run_code 程序里调用时，不要超过那个程序自己的时限（默认 2 分钟，最长 10 分钟）。` },
+      },
       readOnly: true,
+      // The longest wait, and a little for the answer.
+      timeoutMs: (MAX_WAIT_SECONDS + 60) * 1000,
       kind: 'read',
-      title: () => '查看运行记录',
-      execute: async args => {
-        const a = parse(z.object({ id: ScriptId.nullish(), run_id: z.string().nullish() }), args)
-        if (a.run_id !== undefined && a.run_id !== null) return brief(runner, a.run_id, 80)
+      title: a => (a['wait_seconds'] === undefined ? '查看运行记录' : `等运行结束：${String(a['run_id'] ?? '')}`),
+      execute: async (args, exec) => {
+        const a = parse(z.object({ id: ScriptId.nullish(), run_id: z.string().nullish(), wait_seconds: z.number().int().min(1).max(MAX_WAIT_SECONDS).nullish() }), args)
+        if (a.run_id !== undefined && a.run_id !== null) {
+          if (a.wait_seconds === undefined || a.wait_seconds === null) return brief(runner, a.run_id, 80)
+          const waited = await waitForRun(runner, a.run_id, a.wait_seconds * 1000, exec.signal)
+          return { ...brief(runner, waited.runId, 30), waited: waitedView(a.run_id, waited) }
+        }
+        if (a.wait_seconds !== undefined && a.wait_seconds !== null) throw new Error('wait_seconds 要和 run_id 一起用：先用 script_runs 找到要等的那次运行')
         return { runs: runner.list(a.id ?? undefined).slice(0, 10).map(r => brief(runner, r.id, 5)) }
       },
     }),
