@@ -18,6 +18,58 @@ export interface DesktopBridge {
   updates?: UpdatesBridge
   /** The window shows this UI or dsh's own stock one, a separate dsh with its own conversations. */
   uiMode?: UiModeBridge
+  /** The built-in browser the agent operates (apps/desktop/browser.mjs). */
+  browser?: BrowserBridge
+}
+
+export interface BrowserTab {
+  id: string
+  title: string
+  url: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  /** The session whose agent opened it. */
+  owner?: string
+}
+
+export interface BrowserState {
+  tabs: BrowserTab[]
+  /** The tab the panel shows. */
+  shown: string | null
+  /** When an agent last acted in the browser (ms since 1970); 0 never. */
+  agentAt: number
+}
+
+/** A frame of the shown tab: a JPEG at the page's size. */
+export interface BrowserFrame {
+  tab: string
+  width: number
+  height: number
+  data: Uint8Array
+}
+
+/** Electron's sendInputEvent shapes, in page coordinates. */
+export type BrowserInput =
+  | { type: 'mouseDown' | 'mouseUp' | 'mouseMove' | 'mouseEnter' | 'mouseLeave'; x: number; y: number; button?: 'left' | 'middle' | 'right'; clickCount?: number; modifiers?: string[] }
+  | { type: 'mouseWheel'; x: number; y: number; deltaX: number; deltaY: number; canScroll?: boolean; modifiers?: string[] }
+  | { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string; modifiers?: string[] }
+
+export interface BrowserBridge {
+  state(): Promise<BrowserState | null>
+  /** The panel is on screen at this size (CSS pixels), or not (null): frames come only while it is. */
+  show(size: { width: number; height: number } | null): Promise<BrowserState | null>
+  input(event: BrowserInput): void
+  /** Typed text (an input method's result included) into the page's focused field. */
+  text(text: string): Promise<void>
+  /** The user's toolbar, on the tab the panel shows (newTab: a new one). */
+  navigate(target: { url?: string; action?: 'back' | 'forward' | 'reload'; newTab?: boolean }): Promise<BrowserState | null>
+  select(tab: string): Promise<BrowserState | null>
+  close(tab: string): Promise<BrowserState | null>
+  /** @returns the unsubscriber. */
+  onChange(listener: (state: BrowserState) => void): () => void
+  /** @returns the unsubscriber. */
+  onFrame(listener: (frame: BrowserFrame) => void): () => void
 }
 
 export interface UiMode {

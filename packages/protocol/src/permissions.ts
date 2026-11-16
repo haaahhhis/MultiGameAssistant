@@ -38,6 +38,7 @@ export const AGENT_AREAS: readonly AgentArea[] = [
   { id: 'game-records', title: '记录活动、添加游戏', description: '把读到的活动写进日历，替你添加、修改或去掉活动，给新游戏建游戏包。', tools: ['game_record', 'game_activity_save', 'game_activity_remove', 'game_add'] },
   { id: 'skills', title: '保存技能', description: '把做法存成技能，以后的对话都会用到。', tools: ['skill_save'] },
   { id: 'web', title: '上网查资料', description: '读网页、搜索。', tools: ['web_fetch', 'web_search'] },
+  { id: 'browser', title: '操作内置浏览器', description: '在内置浏览器里打开网页、点击、输入、按键、滚动、切换标签页（读页面和截图不算）。', tools: ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_tabs'] },
   { id: 'shell', title: '运行命令、改文件', description: 'dsh 自带的命令行和文件编辑。只在它请求确认时按这里的设置处理（沙箱里的普通命令不会请求）。', tools: ['pwsh', 'bash', 'edit', 'write'], approvalOnly: true },
 ]
 

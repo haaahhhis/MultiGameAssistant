@@ -3,6 +3,8 @@ import type { AdgClient } from '@adg/client-core'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
+import { desktop } from '../desktop.ts'
+import { BrowserPanel } from './BrowserPanel.tsx'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
 import { SessionTools } from './sessionTools.ts'
@@ -60,9 +62,10 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const readOnly = useReadOnly(item, state.running || state.queue.length > 0 || initialPrompt !== undefined)
   // Where the view on screen puts its own controls, beside the tabs.
   const [tools, setTools] = useState<HTMLElement | null>(null)
+  const browser = useBrowserPanel()
 
   return (
-    <section className="main">
+    <section className={`main${browser.open ? ' with-browser' : ''}`}>
       <header className="session-header">
         <div className="session-heading">
           {home ? (
@@ -87,6 +90,10 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
         </div>
         <div className="session-actions">
           <div className="session-tools" ref={setTools} />
+          {browser.bridge !== undefined && (
+            <button type="button" className={`small-button browser-toggle${browser.open ? ' active' : ''}`} aria-pressed={browser.open}
+              title="内置浏览器：看 agent 操作网页，也可以自己接手" onClick={() => browser.setOpen(!browser.open)}>浏览器</button>
+          )}
           <nav className="tabs" role="tablist" aria-label="会话视图">
             {views.map(view => (
               <button key={view.id} role="tab" aria-selected={view.id === active?.id}
@@ -98,25 +105,65 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
         </div>
       </header>
       {state.error !== null && <div className="banner error">{state.error}</div>}
-      <div className="view">
-        {active === undefined
-          ? <div className="empty">当前连接没有提供可用的视图插件。</div>
-          : <SessionTools.Provider value={tools}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SessionTools.Provider>}
-      </div>
-      {readOnly ? (
-        <div className="session-readonly">
-          <Icon name="archive" />
-          <span>这是以前的对话，只能查看，不能继续。</span>
-          {onAgent !== undefined && <button type="button" className="small-button" onClick={() => onAgent(agentId)}>回到「{agent.name}」的对话</button>}
+      <div className="session-body">
+        <div className="session-column">
+          <div className="view">
+            {active === undefined
+              ? <div className="empty">当前连接没有提供可用的视图插件。</div>
+              : <SessionTools.Provider value={tools}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SessionTools.Provider>}
+          </div>
+          {readOnly ? (
+            <div className="session-readonly">
+              <Icon name="archive" />
+              <span>这是以前的对话，只能查看，不能继续。</span>
+              {onAgent !== undefined && <button type="button" className="small-button" onClick={() => onAgent(agentId)}>回到「{agent.name}」的对话</button>}
+            </div>
+          ) : (
+            <>
+              <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
+                initialPrompt={initialPrompt} onInitialSent={onInitialSent} reminder={reminder} />
+            </>
+          )}
         </div>
-      ) : (
-        <>
-          <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
-            initialPrompt={initialPrompt} onInitialSent={onInitialSent} reminder={reminder} />
-        </>
-      )}
+        {browser.open && browser.bridge !== undefined && (
+          <BrowserPanel bridge={browser.bridge} onClose={() => browser.setOpen(false)} />
+        )}
+      </div>
     </section>
   )
+}
+
+/**
+ * The built-in browser panel beside the conversation (desktop app only): the
+ * user opens and closes it, and it comes up by itself when an agent starts
+ * working in the browser — unless the user closed it in the last minutes.
+ */
+function useBrowserPanel() {
+  const bridge = desktop()?.browser
+  const [open, setOpenState] = useState(() => readBrowserOpen())
+  const [closedAt, setClosedAt] = useState(0)
+  const setOpen = (next: boolean) => {
+    setOpenState(next)
+    if (!next) setClosedAt(Date.now())
+    try { localStorage.setItem(BROWSER_KEY, next ? '1' : '0') } catch { /* storage unavailable */ }
+  }
+  useEffect(() => {
+    if (bridge === undefined) return
+    let seen: number | undefined
+    return bridge.onChange(state => {
+      const started = seen !== undefined && state.agentAt > seen
+      seen = state.agentAt
+      if (started && Date.now() - closedAt > AUTO_OPEN_QUIET_MS) setOpenState(true)
+    })
+  }, [bridge, closedAt])
+  return { bridge, open: open && bridge !== undefined, setOpen }
+}
+
+const BROWSER_KEY = 'adg.browserPanel'
+/** Closed by the user this recently: the agent's work does not bring it back. */
+const AUTO_OPEN_QUIET_MS = 3 * 60_000
+function readBrowserOpen(): boolean {
+  try { return localStorage.getItem(BROWSER_KEY) === '1' } catch { return false }
 }
 
 /** The conversation's name; the pencil (or a double-click) edits it in place. Enter saves, Esc cancels. */

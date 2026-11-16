@@ -69,6 +69,18 @@
       config:
         dataDir: !!js "process.env.ADG_DATA_DIR || dshHomePath('adg/data')"
 
+    # The built-in browser's `browser_*` tools: web pages the agent operates and
+    # the user watches in the browser panel. The browser itself is the desktop
+    # app's (apps/desktop/browser.mjs), which hands dsh its bridge:
+    #   ADG_BROWSER_URL     the bridge's loopback address
+    #   ADG_BROWSER_TOKEN   its token
+    # Neither set (dsh started another way, or dsh's own app): no browser tools.
+    - id: adg-browser
+      name: 'dsh-multigameassistant/browser'
+      config:
+        endpoint: !!js "process.env.ADG_BROWSER_URL || undefined"
+        token: !!js "process.env.ADG_BROWSER_TOKEN || undefined"
+
     # M3: the chat layer — notices with buttons, replies, conversations with
     # the agent, approval cards; the `notify` capability.
     - id: adg-notify

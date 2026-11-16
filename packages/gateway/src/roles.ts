@@ -74,6 +74,8 @@ const HANDS_ON: readonly string[] = [
   ...AGENT_AREAS.filter(area => ['run', 'scripts-config', 'scripts-install', 'screen', 'games', 'shell'].includes(area.id)).flatMap(area => area.tools).filter(tool => tool !== 'pipeline_run'),
   // Screenshots are not in an area (they change nothing), and they weigh the most.
   'screen_*',
+  // The built-in browser: every step answers with the whole page.
+  'browser_*',
   // Runs a program that calls the tools: the same work, by another door.
   'workflow',
 ]

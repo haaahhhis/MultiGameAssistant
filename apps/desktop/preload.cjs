@@ -33,6 +33,35 @@ contextBridge.exposeInMainWorld('adgDesktop', {
       return () => ipcRenderer.removeListener('adg:ui-mode', handler)
     },
   },
+  /**
+   * The built-in browser the agent operates (apps/desktop/browser.mjs). Its
+   * pages render offscreen in the shell; the panel shows their frames
+   * (onFrame) and sends the user's mouse, keys and text back (input, text).
+   */
+  browser: {
+    state: () => ipcRenderer.invoke('adg:browser', 'state'),
+    /** The panel's `size` in CSS pixels, or null when it is not on screen (no frames then). */
+    show: size => ipcRenderer.invoke('adg:browser', 'show', { size }),
+    /** A mouse or key event in page coordinates (Electron's sendInputEvent shape). */
+    input: event => ipcRenderer.send('adg:browser-input', event),
+    /** Text typed into the page's focused field (an input method's result included). */
+    text: text => ipcRenderer.invoke('adg:browser', 'text', { text }),
+    /** @returns the unsubscriber. Each frame: `{ tab, width, height, data }`, data a JPEG. */
+    onFrame: listener => {
+      const handler = (_event, frame) => listener(frame)
+      ipcRenderer.on('adg:browser-frame', handler)
+      return () => ipcRenderer.removeListener('adg:browser-frame', handler)
+    },
+    navigate: target => ipcRenderer.invoke('adg:browser', 'navigate', target),
+    select: tab => ipcRenderer.invoke('adg:browser', 'select', { tab }),
+    close: tab => ipcRenderer.invoke('adg:browser', 'close', { tab }),
+    /** @returns the unsubscriber. */
+    onChange: listener => {
+      const handler = (_event, state) => listener(state)
+      ipcRenderer.on('adg:browser-state', handler)
+      return () => ipcRenderer.removeListener('adg:browser-state', handler)
+    },
+  },
   /** Only answered while the startup screen is showing. */
   splash: action => ipcRenderer.invoke('adg:splash', action),
   /** Updates from GitHub Releases (apps/desktop/updates.mjs); each call answers the state, null when run from the repository. */

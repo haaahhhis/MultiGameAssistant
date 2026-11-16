@@ -1960,3 +1960,28 @@ button.link-button.memory-forget { color: var(--error); }
 .update-highlights { margin: 0; padding-left: 1.2em; font-size: 13px; line-height: 1.6; color: var(--text-2); }
 .update-highlights li::marker { color: var(--muted); }
 .about-release-notes { max-height: 360px; overflow-y: auto; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
+
+/* ── The built-in browser beside a conversation (BrowserPanel.tsx) ── */
+.session-body { flex: 1; min-height: 0; display: flex; }
+.session-column { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.browser-toggle.active { color: var(--accent); border-color: var(--accent); }
+.browser-panel { flex: 0 0 clamp(380px, 48%, 960px); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--surface); }
+.browser-toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.browser-toolbar .icon-button { flex-shrink: 0; }
+.browser-address { flex: 1; min-width: 0; height: 30px; font-size: 12.5px; }
+.browser-tabs { display: flex; align-items: center; gap: 2px; padding: 4px 8px 0; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.browser-tab { display: inline-flex; align-items: center; max-width: 180px; border-radius: 7px 7px 0 0; color: var(--muted); }
+.browser-tab.active { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.browser-tab > button { border: none; background: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 4px 6px 10px; font-size: 12px; color: inherit; display: inline-flex; align-items: center; gap: 6px; }
+.browser-tab-close, .browser-tab-new { border: none; background: none; padding: 4px; color: var(--muted); display: inline-flex; }
+.browser-tab-close .ui-icon, .browser-tab-new .ui-icon { width: 12px; height: 12px; }
+.browser-status { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.browser-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #fff; }
+.browser-viewport > .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; line-height: 1.8; color: var(--muted); background: var(--surface); }
+.browser-frame { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; cursor: default; }
+/* Receives the user's keys and input-method text for the page; never seen. */
+.browser-typing { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: none; padding: 0; resize: none; pointer-events: none; }
+@media (max-width: 1100px) {
+  .main.with-browser .session-body { flex-direction: column; }
+  .main.with-browser .browser-panel { flex-basis: 55%; border-left: none; border-top: 1px solid var(--border); }
+}

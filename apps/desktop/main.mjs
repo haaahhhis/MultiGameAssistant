@@ -31,6 +31,8 @@ import { devHome, prepareAdgProfile } from './profile.mjs'
 import { trayIconPng } from './icon.mjs'
 import { createOfficialUi } from './official.mjs'
 import { createUpdater } from './updates.mjs'
+import { AgentBrowser } from './browser.mjs'
+import { startBrowserBridge } from './browser-bridge.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 /**
@@ -109,6 +111,13 @@ const stoppedOnPurpose = new WeakSet()
 let updater = null
 /** @type {ReturnType<typeof createOfficialUi> | null} */
 let official = null
+/** The built-in browser the agent operates (browser.mjs), and how dsh reaches it (browser-bridge.mjs). */
+/** @type {AgentBrowser | null} */
+let browser = null
+/** @type {Awaited<ReturnType<typeof startBrowserBridge>> | null} */
+let browserBridge = null
+/** The size of the UI's browser panel while it is on screen, kept while dsh's own page covers the window. */
+let browserSize = null
 
 // The desktop shell's own folder (logs, theme) moves with the rename too, before anything opens a file in it.
 if (installed !== undefined) movedFromLegacy(app.getPath('userData'))
@@ -127,6 +136,8 @@ app.on('before-quit', () => {
   quitting = true
   stopHost()
   official?.stop()
+  browser?.closeAll()
+  browserBridge?.close()
 })
 
 async function start() {
@@ -182,7 +193,8 @@ async function start() {
     if (!THEMES.includes(theme)) return
     nativeTheme.themeSource = theme
     try { writeFileSync(themeFile(), JSON.stringify({ theme })) } catch { /* a preference, not worth failing over */ }
-    for (const w of BrowserWindow.getAllWindows()) {
+    // Not the built-in browser's pages: they are web pages, drawn offscreen in windows without a title bar.
+    for (const w of BrowserWindow.getAllWindows().filter(w => browser?.owns(w) !== true)) {
       w.setBackgroundColor(background())
       w.setTitleBarOverlay?.(titleBar().titleBarOverlay)
     }
@@ -233,7 +245,7 @@ async function start() {
     arch: installed.arch ?? process.arch,
     dir: join(app.getPath('userData'), 'updates'),
     log: { info: line => startupLog(`[update] ${line}`), warn: line => startupLog(`[update] ${line}`) },
-    onChange: state => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send('adg:update-state', state) },
+    onChange: state => { for (const w of BrowserWindow.getAllWindows().filter(w => browser?.owns(w) !== true)) w.webContents.send('adg:update-state', state) },
     onFound: version => {
       // In the window the notice shows it; the balloon is for when it is in the tray.
       if (tray !== null && process.platform === 'win32' && !(win?.isVisible() ?? false)) {
@@ -268,6 +280,8 @@ async function start() {
     onChange: state => {
       win?.webContents.send('adg:ui-mode', state)
       tray?.setContextMenu(trayMenu())
+      // dsh's own page covers the window: the browser panel is not on screen meanwhile.
+      browser?.show(state.mode === 'official' ? undefined : browserSize ?? undefined)
     },
   })
   // The title bar's switch (apps/web UiSwitch.tsx): MultiGameAssistant's page or dsh's own.
@@ -290,6 +304,7 @@ async function start() {
   win.on('closed', () => { win = null })
   windowChrome(win.webContents)
   watchUi(win.webContents)
+  await startBrowser()
   win.once('ready-to-show', () => { if (!autoStarted && !woken) win?.show() })
   await showSplash({ step: 'env', title: '正在准备运行环境' })
 
@@ -314,6 +329,54 @@ async function start() {
   }
   await showSplash({ step: 'service', title: '正在启动 agent 服务', slowHint: slowHint() })
   void launchHost()
+}
+
+/**
+ * The built-in browser (browser.mjs): its pages, the loopback bridge dsh's
+ * browser tools call, and what the UI's panel asks of it. A browser that
+ * fails to start leaves the app working without it.
+ */
+async function startBrowser() {
+  if (win === null) return
+  try {
+    browser = new AgentBrowser({
+      blocked: () => (uiUrl === null ? [] : [new URL(uiUrl).origin]),
+      log: startupLog,
+    })
+    browserBridge = await startBrowserBridge(browser)
+  } catch (error) {
+    startupLog(`[desktop] the built-in browser did not start: ${error instanceof Error ? error.message : String(error)}`)
+    browser = null
+    return
+  }
+  browser.on('state', state => win?.webContents.send('adg:browser-state', state))
+  // Only while the panel is on screen (show): a JPEG of the tab it shows.
+  browser.on('frame', frame => win?.webContents.send('adg:browser-frame', frame))
+  // The page reloading takes its panel along; it says again when it is back.
+  win.webContents.on('did-start-navigation', details => { if (details.isMainFrame && !details.isSameDocument) { browserSize = null; browser?.show(undefined) } })
+  ipcMain.on('adg:browser-input', (event, input) => {
+    if (win !== null && event.sender === win.webContents) browser?.input(input)
+  })
+  ipcMain.handle('adg:browser', async (event, action, arg) => {
+    if (win === null || event.sender !== win.webContents || browser === null) return null
+    const a = typeof arg === 'object' && arg !== null ? arg : {}
+    switch (action) {
+      case 'state': return browser.state()
+      case 'show': {
+        const s = a.size
+        browserSize = typeof s?.width === 'number' && typeof s?.height === 'number' ? { width: s.width, height: s.height } : null
+        if (official?.state().mode !== 'official') browser.show(browserSize ?? undefined)
+        return browser.state()
+      }
+      // The user's toolbar: the shown tab, as the user, not an agent.
+      case 'navigate':
+        return browser.navigate({ ...(typeof a.url === 'string' ? { url: a.url } : {}), ...(typeof a.action === 'string' ? { action: a.action } : {}), ...(a.newTab === true ? { newTab: true } : {}) }).then(() => browser?.state())
+      case 'select': browser.select(String(a.tab)); return browser.state()
+      case 'close': browser.close(String(a.tab)); return browser.state()
+      case 'text': await browser.insertText(String(a.text ?? '')); return null
+      default: return browser.state()
+    }
+  })
 }
 
 /** Shown while the agent service starts slowly: why, and where to look. */
@@ -546,6 +609,7 @@ async function launchHost() {
       ADG_AUTOSTARTED: autoStarted && !everReady ? '1' : '0',
       ADG_APP_START: everReady || woken ? '0' : '1',
       ...(scriptsDir() === undefined ? {} : { ADG_TOOLS_DIR: scriptsDir() }),
+      ...(browserBridge === null ? {} : { ADG_BROWSER_URL: browserBridge.url, ADG_BROWSER_TOKEN: browserBridge.token }),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

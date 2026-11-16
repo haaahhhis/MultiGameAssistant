@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@adg/analyzer": "workspace:*",
+    "@adg/browser": "workspace:*",
     "@adg/emulator": "workspace:*",
     "@adg/feishu": "workspace:*",
     "@adg/game-intel": "workspace:*",

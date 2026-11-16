@@ -33,6 +33,7 @@
     "./guard": "./lib/guard.js",
     "./monitor": "./lib/monitor.js",
     "./intervene": "./lib/intervene.js",
+    "./browser": "./lib/browser.js",
     "./notify": "./lib/notify.js",
     "./feishu": "./lib/feishu.js",
     "./qqbot": "./lib/qqbot.js",

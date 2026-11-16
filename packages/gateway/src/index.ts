@@ -239,6 +239,8 @@ const MAIN_AGENT: RoleSpec = {
     'script_list', 'script_runs', 'script_run_log', 'script_help', 'script_search', 'script_tasks',
     'game_list', 'game_activities', 'game_report',
     'pipeline_*', 'schedule_*', 'monitor_incidents', 'monitor_stall_check', 'emulator_status', 'window_list',
+    // The built-in browser, for its sub-agents (its own conversation hands it out: roles.ts HANDS_ON).
+    'browser_*',
   ],
   // Saving a pipeline outright is 编排's: 助手 drafts one for the user, or hands the change to 编排.
   hide: ['pipeline_save'],

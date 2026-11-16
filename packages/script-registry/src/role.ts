@@ -12,6 +12,8 @@ export const SCRIPT_ROLE: RoleSpec = {
   tools: [
     'script_*', 'pack_*', 'skill_hub_*', 'emulator_*', 'game_list', 'game_locate', 'game_path_set',
     'screen_*', 'window_*', 'monitor_incidents', 'monitor_stall_*', 'system_info', 'skill_focus', 'skill_save',
+    // Project sites and wikis that need clicking through (the built-in browser).
+    'browser_*',
   ],
   duty: [
     '# 你的角色：脚本',
