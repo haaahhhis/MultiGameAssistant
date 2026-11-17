@@ -666,9 +666,12 @@ export class AdgGateway extends Service {
       version: 1,
       methods: {
         'agents/home': async params => {
-          const { agentId } = params as RequestParams<'agents/home'>
+          const { agentId, focus } = params as RequestParams<'agents/home'>
           try {
-            return { sessionId: await this.home(agentId) }
+            const sessionId = await this.home(agentId)
+            // Added to what it is about: the conversation goes on, the scripts and games it was already on stay.
+            if (focus !== undefined) await this.skillScope.setFocus(sessionId, { scripts: focus.scripts ?? [], games: focus.games ?? [] }, 'add')
+            return { sessionId }
           } catch (error) {
             throw new RpcError(ErrorCode.InvalidParams, error instanceof Error ? error.message : String(error))
           }

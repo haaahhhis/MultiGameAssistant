@@ -2211,6 +2211,24 @@
       "properties": {
         "agentId": {
           "type": "string"
+        },
+        "focus": {
+          "type": "object",
+          "properties": {
+            "scripts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "games": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": [

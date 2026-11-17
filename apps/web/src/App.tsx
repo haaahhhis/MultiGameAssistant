@@ -70,6 +70,15 @@ export function App({ client }: { client: AdgClient }) {
     return () => clearTimeout(timer)
   }, [route, sessions])
 
+  // An agent's one conversation opens as its 对话 tab, not as one of 以前的对话 (分析脚本, 优化脚本, 进游戏读取… all go there).
+  useEffect(() => {
+    if (route.kind !== 'session') return
+    const home = sessions.items.find(i => i.id === route.id)?.home
+    if (home === undefined || (home !== MAIN_AGENT && !roles.some(r => r.id === home))) return
+    replacing.current = true
+    setRoute({ kind: 'agent', id: home })
+  }, [route, sessions, roles])
+
   // Just opened: the games page is the main one; chat when this connection has no games.
   useEffect(() => {
     if (route.kind !== 'start' || status.state !== 'open') return

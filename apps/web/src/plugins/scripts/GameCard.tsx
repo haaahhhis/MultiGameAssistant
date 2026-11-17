@@ -78,7 +78,8 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
   const askAgent = async () => {
     setError(null)
     try {
-      const { sessionId } = await client.connection.call('sessions/create', { focus: { scripts: [scriptId] } })
+      // 助手's one conversation, where the user talks to it.
+      const { sessionId } = await client.connection.call('agents/home', { agentId: 'main', focus: { scripts: [scriptId] } })
       await client.connection.call('session/prompt', {
         sessionId, requestId: `locate-${Date.now()}`, mode: 'queue',
         text: `帮我找到「${scriptName}」（脚本 id: ${scriptId}）要玩的 PC 游戏${view?.game.name === undefined ? '' : `「${view.game.name}」`}装在哪里：先用 game_locate；没找到就在各个磁盘上搜索名为 ${found?.exe ?? view?.game.pcProcess ?? '游戏进程名'} 的程序（可以问我装在哪个盘）。找到后告诉我路径和你怎么确认的，再用 game_path_set 保存。`,

@@ -383,10 +383,13 @@ export const Requests = {
     params: Empty,
     result: z.object({ items: z.array(Role) }),
   },
-  /** The agent's one conversation (`main`: 助手's), made the first time it is asked for, or again when it was deleted. */
+  /**
+   * The agent's one conversation (`main`: 助手's), made the first time it is asked for, or again when it was deleted.
+   * `focus`: scripts and games added to what it is about (as `sessions/create`'s); it sees their skills.
+   */
   'agents/home': {
     capability: AGENTS_CAPABILITY,
-    params: z.object({ agentId: z.string() }),
+    params: z.object({ agentId: z.string(), focus: z.object({ scripts: z.array(z.string()).optional(), games: z.array(z.string()).optional() }).optional() }),
     result: z.object({ sessionId: z.string() }),
   },
   /** Work handed from or to this conversation, newest last. */
