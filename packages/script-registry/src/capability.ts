@@ -3,7 +3,10 @@
  * so these methods do not ask for approval; the agent tools do.
  */
 import type { CapabilityRegistration } from '@adg/gateway'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { guideView } from '@adg/pack-schema'
+import { ExeIcons } from '@adg/protocol/node'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 import type { PackReview } from './pack-review.ts'
@@ -13,8 +16,9 @@ import type { Optimizer } from './optimize.ts'
  * @param setupAgent - hand a waiting setup program to the agent; @returns its conversation.
  * @param review - answer whether to check a pack after its script updated (pack-review.ts).
  * @param optimizer - 优化脚本 (optimize.ts).
+ * @param icons - programs' icons, for the scripts' avatars.
  */
-export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview, optimizer: Optimizer): CapabilityRegistration {
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview, optimizer: Optimizer, icons?: ExeIcons): CapabilityRegistration {
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -24,6 +28,16 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
       'scripts/guide': params => {
         const pack = library.packOf((params as RequestParams<'scripts/guide'>).id)
         return { guide: pack === undefined ? null : guideView(pack.manifest, { builtin: pack.builtin }) }
+      },
+      'scripts/icon': async (params, call) => {
+        const id = (params as RequestParams<'scripts/icon'>).id
+        const program = scriptProgram(library, id)
+        if (program === undefined || icons === undefined || process.platform !== 'win32') return {}
+        try {
+          return { icon: { mediaType: 'image/png', data: (await icons.png(program, call.signal)).toString('base64') } }
+        } catch {
+          return {}
+        }
       },
       'scripts/search': (params, call) => library.search((params as RequestParams<'scripts/search'>).query, call.signal),
       'scripts/releases': (params, call) => {
@@ -102,4 +116,19 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
       'scripts/summarize': async params => ({ sessionId: await summaries.summarize((params as RequestParams<'scripts/summarize'>).id) }),
     },
   }
+}
+
+/** An installed script's program: the one its pack opens for its settings (a launcher has the app's icon), else the one it runs. */
+function scriptProgram(library: ScriptLibrary, id: string): string | undefined {
+  let info, pack
+  try { info = library.get(id); pack = library.packOf(id) } catch { return undefined }
+  const launch = pack?.manifest.launch
+  if (info.dir === undefined || launch === undefined) return undefined
+  for (const exe of [launch.settings?.exe, launch.exe]) {
+    if (exe === undefined) continue
+    const path = join(info.dir, launch.cwd ?? '', exe)
+    if (existsSync(path)) return path
+    if (existsSync(join(info.dir, exe))) return join(info.dir, exe)
+  }
+  return undefined
 }

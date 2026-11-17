@@ -21,7 +21,7 @@ import { GAMES_DIR } from '@adg/packs'
 import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
-import { ExeIcons } from './exe-icon.ts'
+import { ExeIcons } from '@adg/protocol/node'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
@@ -591,7 +591,8 @@ export class AdgGameIntel extends Service {
 
   /**
    * Where a game's PC program is: the one a script that plays it starts (its
-   * saved 游戏位置), else the first 自动查找 finds, looked for once a run.
+   * saved 游戏位置), else where 自动查找 finds the program the packs that play
+   * it name (installed or not), looked for once a run.
    */
   private program(gameId: string): Promise<string | undefined> {
     let found = this.programs.get(gameId)
@@ -599,14 +600,21 @@ export class AdgGameIntel extends Service {
       found = (async () => {
         const runner = this.ctx.get('adgRunner')?.runner
         if (runner === undefined || process.platform !== 'win32') return undefined
-        const scripts = this.scriptsOf(gameId).filter(id => runner.hasPack(id))
-        for (const id of scripts) {
+        const scripts = this.scriptsOf(gameId)
+        for (const id of scripts.filter(id => runner.hasPack(id))) {
           const exe = (await runner.launch.get(id)).pcExe
           if (exe !== undefined) return exe
         }
+        // Not set up yet: where the game is, from what the packs that play it say about its PC program.
+        const { manifest } = this.game(gameId)
+        const library = this.ctx.get('adgScripts')?.library
         for (const id of scripts) {
-          const { candidates } = await runner.locateGame(id).catch(() => ({ candidates: [] }))
-          if (candidates[0] !== undefined) return candidates[0].path
+          let pack
+          try { pack = library?.packOf(id) } catch { pack = undefined }
+          const game = (pack ?? library?.pack(id))?.manifest.game
+          if (game?.pc?.process === undefined) continue
+          const found = await runner.findGameProgram(game, [manifest.name, ...manifest.aliases]).catch(() => undefined)
+          if (found !== undefined) return found
         }
         return undefined
       })()

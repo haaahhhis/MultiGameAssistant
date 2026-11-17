@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
+import { ProgramAvatar } from '../../components/ProgramAvatar.tsx'
 import { FAMILY_LABEL, isActive, PHASE_LABEL, useScriptJobs, useScriptList } from './data.ts'
 import { ImportPanel, InstallPanel, MirrorInstallPanel } from './InstallPanel.tsx'
 import { JobProgress } from './JobProgress.tsx'
@@ -58,6 +59,9 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
                 return (
                   <button key={script.id} className={`script-row ${script.id === current?.id && panel === null ? 'active' : ''}`}
                     onClick={() => { setSelected(script.id); setPanel(null) }}>
+                    {/* Its program's own icon (scripts/icon), read again after an update. */}
+                    <ProgramAvatar client={client} iconKey={`script:${script.id}:${script.current ?? ''}`} name={script.name} className="script-avatar"
+                      load={() => client.connection.call('scripts/icon', { id: script.id })} />
                     <span className="script-row-main">
                       <span className="script-row-name">{script.name}</span>
                       <span className="muted small">{script.source.kind === 'local' ? '本地' : script.current ?? '未安装'}{script.family === undefined ? '' : ` · ${FAMILY_LABEL[script.family] ?? script.family}`}</span>

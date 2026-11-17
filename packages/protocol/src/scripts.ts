@@ -378,6 +378,15 @@ export const ScriptRequests = {
     params: ById,
     result: z.object({ guide: PackGuide.nullable() }),
   },
+  /**
+   * An installed script's program icon (the program its pack opens for its settings, else the one it runs),
+   * for its avatar on the 脚本 page. No `icon`: not installed, no pack, or not on Windows.
+   */
+  'scripts/icon': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({ icon: z.object({ mediaType: z.string(), data: z.string() }).optional() }),
+  },
   /** Search GitHub repositories; packs whose repo matches are marked. */
   'scripts/search': {
     capability: SCRIPTS_CAPABILITY,

@@ -263,6 +263,20 @@ export class Runner {
     return { exe: name, candidates: await locateGame({ exe: name, keywords: gameKeywords(game ?? {}), ...(signal === undefined ? {} : { signal }) }) }
   }
 
+  /**
+   * Where a PC game is, from what a pack says about it (its process and the
+   * names to look for), installed or not: for the game's icon, before any
+   * script that plays it is set up. @returns the best candidate's path.
+   */
+  async findGameProgram(game: { name?: string | undefined; pc?: { process?: string | undefined; keywords?: readonly string[] | undefined } | undefined }, extraKeywords: readonly string[] = [], signal?: AbortSignal): Promise<string | undefined> {
+    const exe = game.pc?.process
+    if (exe === undefined) return undefined
+    const name = exe.toLowerCase().endsWith('.exe') ? exe : `${exe}.exe`
+    const keywords = [...new Set([...gameKeywords(game), ...extraKeywords.filter(k => k.length >= 2)])]
+    const candidates = await locateGame({ exe: name, keywords, ...(signal === undefined ? {} : { signal }) })
+    return candidates[0]?.path
+  }
+
   /** Follow every run's state and lines. @returns a disposer. */
   watch(listener: RunListener): () => void {
     this.#listeners.add(listener)

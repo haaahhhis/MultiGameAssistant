@@ -10,6 +10,7 @@
  * user's, overriding built-ins by id). SKILL.md registration into the agent's
  * skill catalog arrives with the analyzer (M2).
  */
+import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -18,6 +19,7 @@ import type {} from '@adg/gateway'
 import { SCRIPT_ROLE } from './role.ts'
 import { PACKS_DIR } from '@adg/packs'
 import { InstallSettings } from '@adg/protocol'
+import { ExeIcons } from '@adg/protocol/node'
 import { z } from 'zod'
 import { scriptsCapability } from './capability.ts'
 import { ScriptLibrary } from './library.ts'
@@ -143,7 +145,7 @@ export class AdgScripts extends Service {
         const setup = library.pendingSetup(id)
         if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
         return handOff(setup)
-      }, review, optimizer)
+      }, review, optimizer, new ExeIcons(join(spec.dataDir, 'icons')))
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

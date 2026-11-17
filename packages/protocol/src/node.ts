@@ -33,3 +33,4 @@ export function writeFileAtomic(file: string, text: string): Promise<void> {
   void next.finally(() => { if (queues.get(file) === next) queues.delete(file) }).catch(() => {})
   return next
 }
+export { ExeIcons, extractExeIcon } from './exe-icon.ts'
