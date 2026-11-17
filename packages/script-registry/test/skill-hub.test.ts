@@ -15,7 +15,7 @@ function repoZip(files: Record<string, string>): Buffer {
   return makeZip(Object.fromEntries(Object.entries(files).map(([path, text]) => [`skills-main/${path}`, text])))
 }
 
-function setup(taken: Record<string, string> = {}) {
+function setup(taken: Record<string, string> = {}, app: { version?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'adg-hub-'))
   const state = {
     files: {
@@ -43,9 +43,10 @@ function setup(taken: Record<string, string> = {}) {
     taken: async () => new Map(Object.entries(taken)),
     register: (name, entry) => { if (entry === undefined) state.registered.delete(name); else { state.registered.set(name, entry.content); state.owners.set(name, entry.owner) } },
     now: () => state.clock,
+    appVersion: () => app.version,
     log: { info() {}, warn() {} },
   })
-  return { hub, dir, state }
+  return { hub, dir, state, app }
 }
 
 test('the repository is read as one zip, at most daily; its index says each skill\'s games and scripts', async () => {
@@ -141,4 +142,88 @@ test('a downloaded skill picked for the wrong game or script can be put under ot
   await hub.setOwner('maa', null)
   assert.deepEqual(state.owners.get('maa'), { games: ['arknights'], scripts: ['maa'] }, "back to the repository's")
   await assert.rejects(hub.setOwner('game-arknights', null), /没有从技能库下载过/)
+})
+
+test('a skill is its whole folder: a changed script is a new version, shown with the index version and changes; the replaced one can be gone back to', async () => {
+  const { hub, dir, state } = setup()
+  const index = (version: string, changes: string) => JSON.stringify({ skills: [{ name: 'maa', path: 'scripts/maa', kind: 'script', scripts: ['maa'], version, changes }] })
+  state.files['index.json'] = index('1.0.0', '第一版')
+  state.files['scripts/maa/scripts/run.py'] = 'print("v1")\n'
+  const first = await hub.install('maa')
+  assert.equal(first.version, '1.0.0')
+  assert.equal(first.installed?.version, '1.0.0')
+  const script = join(dir, 'skills', 'maa', 'scripts', 'run.py')
+  assert.match(readFileSync(script, 'utf8'), /v1/, 'the files beside SKILL.md come too')
+
+  // Only the script changes: still a new version.
+  state.files['index.json'] = index('1.1.0', '运行器修好了截图')
+  state.files['scripts/maa/scripts/run.py'] = 'print("v2")\n'
+  let listed = (await hub.list({ refresh: true })).items.find(i => i.name === 'maa')!
+  assert.equal(listed.installed?.update, true, 'a change beside SKILL.md is a new version')
+  assert.equal(listed.version, '1.1.0')
+  assert.equal(listed.changes, '运行器修好了截图')
+  assert.equal(listed.installed?.version, '1.0.0', 'what is here')
+  assert.equal((await hub.update('maa')).state, 'updated')
+  assert.match(readFileSync(script, 'utf8'), /v2/)
+  listed = (await hub.list()).items.find(i => i.name === 'maa')!
+  assert.deepEqual(listed.installed?.previous, { version: '1.0.0', at: 1_000_000 }, 'the replaced version is kept')
+
+  // Back: the old files, and the newer version is not offered again…
+  const back = await hub.rollback('maa')
+  assert.match(readFileSync(script, 'utf8'), /v1/)
+  assert.equal(back.installed?.version, '1.0.0')
+  assert.equal(back.installed?.update, false)
+  assert.equal(back.installed?.held, true)
+  assert.equal(back.installed?.previous, undefined)
+  assert.match(state.registered.get('maa') ?? '', /步骤/, 'registered again')
+  await assert.rejects(hub.rollback('maa'), /没有上一个版本/)
+  // …until the repository has another; updating by hand still takes the held one.
+  assert.equal((await hub.update('maa')).state, 'updated')
+  assert.match(readFileSync(script, 'utf8'), /v2/)
+  await hub.rollback('maa')
+  state.files['scripts/maa/scripts/run.py'] = 'print("v3")\n'
+  listed = (await hub.list({ refresh: true })).items.find(i => i.name === 'maa')!
+  assert.equal(listed.installed?.update, true)
+  assert.equal(listed.installed?.held, undefined, 'held only while the repository still has the version gone back from')
+  await hub.remove('maa')
+  assert.ok(!existsSync(join(dir, 'previous', 'maa')), 'removing forgets the kept version too')
+})
+
+test('requires: on an older app a skill is not downloaded or updated, and says why', async () => {
+  const { hub, state, app } = setup({}, { version: '2.0.5' })
+  state.files['index.json'] = JSON.stringify({ skills: [{ name: 'maa', path: 'scripts/maa', scripts: ['maa'], version: '2.0.0', requires: '>=2.1.0' }] })
+  let item = (await hub.list()).items.find(i => i.name === 'maa')!
+  assert.match(item.incompatible ?? '', /需要软件版本 >=2.1.0（现在是 2.0.5）/)
+  await assert.rejects(hub.install('maa'), /需要软件版本/)
+  app.version = '2.1.0'
+  await hub.install('maa')
+  // A newer version for a newer app: offered, not taken.
+  state.files['index.json'] = JSON.stringify({ skills: [{ name: 'maa', path: 'scripts/maa', scripts: ['maa'], version: '3.0.0', requires: '>=3.0.0' }] })
+  state.files['scripts/maa/SKILL.md'] = skill('maa', 'MAA 的安装与运行', '# v3\n')
+  item = (await hub.list({ refresh: true })).items.find(i => i.name === 'maa')!
+  assert.equal(item.installed?.update, true)
+  assert.match(item.incompatible ?? '', /3.0.0/)
+  await assert.rejects(hub.update('maa'), /需要软件版本/)
+  // Run from source (no version): anything goes.
+  app.version = undefined
+  assert.equal((await hub.update('maa')).state, 'updated')
+})
+
+test('downloads recorded before folders were fingerprinted are fingerprinted as they are, not shown as new', async () => {
+  const { hub, dir, state } = setup()
+  await hub.install('game-arknights')
+  // As an older app recorded it: the SKILL.md alone.
+  const file = join(dir, 'state.json')
+  const saved = JSON.parse(readFileSync(file, 'utf8'))
+  saved.installed['game-arknights'] = { repo: saved.installed['game-arknights'].repo, path: 'games/arknights', hash: 'skill-md-only', at: 5 }
+  writeFileSync(file, JSON.stringify(saved))
+  const again = new SkillHub({
+    dir, download: async (url, dest) => { state.downloads.push(url); await mkdir(dirname(dest), { recursive: true }); await writeFile(dest, repoZip(state.files)) },
+    extract: async (archive, dest) => { await extract(archive, dest) }, taken: async () => new Map(), register: () => {}, now: () => state.clock, log: { info() {}, warn() {} },
+  })
+  const before = state.downloads.length
+  const item = (await again.list()).items.find(i => i.name === 'game-arknights')!
+  assert.equal(item.installed?.update, false)
+  assert.equal(state.downloads.length, before + 1, 'the repository is read again for the new fingerprints')
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).installed['game-arknights'].folder, true)
 })

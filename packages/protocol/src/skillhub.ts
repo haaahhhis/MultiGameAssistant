@@ -24,12 +24,26 @@ export const HubItem = z.object({
   scripts: z.array(z.string()),
   repo: z.string(),
   path: z.string(),
+  /** Fingerprint of its whole folder: a different one is another version. */
   hash: z.string(),
+  /** What the repository's index calls this version, and one line on what changed. */
+  version: z.string().optional(),
+  changes: z.string().optional(),
+  /** App versions it works with, e.g. `>=2.1.0`. */
+  requires: z.string().optional(),
   installed: z.object({
     at: z.number(),
-    /** The repository has a newer version. */
+    /** The repository has a newer version (not one gone back from). */
     update: z.boolean(),
+    /** The version downloaded here. */
+    version: z.string().optional(),
+    /** The version the last update replaced, kept to go back to. */
+    previous: z.object({ version: z.string().optional(), at: z.number() }).optional(),
+    /** Went back from the repository's current version: not offered again until another. */
+    held: z.boolean().optional(),
   }).optional(),
+  /** Why the repository's version cannot be taken: this app is too old for it. */
+  incompatible: z.string().optional(),
   /** Why it cannot be downloaded (a core or the user's own skill has the name). */
   blocked: z.string().optional(),
 })
@@ -54,6 +68,12 @@ export const SkillHubRequests = {
     capability: SKILLHUB_CAPABILITY,
     params: ByName,
     result: z.object({ state: z.enum(['current', 'updated']), item: HubItem }),
+  },
+  /** Go back to the version the last update replaced. */
+  'skillhub/rollback': {
+    capability: SKILLHUB_CAPABILITY,
+    params: ByName,
+    result: HubItem,
   },
   'skillhub/remove': {
     capability: SKILLHUB_CAPABILITY,

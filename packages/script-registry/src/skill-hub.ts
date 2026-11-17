@@ -11,11 +11,19 @@
  *   follows the repository: an update replaces it with the repository's
  *   version whether or not it was changed here. What should last is saved as
  *   one of the user's own skills.
+ * - Versions: a skill is its whole folder (SKILL.md and the scripts and
+ *   references beside it), fingerprinted together; any changed file is a new
+ *   version. The index may also give a `version` and one line of `changes`
+ *   to show, and `requires` (`>=2.1.0`): the app versions it works with —
+ *   on an older app it is not downloaded or updated. The version an update
+ *   replaced is kept in `skill-hub/previous/<name>/` to go back to; going back
+ *   holds that newer version until the repository has another.
  * - The user's own skills (`skill_save`, their folders) are not tracked here,
  *   and a skill named like one of them, or like a core skill, is not taken.
  */
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { satisfies } from '@adg/installer'
 import { join, relative, resolve, sep } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
 import { z } from 'zod'
@@ -41,23 +49,46 @@ export interface HubSkill {
   readonly repo: string
   /** Its folder in the repository. */
   readonly path: string
-  /** Fingerprint of its SKILL.md as published. */
+  /** Fingerprint of its folder as published (every file in it). */
   readonly hash: string
+  /** What the index calls this version (shown; `hash` decides what is new). */
+  readonly version?: string
+  /** One line on what changed in this version. */
+  readonly changes?: string
+  /** App versions it works with, e.g. `>=2.1.0`. */
+  readonly requires?: string
 }
 
 export interface HubItem extends HubSkill {
   readonly installed?: {
     readonly at: number
-    /** The repository has another version. */
+    /** The repository has another version (not one gone back from). */
     readonly update: boolean
+    /** The version downloaded here, as the index named it then. */
+    readonly version?: string
+    /** The version an update replaced, kept to go back to. */
+    readonly previous?: { readonly version?: string; readonly at: number }
+    /** Went back from the repository's current version: not offered again until another. */
+    readonly held?: boolean
   }
+  /** Why the repository's version cannot be taken here: this app is too old for it. */
+  readonly incompatible?: string
   /** Why it cannot be downloaded: a core or the user's own skill has the name. */
   readonly blocked?: string
 }
 
 /** Games and scripts the user put a downloaded skill under, instead of the repository's. */
 const Owner = z.object({ games: z.array(z.string()).optional(), scripts: z.array(z.string()).optional() })
-const Installed = z.object({ repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), owner: Owner.optional() })
+const Previous = z.object({ hash: z.string(), version: z.string().optional(), at: z.number() })
+const Installed = z.object({
+  repo: z.string(), path: z.string(), hash: z.string(), at: z.number(), owner: Owner.optional(),
+  /** `hash` is of the whole folder; records from before were of SKILL.md alone. */
+  folder: z.literal(true).optional(),
+  version: z.string().optional(),
+  previous: Previous.optional(),
+  /** The repository's hash that was gone back from. */
+  held: z.string().optional(),
+})
 const State = z.object({
   repos: z.array(z.object({ repo: z.string(), branch: z.string() })).optional(),
   installed: z.record(z.string(), Installed).default({}),
@@ -73,6 +104,9 @@ const Index = z.object({
     kind: z.enum(['game', 'script', 'general']).optional(),
     games: z.array(z.string()).optional(),
     scripts: z.array(z.string()).optional(),
+    version: z.string().max(40).optional(),
+    changes: z.string().max(300).optional(),
+    requires: z.string().max(60).optional(),
   })),
 })
 
@@ -87,6 +121,8 @@ export interface SkillHubOptions {
   readonly taken: () => Promise<ReadonlyMap<string, string>>
   /** Register (or re-register) a downloaded skill with the agents; undefined unregisters. */
   readonly register: (name: string, skill: { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } } | undefined) => void
+  /** This app's version, for a skill's `requires`; undefined (run from source): any. */
+  readonly appVersion?: () => string | undefined
   readonly now?: () => number
   readonly log: { info(message: string): void; warn(message: string): void }
 }
@@ -114,6 +150,21 @@ export class SkillHub {
       } catch { /* none yet */ }
       // Copies of what was downloaded, once kept for merging the user's changes: no longer used.
       await rm(join(this.#options.dir, 'base'), { recursive: true, force: true })
+      // Records from before folders were fingerprinted: fingerprint what is here (an edited copy shows as having a new version).
+      let migrated = false
+      for (const [name, record] of Object.entries(this.#state.installed)) {
+        if (record.folder === true) continue
+        const here = await folderHash(join(this.skillsDir, name)).catch(() => undefined)
+        if (here === undefined) continue
+        record.hash = here
+        record.folder = true
+        migrated = true
+      }
+      // What was read before has the old fingerprints too: read the repositories again.
+      if (migrated) {
+        this.#state.read = {}
+        await this.#save()
+      }
       for (const name of Object.keys(this.#state.installed)) await this.#register(name)
     })()
     return this.#loading
@@ -168,7 +219,7 @@ export class SkillHub {
       if (items.some(i => i.name === name)) continue
       const content = await readFile(join(this.skillsDir, name, SKILL_FILE), 'utf8').catch(() => '')
       const front = frontmatter(content)
-      items.push({ name, description: front?.description ?? '', kind: 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: { at: record.at, update: false } })
+      items.push({ name, description: front?.description ?? '', kind: 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false) })
     }
     return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }) }
   }
@@ -178,6 +229,7 @@ export class SkillHub {
     const skill = await this.#find(name, repo, signal)
     const blocked = (await this.#options.taken()).get(name)
     if (blocked !== undefined) throw new Error(`已有同名的${blocked}「${name}」，没有下载`)
+    this.#checkCompatible(skill)
     await this.#put(skill)
     this.#options.log.info(`skill hub: downloaded ${name} from ${skill.repo}`)
     return this.#item(skill, await this.#options.taken())
@@ -188,13 +240,34 @@ export class SkillHub {
     const record = this.#record(name)
     const skill = await this.#find(name, record.repo, signal)
     if (skill.hash === record.hash) return { state: 'current', item: await this.#item(skill, await this.#options.taken()) }
+    this.#checkCompatible(skill)
     await this.#put(skill)
     return { state: 'updated', item: await this.#item(skill, await this.#options.taken()) }
+  }
+
+  /** Go back to the version the last update replaced; the newer one is not offered again until the repository has another. */
+  async rollback(name: string): Promise<HubItem> {
+    const record = this.#record(name)
+    const kept = join(this.#previousDir, name)
+    const previous = record.previous
+    if (previous === undefined || !(await stat(kept).then(st => st.isDirectory(), () => false))) throw new Error(`「${name}」没有上一个版本可以回退`)
+    const held = record.hash
+    await rm(join(this.skillsDir, name), { recursive: true, force: true })
+    await rename(kept, join(this.skillsDir, name))
+    const { previous: _previous, version: _version, ...rest } = record
+    this.#state.installed[name] = { ...rest, hash: previous.hash, at: this.#now(), folder: true, held, ...(previous.version === undefined ? {} : { version: previous.version }) }
+    await this.#save()
+    await this.#register(name)
+    this.#options.log.info(`skill hub: ${name} back to ${previous.version ?? previous.hash}`)
+    const listed = (await this.list()).items.find(i => i.name === name)
+    if (listed === undefined) throw new Error(`技能库里没有「${name}」`)
+    return listed
   }
 
   async remove(name: string): Promise<void> {
     this.#record(name)
     this.#options.register(name, undefined)
+    await rm(join(this.#previousDir, name), { recursive: true, force: true })
     await rm(join(this.skillsDir, name), { recursive: true, force: true })
     delete this.#state.installed[name]
     await this.#save()
@@ -219,6 +292,22 @@ export class SkillHub {
   }
 
   // ── internals ──
+
+  get #previousDir(): string {
+    return join(this.#options.dir, 'previous')
+  }
+
+  /** Why this app cannot take the skill's version; undefined: it can. */
+  #incompatible(skill: HubSkill): string | undefined {
+    const app = this.#options.appVersion?.()
+    if (skill.requires === undefined || app === undefined || satisfies(app, skill.requires)) return undefined
+    return `需要软件版本 ${skill.requires}（现在是 ${app}），先更新软件`
+  }
+
+  #checkCompatible(skill: HubSkill): void {
+    const why = this.#incompatible(skill)
+    if (why !== undefined) throw new Error(`「${skill.name}」${skill.version === undefined ? '' : ` ${skill.version}`}${why}`)
+  }
 
   #record(name: string) {
     const record = this.#state.installed[name]
@@ -251,12 +340,26 @@ export class SkillHub {
   async #put(skill: HubSkill): Promise<void> {
     const from = join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'))
     const to = join(this.skillsDir, skill.name)
+    const before = this.#state.installed[skill.name]
+    // The version being replaced is kept to go back to (one, the last).
+    let previous: z.infer<typeof Previous> | undefined
+    if (before !== undefined && await stat(to).then(st => st.isDirectory(), () => false)) {
+      await rm(join(this.#previousDir, skill.name), { recursive: true, force: true })
+      await mkdir(this.#previousDir, { recursive: true })
+      await rename(to, join(this.#previousDir, skill.name))
+      previous = { hash: before.hash, at: before.at, ...(before.version === undefined ? {} : { version: before.version }) }
+    }
     await rm(to, { recursive: true, force: true })
     await mkdir(this.skillsDir, { recursive: true })
     await cp(from, to, { recursive: true })
     // Where the user put it stays across updates.
-    const owner = this.#state.installed[skill.name]?.owner
-    this.#state.installed[skill.name] = { repo: skill.repo, path: skill.path, hash: skill.hash, at: this.#now(), ...(owner === undefined ? {} : { owner }) }
+    const owner = before?.owner
+    this.#state.installed[skill.name] = {
+      repo: skill.repo, path: skill.path, hash: skill.hash, at: this.#now(), folder: true,
+      ...(skill.version === undefined ? {} : { version: skill.version }),
+      ...(owner === undefined ? {} : { owner }),
+      ...(previous === undefined ? {} : { previous }),
+    }
     await this.#save()
     await this.#register(skill.name)
   }
@@ -280,13 +383,24 @@ export class SkillHub {
     this.#options.register(name, { description: front.description, content: front.body, path, dir: join(this.skillsDir, name), ...(owner === undefined ? {} : { owner }) })
   }
 
-  async #item(skill: HubSkill, taken: ReadonlyMap<string, string>): Promise<HubItem> {
+  async #item(found: HubSkill, taken: ReadonlyMap<string, string>): Promise<HubItem> {
+    // Only what a HubSkill has (what was read and kept may carry more).
+    const { name, description, title, kind, games, scripts, repo, path, hash, version, changes, requires } = found
+    const skill: HubSkill = {
+      name, description, kind, games, scripts, repo, path, hash,
+      ...(title === undefined ? {} : { title }),
+      ...(version === undefined ? {} : { version }),
+      ...(changes === undefined ? {} : { changes }),
+      ...(requires === undefined ? {} : { requires }),
+    }
+    const incompatible = this.#incompatible(skill)
     const record = this.#state.installed[skill.name]
     if (record === undefined) {
       const blocked = taken.get(skill.name)
-      return { ...skill, ...(blocked === undefined ? {} : { blocked: `已有同名的${blocked}` }) }
+      return { ...skill, ...(blocked === undefined ? {} : { blocked: `已有同名的${blocked}` }), ...(incompatible === undefined ? {} : { incompatible }) }
     }
-    return { ...skill, installed: { at: record.at, update: skill.repo === record.repo && skill.hash !== record.hash } }
+    const newer = skill.repo === record.repo && skill.hash !== record.hash && skill.hash !== record.held
+    return { ...skill, installed: installedOf(record, newer, skill.hash === record.held), ...(newer && incompatible !== undefined ? { incompatible } : {}) }
   }
 
   /** Download the repository and list its skills; the copy replaces the one before. */
@@ -319,7 +433,7 @@ export class SkillHub {
 /** The skills in an unpacked repository: as its `index.json` lists them, else every SKILL.md. */
 export async function readSkills(root: string, repo: string): Promise<HubSkill[]> {
   const indexText = await readFile(join(root, 'index.json'), 'utf8').catch(() => undefined)
-  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined }[] = []
+  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined; version?: string | undefined; changes?: string | undefined; requires?: string | undefined }[] = []
   if (indexText !== undefined) {
     const parsed = Index.safeParse(JSON.parse(indexText.replace(/^﻿/, '')))
     if (!parsed.success) throw new Error(`index.json 格式不对：${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join('; ')}`)
@@ -335,6 +449,8 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
     if (path === '' || rel.startsWith('..') || rel.split(sep).includes('..')) continue
     const content = await readFile(join(full, SKILL_FILE), 'utf8').catch(() => undefined)
     const front = content === undefined ? undefined : frontmatter(content)
+    const version = entry.version ?? front?.version
+    const { changes, requires } = entry
     if (content === undefined || front === undefined) continue
     const name = entry.name ?? front.name
     if (name === undefined || !NAME.test(name) || skills.some(s => s.name === name)) continue
@@ -347,8 +463,11 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
       scripts: entry.scripts ?? [],
       repo,
       path,
-      hash: hash(content),
+      hash: await folderHash(full),
       ...(entry.title === undefined ? {} : { title: entry.title }),
+      ...(version === undefined ? {} : { version }),
+      ...(changes === undefined ? {} : { changes }),
+      ...(requires === undefined ? {} : { requires }),
     })
   }
   return skills
@@ -366,7 +485,7 @@ async function findSkillFolders(root: string, sub: string, depth: number): Promi
 }
 
 /** `name` and `description` from a SKILL.md's frontmatter, and the text after it. */
-export function frontmatter(text: string): { name?: string; description: string; body: string } | undefined {
+export function frontmatter(text: string): { name?: string; version?: string; description: string; body: string } | undefined {
   const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text)
   if (match === null) return undefined
   const field = (key: string) => {
@@ -378,12 +497,42 @@ export function frontmatter(text: string): { name?: string; description: string;
   const description = field('description')
   if (description === undefined || description === '') return undefined
   const name = field('name')
-  return { ...(name === undefined ? {} : { name }), description, body: match[2]! }
+  const version = field('version')
+  return { ...(name === undefined ? {} : { name }), ...(version === undefined ? {} : { version }), description, body: match[2]! }
 }
 
-/** Fingerprint of a skill file, the same whatever line endings git gave it. */
-function hash(text: string): string {
-  return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16)
+/**
+ * Fingerprint of a skill's folder: every file in it (by path, in order), text
+ * the same whatever line endings git gave it.
+ */
+export async function folderHash(dir: string): Promise<string> {
+  const files: string[] = []
+  const walk = async (sub: string): Promise<void> => {
+    for (const entry of await readdir(join(dir, sub), { withFileTypes: true })) {
+      const rel = sub === '' ? entry.name : `${sub}/${entry.name}`
+      // Python's compiled cache appears beside scripts once they run: not part of the skill.
+      if (entry.isDirectory()) { if (entry.name !== '__pycache__') await walk(rel) } else if (entry.isFile()) files.push(rel)
+    }
+  }
+  await walk('')
+  if (!files.includes(SKILL_FILE)) throw new Error(`${dir} 里没有 ${SKILL_FILE}`)
+  const digest = createHash('sha256')
+  for (const rel of files.sort()) {
+    const bytes = await readFile(join(dir, ...rel.split('/')))
+    digest.update(rel).update('\0').update(bytes.includes(0) ? bytes : bytes.toString('utf8').replace(/\r\n/g, '\n')).update('\0')
+  }
+  return digest.digest('hex').slice(0, 16)
+}
+
+/** How a downloaded skill stands, for a HubItem. */
+function installedOf(record: State['installed'][string], update: boolean, held = false): NonNullable<HubItem['installed']> {
+  return {
+    at: record.at,
+    update,
+    ...(record.version === undefined ? {} : { version: record.version }),
+    ...(record.previous === undefined ? {} : { previous: { at: record.previous.at, ...(record.previous.version === undefined ? {} : { version: record.previous.version }) } }),
+    ...(held ? { held: true } : {}),
+  }
 }
 
 function repoKey(repo: HubRepo): string {

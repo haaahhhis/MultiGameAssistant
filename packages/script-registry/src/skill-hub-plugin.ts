@@ -9,6 +9,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-skill'
 import type { CapabilityRegistration } from '@adg/gateway'
+import { pluginVersion } from '@adg/gateway'
 import { SKILLHUB_CAPABILITY, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
 import type { ScriptLibrary } from './library.ts'
@@ -56,6 +57,8 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
       else entries.set(name, skill)
       apply(name)
     },
+    // For a skill's `requires`: the desktop app passes its version; the dsh plugin has it in its manifest; from source, none.
+    appVersion: () => process.env['ADG_APP_VERSION'] || pluginVersion(),
     log,
   })
   const started = ready.then(() => hub.start())
@@ -84,6 +87,11 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
         const result = await hub.update((params as RequestParams<'skillhub/update'>).name, call.signal)
         changed()
         return result
+      },
+      'skillhub/rollback': async params => {
+        const item = await hub.rollback((params as RequestParams<'skillhub/rollback'>).name)
+        changed()
+        return item
       },
       'skillhub/remove': async params => {
         await hub.remove((params as RequestParams<'skillhub/remove'>).name)
@@ -147,7 +155,7 @@ function hubTools(hub: SkillHub, approve: Approve, changed: () => void): ToolDef
         const shown = items.filter(i => (a.game == null || i.games.includes(a.game)) && (a.script == null || i.scripts.includes(a.script)))
         return {
           errors,
-          skills: shown.map(i => ({ name: i.name, description: i.description, kind: i.kind, games: i.games, scripts: i.scripts, repo: i.repo, installed: i.installed, blocked: i.blocked })),
+          skills: shown.map(i => ({ name: i.name, description: i.description, kind: i.kind, games: i.games, scripts: i.scripts, repo: i.repo, version: i.version, changes: i.changes, installed: i.installed, blocked: i.blocked, incompatible: i.incompatible })),
         }
       },
       presentCall: () => ({ card: 'generic', title: '查看技能库', kind: 'read' }),

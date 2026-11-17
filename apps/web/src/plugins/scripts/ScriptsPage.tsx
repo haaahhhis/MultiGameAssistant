@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { ProgramAvatar } from '../../components/ProgramAvatar.tsx'
-import { FAMILY_LABEL, isActive, PHASE_LABEL, useScriptJobs, useScriptList } from './data.ts'
+import { FAMILY_LABEL, isActive, PHASE_LABEL, skillUpdatesFor, useScriptJobs, useScriptList, useSkillUpdates } from './data.ts'
 import { ImportPanel, InstallPanel, MirrorInstallPanel } from './InstallPanel.tsx'
 import { JobProgress } from './JobProgress.tsx'
 import { ScriptDetail } from './ScriptDetail.tsx'
@@ -14,6 +14,8 @@ type Panel = { kind: 'install'; repo?: string } | { kind: 'mirror'; rid?: string
 export function ScriptsPage({ client, openSession, arg }: PageProps) {
   const { data, error } = useScriptList(client)
   const jobs = useScriptJobs(client)
+  // Downloaded 技能库 skills with a newer version: a small hint on their scripts.
+  const skillUpdates = useSkillUpdates(client)
   const [selected, setSelected] = useState<string | null>(null)
   const [panel, setPanel] = useState<Panel>(null)
   // A link such as the game page's (#/p/scripts/mirror:okww) opens the Mirror酱 install of that resource.
@@ -64,7 +66,10 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
                       load={() => client.connection.call('scripts/icon', { id: script.id })} />
                     <span className="script-row-main">
                       <span className="script-row-name">{script.name}</span>
-                      <span className="muted small">{script.source.kind === 'local' ? '本地' : script.current ?? '未安装'}{script.family === undefined ? '' : ` · ${FAMILY_LABEL[script.family] ?? script.family}`}</span>
+                      <span className="muted small">
+                        {/* First, so the row's ellipsis never cuts it. */}
+                        {skillUpdatesFor(script, skillUpdates).length > 0 && <span className="skill-update-hint" title="这个脚本的技能在技能库里有新版">技能有新版 · </span>}
+                        {script.source.kind === 'local' ? '本地' : script.current ?? '未安装'}{script.family === undefined ? '' : ` · ${FAMILY_LABEL[script.family] ?? script.family}`}</span>
                     </span>
                     {isActive(job) ? <span className="run-dot" role="img" aria-label="进行中" />
                       : setups.some(s => s.scriptId === script.id) ? <span className="badge warn">待安装</span>
@@ -138,7 +143,7 @@ export function ScriptsPage({ client, openSession, arg }: PageProps) {
             <ImportPanel client={client} onClose={() => setPanel(null)} onImported={id => { setSelected(id); setPanel(null) }} />
           )}
           {panel === null && current !== undefined && (
-            <ScriptDetail key={current.id} client={client} script={current} job={jobs.get(current.id)} setup={setups.find(s => s.scriptId === current.id)} onRemoved={() => setSelected(null)} openSession={openSession} />
+            <ScriptDetail key={current.id} client={client} script={current} skillUpdates={skillUpdatesFor(current, skillUpdates)} job={jobs.get(current.id)} setup={setups.find(s => s.scriptId === current.id)} onRemoved={() => setSelected(null)} openSession={openSession} />
           )}
           {waitingShown !== undefined && (
             <SetupCard key={waitingShown.scriptId} client={client} setup={waitingShown} openSession={openSession} onImported={id => setSelected(id)} />

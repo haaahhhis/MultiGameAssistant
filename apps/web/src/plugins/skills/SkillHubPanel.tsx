@@ -2,7 +2,7 @@
  * 技能库: skills for games and scripts, downloaded from the skills
  * repository when the user wants them. Suggested for the games followed and
  * the scripts in the library; a downloaded skill follows the repository, and
- * an update replaces it.
+ * an update replaces it (the replaced version kept to go back to).
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
@@ -124,20 +124,34 @@ export function SkillHubPanel({ client, focus, openSkill }: {
                     <strong>{item.title ?? item.name}</strong>
                     {item.title !== undefined && <code className="muted small">{item.name}</code>}
                     <span className="badge">{KIND[item.kind]}</span>
-                    {item.installed?.update === true && <span className="badge ok">有新版</span>}
+                    {versionLabel(item) !== undefined && <span className="muted small">{versionLabel(item)}</span>}
+                    {item.installed?.update === true && item.incompatible === undefined && <span className="badge ok">有新版</span>}
+                    {item.installed?.held === true && <span className="badge" title="回退过：技能库再有更新的版本才会提示">已回退</span>}
                   </div>
                   <span className="muted small">{item.description}</span>
+                  {item.changes !== undefined && (item.installed === undefined || item.installed.update) && <span className="muted small hub-changes">{item.version === undefined ? '' : `${item.version}：`}{item.changes}</span>}
+                  {item.incompatible !== undefined && <span className="muted small hub-incompatible">{item.installed === undefined ? '' : '新版'}{item.incompatible}</span>}
                   {item.blocked !== undefined && <span className="muted small">{item.blocked}，没有下载（以你已有的为准）</span>}
                 </div>
                 <div className="hub-actions">
-                  {item.installed === undefined && item.blocked === undefined && (
+                  {item.installed === undefined && item.blocked === undefined && item.incompatible === undefined && (
                     <button className="primary small-button" disabled={busy !== null} onClick={() => void act(`install:${item.name}`, async () => {
                       await client.connection.call('skillhub/install', { name: item.name, repo: item.repo })
                       return `已下载 ${item.name}，agent 现在就能用`
                     })}>{busy === `install:${item.name}` ? '下载中…' : '下载'}</button>
                   )}
-                  {item.installed?.update === true && (
+                  {item.installed?.update === true && item.incompatible === undefined && (
                     <button className="primary small-button" disabled={busy !== null} onClick={() => void update(item)}>{busy === `update:${item.name}` ? '更新中…' : '更新'}</button>
+                  )}
+                  {item.installed?.held === true && item.incompatible === undefined && (
+                    <button className="ghost small-button" title="回退过的那个新版本，再换回去" disabled={busy !== null} onClick={() => void update(item)}>{busy === `update:${item.name}` ? '更新中…' : '重新更新'}</button>
+                  )}
+                  {item.installed?.previous !== undefined && (
+                    <button className="ghost small-button" title={`换回上一个版本${item.installed.previous.version === undefined ? '' : ` ${item.installed.previous.version}`}（${relativeTime(item.installed.previous.at, now)}下载的）`}
+                      disabled={busy !== null} onClick={() => void act(`rollback:${item.name}`, async () => {
+                        const back = await client.connection.call('skillhub/rollback', { name: item.name })
+                        return `${item.name} 已回退${back.installed?.version === undefined ? '' : `到 ${back.installed.version}`}；技能库再有新版本时会再提示`
+                      })}>{busy === `rollback:${item.name}` ? '回退中…' : '回退'}</button>
                   )}
                   {item.installed !== undefined && (
                     <>
@@ -156,6 +170,14 @@ export function SkillHubPanel({ client, focus, openSkill }: {
       ))}
     </div>
   )
+}
+
+/** 「1.0.0」, or 「1.0.0 → 1.1.0」 when the repository has a newer one. */
+function versionLabel(item: HubItem): string | undefined {
+  const here = item.installed?.version
+  if (item.installed === undefined) return item.version
+  if (item.installed.update && item.version !== undefined && item.version !== here) return `${here ?? '旧版'} → ${item.version}`
+  return here
 }
 
 function RepoEditor({ repos, disabled, onSave }: { repos: readonly HubRepo[]; disabled: boolean; onSave: (repos: HubRepo[]) => void }) {

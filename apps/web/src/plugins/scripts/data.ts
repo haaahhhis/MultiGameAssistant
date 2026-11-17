@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { RequestResult, ScriptJob } from '@adg/protocol'
+import type { HubItem, RequestResult, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { useStore } from '../../hooks.ts'
 
 export type ScriptList = RequestResult<'scripts/list'>
@@ -83,4 +83,34 @@ export const FAMILY_LABEL: Readonly<Record<string, string>> = {
 
 export function isActive(job: ScriptJob | undefined): job is ScriptJob {
   return job !== undefined && job.endedAt === undefined
+}
+
+/**
+ * Downloaded 技能库 skills that have a newer version, re-read on
+ * `skillhub/changed` (the 技能库 reads the repository at most once a day,
+ * or when asked). Empty without the skill hub.
+ */
+export function useSkillUpdates(client: AdgClient): readonly HubItem[] {
+  const status = useStore(client.connection.status)
+  const capabilities = useStore(client.capabilities)
+  const hub = capabilities.has('skillhub')
+  const [items, setItems] = useState<readonly HubItem[]>([])
+  const [revision, setRevision] = useState(0)
+  useEffect(() => client.connection.on('skillhub/changed', () => setRevision(r => r + 1)), [client])
+  useEffect(() => {
+    if (status.state !== 'open' || !hub) return
+    let live = true
+    client.connection.call('skillhub/list', {})
+      // One this app is too old for has nothing to do on the scripts page (the 技能库 says why).
+      .then(data => { if (live) setItems(data.items.filter(i => i.installed?.update === true && i.incompatible === undefined)) })
+      .catch(() => { /* the 技能库 page says why */ })
+    return () => { live = false }
+  }, [client, status.state, hub, revision])
+  return items
+}
+
+/** The skills among `updates` that are for this script (its id, its pack, or what it was recognized as). */
+export function skillUpdatesFor(script: Pick<ScriptInfo, 'id' | 'packId' | 'known'>, updates: readonly HubItem[]): HubItem[] {
+  const ids = [script.id, script.packId, script.known].filter((x): x is string => x !== undefined)
+  return updates.filter(item => item.scripts.some(s => ids.includes(s)))
 }

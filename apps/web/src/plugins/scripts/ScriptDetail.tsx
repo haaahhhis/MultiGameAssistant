@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { EnvItem, PendingSetupInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
+import type { EnvItem, HubItem, PendingSetupInfo, ScriptInfo, ScriptJob } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -24,9 +24,11 @@ const ENV_BADGE: Readonly<Record<EnvItem['status'], [string, string]>> = {
   unsupported: ['', '暂不检测'],
 }
 
-export function ScriptDetail({ client, script, job, setup, onRemoved, openSession }: {
+export function ScriptDetail({ client, script, skillUpdates = [], job, setup, onRemoved, openSession }: {
   client: AdgClient
   script: ScriptInfo
+  /** This script's downloaded 技能库 skills that have a newer version. */
+  skillUpdates?: readonly HubItem[]
   job: ScriptJob | undefined
   /** An update that downloaded a setup program, waiting to be installed. */
   setup?: PendingSetupInfo | undefined
@@ -74,6 +76,7 @@ export function ScriptDetail({ client, script, job, setup, onRemoved, openSessio
         </div>
       </header>
 
+      {skillUpdates.length > 0 && <SkillUpdateNote client={client} skills={skillUpdates} />}
       {shown !== undefined && <JobProgress client={client} job={shown} />}
       {setup !== undefined && <SetupCard client={client} setup={setup} openSession={openSession} onImported={() => {}} />}
 
@@ -215,5 +218,40 @@ export function ScriptDetail({ client, script, job, setup, onRemoved, openSessio
       {message !== null && <div className="notice info">{message}</div>}
       {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </div>
+  )
+}
+
+/** This script's downloaded 技能库 skills have a newer version: say so, and take it here. */
+function SkillUpdateNote({ client, skills }: { client: AdgClient; skills: readonly HubItem[] }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const names = skills.map(s => {
+    const name = s.title ?? s.name
+    const to = s.version === undefined || s.version === s.installed?.version ? '' : ` ${s.installed?.version ?? ''}→${s.version}`
+    return `${name}${to}${s.changes === undefined ? '' : `（${s.changes}）`}`
+  }).join('、')
+  const update = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      // The list is read again on skillhub/changed, and this note goes away.
+      for (const s of skills) await client.connection.call('skillhub/update', { name: s.name })
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <div className="notice info left small skill-update-note">
+        <Icon name="info" />
+        <span>技能有新版：{names}。更新后 agent 下次用这个脚本就按新版做。</span>
+        <span className="spacer" />
+        <a href={`#/p/skills/${encodeURIComponent(`hub:${skills[0]!.name}`)}`}>在技能库查看</a>
+        <button className="small-button" disabled={busy} onClick={() => void update()}>{busy ? '更新中…' : '更新技能'}</button>
+      </div>
+      {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}
+    </>
   )
 }

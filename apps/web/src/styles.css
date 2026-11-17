@@ -2111,3 +2111,8 @@ button.link-button.memory-forget { color: var(--error); }
   .session-body.with-side .session-column { min-width: 0; }
   .side-slot, .side-slot.side-browser { flex-basis: 55%; border-left: none; border-top: 1px solid var(--border); }
 }
+.skill-update-note { align-items: center; flex-wrap: wrap; }
+.skill-update-note .ui-icon { margin-top: 0; }
+.skill-update-hint { color: var(--ok); }
+.hub-changes { color: var(--ok); }
+.hub-incompatible { color: var(--warn); }

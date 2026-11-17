@@ -609,6 +609,8 @@ async function launchHost() {
       ADG_LAUNCH_COMMAND: JSON.stringify(launchCommand),
       ADG_AUTOSTARTED: autoStarted && !everReady ? '1' : '0',
       ADG_APP_START: everReady || woken ? '0' : '1',
+      // For a downloaded skill's `requires` (the skills repository); none when run from the repository.
+      ...(installed?.version === undefined ? {} : { ADG_APP_VERSION: installed.version }),
       ...(scriptsDir() === undefined ? {} : { ADG_TOOLS_DIR: scriptsDir() }),
       ...(browserBridge === null ? {} : { ADG_BROWSER_URL: browserBridge.url, ADG_BROWSER_TOKEN: browserBridge.token }),
     },

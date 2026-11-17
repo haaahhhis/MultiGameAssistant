@@ -66,6 +66,12 @@
     "attachments/image": {
       "capability": "attachments"
     },
+    "attachments/file": {
+      "capability": "attachments"
+    },
+    "files/pick": {
+      "capability": "files"
+    },
     "sessions/archived": {
       "capability": "archive"
     },
@@ -133,6 +139,9 @@
       "capability": "scripts"
     },
     "scripts/guide": {
+      "capability": "scripts"
+    },
+    "scripts/icon": {
       "capability": "scripts"
     },
     "scripts/search": {
@@ -450,6 +459,9 @@
     "games/image": {
       "capability": "games"
     },
+    "games/icon": {
+      "capability": "games"
+    },
     "games/discover": {
       "capability": "games"
     },
@@ -517,6 +529,9 @@
       "capability": "skillhub"
     },
     "skillhub/update": {
+      "capability": "skillhub"
+    },
+    "skillhub/rollback": {
       "capability": "skillhub"
     },
     "skillhub/remove": {
@@ -5597,6 +5612,88 @@
       ],
       "additionalProperties": false
     },
+    "attachments/file.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "attachments/file.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "mediaType": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mediaType",
+        "data",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "files/pick.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "file",
+            "folder"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "defaultPath": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "filterName": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "extensions": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\w+$"
+          }
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "files/pick.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "sessions/archived.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -8147,6 +8244,43 @@
       "required": [
         "guide"
       ],
+      "additionalProperties": false
+    },
+    "scripts/icon.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/icon.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "icon": {
+          "type": "object",
+          "properties": {
+            "mediaType": {
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mediaType",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     },
     "scripts/search.params": {
@@ -20787,6 +20921,43 @@
       ],
       "additionalProperties": false
     },
+    "games/icon.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "game"
+      ],
+      "additionalProperties": false
+    },
+    "games/icon.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "icon": {
+          "type": "object",
+          "properties": {
+            "mediaType": {
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mediaType",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "games/discover.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22718,6 +22889,15 @@
               "hash": {
                 "type": "string"
               },
+              "version": {
+                "type": "string"
+              },
+              "changes": {
+                "type": "string"
+              },
+              "requires": {
+                "type": "string"
+              },
               "installed": {
                 "type": "object",
                 "properties": {
@@ -22726,6 +22906,27 @@
                   },
                   "update": {
                     "type": "boolean"
+                  },
+                  "version": {
+                    "type": "string"
+                  },
+                  "previous": {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "held": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -22733,6 +22934,9 @@
                   "update"
                 ],
                 "additionalProperties": false
+              },
+              "incompatible": {
+                "type": "string"
               },
               "blocked": {
                 "type": "string"
@@ -22851,6 +23055,15 @@
         "hash": {
           "type": "string"
         },
+        "version": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "string"
+        },
+        "requires": {
+          "type": "string"
+        },
         "installed": {
           "type": "object",
           "properties": {
@@ -22859,6 +23072,27 @@
             },
             "update": {
               "type": "boolean"
+            },
+            "version": {
+              "type": "string"
+            },
+            "previous": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "held": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -22866,6 +23100,9 @@
             "update"
           ],
           "additionalProperties": false
+        },
+        "incompatible": {
+          "type": "string"
         },
         "blocked": {
           "type": "string"
@@ -22949,6 +23186,15 @@
             "hash": {
               "type": "string"
             },
+            "version": {
+              "type": "string"
+            },
+            "changes": {
+              "type": "string"
+            },
+            "requires": {
+              "type": "string"
+            },
             "installed": {
               "type": "object",
               "properties": {
@@ -22957,6 +23203,27 @@
                 },
                 "update": {
                   "type": "boolean"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "previous": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "at"
+                  ],
+                  "additionalProperties": false
+                },
+                "held": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -22964,6 +23231,9 @@
                 "update"
               ],
               "additionalProperties": false
+            },
+            "incompatible": {
+              "type": "string"
             },
             "blocked": {
               "type": "string"
@@ -22985,6 +23255,127 @@
       "required": [
         "state",
         "item"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/rollback.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/rollback.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "game",
+            "script",
+            "general"
+          ]
+        },
+        "games": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "string"
+        },
+        "requires": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "update": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": "string"
+            },
+            "previous": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "held": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "at",
+            "update"
+          ],
+          "additionalProperties": false
+        },
+        "incompatible": {
+          "type": "string"
+        },
+        "blocked": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "kind",
+        "games",
+        "scripts",
+        "repo",
+        "path",
+        "hash"
       ],
       "additionalProperties": false
     },
