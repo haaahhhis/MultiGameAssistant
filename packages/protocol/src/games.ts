@@ -249,6 +249,15 @@ export const GamesRequests = {
     params: z.object({ url: z.string().refine(u => OWN_IMAGE.test(u) || SHOT_IMAGE.test(u) || /^https?:\/\/\S+$/.test(u), '不是图片地址') }),
     result: z.object({ mediaType: z.string(), data: z.string() }),
   },
+  /**
+   * The game program's own icon (its .exe, as Explorer shows it), for the game's avatar: the program a script that plays
+   * it starts (启动游戏), else where 自动查找 finds it. No `icon`: no PC program known (a phone game), or not on Windows.
+   */
+  'games/icon': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string().min(1) }),
+    result: z.object({ icon: z.object({ mediaType: z.string(), data: z.string() }).optional() }),
+  },
   /** Ask the agent to find where a game's events can be read and add it (a game pack of the user's own). */
   'games/discover': {
     capability: GAMES_CAPABILITY,

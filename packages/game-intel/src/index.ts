@@ -21,6 +21,7 @@ import { GAMES_DIR } from '@adg/packs'
 import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
+import { ExeIcons } from './exe-icon.ts'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
@@ -99,6 +100,10 @@ export class AdgGameIntel extends Service {
   private games: LoadedGame[] = []
   private readonly daily: DailyReport
   private readonly dir: string
+  /** Game programs' icons (exe-icon.ts). */
+  private readonly icons: ExeIcons
+  /** Each game's PC program as found this run (undefined: none). */
+  private readonly programs = new Map<string, Promise<string | undefined>>()
   private readonly builtinDir: string
   private readonly log: { warn(message: string): void }
 
@@ -110,6 +115,7 @@ export class AdgGameIntel extends Service {
     this.dir = join(spec.dataDir, 'games')
     this.builtinDir = spec.gamesDir ?? GAMES_DIR
     this.calendar = new Calendar(this.dir)
+    this.icons = new ExeIcons(join(this.dir, 'icons'))
     const calendar = this.calendar
     const changed = (game?: string) => ctx.get('adgGateway')?.broadcast('games/changed', game === undefined ? {} : { game })
 
@@ -238,6 +244,11 @@ export class AdgGameIntel extends Service {
             if (screen?.evidence !== true) throw new Error('这个活动没有保存截图')
             if (screen.image !== undefined) return this.picture(screen.image)
             return { mediaType: 'image/png', data: (await readFile(this.evidenceFile(id))).toString('base64') }
+          },
+          'games/icon': async (params, call) => {
+            await this.ready
+            const icon = await this.icon((params as RequestParams<'games/icon'>).game, call.signal)
+            return icon === null ? {} : { icon }
           },
           'games/image': async params => {
             await this.ready
@@ -564,6 +575,46 @@ export class AdgGameIntel extends Service {
     const byDescription = matchScripts(rest.map(i => ({ id: i.rid, texts: [i.description] })), games)
     const mine = new Set([...byName, ...byDescription].filter(([, ids]) => ids.includes(gameId)).map(([rid]) => rid))
     return { items: items.filter(i => mine.has(i.rid)), from }
+  }
+
+  /** A game's program icon, for its avatar; null when it has no PC program this app knows of. */
+  private async icon(gameId: string, signal: AbortSignal): Promise<{ mediaType: string; data: string } | null> {
+    const program = await this.program(gameId)
+    if (program === undefined) return null
+    try {
+      return { mediaType: 'image/png', data: (await this.icons.png(program, signal)).toString('base64') }
+    } catch (e) {
+      this.log.warn(`games: no icon for ${gameId} (${program}): ${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
+  }
+
+  /**
+   * Where a game's PC program is: the one a script that plays it starts (its
+   * saved 游戏位置), else the first 自动查找 finds, looked for once a run.
+   */
+  private program(gameId: string): Promise<string | undefined> {
+    let found = this.programs.get(gameId)
+    if (found === undefined) {
+      found = (async () => {
+        const runner = this.ctx.get('adgRunner')?.runner
+        if (runner === undefined || process.platform !== 'win32') return undefined
+        const scripts = this.scriptsOf(gameId).filter(id => runner.hasPack(id))
+        for (const id of scripts) {
+          const exe = (await runner.launch.get(id)).pcExe
+          if (exe !== undefined) return exe
+        }
+        for (const id of scripts) {
+          const { candidates } = await runner.locateGame(id).catch(() => ({ candidates: [] }))
+          if (candidates[0] !== undefined) return candidates[0].path
+        }
+        return undefined
+      })()
+      // A path saved later is read again next time.
+      void found.then(path => { if (path === undefined) setTimeout(() => this.programs.delete(gameId), 10 * 60_000).unref?.() })
+      this.programs.set(gameId, found)
+    }
+    return found
   }
 
   private scriptsOf(gameId: string): string[] {
