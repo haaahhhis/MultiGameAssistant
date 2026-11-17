@@ -124,3 +124,21 @@ test('chat: tool rows pair results and approvals; turn errors become notices', (
   const echo = chat[3]
   assert.ok(echo?.kind === 'user' && echo.pending?.requestId === 'r')
 })
+
+test('chat: a screenshot a tool took inside a program shows on that run_code step', () => {
+  const shot = { type: 'image' as const, name: 'browser.png', mediaType: 'image/png', width: 573, height: 603, attachmentId: 'sha256:aa', bytes: 28242 }
+  const events: SessionEvent[] = [
+    { type: 'turn/start', seq: 0, time: 0, turn: 1 },
+    { type: 'user/message', seq: 1, time: 1, messageId: 'm', content: [{ type: 'text', text: '截图' }], origin: human },
+    { type: 'tool/call', seq: 2, time: 2, turn: 1, step: 1, callId: 'c1', name: 'run_code', arguments: '{"code":"return await tools.browser_screenshot({})"}' },
+    { type: 'tool/result', seq: 3, time: 3, turn: 1, step: 1, callId: 'c1', isError: false, content: [{ type: 'text', text: '{"image":{}}' }] },
+    // dsh hands the program's images to the model after the run, as context.
+    { type: 'user/message', seq: 4, time: 4, messageId: 'p', content: [{ type: 'text', text: '截图 573×603' }, shot], origin: { kind: 'ptc-mode', human: false } },
+    { type: 'user/message', seq: 5, time: 5, messageId: 'p2', content: [shot], origin: { kind: 'ptc-mode', human: false } },
+  ]
+  const chat = buildChat(events, null)
+  assert.deepEqual(chat.map(i => i.kind), ['user', 'tool'])
+  const tool = chat[1]
+  assert.ok(tool?.kind === 'tool')
+  assert.deepEqual(tool.images?.map(i => i.attachmentId), ['sha256:aa'])
+})

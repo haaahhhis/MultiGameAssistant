@@ -80,6 +80,11 @@ const imagesOf = (content: readonly ContentPart[]): ChatImage[] =>
 const resultText = (content: readonly ContentPart[]): string =>
   content.map(p => (p.type === 'text' ? p.text : p.type === 'image' ? '[image]' : p.type === 'file' ? `[file ${p.name ?? ''}]` : '')).join('')
 
+/** dsh's tool that runs a program calling tools (the ptc preset sub-agents start under). */
+const PROGRAM_TOOL = 'run_code'
+/** The source of the message dsh adds after a program run with the images its tools returned. */
+const PROGRAM_IMAGES = 'ptc-mode'
+
 /**
  * Build the transcript.
  * @param events - loaded protocol events, ascending by seq.
@@ -93,6 +98,8 @@ export function buildChat(
 ): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, ToolItem>()
+  /** The latest program run (run_code): images its tools took come after it. */
+  let program: ToolItem | undefined
   const committed = new Set<string>()
   /** callId → approval state ('asked' or the decided outcome). */
   const approvals = new Map<string, string>()
@@ -115,6 +122,10 @@ export function buildChat(
           items.push({ kind: 'context', id: `c:${event.seq}`, title: '较早的对话已压缩成摘要（agent 只记得摘要里的内容）', summary: '', text })
         } else if (event.origin.summary !== undefined) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: event.origin.kind, summary: event.origin.summary, text })
+        } else if (event.origin.kind === PROGRAM_IMAGES && program !== undefined) {
+          // A screenshot a tool took inside a program: dsh hands it to the model after the run; it shows on that run.
+          const images = imagesOf(event.content).filter(i => program!.images?.some(had => had.attachmentId === i.attachmentId) !== true)
+          if (images.length > 0) program.images = [...(program.images ?? []), ...images]
         }
         break
       }
@@ -140,6 +151,7 @@ export function buildChat(
         if (approval !== undefined) item.approval = approval
         tools.set(event.callId, item)
         items.push(item)
+        if (event.name === PROGRAM_TOOL) program = item
         break
       }
       case 'tool/result': {
