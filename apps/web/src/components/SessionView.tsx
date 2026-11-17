@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, requestedLabel, useRoles } from '../agents.ts'
 import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
@@ -78,62 +79,57 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
   const own = useMemo(() => commandsOf(built), [built])
   const sideBar = useMemo(() => ({ openTask: side.openTask }), [side.openTask])
+  // In the desktop app these go up into the window's title bar, left of its buttons, as the Claude app has them.
+  const inTitleBar = desktop() !== undefined
+  const tools = (
+    <div className={`title-tools${inTitleBar ? ' in-title-bar' : ''}`} role="toolbar" aria-label="侧栏">
+      {SIDE_PANELS.filter(p => p.id !== 'browser' || side.bridge !== undefined).map(p => {
+        const on = side.panel === p.id
+        const hint = p.id === 'tasks' && runningTasks > 0 ? `子任务：${runningTasks} 个进行中`
+          : p.id === 'browser' && side.working ? 'agent 正在操作内置浏览器' : p.hint
+        return (
+          <button key={p.id} type="button" className={`side-icon${on ? ' active' : ''}`} aria-pressed={on} aria-label={p.title} title={hint}
+            onClick={() => side.setPanel(on ? null : p.id)}>
+            <Icon name={p.icon} />
+            {p.id === 'tasks' && runningTasks > 0 && <span className="side-icon-badge">{runningTasks}</span>}
+            {p.id === 'browser' && side.working && <span className="side-icon-dot" />}
+          </button>
+        )
+      })}
+      <ViewMenu views={views} onSelect={setTab} />
+    </div>
+  )
 
   return (
     <section className="main">
-      <header className="session-header">
-        <div className="session-heading">
-          {home ? (
-            <div className="breadcrumb agent-heading">
-              <span className={`agent-avatar small agent-${agent.id}`}><Icon name={agent.icon} /></span>
-              <h1>{agent.name}</h1>
-            </div>
-          ) : (
-            <div className="breadcrumb">
+      {/* An earlier conversation says whose it is and what it is called; an agent's own one needs no header. */}
+      {(!home || !inTitleBar) && (
+        <div className="session-bar">
+          {!home && (
+            <div className="breadcrumb session-crumb">
               {onAgent !== undefined
                 ? <button type="button" className="link-button breadcrumb-link" title={`回到「${agent.name}」的对话`} onClick={() => onAgent(agentId)}>{agent.name}</button>
                 : <span>{agent.name}</span>}
               <span className="breadcrumb-divider">/</span>
               <SessionTitle title={state.title} onRename={title => client.renameSession(session.id, title)} />
+              <span className="session-crumb-note">以前的对话{agentId !== MAIN_AGENT && item?.requestedBy !== undefined ? ` · ${requestedLabel(item.requestedBy)}` : ''}</span>
             </div>
           )}
-          <div className="session-meta">
-            <RunState running={state.running} />
-            {home ? <span>{agent.description}</span> : <span>以前的对话</span>}
-            {!home && agentId !== MAIN_AGENT && item?.requestedBy !== undefined && <span>{requestedLabel(item.requestedBy)}</span>}
-          </div>
+          {!inTitleBar && tools}
         </div>
-        <div className="session-actions">
-          <nav className="tabs" role="tablist" aria-label="会话视图">
-            {views.map(view => (
-              <button key={view.id} role="tab" aria-selected={view.id === active?.id}
-                className={view.id === active?.id ? 'active' : ''} onClick={() => setTab(view.id)}>
-                {view.title}
-              </button>
-            ))}
-          </nav>
-          {/* What opens in the sidebar, as the Claude app has it: one icon each. */}
-          <div className="side-icons" role="toolbar" aria-label="侧栏">
-            {SIDE_PANELS.filter(p => p.id !== 'browser' || side.bridge !== undefined).map(p => {
-              const on = side.panel === p.id
-              const hint = p.id === 'tasks' && runningTasks > 0 ? `子任务：${runningTasks} 个进行中`
-                : p.id === 'browser' && side.working ? 'agent 正在操作内置浏览器' : p.hint
-              return (
-                <button key={p.id} type="button" className={`side-icon${on ? ' active' : ''}`} aria-pressed={on} aria-label={p.title} title={hint}
-                  onClick={() => side.setPanel(on ? null : p.id)}>
-                  <Icon name={p.icon} />
-                  {p.id === 'tasks' && runningTasks > 0 && <span className="side-icon-badge">{runningTasks}</span>}
-                  {p.id === 'browser' && side.working && <span className="side-icon-dot" />}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </header>
+      )}
+      {inTitleBar && createPortal(tools, document.body)}
       {state.error !== null && <div className="banner error">{state.error}</div>}
       <div className={`session-body${side.panel !== null ? ' with-side' : ''}`}>
         <div className="session-column">
           <div className="view">
+            {/* Another view (轨迹) in the conversation's place: back to it. */}
+            {active !== undefined && views[0] !== undefined && active.id !== views[0].id && (
+              <div className="view-back">
+                <button type="button" className="small-button" onClick={() => setTab(views[0]!.id)}><Icon name="back" />返回{views[0].title}</button>
+                <span className="view-back-title">{active.title}</span>
+              </div>
+            )}
             {active === undefined
               ? <div className="empty">当前连接没有提供可用的视图插件。</div>
               : <SideBar.Provider value={sideBar}><active.component client={client} session={session} state={state} readOnly={readOnly} /></SideBar.Provider>}
@@ -273,10 +269,40 @@ function SessionTitle({ title, onRename }: { title: string | null; onRename: (ti
   )
 }
 
-function RunState({ running }: { running: boolean }) {
-  return running
-    ? <span className="status-pill running"><span className="pill-dot" />运行中</span>
-    : <span className="status-pill">空闲</span>
+/**
+ * The … at the end of the title bar's icons: the conversation's other views
+ * (轨迹). One opens in the conversation's place, with 返回 back to it.
+ */
+function ViewMenu({ views, onSelect }: { views: readonly { id: string; title: string }[]; onSelect: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => { if (root.current?.contains(e.target as Node) !== true) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc) }
+  }, [open])
+  // The first view is the conversation itself; the menu offers the others.
+  const others = views.slice(1)
+  if (others.length === 0) return null
+  return (
+    <div className="view-menu" ref={root}>
+      <button type="button" className={`side-icon${open ? ' active' : ''}`} aria-haspopup="menu" aria-expanded={open} aria-label="更多" title="更多" onClick={() => setOpen(!open)}>
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div className="view-menu-list" role="menu">
+          {others.map(view => (
+            <button key={view.id} type="button" role="menuitem" onClick={() => { onSelect(view.id); setOpen(false) }}>
+              <Icon name={view.id === 'trajectory' ? 'flow' : 'eye'} />{view.title}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const TAB_KEY = 'adg.sessionTab'

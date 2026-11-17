@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { desktop } from './desktop.ts'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
 import { ScriptUpdateNotes } from './components/ScriptUpdates.tsx'
-import { NavRail, type RailTarget } from './components/NavRail.tsx'
+import { NavRail, RAIL_WIDE, useRailWidth, type RailTarget } from './components/NavRail.tsx'
+import { RailSlot, RailWide } from './components/railSlot.ts'
 import { SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { AgentHistory, useHasEarlier } from './components/SessionList.tsx'
@@ -28,6 +31,9 @@ const START_PAGE = 'games'
  */
 export function App({ client }: { client: AdgClient }) {
   const [route, setRoute] = useState<Route>(() => readRoute())
+  const [railWidth, setRailWidth] = useRailWidth()
+  // Where a top page (游戏) puts its list, in the rail.
+  const [railSlot, setRailSlot] = useState<HTMLElement | null>(null)
   const sessions = useStore(client.sessions)
   const pages = usePages(client)
   const status = useStore(client.connection.status)
@@ -105,9 +111,11 @@ export function App({ client }: { client: AdgClient }) {
   )
 
   return (
-    <div className={`app ${view.kind === 'settings' ? 'with-sidebar' : ''}`}>
+    <RailSlot.Provider value={railSlot}>
+    <RailWide.Provider value={railWidth >= RAIL_WIDE}>
+    <div className={`app ${view.kind === 'settings' ? 'with-sidebar' : ''}`} style={{ '--rail-width': `${railWidth}px` } as CSSProperties}>
       <NavRail client={client} pages={pages.filter(p => p.agent === undefined)} current={rail} onAgent={openAgent} onPage={openPage}
-        onSchedule={() => setRoute({ kind: 'schedule' })} onSettings={() => openSettings()} />
+        onSchedule={() => setRoute({ kind: 'schedule' })} onSettings={() => openSettings()} width={railWidth} onWidth={setRailWidth} slot={setRailSlot} />
       {view.kind === 'settings' && <SettingsView client={client} onClose={goHome} section={view.section} onSection={id => setRoute({ kind: 'settings', section: id })} />}
       {view.kind !== 'settings' && (
         // The main column; an exchange between two agents goes over what is there, in the same place.
@@ -134,6 +142,8 @@ export function App({ client }: { client: AdgClient }) {
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
       <UiSwitch />
     </div>
+    </RailWide.Provider>
+    </RailSlot.Provider>
   )
 }
 
@@ -158,8 +168,10 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
     ...(earlier ? [{ id: 'history' satisfies AgentTab, title: '以前的对话', icon: 'archive' as const }] : []),
   ]
   if (tabs.length === 1) return null
-  return (
-    <nav className="agent-tabs" role="tablist" aria-label={agent.name}>
+  // In the desktop app, up in the window's title bar, in its middle; in a browser, above the agent's page.
+  const inTitleBar = desktop() !== undefined
+  const nav = (
+    <nav className={`agent-tabs${inTitleBar ? ' in-title-bar' : ''}`} role="tablist" aria-label={agent.name}>
       {tabs.map(tab => (
         <button key={tab.id} role="tab" aria-selected={tab.id === current} className={tab.id === current ? 'active' : ''} onClick={() => onTab(tab.id)}>
           <Icon name={tab.icon} />{tab.title}
@@ -167,6 +179,7 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
       ))}
     </nav>
   )
+  return inTitleBar ? createPortal(nav, document.body) : nav
 }
 
 /** An agent's one conversation (`agents/home`): made the first time it is opened. */

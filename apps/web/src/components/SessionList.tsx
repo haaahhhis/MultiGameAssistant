@@ -33,6 +33,8 @@ export interface AgentState {
   readonly unread: boolean
   /** Approvals and questions waiting in its conversations. */
   readonly waiting: number
+  /** Its conversation the roster quotes: its own one, else its latest. */
+  readonly last: SessionItem | undefined
 }
 
 /**
@@ -83,6 +85,7 @@ export function useAgentStates(client: AdgClient, open: string | undefined): rea
       running: items.filter(i => i.running).length,
       unread: agent.id !== open && last !== undefined && last.updatedAt > (seen[agent.id] ?? Infinity),
       waiting: [...approvals, ...questions].filter(r => ownerOf(r.sessionId) === agent.id).length,
+      last: items.find(i => i.home === agent.id) ?? last,
     }
   })
 }

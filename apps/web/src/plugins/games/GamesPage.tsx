@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useContext, useEffect, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import type { AdgClient } from '@adg/client-core'
 import type { Activity, GameInfo, GamesSettings, RequestResult } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { Icon } from '../../components/Icons.tsx'
+import { RailItem } from '../../components/NavRail.tsx'
+import { RailSlot } from '../../components/railSlot.ts'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { ActivityEditor } from './ActivityEditor.tsx'
 import { ActivityDialog, ActivityDialogBody } from './ActivityDialog.tsx'
+import { GameAvatar } from './GameAvatar.tsx'
 import { GameView, useGameColors } from './GameView.tsx'
 import { CatalogPicker, Overview, PALETTE, progressOf } from './Overview.tsx'
 import './games.css'
@@ -78,9 +82,36 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
     return game === undefined ? `刷新完成：${results.filter(r => readable(r.game)).map(r => `${name(r.game)} ${r.count} 个活动`).join('；')}` : undefined
   })
 
-  const tab = (g: GameInfo) => {
+  const counts = (g: GameInfo) => {
     const mine = (data?.activities ?? []).filter(a => a.game === g.id && (a.startsAt ?? 0) <= now && Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
     const soon = mine.filter(a => progressOf(a).state !== 'finished' && a.endsAt !== undefined && a.endsAt > now && a.endsAt - now < (data?.settings.report.soonDays ?? 3) * DAY).length
+    const title = `${mine.length} 个进行中${g.refreshed === undefined ? '' : ` · ${relativeTime(g.refreshed.at, now)}刷新`}${g.followed === true ? ' · 关注的游戏' : ''}`
+    return { mine, soon, title }
+  }
+  // With the app's rail there, the list of games is in it, under 游戏 and 助手 (NavRail.tsx).
+  const slot = useContext(RailSlot)
+  const railList = slot === null ? null : (
+    <div className="rail-games" role="tablist" aria-label="游戏">
+      <RailItem icon="calendar" label="全部活动" active={showOverview} onClick={() => select('')} />
+      {games.map(g => {
+        const { soon, title } = counts(g)
+        return (
+          <button key={g.id} role="tab" aria-selected={current?.id === g.id} className={`rail-item rail-game ${current?.id === g.id ? 'active' : ''}`}
+            style={{ '--game': colors.get(g.id) } as CSSProperties} title={`${g.name}：${title}`} onClick={() => select(g.id)}>
+            <GameAvatar client={client} game={g} />
+            <span className="rail-label">{g.name}</span>
+            {soon > 0 && <span className="rail-badge" title={`${soon} 个快结束还没做完`}>{soon}</span>}
+          </button>
+        )
+      })}
+      <RailItem icon="plus" label="更多游戏" title="关注更多游戏（SRA 公共 API）" active={catalogOpen} onClick={() => setCatalogOpen(o => !o)} />
+      <RailItem icon="send" label="日报" active={showReport} onClick={() => select('report')} />
+    </div>
+  )
+  const heading = showReport ? '日报' : current?.name ?? '全部活动'
+
+  const tab = (g: GameInfo) => {
+    const { mine, soon } = counts(g)
     return (
       <button key={g.id} role="tab" aria-selected={current?.id === g.id} className={`game-tab ${current?.id === g.id ? 'active' : ''}`} style={{ '--game': colors.get(g.id) } as CSSProperties}
         title={`${mine.length} 个进行中${g.refreshed === undefined ? '' : ` · ${relativeTime(g.refreshed.at, now)}刷新`}${g.followed === true ? ' · 关注的游戏' : ''}`} onClick={() => select(g.id)}>
@@ -93,16 +124,17 @@ export function GamesPage({ client, openSession, openSettings, openPage, arg }: 
   return (
     <section className="main games-page">
       {/* The tabs say where you are, so they are the header: no second row repeating the same name. */}
+      {slot !== null && railList !== null && createPortal(railList, slot)}
       <header className="page-header games-header">
-        <div className="breadcrumb"><h1>游戏</h1></div>
-        <nav className="game-tabs" role="tablist" aria-label="游戏">
+        <div className="breadcrumb"><h1>{slot === null ? '游戏' : heading}</h1></div>
+        {slot === null ? <nav className="game-tabs" role="tablist" aria-label="游戏">
           <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="calendar" />全部活动</button>
           <span className="game-tabs-divider" />
           {games.map(tab)}
           <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-expanded={catalogOpen} title="关注更多游戏（SRA 公共 API）" onClick={() => setCatalogOpen(o => !o)}><Icon name="plus" />更多游戏</button>
           <span className="spacer" />
           <button role="tab" aria-selected={showReport} className={`game-tab ${showReport ? 'active' : ''}`} onClick={() => select('report')}><Icon name="send" />日报</button>
-        </nav>
+        </nav> : <span className="spacer" />}
         <div className="page-actions">
           <button className="small-button" disabled={busy !== null || games.length === 0} onClick={() => void refresh()}><Icon name="refresh" />{busy === 'refresh:' ? '刷新中…' : '刷新全部'}</button>
         </div>
