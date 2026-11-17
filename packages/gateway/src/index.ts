@@ -61,6 +61,7 @@ import { LastReplies } from './last-reply.ts'
 import { handsOn, HANDS_ON_REFUSAL, hiddenTools, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
 import { AgentModels, type AgentModelTarget } from './agent-models.ts'
 import { Peer } from './peer.ts'
+import { pickPath } from './pick.ts'
 import { Permissions, PRESET } from './permissions.ts'
 import { CapabilityRegistry, type CapabilityRegistration } from './registry.ts'
 import { createSockets, MOUNT, serveMounted, startServer, type Sockets } from './server.ts'
@@ -621,6 +622,18 @@ export class AdgGateway extends Service {
         },
       }), 'adg-gateway capability model-default')
     })
+
+    // A file or folder dialog for pages without the desktop app's (pick.ts).
+    ctx.effect(() => this.registry.register({
+      id: 'files',
+      version: 1,
+      methods: {
+        'files/pick': async (params, call) => {
+          const path = await pickPath(params as RequestParams<'files/pick'>, call.signal)
+          return path === undefined ? {} : { path }
+        },
+      },
+    }), 'adg-gateway capability files')
 
     // Which model each agent and its sub-agents use (agent-models.ts).
     ctx.effect(() => this.registry.register({

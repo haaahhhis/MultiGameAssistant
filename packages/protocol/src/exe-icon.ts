@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve as absolute } from 'node:path'
 
 /** The size asked for; the shell gives the nearest the program has (most have 256). */
 const ICON_SIZE = 256
@@ -58,12 +58,34 @@ public static class AdgExeIcon {
 [Console]::Out.Write([AdgExeIcon]::Png($path, $size))
 `
 
-/** Ask Windows for a program's icon. @returns PNG bytes. */
-export function extractExeIcon(path: string, signal?: AbortSignal): Promise<Buffer> {
-  if (process.platform !== 'win32') return Promise.reject(new Error('只有 Windows 上能读程序图标'))
+/**
+ * The icon Windows associates with the file (32 px): no code to compile, for where the shell's own
+ * (SCRIPT, which compiles a small helper) cannot run.
+ */
+const FALLBACK = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:ADG_ICON_PATH)
+$png = New-Object IO.MemoryStream
+$icon.ToBitmap().Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+[Console]::Out.Write([Convert]::ToBase64String($png.ToArray()))
+`
+
+/** Ask Windows for a program's icon: the shell's at 256 px, else the associated one. @returns PNG bytes. */
+export async function extractExeIcon(path: string, signal?: AbortSignal): Promise<Buffer> {
+  if (process.platform !== 'win32') throw new Error('只有 Windows 上能读程序图标')
+  try {
+    return await runIcon(SCRIPT, path, signal)
+  } catch (e) {
+    if (signal?.aborted === true) throw e
+    return runIcon(FALLBACK, path, signal)
+  }
+}
+
+function runIcon(script: string, path: string, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', SCRIPT], {
-      env: { ...process.env, ADG_ICON_PATH: path, ADG_ICON_SIZE: String(ICON_SIZE) },
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      env: { ...process.env, ADG_ICON_PATH: absolute(path), ADG_ICON_SIZE: String(ICON_SIZE) },
       timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(signal === undefined ? {} : { signal }),
     }, (error, stdout, stderr) => {
       if (error !== null) { reject(new Error(`读不到 ${path} 的图标：${(stderr || error.message).trim().split('\n')[0]}`)); return }

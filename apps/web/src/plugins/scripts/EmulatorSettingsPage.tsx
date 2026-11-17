@@ -3,6 +3,7 @@ import type { AdgClient } from '@adg/client-core'
 import type { RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { useStore } from '../../hooks.ts'
+import { pickPath } from '../../pickPath.ts'
 import { errorText } from './data.ts'
 
 type Status = RequestResult<'emulators/status'>
@@ -95,6 +96,8 @@ export function EmulatorSettingsPage({ client }: { client: AdgClient }) {
           <div className="key-input">
             <input id="adb-path" className="text-input plain" value={adbPath} onChange={e => setAdbPath(e.target.value)} placeholder="例如 D:\platform-tools\adb.exe" spellCheck={false} />
             <button className="small-button" disabled={busy !== null} onClick={() => void set({ adbPath: adbPath.trim() === '' ? null : adbPath.trim() })}>保存</button>
+            <button className="small-button" disabled={busy !== null} onClick={() => void pickPath(client, { kind: 'file', title: '选择 adb.exe', defaultPath: adbPath.trim(), filterName: '程序', extensions: ['exe'] })
+              .then(path => { if (path !== null) { setAdbPath(path); void set({ adbPath: path }) } }, e => setError(errorText(e)))}>选择文件…</button>
           </div>
           <label className="field-label" htmlFor="boot-timeout">等待安卓启动的最长时间（秒）</label>
           <input id="boot-timeout" className="text-input plain" type="number" min={30} max={900} defaultValue={data.settings.bootTimeoutSeconds}

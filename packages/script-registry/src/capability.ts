@@ -3,8 +3,8 @@
  * so these methods do not ask for approval; the agent tools do.
  */
 import type { CapabilityRegistration } from '@adg/gateway'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { guideView } from '@adg/pack-schema'
 import { ExeIcons } from '@adg/protocol/node'
 import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
@@ -123,12 +123,30 @@ function scriptProgram(library: ScriptLibrary, id: string): string | undefined {
   let info, pack
   try { info = library.get(id); pack = library.packOf(id) } catch { return undefined }
   const launch = pack?.manifest.launch
-  if (info.dir === undefined || launch === undefined) return undefined
+  if (info.dir === undefined) return undefined
+  if (launch === undefined) return mainProgram(info.dir)
   for (const exe of [launch.settings?.exe, launch.exe]) {
     if (exe === undefined) continue
     const path = join(info.dir, launch.cwd ?? '', exe)
     if (existsSync(path)) return path
     if (existsSync(join(info.dir, exe))) return join(info.dir, exe)
   }
-  return undefined
+  return mainProgram(info.dir)
+}
+
+/** Not a script's own program: uninstallers, updaters, installers, runtimes. */
+const HELPER = /unins|updat|setup|install|crash|report|helper|python|pythonw|pip|node|git|adb|7z|vc_?redist/i
+
+/** A script folder's own program when its pack names none: the one named like the folder, else its only one. */
+function mainProgram(dir: string): string | undefined {
+  let exes: string[]
+  try {
+    exes = readdirSync(dir).filter(name => name.toLowerCase().endsWith('.exe') && !HELPER.test(name))
+  } catch {
+    return undefined
+  }
+  const folder = basename(dir).toLowerCase()
+  const named = exes.find(name => { const stem = name.slice(0, -4).toLowerCase(); return folder.includes(stem) || stem.includes(folder) })
+  const exe = named ?? (exes.length === 1 ? exes[0] : undefined)
+  return exe === undefined ? undefined : join(dir, exe)
 }

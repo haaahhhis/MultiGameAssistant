@@ -4,6 +4,7 @@
  * chat channels. Contributes the `games@1` capability.
  */
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
@@ -594,35 +595,42 @@ export class AdgGameIntel extends Service {
    * saved 游戏位置), else where 自动查找 finds the program the packs that play
    * it name (installed or not), looked for once a run.
    */
-  private program(gameId: string): Promise<string | undefined> {
-    let found = this.programs.get(gameId)
-    if (found === undefined) {
-      found = (async () => {
-        const runner = this.ctx.get('adgRunner')?.runner
-        if (runner === undefined || process.platform !== 'win32') return undefined
-        const scripts = this.scriptsOf(gameId)
-        for (const id of scripts.filter(id => runner.hasPack(id))) {
-          const exe = (await runner.launch.get(id)).pcExe
-          if (exe !== undefined) return exe
-        }
-        // Not set up yet: where the game is, from what the packs that play it say about its PC program.
-        const { manifest } = this.game(gameId)
-        const library = this.ctx.get('adgScripts')?.library
-        for (const id of scripts) {
-          let pack
-          try { pack = library?.packOf(id) } catch { pack = undefined }
-          const game = (pack ?? library?.pack(id))?.manifest.game
-          if (game?.pc?.process === undefined) continue
-          const found = await runner.findGameProgram(game, [manifest.name, ...manifest.aliases]).catch(() => undefined)
-          if (found !== undefined) return found
-        }
-        return undefined
-      })()
-      // A path saved later is read again next time.
-      void found.then(path => { if (path === undefined) setTimeout(() => this.programs.delete(gameId), 10 * 60_000).unref?.() })
-      this.programs.set(gameId, found)
+  private async program(gameId: string): Promise<string | undefined> {
+    const runner = this.ctx.get('adgRunner')?.runner
+    if (runner === undefined || process.platform !== 'win32') return undefined
+    const scripts = this.scriptsOf(gameId)
+    // A saved 游戏位置 is read every time: one saved a moment ago counts at once.
+    for (const id of scripts) {
+      const exe = (await runner.launch.get(id).catch(() => undefined))?.pcExe
+      if (exe !== undefined && existsSync(exe)) return exe
     }
-    return found
+    // The search, once a while: it reads the registry and the disk.
+    let search = this.programs.get(gameId)
+    if (search === undefined) {
+      search = this.searchProgram(gameId, scripts)
+      this.programs.set(gameId, search)
+      void search.then(path => { if (path === undefined) setTimeout(() => this.programs.delete(gameId), 2 * 60_000).unref?.() })
+    }
+    const path = await search
+    if (path !== undefined && !existsSync(path)) { this.programs.delete(gameId); return undefined }
+    return path
+  }
+
+  /** Where 自动查找 finds the program the packs that play a game name (installed or not), with the game's names to look for. */
+  private async searchProgram(gameId: string, scripts: readonly string[]): Promise<string | undefined> {
+    const runner = this.ctx.get('adgRunner')?.runner
+    if (runner === undefined) return undefined
+    const { manifest } = this.game(gameId)
+    const library = this.ctx.get('adgScripts')?.library
+    for (const id of scripts) {
+      let pack
+      try { pack = library?.packOf(id) } catch { pack = undefined }
+      const game = (pack ?? library?.pack(id))?.manifest.game
+      if (game?.pc?.process === undefined) continue
+      const found = await runner.findGameProgram(game, [manifest.name, ...manifest.aliases]).catch(() => undefined)
+      if (found !== undefined) return found
+    }
+    return undefined
   }
 
   private scriptsOf(gameId: string): string[] {

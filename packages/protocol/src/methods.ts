@@ -515,6 +515,22 @@ export const Requests = {
     params: z.object({ path: z.string().min(1) }),
     result: z.object({ mediaType: z.string(), data: z.string(), path: z.string() }),
   },
+  /**
+   * Open a file or folder dialog on the gateway's computer (Windows), for
+   * pages without the desktop app's: a game's program, a script folder.
+   * `path` is absent when the dialog was closed.
+   */
+  'files/pick': {
+    capability: 'files',
+    params: z.object({
+      kind: z.enum(['file', 'folder']),
+      title: z.string().max(200).optional(),
+      defaultPath: z.string().max(1000).optional(),
+      filterName: z.string().max(60).optional(),
+      extensions: z.array(z.string().regex(/^\w+$/)).max(20).optional(),
+    }),
+    result: z.object({ path: z.string().optional() }),
+  },
   /** Archived sessions: hidden from the session list, kept, restorable. */
   'sessions/archived': {
     capability: 'archive',

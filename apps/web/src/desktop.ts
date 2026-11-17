@@ -3,7 +3,7 @@ import type { ReleaseNote } from '@adg/protocol'
 /** What the desktop shell (apps/desktop/preload.cjs) adds; absent in a plain browser. */
 export interface DesktopBridge {
   /** A native file dialog. @returns the chosen file's path, or null when cancelled. */
-  pickFile(options: { title?: string; defaultPath?: string | undefined; filterName?: string; extensions?: string[] }): Promise<string | null>
+  pickFile(options: { title?: string; defaultPath?: string | undefined; filterName?: string; extensions?: string[]; folder?: boolean }): Promise<string | null>
   /** Put a PNG (a data: URL) on the system clipboard, when the page's own clipboard is refused. */
   copyImage?(dataUrl: string): Promise<void>
   /** Open a folder or a viewable file; anything else is shown selected in Explorer. */

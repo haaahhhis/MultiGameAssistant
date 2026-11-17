@@ -4,6 +4,7 @@ import { parseGitHubLink, type MirrorLookup, type MirrorSearchItem, type Release
 import { Icon } from '../../components/Icons.tsx'
 import { errorText, formatBytes, PHASE_LABEL } from './data.ts'
 import { Select } from '../../components/Select.tsx'
+import { pickPath } from '../../pickPath.ts'
 
 /**
  * Install from a GitHub release: pick the repository (any GitHub link works:
@@ -431,6 +432,15 @@ export function ImportPanel({ client, onImported, onClose }: { client: AdgClient
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const choose = async () => {
+    setError(null)
+    try {
+      const picked = await pickPath(client, { kind: 'folder', title: '选择脚本所在的文件夹', defaultPath: path.trim().replace(/^"|"$/g, '') })
+      if (picked !== null) setPath(picked)
+    } catch (e) {
+      setError(errorText(e))
+    }
+  }
   const submit = async () => {
     setBusy(true)
     setError(null)
@@ -450,7 +460,10 @@ export function ImportPanel({ client, onImported, onClose }: { client: AdgClient
       </div>
       <form className="import-form" onSubmit={e => { e.preventDefault(); void submit() }}>
         <label className="field-label" htmlFor="import-path">目录路径</label>
-        <input id="import-path" className="text-input plain" value={path} onChange={e => setPath(e.target.value)} placeholder="例如 D:\Games\MAA" spellCheck={false} disabled={busy} />
+        <div className="key-input">
+          <input id="import-path" className="text-input plain" value={path} onChange={e => setPath(e.target.value)} placeholder="例如 D:\Games\MAA" spellCheck={false} disabled={busy} />
+          <button className="small-button" type="button" disabled={busy} onClick={() => void choose()}>选择文件夹…</button>
+        </div>
         <label className="field-label" htmlFor="import-name">显示名称（可选）</label>
         <input id="import-name" className="text-input plain" value={name} onChange={e => setName(e.target.value)} placeholder="留空则按脚本包或目录名" disabled={busy} />
         <div className="key-actions">

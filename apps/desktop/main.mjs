@@ -163,16 +163,17 @@ async function start() {
     icon: nativeImage.createFromBuffer(trayIconPng(64)),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(here, 'preload.cjs') },
   })
-  // The one thing the page cannot do itself: let the user pick a file and learn its path.
+  // The one thing the page cannot do itself: let the user pick a file or folder and learn its path.
   ipcMain.handle('adg:pick-file', async (event, options) => {
     if (win === null || event.sender !== win.webContents) return null
     const o = typeof options === 'object' && options !== null ? options : {}
+    const folder = o.folder === true
     const extensions = Array.isArray(o.extensions) ? o.extensions.filter(e => typeof e === 'string' && /^\w+$/.test(e)) : []
     const result = await dialog.showOpenDialog(win, {
-      title: typeof o.title === 'string' ? o.title : '选择文件',
+      title: typeof o.title === 'string' ? o.title : folder ? '选择文件夹' : '选择文件',
       ...(typeof o.defaultPath === 'string' && o.defaultPath !== '' ? { defaultPath: o.defaultPath } : {}),
-      filters: extensions.length > 0 ? [{ name: typeof o.filterName === 'string' ? o.filterName : '文件', extensions }, { name: '所有文件', extensions: ['*'] }] : [],
-      properties: ['openFile'],
+      filters: !folder && extensions.length > 0 ? [{ name: typeof o.filterName === 'string' ? o.filterName : '文件', extensions }, { name: '所有文件', extensions: ['*'] }] : [],
+      properties: [folder ? 'openDirectory' : 'openFile'],
     })
     return result.canceled ? null : result.filePaths[0] ?? null
   })

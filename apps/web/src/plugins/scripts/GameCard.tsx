@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
-import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
+import { pickPath } from '../../pickPath.ts'
+import { programsChanged } from '../../components/ProgramAvatar.tsx'
 import { errorText } from './data.ts'
 import { Select } from '../../components/Select.tsx'
 
@@ -43,6 +44,8 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
     try {
       setView(await client.connection.call('configs/launch/set', { scriptId, ...patch }))
       setSaved(true)
+      // The game's and the script's avatars may now have a program to take their icon from.
+      if ('pcExe' in patch) programsChanged()
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -87,10 +90,13 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
   }
 
   const pick = async () => {
-    const bridge = desktop()
-    if (bridge === undefined) return
-    const path = await bridge.pickFile({ title: '选择游戏程序', defaultPath: exe.trim() === '' ? undefined : exe.trim(), filterName: '程序', extensions: ['exe'] })
-    if (path !== null) await saveExe(path)
+    setError(null)
+    try {
+      const path = await pickPath(client, { kind: 'file', title: '选择游戏程序', defaultPath: exe.trim() === '' ? undefined : exe.trim(), filterName: '程序', extensions: ['exe'] })
+      if (path !== null) await saveExe(path)
+    } catch (e) {
+      setError(errorText(e))
+    }
   }
 
   if (view === null) return error === null ? null : <section className="card"><div className="notice error left"><Icon name="alert" /><span>{error}</span></div></section>
@@ -129,12 +135,12 @@ export function GameCard({ client, scriptId, scriptName, openSession }: { client
           </div>
           <div className="button-row">
             <button className="small-button" disabled={busy || locating} onClick={() => void locate()}>{locating ? '正在查找…' : '自动查找'}</button>
-            {desktop() !== undefined && <button className="small-button" disabled={busy || locating} onClick={() => void pick()}>选择文件…</button>}
+            <button className="small-button" disabled={busy || locating} onClick={() => void pick()}>选择文件…</button>
             <button className="link-button small" disabled={locating} onClick={() => void askAgent()}>让 agent 找</button>
           </div>
           {found !== null && found.exe === undefined && <p className="muted small">脚本包没有写游戏的进程名：先在下面填进程名，或用「选择文件…」/ 让 agent 找。</p>}
           {found !== null && found.exe !== undefined && found.candidates.length === 0 && (
-            <p className="muted small">没找到 {found.exe}（查了正在运行的程序、已安装程序、开始菜单和桌面快捷方式、各盘的常见游戏目录）。可以「选择文件…」，或「让 agent 找」在整个磁盘上搜。</p>
+            <p className="muted small">没找到 {found.exe}（查了正在运行的程序、以前运行过的程序、Windows 搜索、已安装程序、游戏启动器记下的目录、开始菜单和桌面快捷方式、各盘的常见游戏目录）。可以「选择文件…」，或「让 agent 找」在整个磁盘上搜。</p>
           )}
           {found !== null && found.candidates.length === 1 && <p className="muted small">找到并保存了：{found.candidates[0]!.path}（{found.candidates[0]!.source}）</p>}
           {found !== null && found.candidates.length > 1 && (
