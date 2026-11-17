@@ -14,12 +14,17 @@ const GAP = 6
 const EDGE = 8
 const HELD = 'data-tip'
 
-interface Tip { readonly text: string; readonly anchor: DOMRect }
+interface Tip { readonly text: string; readonly anchor: DOMRect; readonly side: 'right' | 'auto' }
+
+/** The window's own title bar (desktop app, or the page's strip in its place): no tip goes there. */
+function titleBar(): number {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--title-bar')) || 0
+}
 
 export function TooltipHost() {
   const [tip, setTip] = useState<Tip | null>(null)
   const box = useRef<HTMLDivElement>(null)
-  const [place, setPlace] = useState<{ left: number; top: number; below: boolean } | null>(null)
+  const [place, setPlace] = useState<{ left: number; top: number; side: 'above' | 'below' | 'right' } | null>(null)
 
   useEffect(() => {
     let target: HTMLElement | null = null
@@ -55,7 +60,7 @@ export function TooltipHost() {
       el.setAttribute(HELD, text)
       el.removeAttribute('title')
       timer = window.setTimeout(() => {
-        if (target === el && el.isConnected) setTip({ text, anchor: el.getBoundingClientRect() })
+        if (target === el && el.isConnected) setTip({ text, anchor: el.getBoundingClientRect(), side: el.closest('.rail') !== null ? 'right' : 'auto' })
       }, DELAY)
     }
     const out = (e: PointerEvent) => {
@@ -81,19 +86,25 @@ export function TooltipHost() {
     }
   }, [])
 
-  // Above the element (below when there is no room), centred on it, kept on screen.
+  // Beside a rail entry, to its right (as dsh's sidebar has it); anything else above, centred on it,
+  // or below when there is no room above — the title bar's strip counts as none: the window's buttons cover it.
   useLayoutEffect(() => {
     if (tip === null || box.current === null) { setPlace(null); return }
     const { width, height } = box.current.getBoundingClientRect()
     const a = tip.anchor
-    const below = a.top - GAP - height < EDGE
+    const clampTop = (top: number) => Math.max(EDGE, Math.min(top, window.innerHeight - height - EDGE))
+    if (tip.side === 'right') {
+      setPlace({ left: a.right + GAP, top: clampTop(a.top + a.height / 2 - height / 2), side: 'right' })
+      return
+    }
+    const below = a.top - GAP - height < EDGE + titleBar()
     const left = Math.max(EDGE, Math.min(a.left + a.width / 2 - width / 2, window.innerWidth - width - EDGE))
-    setPlace({ left, top: below ? a.bottom + GAP : a.top - GAP - height, below })
+    setPlace({ left, top: below ? a.bottom + GAP : a.top - GAP - height, side: below ? 'below' : 'above' })
   }, [tip])
 
   if (tip === null) return null
   return createPortal(
-    <div ref={box} className={`app-tooltip ${place?.below === true ? 'below' : ''}`} role="tooltip"
+    <div ref={box} className={`app-tooltip ${place?.side ?? ''}`} role="tooltip"
       style={place === null ? { left: 0, top: 0, visibility: 'hidden' } : { left: place.left, top: place.top }}>
       {tip.text}
     </div>,

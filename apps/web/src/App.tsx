@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { desktop } from './desktop.ts'
 import type { AdgClient } from '@adg/client-core'
 import { DEEPSEEK_API_KEY } from '@adg/protocol'
 import { ApprovalDock } from './components/ApprovalDock.tsx'
@@ -168,10 +167,9 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
     ...(earlier ? [{ id: 'history' satisfies AgentTab, title: '以前的对话', icon: 'archive' as const }] : []),
   ]
   if (tabs.length === 1) return null
-  // In the desktop app, up in the window's title bar, in its middle; in a browser, above the agent's page.
-  const inTitleBar = desktop() !== undefined
+  // Up in the window's title bar, in its middle (elsewhere, the page's strip in its place, from the main column's edge).
   const nav = (
-    <nav className={`agent-tabs${inTitleBar ? ' in-title-bar' : ''}`} role="tablist" aria-label={agent.name}>
+    <nav className="agent-tabs in-title-bar" role="tablist" aria-label={agent.name}>
       {tabs.map(tab => (
         <button key={tab.id} role="tab" aria-selected={tab.id === current} className={tab.id === current ? 'active' : ''} onClick={() => onTab(tab.id)}>
           <Icon name={tab.icon} />{tab.title}
@@ -179,7 +177,7 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
       ))}
     </nav>
   )
-  return inTitleBar ? createPortal(nav, document.body) : nav
+  return createPortal(nav, document.body)
 }
 
 /** An agent's one conversation (`agents/home`): made the first time it is opened. */

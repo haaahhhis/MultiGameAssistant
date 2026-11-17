@@ -18,6 +18,7 @@ import { aboutPlugin, compactionPlugin, memoryPlugin, permissionsPlugin, persona
 import { statusPlugin } from './plugins/status/index.ts'
 import { trajectoryPlugin } from './plugins/trajectory/index.ts'
 import { applyTheme } from './theme.ts'
+import { desktop } from './desktop.ts'
 import '@fontsource-variable/geist'
 import '@fontsource-variable/geist-mono'
 import '@fontsource-variable/noto-sans-sc'
@@ -26,6 +27,10 @@ import './styles.css'
 import './plugins/trajectory/trajectory.css'
 
 applyTheme()
+// No desktop window: the page draws a strip of its own where the title bar is (styles.css .own-title-bar).
+if (desktop() === undefined) document.documentElement.classList.add('own-title-bar')
+// Shown in dsh (the plugin): its look for hover tips.
+if (MOUNTED) document.documentElement.classList.add('in-dsh')
 
 // Built-in UI plugins. Each one only appears when its capabilities are served.
 registerPlugin(chatPlugin)

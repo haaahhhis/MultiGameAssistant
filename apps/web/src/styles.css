@@ -506,8 +506,12 @@ a.exchange-line:hover { border-color: var(--accent-line); background: var(--hove
 .app-main > * { grid-area: 1 / 1; }
 .app-main.under-exchange > :not(.exchange-page) { visibility: hidden; }
 /* When things were said: a centred time line after a pause */
-.time-divider { display: flex; justify-content: center; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.time-divider span { padding: 2px 8px; }
+.time-divider { display: flex; justify-content: center; width: fit-content; margin-inline: auto; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.time-divider span { padding: 2px 8px; border-radius: 999px; cursor: default; }
+/* The time alone; the pointer on it shows the day too. */
+.time-divider .time-full { display: none; }
+.time-divider:hover .time-short { display: none; }
+.time-divider:hover .time-full { display: inline; background: var(--sunken); color: var(--text-2); }
 /* Work handed to this agent, in its own conversation: the same one line */
 .task-line { align-items: flex-start; }
 button.exchange-line { font-weight: 400; cursor: pointer; }
@@ -528,6 +532,13 @@ a.small-button { color: var(--text); text-decoration: none; }
 .agent-tabs.in-title-bar { position: fixed; top: 3px; left: 50%; z-index: 2001; transform: translateX(-50%); max-width: calc(100vw - 520px); height: calc(var(--title-bar, 34px) - 6px); padding: 2px; border-color: transparent; background: var(--sunken); -webkit-app-region: no-drag; app-region: no-drag; }
 .agent-tabs.in-title-bar button { height: 100%; padding: 0 11px; font-size: 12px; }
 .agent-tabs.in-title-bar button.active { background: var(--panel); }
+/*
+ * Without the desktop window (a browser, or dsh's frame): a strip of the page's own in its place, with the same
+ * things in it — the agent's tabs in its middle, the sidebar icons at its right end.
+ */
+.own-title-bar { --title-bar: 40px; }
+.own-title-bar .agent-tabs.in-title-bar { max-width: calc(100vw - 2 * 150px); }
+.own-title-bar .title-tools.in-title-bar { right: 10px; }
 /* Timed tasks: an agent's, and everyone's together */
 .schedule-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; padding: 18px 22px 24px; }
 .schedule-body > p { margin: 0; }
@@ -1797,8 +1808,12 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 /* Hover hints for every title="…" (components/Tooltip.tsx): the slash menu's tip, small. */
 .app-tooltip { position: fixed; z-index: 2100; max-width: min(320px, calc(100vw - 16px)); padding: 5px 9px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12px; font-weight: 400; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; box-shadow: var(--shadow-pop); pointer-events: none; animation: tip-in .12s var(--ease) both; }
 .app-tooltip.below { animation-name: tip-in-below; }
+.app-tooltip.right { animation-name: tip-in-right; }
+/* In dsh (the plugin), dsh's own tips: a dark bubble, no shadow, so its sidebar and this one's look alike. */
+.in-dsh .app-tooltip { padding: 3px 7px; border-radius: 8px; background: #2c2c2e; color: #fff; font-size: 13px; line-height: 1.45; box-shadow: none; }
 @keyframes tip-in { from { opacity: 0; transform: translateY(2px); } }
 @keyframes tip-in-below { from { opacity: 0; transform: translateY(-2px); } }
+@keyframes tip-in-right { from { opacity: 0; transform: translateX(-2px); } }
 @media (prefers-reduced-motion: reduce) { .app-tooltip, .confirm-backdrop, .dialog-backdrop, .dialog { animation: none; } }
 @media (max-width: 720px) { .slash-tip { display: none; } }
 .slash-expansion { margin-top: 6px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }

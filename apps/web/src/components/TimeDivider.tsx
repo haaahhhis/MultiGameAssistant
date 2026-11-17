@@ -33,6 +33,18 @@ export function needsTime(at: number | undefined, before: number | undefined): b
   return before === undefined || at - before >= TIME_GAP || dayOf(at) !== dayOf(before)
 }
 
+/** The day and time in full, without seconds: what a time line shows while the pointer is on it. */
+export function dayAndTime(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日${WEEKDAY[d.getDay()]} ${clock(d)}`
+}
+
+/** The time alone; the pointer on it shows the date too. */
 export function TimeDivider({ at }: { at: number }) {
-  return <div className="time-divider" title={fullTime(at)}><span>{timeLabel(at)}</span></div>
+  return (
+    <div className="time-divider">
+      <span className="time-short">{clock(new Date(at))}</span>
+      <span className="time-full" aria-hidden>{dayAndTime(at)}</span>
+    </div>
+  )
 }

@@ -17,7 +17,7 @@ export type RailTarget =
 
 /**
  * The first column (docs/design/agent-roles.md §12). On top, 助手; at the
- * bottom, above 定时, the pages ordered below 0 (游戏). Between them, a list
+ * bottom, above 定时 (and under 更新), the pages ordered below 0 (游戏). Between them, a list
  * that follows which is open: 助手 (or anything else) lists the other agents
  * and the pages ordered from 0; such a page lists its own things there (the
  * games page, its games: `slot`). Pages come from UI plugins, so an area appears
@@ -74,10 +74,10 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
           </div>
         )}
       <div className="rail-footer">
-        {top.map(pageItem)}
         {update !== null && (
           <RailItem icon="download" label="更新" title={`MultiGameAssistant ${update.version} 可以更新了：点开看更新了什么`} active={false} onClick={openUpdateNotes} dot />
         )}
+        {top.map(pageItem)}
         {capabilities.has('pipelines') && (
           <RailItem icon="calendar" label="定时" title="每个 agent 的定时任务，和按时运行的流水线" active={current.kind === 'schedule'} onClick={onSchedule} />
         )}

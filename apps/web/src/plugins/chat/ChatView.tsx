@@ -145,8 +145,8 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
         {ready && state.status !== 'opening' && items.length === 0 && (
           <div className="empty chat-empty">
             <AdgMark size="lg" />
-            <h2>今天，我们一起完成什么？</h2>
-            <p>一个问题、一段代码，或一个还不成熟的想法。<br />在下方写下来，让对话开始。</p>
+            <h2>今天，先从哪个游戏开始？</h2>
+            <p>问问哪些活动快结束、新版本有什么，或者让它把今天的日常清掉。<br />在下方写下来就行。</p>
           </div>
         )}
         {ready && rows.map((row, index) => <TimedRow key={rowKey(row)} at={timeLines[index]}>{row.kind === 'sent'

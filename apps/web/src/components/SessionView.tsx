@@ -79,10 +79,9 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
   const own = useMemo(() => commandsOf(built), [built])
   const sideBar = useMemo(() => ({ openTask: side.openTask }), [side.openTask])
-  // In the desktop app these go up into the window's title bar, left of its buttons, as the Claude app has them.
-  const inTitleBar = desktop() !== undefined
+  // Up in the window's title bar, left of its buttons, as the Claude app has them (elsewhere, the page's strip in its place).
   const tools = (
-    <div className={`title-tools${inTitleBar ? ' in-title-bar' : ''}`} role="toolbar" aria-label="侧栏">
+    <div className="title-tools in-title-bar" role="toolbar" aria-label="侧栏">
       {SIDE_PANELS.filter(p => p.id !== 'browser' || side.bridge !== undefined).map(p => {
         const on = side.panel === p.id
         const hint = p.id === 'tasks' && runningTasks > 0 ? `子任务：${runningTasks} 个进行中`
@@ -103,7 +102,7 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
   return (
     <section className="main">
       {/* An earlier conversation says whose it is and what it is called; an agent's own one needs no header. */}
-      {(!home || !inTitleBar) && (
+      {!home && (
         <div className="session-bar">
           {!home && (
             <div className="breadcrumb session-crumb">
@@ -115,10 +114,9 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
               <span className="session-crumb-note">以前的对话{agentId !== MAIN_AGENT && item?.requestedBy !== undefined ? ` · ${requestedLabel(item.requestedBy)}` : ''}</span>
             </div>
           )}
-          {!inTitleBar && tools}
         </div>
       )}
-      {inTitleBar && createPortal(tools, document.body)}
+      {createPortal(tools, document.body)}
       {state.error !== null && <div className="banner error">{state.error}</div>}
       <div className={`session-body${side.panel !== null ? ' with-side' : ''}`}>
         <div className="session-column">
