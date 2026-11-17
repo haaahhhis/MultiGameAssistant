@@ -259,7 +259,7 @@ button.rail-item:disabled { opacity: .5; }
 .profile-current { font-size: 11px; color: var(--ok); }
 .script-summary .summary-text { margin: 4px 0 0; line-height: 1.7; white-space: pre-wrap; }
 .profile-save { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
-.chip.subtle { margin-left: 8px; font-family: var(--font); font-size: 11px; padding: 0 8px; color: var(--muted); }
+.chip.subtle { margin-left: 8px; font-family: var(--font); font-size: 11px; line-height: 18px; padding: 0 8px; color: var(--muted); }
 .plugin-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .plugin-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 9px 0; border-top: 1px solid var(--border); }
 .plugin-list li:first-child { border-top: none; padding-top: 0; }
@@ -661,7 +661,8 @@ a.task-card.pipeline-line .muted { flex: 1; min-width: 0; overflow: hidden; text
 .status-dot.running { background: var(--accent-fill); animation: blink 1.4s var(--ease) infinite; }
 .status-dot.ok { background: var(--ok); }
 .status-dot.error { background: var(--error); }
-.badge { flex-shrink: 0; font-size: 11px; line-height: 1.8; padding: 0 8px; border-radius: 999px; background: var(--hover); color: var(--text-2); }
+/* Small text pills: one fixed line, centred in their row rather than stretched to its height. */
+.badge { display: inline-block; flex-shrink: 0; align-self: center; vertical-align: middle; font-size: 11px; line-height: 20px; padding: 0 8px; border-radius: 999px; background: var(--hover); color: var(--text-2); }
 .badge.approval-asked { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .badge.approval-rejected { color: var(--error); }
 .context-row { font-size: 12.5px; color: var(--muted); }
@@ -721,7 +722,7 @@ button.model-trigger .ui-icon { width: 14px; height: 14px; color: var(--muted); 
 .model-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--accent-fill); }
 .model-dot.off { background: var(--error); }
 .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-effort { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; background: var(--sunken); color: var(--text-2); font-size: 11.5px; }
+.model-effort { flex-shrink: 0; align-self: center; line-height: 18px; padding: 0 7px; border-radius: 999px; background: var(--sunken); color: var(--text-2); font-size: 11.5px; }
 .model-picker.has-error button.model-trigger { border-color: var(--error); }
 .model-panel { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30; display: flex; flex-direction: column; gap: 8px; width: min(380px, 86vw); max-height: min(460px, 70vh); padding: 10px; border: 1px solid var(--border-strong); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow); }
 .model-search { margin: 0; }
@@ -815,7 +816,7 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 /* messages waiting in the session's queue (Composer) */
 .queue { display: flex; flex-direction: column; gap: 6px; max-width: 760px; margin: 0 auto 8px; }
 .queue-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border: 1px dashed var(--border); border-radius: var(--r-md, 10px); background: var(--raised); font-size: 13px; min-width: 0; }
-.queue-tag { flex-shrink: 0; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; color: var(--muted); background: var(--sunken); }
+.queue-tag { flex-shrink: 0; align-self: center; font-size: 11.5px; line-height: 18px; padding: 0 8px; border-radius: 999px; color: var(--muted); background: var(--sunken); }
 .queue-tag.next-step { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-when { flex-shrink: 0; font-size: 12px; }
@@ -906,7 +907,7 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .strong { font-weight: 600; }
 .model-group { margin-top: 4px; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.chip { font-family: var(--mono); font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--sunken); overflow-wrap: anywhere; max-width: 100%; }
+.chip { display: inline-block; align-self: center; vertical-align: middle; box-sizing: border-box; font-family: var(--mono); font-size: 12px; line-height: 20px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--sunken); overflow-wrap: anywhere; max-width: 100%; }
 .notice.left { text-align: left; justify-content: flex-start; }
 .settings-close { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
 
@@ -1560,7 +1561,8 @@ button.palette-item:hover:not(:disabled) { background: var(--hover); border-colo
 .inspector-section textarea { resize: vertical; font-family: var(--font); }
 .inspector-run { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); font-size: 12.5px; }
 .pipeline-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
-.chip { height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 400; }
+/* Chips you click (定时's weekdays, a game's pick): the size of a small button. */
+button.chip { height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 400; line-height: normal; }
 .chip.active { background: var(--accent-fill); color: var(--accent-text); border-color: transparent; }
 @media (max-width: 1100px) { .pipeline-editor { grid-template-columns: 170px minmax(0, 1fr); } .pipeline-inspector { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--border); max-height: 260px; } .pipeline-editor { height: auto; grid-template-rows: 420px auto; } }
 
@@ -2014,7 +2016,7 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .memory-body .text-input { margin-top: 0; resize: vertical; }
 .memory-text { font-size: 13.5px; line-height: 1.7; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
 .memory-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
-.memory-kind-tag { padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 18px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
+.memory-kind-tag { align-self: center; padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 18px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--border); }
 .memory-kind-tag.profile { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .memory-kind-tag.core { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); font-weight: 600; }
 .memory-compose-hint.warn-text { color: var(--warn); }
