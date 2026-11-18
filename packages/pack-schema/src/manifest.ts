@@ -320,6 +320,63 @@ export const Guide = z.object({
 })
 export type Guide = z.infer<typeof Guide>
 
+/** An MCP server name: the namespace its tools are called under (`script_mcp_call server=…`). */
+export const MCP_SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
+
+/**
+ * One MCP (Model Context Protocol) server the script provides, through which
+ * the agent can drive the script directly (its tools) instead of, or beside,
+ * starting tasks with `script_run`. Either read from the script's own MCP
+ * config file (`from`, so it follows the script's updates) or written out
+ * here (`transport` with `command` or `url`). Strings may use `{dir}` (the
+ * script directory); a relative `command` is found in the script directory.
+ */
+export const McpServer = z.object({
+  name: z.string().regex(MCP_SERVER_NAME, 'letters, digits, _ and -, at most 32'),
+  /** The entry in one of the script's MCP config files (`.mcp.json`, `.vscode/mcp.json`…): `server` defaults to `name`. */
+  from: z.object({ file: RelativePath, server: z.string().min(1).optional() }).optional(),
+  /** `stdio`: a program the app starts; `http` (Streamable HTTP) / `sse`: a service at `url`. */
+  transport: z.enum(['stdio', 'http', 'sse']).optional(),
+  command: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  cwd: RelativePath.optional(),
+  url: z.string().regex(/^https?:\/\//, 'an http(s) URL').optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  /** The service runs inside the script's own program: start the script (its window or a task) before connecting. */
+  needsRunning: z.boolean().default(false),
+  /** What the server can do, for the agent. */
+  description: z.string().optional(),
+}).superRefine((server, issues) => {
+  if (server.from !== undefined) return
+  if (server.transport === undefined) issues.addIssue({ code: 'custom', path: ['transport'], message: 'give transport (stdio, http or sse), or from: the script\'s MCP config file' })
+  else if (server.transport === 'stdio' && server.command === undefined) issues.addIssue({ code: 'custom', path: ['command'], message: 'a stdio server needs command' })
+  else if (server.transport !== 'stdio' && server.url === undefined) issues.addIssue({ code: 'custom', path: ['url'], message: `a ${server.transport} server needs url` })
+})
+export type McpServer = z.infer<typeof McpServer>
+
+/**
+ * How the agent uses the script over MCP. `servers` empty with `note`: the
+ * script has MCP configuration but it is not usable here (and why).
+ */
+export const Mcp = z.object({
+  servers: z.array(McpServer).default([]),
+  /** For the agent: what to do over MCP rather than with tasks, in which order, what to check first. */
+  usage: z.string().optional(),
+  /** Notes on particular tools: what each is for, its arguments, the task it stands for. */
+  tools: z.array(z.object({
+    name: z.string().min(1),
+    /** Which server's (default: the only one). */
+    server: z.string().regex(MCP_SERVER_NAME).optional(),
+    use: z.string().min(1),
+    /** The pack task it does the same as, by id. */
+    task: z.string().optional(),
+  })).default([]),
+  /** Why `servers` is empty though the script has MCP configuration. */
+  note: z.string().optional(),
+})
+export type Mcp = z.infer<typeof Mcp>
+
 /** Whether `file` is one of the declared config files (`*` matches within one path segment). */
 export function declaresFile(files: readonly { path: string }[], file: string): boolean {
   const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
@@ -383,6 +440,8 @@ export const ScriptManifest = z.object({
   game: Game.optional(),
   /** The user guide shown on the 脚本 page. */
   guide: Guide.optional(),
+  /** The script's MCP servers and how the agent drives the script through them. */
+  mcp: Mcp.optional(),
   intervention: open.optional(),
   update: open.optional(),
 }).superRefine((manifest, issues) => {
@@ -396,6 +455,20 @@ export const ScriptManifest = z.object({
   manifest.recovery.forEach((entry, index) => {
     if (!tags.has(entry.on)) issues.addIssue({ code: 'custom', path: ['recovery', index, 'on'], message: `no log rule has tag ${entry.on} (use a rule tag, stalled or failed)` })
   })
+  const mcp = manifest.mcp
+  if (mcp !== undefined) {
+    const names = new Set<string>()
+    mcp.servers.forEach((server, index) => {
+      if (names.has(server.name)) issues.addIssue({ code: 'custom', path: ['mcp', 'servers', index, 'name'], message: `duplicate MCP server ${server.name}` })
+      names.add(server.name)
+    })
+    mcp.tools.forEach((tool, index) => {
+      if (tool.server !== undefined && !names.has(tool.server)) issues.addIssue({ code: 'custom', path: ['mcp', 'tools', index, 'server'], message: `no MCP server ${tool.server}` })
+      if (tool.server === undefined && names.size > 1) issues.addIssue({ code: 'custom', path: ['mcp', 'tools', index, 'server'], message: 'several MCP servers: say which one' })
+      if (tool.task !== undefined && !ids.has(tool.task)) issues.addIssue({ code: 'custom', path: ['mcp', 'tools', index, 'task'], message: `no task ${tool.task}` })
+    })
+    if (mcp.servers.length === 0 && (mcp.note ?? '').trim() === '') issues.addIssue({ code: 'custom', path: ['mcp', 'note'], message: 'no MCP servers: say why in note' })
+  }
   const guide = manifest.guide
   if (guide === undefined) return
   const file = (name: string, path: (string | number)[]) => {

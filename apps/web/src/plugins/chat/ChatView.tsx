@@ -42,10 +42,10 @@ type TurnHeader = { readonly model: string | undefined }
 
 export function ChatView({ client, session, state, readOnly }: SessionViewProps) {
   const built = useMemo(
-    () => buildChat(state.events, state.live, state.pending),
+    () => buildChat(state.events, state.live, state.pending, state.queue),
     // `version` covers in-place live delta appends.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.events, state.live, state.pending, state.version],
+    [state.events, state.live, state.pending, state.queue, state.version],
   )
   // dsh's note that a sub-agent ended is for the model: its card says so.
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])

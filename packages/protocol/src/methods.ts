@@ -102,7 +102,9 @@ export type Role = z.infer<typeof Role>
 /**
  * A message sent while the agent was busy, still waiting in the session's
  * queue: `next-turn` starts a turn once the current one ends; `next-step` goes
- * into the running turn at its next step (「插入当前轮次」).
+ * into the running turn at its next step (「插入当前轮次」). `taken`: the agent
+ * has taken it for a step that is still being prepared, and it is not in the
+ * conversation's events yet (a chat shows it as sent, not as waiting).
  */
 export const QueuedPrompt = z.object({
   /** Queue item id (for `session/queue/update`). */
@@ -111,7 +113,7 @@ export const QueuedPrompt = z.object({
   requestId: z.string().optional(),
   text: z.string(),
   images: z.number().int().optional(),
-  placement: z.enum(['next-turn', 'next-step']),
+  placement: z.enum(['next-turn', 'next-step', 'taken']),
 })
 export type QueuedPrompt = z.infer<typeof QueuedPrompt>
 

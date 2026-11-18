@@ -14,6 +14,7 @@ import {
 } from '@adg/protocol'
 import { convertLiveBaseline, convertLiveFrame, convertRecord, convertRecords } from './convert.ts'
 import type { LastReplies } from './last-reply.ts'
+import { toQueue } from './queue.ts'
 import type { CapabilityRegistration, MethodContext } from './registry.ts'
 
 export type HostSessions = Pick<SessionController,
@@ -28,16 +29,13 @@ function handlers(map: ProtocolHandlers): CapabilityRegistration['methods'] {
   return map as CapabilityRegistration['methods']
 }
 
+export { toQueue }
+
 type SessionId = SessionSummary['sessionId']
 
 /** Brand casts at the protocol boundary: protocol ids are plain strings. */
 const sid = (id: string) => id as SessionId
 
-/**
- * The people's messages still waiting in dsh's `inbox` projection, in the
- * order they will run: `next-step` ones go into the running turn first.
- * Other inbox entries (a subagent's report, a reminder) are not shown.
- */
 /** dsh's contextPressure and contextBreakdown projection values as the protocol's SessionContext; undefined until known. */
 export function toContext(pressure: unknown, breakdown: unknown): SessionContext | undefined {
   const p = (pressure ?? {}) as { contextWindow?: unknown; pressureTokens?: unknown; projectedTokens?: unknown }
@@ -53,28 +51,6 @@ export function toContext(pressure: unknown, breakdown: unknown): SessionContext
     usedTokens: Math.max(0, Math.round(used)),
     ...(system === undefined || tools === undefined || messages === undefined ? {} : { breakdown: { systemTokens: system, toolsTokens: tools, messageTokens: messages } }),
   }
-}
-
-export function toQueue(inbox: unknown): QueuedPrompt[] {
-  const items: QueuedPrompt[] = []
-  for (const placement of ['next-step', 'next-turn'] as const) {
-    const list = (inbox as Record<string, unknown> | undefined)?.[placement]
-    if (!Array.isArray(list)) continue
-    for (const message of list as { id?: unknown; source?: { kind?: unknown; rpcId?: unknown }; content?: unknown }[]) {
-      if (typeof message.id !== 'string' || message.source?.kind !== 'user') continue
-      const content = Array.isArray(message.content) ? message.content as { type?: unknown; text?: unknown }[] : []
-      const text = content.filter(c => c.type === 'text' && typeof c.text === 'string').map(c => c.text as string).join('\n')
-      const images = content.filter(c => c.type === 'image').length
-      items.push({
-        id: message.id,
-        ...(typeof message.source.rpcId === 'string' ? { requestId: message.source.rpcId } : {}),
-        text,
-        ...(images === 0 ? {} : { images }),
-        placement,
-      })
-    }
-  }
-  return items
 }
 
 function titleOf(values: unknown): string | null {
@@ -157,6 +133,8 @@ export interface BuiltinDeps {
   readonly selectModel?: (sessionId: string, selection: ModelSelection) => Promise<ModelSelection>
   /** Sessions' last replies (last-reply.ts). */
   readonly lastReplies?: LastReplies
+  /** The person's messages the agent took for a step and has not logged yet (queue.ts TakenInput). */
+  readonly takenOf?: (sessionId: string) => QueuedPrompt[]
 }
 
 const DEFAULT_OPEN_MESSAGES = 60
@@ -262,7 +240,7 @@ export function builtinCapabilities(deps: BuiltinDeps): CapabilityRegistration[]
           hasMore: snapshot.hasMore,
           title: titleOf(snapshot.projections.values),
           live: convertLiveBaseline(snapshot.assistantStream),
-          queue: toQueue((snapshot.projections.values as { inbox?: unknown }).inbox),
+          queue: toQueue((snapshot.projections.values as { inbox?: unknown }).inbox, deps.takenOf?.(params.sessionId)),
           ...contextOf(snapshot.projections.values),
         }
       },

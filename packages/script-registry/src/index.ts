@@ -30,6 +30,9 @@ import { scriptSummaries } from './script-summary.ts'
 import { setupHandOff } from './setup-handoff.ts'
 import type { SkillHub } from './skill-hub.ts'
 import { scriptTools, TOOL_NAMES, type Approve } from './tools.ts'
+import { ScriptMcp } from './mcp.ts'
+import { mcpTools } from './mcp-tools.ts'
+import { ScriptIntegrations } from './script-integrations.ts'
 
 /** Look for newer versions of every script a little after the app starts, then every few hours. */
 const UPDATE_CHECK_FIRST_MS = 2 * 60_000
@@ -39,6 +42,10 @@ export { OPTIMIZE_AFTER_RUNS, ScriptLibrary, type InstallRequest, type LibraryOp
 export type { Optimizer } from './optimize.ts'
 export { loadPacks, packForRepo, type LoadedPack, type PackDir } from './packs.ts'
 export { TOOL_NAMES } from './tools.ts'
+export { MCP_TOOL_NAMES } from './mcp-tools.ts'
+export { discoverMcp, mcpEndpoints, parseMcpConfig, ScriptMcp, type DiscoveredMcpServer, type McpEndpoint } from './mcp.ts'
+export { discoverSkills, type ScriptSkill } from './script-skills.ts'
+export { ScriptIntegrations, type SkillKeeper } from './script-integrations.ts'
 export { frontmatter, readSkills, SkillHub, type HubItem, type HubSkill } from './skill-hub.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -71,6 +78,8 @@ export class AdgScripts extends Service {
   readonly ready: Promise<void>
   /** 优化脚本: offered after enough clean runs (the runner reports them to `library.ranClean`) or an update. */
   readonly optimizer: Optimizer
+  /** The scripts' MCP servers and the skills they ship (script-integrations.ts). */
+  readonly integrations: ScriptIntegrations
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'adgScripts')
@@ -80,6 +89,21 @@ export class AdgScripts extends Service {
     const log = ctx.logger('adg-scripts')
     const ref = (value: string) => value as CredentialRef
     const handOff = setupHandOff(ctx, () => this.library, { info: message => log.info(message), warn: message => log.warn(message) })
+
+    // A script that changed (an update) may ship newer versions of the skills taken from it: take them again, a little later.
+    const syncing = new Map<string, ReturnType<typeof setTimeout>>()
+    const skillSync = (id: string) => {
+      clearTimeout(syncing.get(id))
+      const timer = setTimeout(() => {
+        syncing.delete(id)
+        void this.ready.then(() => this.integrations.syncSkills(id)).then(names => {
+          if (names.length > 0) ctx.get('adgGateway')?.broadcast('skills/changed', {})
+        }, error => log.warn(`skills of ${id} not synced: ${error instanceof Error ? error.message : String(error)}`))
+      }, 5_000)
+      timer.unref()
+      syncing.set(id, timer)
+    }
+    ctx.effect(() => () => { for (const timer of syncing.values()) clearTimeout(timer); syncing.clear() }, 'adg-scripts skill sync')
 
     const review = packReview(ctx, () => this.library, { warn: message => log.warn(message) })
     const optimizer = scriptOptimizer(ctx, () => this.library, { warn: message => log.warn(message) })
@@ -92,7 +116,10 @@ export class AdgScripts extends Service {
       ...(spec.defaults === undefined ? {} : { defaults: stripUndefined(spec.defaults) }),
       credential: async name => (await ctx.get('credentials')?.resolve(ref(name)))?.value,
       credentialConfigured: async name => (await ctx.get('credentials')?.describe(ref(name)))?.configured ?? false,
-      onChanged: id => ctx.get('adgGateway')?.broadcast('scripts/changed', id === undefined ? {} : { id }),
+      onChanged: id => {
+        ctx.get('adgGateway')?.broadcast('scripts/changed', id === undefined ? {} : { id })
+        if (id !== undefined) skillSync(id)
+      },
       onJob: job => ctx.get('adgGateway')?.broadcast('scripts/job', job),
       onSetup: handOff,
       onPackReview: script => review.ask(script),
@@ -100,6 +127,9 @@ export class AdgScripts extends Service {
       log: { info: message => log.info(message), warn: message => log.warn(message) },
     })
     const library = this.library
+    this.integrations = new ScriptIntegrations(library, new ScriptMcp({ dataDir: spec.dataDir, log: { info: message => log.info(message), warn: message => log.warn(message) } }), () => ctx.get('adgGateway'), { info: message => log.info(message), warn: message => log.warn(message) })
+    const integrations = this.integrations
+    ctx.effect(() => () => void integrations.mcp.dispose(), 'adg-scripts MCP connections')
     this.ready = library.start()
     this.ready.then(
       () => log.info(`script library ready: ${library.list().scripts.length} script(s), tools in ${library.toolsDir}`),
@@ -125,7 +155,7 @@ export class AdgScripts extends Service {
 
     ctx.inject(['adgGateway'], gateway => gateway.adgGateway.agentPart('adg-script-registry tools', agent => {
       const registered: Array<() => void> = []
-      for (const tool of scriptTools(library, approve)) {
+      for (const tool of [...scriptTools(library, approve), ...mcpTools(library, integrations, approve)]) {
         registered.push(agent.tools.register({ ...tool, execute: async (args, exec) => { await this.ready; await ctx.get('adgGateway')?.guardTool(exec); return tool.execute(args, exec) } }))
       }
       return () => { for (const dispose of registered) dispose() }
@@ -145,7 +175,7 @@ export class AdgScripts extends Service {
         const setup = library.pendingSetup(id)
         if (setup === undefined) throw new Error(`${id} 没有等待运行的安装程序`)
         return handOff(setup)
-      }, review, optimizer, new ExeIcons(join(spec.dataDir, 'icons')))
+      }, review, optimizer, new ExeIcons(join(spec.dataDir, 'icons')), integrations)
       scoped.adgGateway.register({
         ...capability,
         methods: Object.fromEntries(Object.entries(capability.methods).map(([name, handler]) => [name, async (params: unknown, call: Parameters<typeof handler>[1]) => {

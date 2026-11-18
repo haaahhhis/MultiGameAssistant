@@ -201,6 +201,15 @@
     "scripts/remove": {
       "capability": "scripts"
     },
+    "scripts/mcp": {
+      "capability": "scripts"
+    },
+    "scripts/mcp/probe": {
+      "capability": "scripts"
+    },
+    "scripts/skills/import": {
+      "capability": "scripts"
+    },
     "scripts/envCheck": {
       "capability": "scripts"
     },
@@ -4111,7 +4120,8 @@
                 "type": "string",
                 "enum": [
                   "next-turn",
-                  "next-step"
+                  "next-step",
+                  "taken"
                 ]
               }
             },
@@ -10809,6 +10819,289 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/mcp.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/mcp.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "pack",
+                  "discovered"
+                ]
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http",
+                  "sse"
+                ]
+              },
+              "target": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "needsRunning": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "string"
+              },
+              "trusted": {
+                "type": "boolean"
+              },
+              "connected": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "source",
+              "transport",
+              "target",
+              "needsRunning",
+              "trusted",
+              "connected"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "usage": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "string"
+              },
+              "imported": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "current": {
+                    "type": "boolean"
+                  },
+                  "changed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "current",
+                  "changed"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "servers",
+        "skills"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/mcp/probe.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "server": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "id",
+        "server"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/mcp/probe.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "server": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/skills/import.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "names": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/skills/import.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "imported": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "skill": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "replaced": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "skill",
+              "name",
+              "replaced"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "skill": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "skill",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "imported",
+        "skipped"
+      ],
       "additionalProperties": false
     },
     "scripts/envCheck.params": {
@@ -25992,7 +26285,8 @@
                 "type": "string",
                 "enum": [
                   "next-turn",
-                  "next-step"
+                  "next-step",
+                  "taken"
                 ]
               }
             },

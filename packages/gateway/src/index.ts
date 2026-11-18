@@ -38,7 +38,7 @@ import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
 import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SessionEvent, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
-import { removeSkill, saveSkill, skillSaveTool, userSkills, type SkillSaveDeps } from './skill-save.ts'
+import { importedSkills, importSkill, importUnchanged, removeSkill, saveSkill, skillSaveTool, userSkills, type ImportedSkill, type SkillImport, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
 import { skillFocusTool } from './skill-focus-tool.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaOf, personaPrompt } from './persona.ts'
@@ -55,6 +55,7 @@ import { convertRecords } from './convert.ts'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { QuestionBroker, type QuestionAnswerer } from './questions.ts'
 import { builtinCapabilities, toContext, toQueue, toSessionItem, toSessionModel } from './builtin.ts'
+import { resumeAfterError, TakenInput, type InboxMessage, type ResumableAgent } from './queue.ts'
 import { AgentHomes, HandOffs } from './homes.ts'
 import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
@@ -76,6 +77,7 @@ export { convertRecord, convertRecords } from './convert.ts'
 export { Permissions, PRESET } from './permissions.ts'
 export { convertEvent, convertLiveFrame, streamFacts } from './convert.ts'
 export { SkillScope, type Focus, type ScopedSkillInput, type ScriptRelations, type SkillOwner } from './skill-scope.ts'
+export { importedSkills, importSkill, importUnchanged, userSkills, type ImportedSkill, type SkillImport, type SkillSaveDeps } from './skill-save.ts'
 export { AGENT_PRESET, type AgentPart } from './shared.ts'
 export { pluginVersion } from './about.ts'
 export { NEW_INPUT, type InputWatch, type WaitingCall } from './new-input.ts'
@@ -239,7 +241,7 @@ const MAIN_AGENT: RoleSpec = {
   order: 0,
   tools: [
     'agent_delegate', 'notice_act', 'system_info', 'skill_focus', 'skill_save', 'skill_hub_list',
-    'script_list', 'script_runs', 'script_run_log', 'script_help', 'script_search', 'script_tasks',
+    'script_list', 'script_runs', 'script_run_log', 'script_help', 'script_search', 'script_tasks', 'script_mcp_list',
     'game_list', 'game_activities', 'game_report',
     'pipeline_*', 'schedule_*', 'monitor_incidents', 'monitor_stall_check', 'emulator_status', 'window_list',
     // The built-in browser, for its sub-agents (its own conversation hands it out: roles.ts HANDS_ON).
@@ -267,7 +269,7 @@ function mainDuty(roles: readonly { readonly name: string; readonly description:
   return [
     '# 你的角色：助手',
     '你是用户的助手：和用户对话，弄清要做什么，安排谁来做。截图点击、运行和安装脚本、分析脚本和写脚本包、读游戏这些具体的事交给对应的 agent（agent_delegate），你自己不做。分析脚本、写或改脚本包交给「脚本」：保存脚本包的 pack_propose 只有它有，你的子 agent 没有。',
-    '用户要在游戏里做一件事时，交出去之前先用 script_list、script_tasks 看这个游戏下的脚本有没有这个功能：有，就交给「脚本」agent，写明用哪个脚本的哪个任务去做；确认脚本都做不了，才交给能截图点击的 agent 自己动手，并在任务里写上脚本为什么做不了。',
+    '用户要在游戏里做一件事时，交出去之前先用 script_list、script_tasks 看这个游戏下的脚本有没有这个功能：有，就交给「脚本」agent，写明用哪个脚本的哪个任务去做；脚本自带 MCP 服务时（script_mcp_list），「脚本」agent 还能直接调用它的工具，做到整个任务之外的细粒度操作（查状态、只跑某一项、改设置），也交给它；确认脚本都做不了，才交给能截图点击的 agent 自己动手，并在任务里写上脚本为什么做不了。',
     roles.length === 0 ? '现在没有可以交给的 agent，能做的你自己做。' : `可以交给的 agent：\n${roles.map(r => `- ${r.name}：${r.description}`).join('\n')}`,
     '运行命令、改文件这些工具不在你的对话里：用户要的这类事（整理文件、导出记录、查系统），还有查资料、读日志、比较几个方案，都开自己的子 agent（subagent）去做，它把结果交回来，你告诉用户。截图点击、运行和安装脚本、分析脚本和写脚本包这些交给对应的主 agent。',
     '交出去的事在那个 agent 自己的对话里做，它看不到你和用户的对话，所以任务要写完整。交出去以后用一句话告诉用户交给了谁、做什么，然后结束这一轮：不要等它，也不要替它回答。',
@@ -293,6 +295,10 @@ export class AdgGateway extends Service {
   private archived = new Set<string>()
   /** The latest context projections per session (a control frame carries only the keys its event changed). */
   private readonly contexts = new Map<string, { pressure?: unknown; breakdown?: unknown }>()
+  /** The latest non-empty inbox projection per session, so the queue can be sent again when only the taken messages change. */
+  private readonly inboxes = new Map<string, unknown>()
+  /** The person's messages the agent took for a step and has not logged yet (queue.ts). */
+  private readonly taken = new TakenInput(sessionId => this.broadcast('session/queue', { sessionId, items: toQueue(this.inboxes.get(sessionId), this.taken.items(sessionId)) }))
   private readonly peers = new Set<Peer>()
   private readonly approvals: ApprovalBroker
   private readonly questions: QuestionBroker
@@ -412,6 +418,7 @@ export class AdgGateway extends Service {
       },
       selectModel: (sessionId, selection) => this.selectSessionModel(sessionId, selection),
       lastReplies: new LastReplies(ctx.sessionController),
+      takenOf: sessionId => this.taken.items(sessionId),
       approvals: this.approvals,
       serverInfo: { name: 'adg-gateway', version: '0.1.0' },
       compact: (sessionId, signal) => compactSession(ctx, sessionId, signal),
@@ -865,6 +872,38 @@ export class AdgGateway extends Service {
         return decision
       }
     }) as never, true))
+
+    // The person's messages between the inbox and the log (queue.ts): listed as taken while a step is prepared, and,
+    // after a turn that failed, handed to a new turn instead of waiting for the person to send something else.
+    this.agentPart('adg-gateway taken input', scope => {
+      const failed = new WeakSet<object>()
+      const offs = [
+        scope.on('agent/inbox/claimed' as never, (({ agent, message }: { agent: ResumableAgent; message: InboxMessage }) => {
+          this.taken.take(agent.session.id, message)
+        }) as never),
+        scope.on('session/event' as never, ((session: { id: string }, event: { type?: unknown; data?: { id?: unknown } }) => {
+          if (event.type === 'user/message' && typeof event.data?.id === 'string') this.taken.logged(session.id, event.data.id)
+        }) as never),
+        scope.on('agent/error' as never, (({ agent }: { agent: object }) => { failed.add(agent) }) as never),
+        scope.on('agent/status' as never, (({ agent, status }: { agent: ResumableAgent; status: unknown }) => {
+          if (status !== 'idle') return
+          // After dsh's own idle bookkeeping (kick's finally), which may wake the agent itself.
+          setTimeout(() => {
+            if (!failed.delete(agent)) {
+              if (agent.status === 'idle') this.taken.clear(agent.session.id)
+              return
+            }
+            try {
+              const handed = resumeAfterError(agent, this.taken)
+              if (handed > 0) log.info(`gave ${handed} waiting message(s) of ${agent.session.id} to a new turn after its turn failed`)
+            } catch (error) {
+              log.warn(`could not hand the waiting messages of ${agent.session.id} to a new turn: ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }, 0)
+        }) as never),
+      ]
+      return () => { for (const off of offs) off() }
+    })
 
     // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.
     if (config.dataDir !== undefined) {
@@ -1559,6 +1598,27 @@ Content-Length: 0
     return sessionId
   }
 
+  /**
+   * Put a skill from elsewhere (a script's own skills) among this app's
+   * skills (the skills folder, the 技能 page), for its agents at once.
+   * @returns the name it was saved under; throws without a skills folder.
+   */
+  async importSkill(input: SkillImport): Promise<{ name: string; replaced: boolean }> {
+    const saved = this.savedSkills
+    if (saved === undefined) throw new Error('这里没有可以写的技能文件夹')
+    const { name, replaced } = await importSkill(saved.deps, input)
+    this.log.info(`skill ${replaced ? 'imported again' : 'imported'}: ${name} (${input.origin.kind}${typeof input.origin['script'] === 'string' ? ` ${input.origin['script']}` : ''})`)
+    return { name, replaced }
+  }
+
+  /** The skills imported into this app's skills folder (`importSkill`), each with whether it was changed here since. */
+  async importedSkills(): Promise<Array<ImportedSkill & { readonly changed: boolean }>> {
+    const saved = this.savedSkills
+    if (saved === undefined) return []
+    const dir = saved.deps.dir
+    return Promise.all((await importedSkills(dir)).map(async item => ({ ...item, changed: !(await importUnchanged(dir, item)) })))
+  }
+
   /** Count a session the app just created as its own (session/created came before it was). */
   async adopt(sessionId: string): Promise<void> {
     if (!this.shared) return
@@ -1721,7 +1781,12 @@ Content-Length: 0
             this.broadcast('sessions/changed', { kind: 'upsert', item: { id: frame.sessionId, title, ...(role === undefined ? {} : { role }), ...(home === undefined ? {} : { home }) } })
           }
           if (changed.has('modelSelection')) this.broadcast('session/model', { sessionId: frame.sessionId, ...toSessionModel(changed.get('modelSelection')) })
-          if (changed.has('inbox')) this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(changed.get('inbox')) })
+          if (changed.has('inbox')) {
+            const inbox = changed.get('inbox')
+            if (toQueue(inbox).length === 0) this.inboxes.delete(frame.sessionId)
+            else this.inboxes.set(frame.sessionId, inbox)
+            this.broadcast('session/queue', { sessionId: frame.sessionId, items: toQueue(inbox, this.taken.items(frame.sessionId)) })
+          }
           if (changed.has('contextPressure') || changed.has('contextBreakdown')) {
             // Either may change without the other; the meter needs both.
             const known = this.contexts.get(frame.sessionId) ?? {}

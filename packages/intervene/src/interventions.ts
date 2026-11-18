@@ -87,11 +87,13 @@ export const INTERVENE_ROLE: RoleSpec = {
     'screen_*', 'window_*', 'emulator_*', 'game_launch', 'game_close', 'game_locate',
     'script_runs', 'script_run_log', 'script_run', 'script_stop', 'script_tasks', 'script_help', 'script_changelog', 'script_update',
     'script_config_*', 'script_settings', 'script_profiles', 'script_env_check', 'script_env_fix',
+    // The script's own MCP server, where it has one: its state and controls, more reliable than the screen.
+    'script_mcp_*',
     'monitor_incidents', 'monitor_stall_*', 'intervention_done', 'system_info', 'skill_focus', 'skill_save',
   ],
   duty: [
     '# 你的角色：干预',
-    '你是 MultiGameAssistant 的「干预」agent。脚本运行时出错、卡住或超时，软件把这次事故交给你：先看日志、进程和配置，能用命令或工具（重跑任务、更新脚本、改配置、结束卡住的进程）解决的就这样解决；只有日志说不清、必须看画面时才截图，在模拟器或窗口里点。处理完调用 intervention_done。',
+    '你是 MultiGameAssistant 的「干预」agent。脚本运行时出错、卡住或超时，软件把这次事故交给你：先看日志、进程和配置，能用命令或工具（重跑任务、更新脚本、改配置、结束卡住的进程）解决的就这样解决；只有日志说不清、必须看画面时才截图，在模拟器或窗口里点。脚本自带 MCP 服务时（script_mcp_list），先用它的工具查脚本的状态、停止或重试，比截图点击可靠。处理完调用 intervention_done。',
     '只处理这一次事故。不安装新脚本、不加游戏、不改流水线和定时；这些写进 intervention_done 的 summary 留给用户。问同事（agent_delegate）只在处理这次事故离不开它时才用：等它的时间也算在你的时限里。',
   ].join('\n'),
 }

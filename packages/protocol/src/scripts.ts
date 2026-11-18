@@ -358,6 +358,39 @@ export const InstallSettings = z.object({
 export type InstallSettings = z.infer<typeof InstallSettings>
 
 const Empty = z.object({})
+
+/** One of a script's MCP servers (`scripts/mcp`). */
+export const ScriptMcpServer = z.object({
+  name: z.string(),
+  /** `pack`: its pack names it; `discovered`: only in the script's own MCP config file. */
+  source: z.enum(['pack', 'discovered']),
+  transport: z.enum(['stdio', 'http', 'sse']),
+  /** The program it starts, or its address. */
+  target: z.string(),
+  /** The script's config file it was read from. */
+  file: z.string().optional(),
+  /** Served by the script's own program while it runs. */
+  needsRunning: z.boolean(),
+  description: z.string().optional(),
+  /** Why it cannot be used as written. */
+  problem: z.string().optional(),
+  /** Started without asking: a built-in pack's, or approved before. */
+  trusted: z.boolean(),
+  connected: z.boolean(),
+})
+export type ScriptMcpServer = z.infer<typeof ScriptMcpServer>
+
+/** A skill the script ships (`scripts/mcp`). */
+export const ScriptSkillItem = z.object({
+  name: z.string(),
+  description: z.string(),
+  /** Its folder in the script directory. */
+  path: z.string(),
+  problem: z.string().optional(),
+  /** Among this app's skills: under which name, whether it is the script's current version, whether it was changed here. */
+  imported: z.object({ name: z.string(), current: z.boolean(), changed: z.boolean() }).optional(),
+})
+export type ScriptSkillItem = z.infer<typeof ScriptSkillItem>
 const ById = z.object({ id: ScriptId })
 
 export const ScriptRequests = {
@@ -562,6 +595,41 @@ export const ScriptRequests = {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({ id: ScriptId, deleteFiles: z.boolean().optional() }),
     result: Empty,
+  },
+  /**
+   * What the script offers agents beyond its tasks: its MCP servers (read
+   * from its MCP config files and its pack) and the skills it ships.
+   */
+  'scripts/mcp': {
+    capability: SCRIPTS_CAPABILITY,
+    params: ById,
+    result: z.object({
+      servers: z.array(ScriptMcpServer),
+      /** The pack's notes for the agent on using them. */
+      usage: z.string().optional(),
+      note: z.string().optional(),
+      skills: z.array(ScriptSkillItem),
+    }),
+  },
+  /** Connect to one of the script's MCP servers and list its tools (the user's click: trusted from then on). */
+  'scripts/mcp/probe': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: ScriptId, server: z.string().min(1).max(32) }),
+    result: z.object({
+      ok: z.boolean(),
+      tools: z.array(z.object({ name: z.string(), title: z.string().optional(), description: z.string().optional() })).optional(),
+      server: z.object({ name: z.string(), version: z.string() }).optional(),
+      error: z.string().optional(),
+    }),
+  },
+  /** Put the script's skills (these, or all) among this app's skills, belonging to the script. */
+  'scripts/skills/import': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: ScriptId, names: z.array(z.string().min(1).max(200)).max(50).optional() }),
+    result: z.object({
+      imported: z.array(z.object({ skill: z.string(), name: z.string(), replaced: z.boolean() })),
+      skipped: z.array(z.object({ skill: z.string(), reason: z.string() })),
+    }),
   },
   /** Check the script's runtime requirements on this machine. */
   'scripts/envCheck': {

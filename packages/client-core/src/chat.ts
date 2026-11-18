@@ -2,7 +2,7 @@
  * Chat view model: the transcript a conversation UI renders, derived purely
  * from protocol events, the streaming attempt, and local prompt echoes.
  */
-import { reminderLine, reminderPrompts, type ContentPart, type SessionEvent } from '@adg/protocol'
+import { reminderLine, reminderPrompts, type ContentPart, type QueuedPrompt, type SessionEvent } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
 import type { PendingPrompt } from './session.ts'
 
@@ -90,11 +90,13 @@ const PROGRAM_IMAGES = 'ptc-mode'
  * @param events - loaded protocol events, ascending by seq.
  * @param live - the streaming attempt, or null.
  * @param pending - local prompt echoes not yet in the log.
+ * @param queue - the host's queue: the messages it lists as `taken` are sent but not in the log yet.
  */
 export function buildChat(
   events: readonly SessionEvent[],
   live: LiveAttemptView | null,
   pending: readonly PendingPrompt[] = [],
+  queue: readonly QueuedPrompt[] = [],
 ): ChatItem[] {
   const items: ChatItem[] = []
   const tools = new Map<string, ToolItem>()
@@ -213,6 +215,18 @@ export function buildChat(
     items.push({
       kind: 'assistant', id: `live:${live.attemptId}`, text, reasoning, live: true, interrupted: false,
       time: live.deltas[0]?.time ?? Date.now(),
+    })
+  }
+
+  // Taken for a step that is still being prepared (a compaction first, a slow network): sent, so shown as sent.
+  const logged = new Set(events.flatMap(e => (e.type === 'user/message' ? [e.messageId] : [])))
+  for (const item of queue) {
+    if (item.placement !== 'taken' || logged.has(item.id)) continue
+    items.push({
+      kind: 'user', id: `q:${item.id}`, text: item.text, images: item.images ?? 0, imageRefs: [], files: 0,
+      // The queue has no time; the turn that took it has just started.
+      time: events.at(-1)?.time ?? Date.now(),
+      pending: { requestId: item.requestId ?? item.id },
     })
   }
 

@@ -11,14 +11,20 @@ import { SCRIPTS_CAPABILITY, type RequestParams } from '@adg/protocol'
 import type { ScriptLibrary } from './library.ts'
 import type { PackReview } from './pack-review.ts'
 import type { Optimizer } from './optimize.ts'
+import type { ScriptIntegrations } from './script-integrations.ts'
 
 /**
  * @param setupAgent - hand a waiting setup program to the agent; @returns its conversation.
  * @param review - answer whether to check a pack after its script updated (pack-review.ts).
  * @param optimizer - 优化脚本 (optimize.ts).
  * @param icons - programs' icons, for the scripts' avatars.
+ * @param integrations - the scripts' MCP servers and the skills they ship.
  */
-export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview, optimizer: Optimizer, icons?: ExeIcons): CapabilityRegistration {
+export function scriptsCapability(library: ScriptLibrary, summaries: { summarize(id: string): Promise<string> }, setupAgent: (id: string) => Promise<string>, review: PackReview, optimizer: Optimizer, icons?: ExeIcons, integrations?: ScriptIntegrations): CapabilityRegistration {
+  const needIntegrations = () => {
+    if (integrations === undefined) throw new Error('这里没有脚本的 MCP 和技能支持')
+    return integrations
+  }
   return {
     id: SCRIPTS_CAPABILITY,
     version: 1,
@@ -38,6 +44,33 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
         } catch {
           return {}
         }
+      },
+      'scripts/mcp': async params => {
+        const { id } = params as RequestParams<'scripts/mcp'>
+        const all = needIntegrations()
+        const endpoints = await all.endpoints(id).catch(() => [])
+        const usage = all.usage(id)
+        return {
+          servers: await Promise.all(endpoints.map(e => all.view(id, e))),
+          ...(usage.usage === undefined ? {} : { usage: usage.usage }),
+          ...(usage.note === undefined ? {} : { note: usage.note }),
+          skills: await all.skills(id).catch(() => []),
+        }
+      },
+      'scripts/mcp/probe': async (params, call) => {
+        const { id, server } = params as RequestParams<'scripts/mcp/probe'>
+        const all = needIntegrations()
+        try {
+          // The user's click is the approval: the server is trusted from then on.
+          const listed = await all.tools(id, await all.endpoint(id, server), 'approved', call.signal)
+          return { ok: true, tools: listed.tools.map(t => ({ name: t.name, ...(t.title === undefined ? {} : { title: t.title }), ...(t.description === undefined ? {} : { description: t.description.slice(0, 300) }) })), ...(listed.server === undefined ? {} : { server: listed.server }) }
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        }
+      },
+      'scripts/skills/import': params => {
+        const p = params as RequestParams<'scripts/skills/import'>
+        return needIntegrations().importSkills(p.id, p.names)
       },
       'scripts/search': (params, call) => library.search((params as RequestParams<'scripts/search'>).query, call.signal),
       'scripts/releases': (params, call) => {

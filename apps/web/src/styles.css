@@ -258,6 +258,11 @@ button.rail-item:disabled { opacity: .5; }
 .profile-chip.active { color: var(--text); background: var(--raised); border-color: var(--accent); box-shadow: var(--shadow-1); }
 .profile-current { font-size: 11px; color: var(--ok); }
 .script-summary .summary-text { margin: 4px 0 0; line-height: 1.7; white-space: pre-wrap; }
+.script-mcp h4 { margin: 12px 0 4px; font-weight: 500; }
+.script-mcp .version-list li { flex-direction: column; align-items: stretch; gap: 4px; }
+.script-mcp .version-list li p { margin: 0; }
+.mcp-server-main { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mcp-target { word-break: break-all; }
 .profile-save { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); }
 .chip.subtle { margin-left: 8px; font-family: var(--font); font-size: 11px; line-height: 18px; padding: 0 8px; color: var(--muted); }
 .plugin-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }

@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-skill'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@adg/gateway'
-import type {} from '@adg/script-registry'
+import { discoverMcp, discoverSkills, mcpEndpoints } from '@adg/script-registry'
 import { guideIssues, MANIFEST_FILE, parseManifest, SKILL_FILE } from '@adg/pack-schema'
 import { BUILTIN_PACK_VERSION, PACKS_CAPABILITY, ScriptId, type PackDraft, type PackVersion, type RequestParams } from '@adg/protocol'
 import { z } from 'zod'
@@ -232,10 +232,22 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
         // Where its documentation is online: the repository it updates from (README, Wiki), and the pages its README links.
         const repo = script.channels.github?.repo
         const online = [...(repo === undefined ? [] : [`https://github.com/${repo}`, `https://github.com/${repo}/wiki`]), ...report.docLinks]
+        // What it offers agents beyond tasks: its MCP servers (its own config files) and the skills it ships.
+        const found = await discoverMcp(script.dir)
+        const servers = mcpEndpoints(script.dir, found, undefined, false)
+        const skills = await discoverSkills(script.dir).catch(() => [])
         return {
           script: { id: script.id, name: script.name, source: script.source, family: script.family },
           ...report,
           docLinks: [...new Set(online)],
+          mcp: servers.length === 0 ? null : {
+            servers: servers.map(e => ({ name: e.name, file: e.file, server: e.server, transport: e.transport, ...(e.transport === 'stdio' ? { command: e.command, args: e.args } : { url: e.url }), ...(e.problem === undefined ? {} : { problem: e.problem }) })),
+            todo: '这个脚本有 MCP 服务：脚本包要写 mcp 一节（servers 用 from 指向它的配置文件；用 script_mcp_tools 连上看看工具后写 usage 和 tools），SKILL.md 里写一节「MCP」说明什么时候用 MCP、什么时候用 script_run（见 script-analysis 技能「MCP」一节）',
+          },
+          skills: skills.length === 0 ? null : {
+            items: skills.map(k => ({ name: k.name, description: k.description, path: k.path, ...(k.problem === undefined ? {} : { problem: k.problem }) })),
+            todo: '这个脚本自带技能：读一读它们，SKILL.md 里提一句；用户想用时用 script_skills_import 放进技能库',
+          },
           readFirst: '先读文档（docs 里的文件、readme、docLinks 里的网页），再结合代码和配置核对、补全；只有完全找不到文档时才直接从代码分析。',
           currentPack: pack === undefined ? null : { id: pack.manifest.id, builtin: pack.builtin, manifest, skill: pack.skill },
         }
@@ -330,7 +342,13 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
         }
         deps.library.get(a.script_id) // must exist
         // The guide is for the user (the 脚本 page shows it); the agent's own notes go in SKILL.md.
-        const issues = guideIssues(parseManifest(a.manifest, `${a.pack_id}/${MANIFEST_FILE}`))
+        const manifest = parseManifest(a.manifest, `${a.pack_id}/${MANIFEST_FILE}`)
+        const issues = guideIssues(manifest)
+        // A script with MCP servers gets a pack that says how to use them (or why not).
+        const dir = deps.library.get(a.script_id).dir
+        if (manifest.mcp === undefined && dir !== undefined && (await discoverMcp(dir)).some(e => e.disabled !== true)) {
+          issues.push('这个脚本目录里有 MCP 配置：manifest 要写 mcp 一节——servers（用 from 指向脚本的配置文件）、usage（什么时候用 MCP、怎么用）和 tools（主要工具的用途）；确实用不了就写 mcp: { servers: [], note: 为什么 }。SKILL.md 里也写一节「MCP」')
+        }
         if (issues.length > 0) throw new Error(`使用说明还要改（按 script-analysis 技能「使用说明」一节）：\n- ${issues.join('\n- ')}`)
         const saved = await deps.drafts.save({
           packId: a.pack_id, scriptId: a.script_id, proposedAt: Date.now(), summary: a.summary,

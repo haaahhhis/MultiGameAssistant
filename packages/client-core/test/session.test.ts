@@ -65,6 +65,22 @@ test('a prompt echo stays until its user/message arrives', async () => {
   assert.equal(handle.state.get().pending.length, 0)
 })
 
+test('chat: a message the host lists as taken shows as sent until its user/message is in the log', () => {
+  const queue = [
+    { id: 'm1', requestId: 'r1', text: 'hello', placement: 'taken' as const },
+    { id: 'm2', text: 'later', placement: 'next-turn' as const },
+  ]
+  const before = buildChat([{ type: 'turn/start', seq: 1, time: 1, turn: 1 }], null, [], queue)
+  assert.deepEqual(before.map(i => i.kind === 'user' ? [i.text, i.pending?.requestId] : i.kind), [['hello', 'r1']])
+  const logged: SessionEvent[] = [
+    { type: 'turn/start', seq: 1, time: 1, turn: 1 },
+    { type: 'user/message', seq: 2, time: 2, messageId: 'm1', content: [{ type: 'text', text: 'hello' }], origin: human, requestId: 'r1' },
+  ]
+  // The log and the queue arrive on different streams: the logged message is not shown twice.
+  const after = buildChat(logged, null, [], queue)
+  assert.deepEqual(after.map(i => i.kind === 'user' ? [i.text, i.pending === undefined] : i.kind), [['hello', true]])
+})
+
 test('live deltas accumulate and clear when the durable message lands', async () => {
   const { handle, connect } = handleWith()
   connect(1)

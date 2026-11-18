@@ -7,13 +7,14 @@
  * code only reads packs; nothing here names a particular script or game.
  */
 export {
-  ConfigFile, ConfigPatch, declaresFile, Game, Guide, Launch, LogEncoding, LogRule, Logs, LogSource, ParamChoices, PathSegment, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
+  ConfigFile, ConfigPatch, declaresFile, Game, Guide, Launch, LogEncoding, LogRule, Logs, LogSource, Mcp, MCP_SERVER_NAME, McpServer, ParamChoices, PathSegment, Recovery, Requirement, Resources, ScriptManifest, Task, TaskParam,
   type ScriptManifestInput,
 } from './manifest.ts'
 export { guideIssues, guideView, keyText, valueText } from './guide.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'
 export { PackError, parseManifest } from './parse.ts'
 export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, SraSource, type GameManifestInput } from './game.ts'
+export { parseJsonc, stripJsonc } from './jsonc.ts'
 export { chooseAsset, expand, globToRegExp, versionOfTag, type AssetChoice } from './match.ts'
 
 /** File names inside a pack directory. */

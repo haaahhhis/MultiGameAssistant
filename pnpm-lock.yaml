@@ -883,6 +883,9 @@ importers:
       '@adg/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@modelcontextprotocol/client':
+        specifier: 2.2.0
+        version: 2.2.0
       zod:
         specifier: 4.4.3
         version: 4.4.3

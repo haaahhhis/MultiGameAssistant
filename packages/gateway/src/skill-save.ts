@@ -57,6 +57,104 @@ export async function saveSkill(deps: SkillSaveDeps, input: unknown): Promise<{ 
   return { saved: file, replaced: existing !== undefined }
 }
 
+/** Where an imported skill came from: kept in `<dir>/.imported.json`, not in its folder (whose fingerprint says whether it was changed here). */
+export interface ImportedSkill {
+  readonly name: string
+  /** What it came from, e.g. `{ kind: 'script', script: 'maa', path: 'skills/daily', hash, version }`. */
+  readonly origin: Readonly<Record<string, unknown>> & { readonly kind: string }
+  /** Fingerprint of the copy as it was written: another one now means it was changed here. */
+  readonly copyHash: string
+  readonly at: number
+}
+
+export interface SkillImport {
+  readonly name: string
+  readonly description: string
+  /** The folder to copy (its SKILL.md and everything beside it), or with `single` only its SKILL.md. */
+  readonly from: string
+  readonly single?: boolean
+  readonly scripts?: readonly string[]
+  readonly games?: readonly string[]
+  readonly origin: ImportedSkill['origin']
+  /** A name to use when `name` is taken by a skill from elsewhere (e.g. `<script>-<name>`). */
+  readonly fallbackName?: string
+}
+
+const IMPORTED = '.imported.json'
+const SKIPPED = /^(node_modules|__pycache__|\.git)$/
+
+/** The imported skills still in `dir`. */
+export async function importedSkills(dir: string): Promise<ImportedSkill[]> {
+  const saved = await readFile(join(dir, IMPORTED), 'utf8').then(text => JSON.parse(text) as unknown, () => [])
+  if (!Array.isArray(saved)) return []
+  const out: ImportedSkill[] = []
+  for (const item of saved as ImportedSkill[]) {
+    if (typeof item?.name !== 'string' || !SKILL_NAME.test(item.name) || typeof item.origin?.kind !== 'string') continue
+    if (await readFile(join(dir, item.name, 'SKILL.md'), 'utf8').then(() => true, () => false)) out.push(item)
+  }
+  return out
+}
+
+/**
+ * Copy a skill from elsewhere (a script's own skills) into `dir` as one of
+ * this app's skills, with the owner given; the same origin imported again
+ * replaces its copy. @returns the name it was saved under.
+ */
+export async function importSkill(deps: SkillSaveDeps, input: SkillImport): Promise<{ name: string; saved: string; replaced: boolean }> {
+  const { cp, mkdir: mkdirp, rm: remove } = await import('node:fs/promises')
+  const imported = await importedSkills(deps.dir)
+  const sameOrigin = (item: ImportedSkill) => JSON.stringify([item.origin.kind, item.origin['script'], item.origin['path']]) === JSON.stringify([input.origin.kind, input.origin['script'], input.origin['path']])
+  const taken = await deps.taken()
+  const usable = async (name: string) => {
+    if (!SKILL_NAME.test(name) || name.length > MAX_SKILL_NAME || taken.includes(name)) return false
+    const exists = await readFile(join(deps.dir, name, 'SKILL.md'), 'utf8').then(() => true, () => false)
+    return !exists || imported.some(item => item.name === name && sameOrigin(item))
+  }
+  const previous = imported.find(sameOrigin)
+  const candidates = [...(previous === undefined ? [] : [previous.name]), input.name, ...(input.fallbackName === undefined ? [] : [input.fallbackName])]
+  let name: string | undefined
+  for (const candidate of candidates) if (await usable(candidate)) { name = candidate; break }
+  if (name === undefined) throw new Error(`技能名「${input.name}」已经被别的技能用了`)
+  const folder = join(deps.dir, name)
+  const replaced = await readFile(join(folder, 'SKILL.md'), 'utf8').then(() => true, () => false)
+  const text = await readFile(input.single === true ? input.from : join(input.from, 'SKILL.md'), 'utf8')
+  const body = /^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/.exec(text)?.[1] ?? text
+  await remove(folder, { recursive: true, force: true })
+  await mkdirp(folder, { recursive: true })
+  if (input.single !== true) await cp(input.from, folder, { recursive: true, filter: source => !SKIPPED.test(source.split(/[\\/]/).pop() ?? '') })
+  const owner = [
+    ...(input.scripts === undefined || input.scripts.length === 0 ? [] : [`scripts: ${JSON.stringify(input.scripts)}\n`]),
+    ...(input.games === undefined || input.games.length === 0 ? [] : [`games: ${JSON.stringify(input.games)}\n`]),
+  ].join('')
+  await writeFile(join(folder, 'SKILL.md'), `---\nname: ${name}\ndescription: ${JSON.stringify(input.description.replace(/\s+/g, ' ').trim())}\n${owner}---\n\n${body.trim()}\n`)
+  const record: ImportedSkill = { name, origin: input.origin, copyHash: await copyHash(folder), at: Date.now() }
+  const rest = imported.filter(item => item.name !== name && !sameOrigin(item))
+  await writeFile(join(deps.dir, IMPORTED), `${JSON.stringify([...rest, record], null, 1)}\n`)
+  await deps.saved?.(name)
+  return { name, saved: join(folder, 'SKILL.md'), replaced }
+}
+
+/** Whether an imported skill's folder is still as it was written (not changed on the 技能 page or by the agent). */
+export async function importUnchanged(dir: string, item: ImportedSkill): Promise<boolean> {
+  return await copyHash(join(dir, item.name)).catch(() => '') === item.copyHash
+}
+
+async function copyHash(folder: string): Promise<string> {
+  const { createHash } = await import('node:crypto')
+  const { readdir } = await import('node:fs/promises')
+  const files: string[] = []
+  const walk = async (sub: string): Promise<void> => {
+    for (const entry of await readdir(join(folder, sub), { withFileTypes: true })) {
+      const rel = sub === '' ? entry.name : `${sub}/${entry.name}`
+      if (entry.isDirectory()) { if (!SKIPPED.test(entry.name)) await walk(rel) } else if (entry.isFile()) files.push(rel)
+    }
+  }
+  await walk('')
+  const digest = createHash('sha256')
+  for (const rel of files.sort()) digest.update(rel).update('\0').update(await readFile(join(folder, ...rel.split('/')))).update('\0')
+  return digest.digest('hex').slice(0, 16)
+}
+
 /** Delete `<dir>/<name>/`; false when there is no such saved skill. */
 export async function removeSkill(dir: string, name: string): Promise<boolean> {
   if (!SKILL_NAME.test(name)) return false

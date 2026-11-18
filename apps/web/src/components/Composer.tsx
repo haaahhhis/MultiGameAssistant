@@ -21,7 +21,9 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   reminder?: ReactNode
 }) {
   const capabilities = useStore(client.capabilities)
-  const { queue, context } = useStore(session.state)
+  const { queue: waiting, context } = useStore(session.state)
+  // A message the agent already took is in the chat (ChatView), not waiting here.
+  const queue = waiting.filter(item => item.placement !== 'taken')
   // What was typed here before switching away comes back (drafts.ts).
   const [text, setText] = useState(() => readDraft(session.id))
   // By default what is sent goes into the work under way: the person may have said the wrong thing, or changed their mind.
