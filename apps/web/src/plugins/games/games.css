@@ -349,6 +349,9 @@ button.source-open { border: none; border-left: 1px solid var(--border); border-
 .dialog-title h3 { margin: 0; font-size: 15.5px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-meta { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); }
 .dialog-game { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* 更多游戏: a smaller window, as tall as its list (up to the usual height). */
+.activity-dialog.catalog-dialog { width: min(640px, 100%); height: auto; max-height: min(640px, 100%); }
+.catalog-dialog-body { padding: 16px 20px 20px; }
 .dialog-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: none; border-radius: var(--r-md); color: var(--muted); background: none; cursor: pointer; }
 .dialog-close:hover { color: var(--text); background: var(--hover); }
 .dialog-close .ui-icon { width: 15px; height: 15px; }

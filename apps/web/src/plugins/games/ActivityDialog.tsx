@@ -16,7 +16,7 @@ import { ProgressPill, progressOf } from './Overview.tsx'
  * Closes with Esc, its ✕, or a click beside it (not while a form is open in it:
  * that may hold unsaved words, and goes only by its own buttons or its own Esc).
  */
-export function ActivityDialog({ color, label, onClose, children }: { color: string; label: string; onClose: () => void; children: ReactNode }) {
+export function ActivityDialog({ color, label, onClose, className = '', children }: { color: string; label: string; onClose: () => void; className?: string; children: ReactNode }) {
   const frame = useRef<HTMLDivElement>(null)
   const held = () => frame.current?.querySelector('form.activity-editor') !== null
   useEffect(() => {
@@ -44,7 +44,7 @@ export function ActivityDialog({ color, label, onClose, children }: { color: str
   }, [onClose])
   return (
     <div className="activity-scrim" onPointerDown={e => { if (e.target === e.currentTarget && !held()) onClose() }}>
-      <div ref={frame} className="activity-dialog" role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} style={{ '--game': color } as CSSProperties}>
+      <div ref={frame} className={`activity-dialog ${className}`} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} style={{ '--game': color } as CSSProperties}>
         {children}
       </div>
     </div>

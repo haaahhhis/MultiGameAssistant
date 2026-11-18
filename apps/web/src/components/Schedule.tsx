@@ -276,11 +276,11 @@ export function ScheduleOverview({ client, focus, agent: firstAgent }: { client:
 function DailyReportLine({ report, now }: { report: { schedule: PipelineSchedule }; now: number }) {
   const next = nextAt(report.schedule, now)
   return (
-    <a className="task-card pipeline-line" href="#/p/games/report" title="在游戏页的「日报」里设置">
+    <a className="task-card pipeline-line" href="#/p/daily-report" title="在游戏的「日报」里设置">
       <Icon name="send" />
       <span className="task-title">每日日报</span>
       <span className="muted small">{timetableText(report.schedule)}{next === undefined ? '' : ` · 下次 ${clock(next)}`} · 发到飞书</span>
-      <span className="muted small daily-report-where">在游戏页设置</span>
+      <span className="muted small daily-report-where">在游戏的「日报」里设置</span>
       <Icon name="chevron" />
     </a>
   )
@@ -415,7 +415,7 @@ function TaskForm({ client, agents, task, onDone }: {
             </button>
           ))}
         </div>
-        {agent === 'games' && <p className="muted small">游戏的每日日报不在这里设：在<a href="#/p/games/report">游戏页的「日报」</a>里设置时间和内容。</p>}
+        {agent === 'games' && <p className="muted small">游戏的每日日报不在这里设：在游戏的<a href="#/p/daily-report">「日报」</a>里设置时间和内容。</p>}
       </div>
 
       <div className="task-form-step">

@@ -80,6 +80,8 @@ export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
   const section = /^#\/settings\/(.+)$/.exec(location.hash)
   if (section !== null) return { kind: 'settings', section: decodeURIComponent(section[1]!) }
+  // The daily report was a tab of the game board; it is the 游戏 agent's 日报 page now.
+  if (location.hash === '#/p/games/report') return { kind: 'page', id: 'daily-report' }
   const page = /^#\/p\/([^/]+)(?:\/(.+))?$/.exec(location.hash)
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
