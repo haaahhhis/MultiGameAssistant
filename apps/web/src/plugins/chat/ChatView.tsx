@@ -8,7 +8,7 @@ import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { CopyButton } from '../../components/CopyButton.tsx'
-import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
+import { needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
@@ -360,7 +360,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
       return (
-        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`} title={fullTime(item.time)}>
+        <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
           {said.channel !== undefined && <div className="msg-from">来自{said.channel}</div>}
           <div className="bubble">
             <UserText text={said.text} />
@@ -386,7 +386,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       // 助手 read a reply that came back and found nothing the person needs to hear.
       if (!item.live && isQuiet(item.text)) return <div className="quiet-reply"><Icon name="check" />看过了，没有要告诉你的</div>
       return (
-        <div className={`msg assistant ${item.live ? 'live' : ''}`} title={item.live ? undefined : fullTime(item.time)}>
+        <div className={`msg assistant ${item.live ? 'live' : ''}`}>
           {item.reasoning.trim() !== '' && (
             <details className="reasoning" open={item.live && item.text === ''}>
               <summary><Icon name="chevron" />{item.live && item.text === '' ? <span className="shimmer">正在思考…</span> : '思考过程'}</summary>

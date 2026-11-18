@@ -4,7 +4,7 @@ import { BY_YOU, type HandOff, type RelayNote, type TaskNote, type ThreadMessage
 import { MAIN, agentOf, useLastReplies, useRoles, type Agent } from '../../agents.ts'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
-import { fullTime, needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
+import { needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { OpenSubTask, SubAgentPane, SubTaskTracker, ThreadSubTasks, useThreadSubAgents, type OpenTask } from './SubTasks.tsx'
 
@@ -314,7 +314,7 @@ export function HandOffPage({ client, id, onClose }: { client: AdgClient; id: st
     if (s.kind === 'aside') { rows.push(<div key={s.key} className="exchange-aside" data-thread={s.thread}>{s.body}</div>); continue }
     const agent = agentNamed(s.who)
     rows.push(
-      <div key={s.key} className={`exchange-msg ${s.failed === true ? 'failed' : ''}`} data-thread={s.thread} title={at === undefined ? undefined : fullTime(at)}>
+      <div key={s.key} className={`exchange-msg ${s.failed === true ? 'failed' : ''}`} data-thread={s.thread}>
         <div className="exchange-msg-head">
           <span className={`agent-avatar small agent-${agent?.id ?? 'unknown'}`}><Icon name={agent?.icon ?? 'sparkles'} /></span>
           <strong>{s.kindOf === undefined || s.kindOf === 'done' ? s.who : `${s.who} · ${KIND_LABEL[s.kindOf]}`}</strong>
