@@ -60,17 +60,21 @@ export type Route =
   | { readonly kind: 'start' }
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
-  /** An agent: its one conversation, its timed tasks, or its earlier conversations. Its other tabs are pages it owns (`page`). */
+  /** An agent: its one conversation, or its earlier conversations. Its other tabs are pages it owns (`page`). */
   | { readonly kind: 'agent'; readonly id: string; readonly tab?: AgentTab | undefined }
   /** What two agents said to each other (Delegation.tsx HandOffPage). */
   | { readonly kind: 'handoff'; readonly id: string }
-  /** Every agent's timed tasks and the pipelines on a timetable, together. */
-  | { readonly kind: 'schedule' }
+  /**
+   * Every agent's timed tasks, reminders and the pipelines on a timetable, together: the one place they
+   * are made and changed. `focus`: one timed task or reminder to show (an agent's link to what it just
+   * set); `agent`: show only that agent's at first (an old `#/a/<agent>/schedule` link).
+   */
+  | { readonly kind: 'schedule'; readonly focus?: string | undefined; readonly agent?: string | undefined }
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
 
 /** An agent's own tabs besides its conversation (App.tsx AgentTabs). */
-export type AgentTab = 'schedule' | 'history'
+export type AgentTab = 'history'
 
 export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
@@ -80,9 +84,14 @@ export function readRoute(): Route {
   if (page !== null) return { kind: 'page', id: decodeURIComponent(page[1]!), ...(page[2] === undefined ? {} : { arg: decodeURIComponent(page[2]) }) }
   if (location.hash === '#/chat') return { kind: 'home' }
   if (location.hash === '#/schedule') return { kind: 'schedule' }
+  const focus = /^#\/schedule\/(.+)$/.exec(location.hash)
+  if (focus !== null) return { kind: 'schedule', focus: decodeURIComponent(focus[1]!) }
+  // Agents had a 定时 tab each; their timed tasks are all on 定时 now.
+  const ownSchedule = /^#\/a\/(.+)\/schedule$/.exec(location.hash)
+  if (ownSchedule !== null) return { kind: 'schedule', agent: decodeURIComponent(ownSchedule[1]!) }
   const handOff = /^#\/h\/(.+)$/.exec(location.hash)
   if (handOff !== null) return { kind: 'handoff', id: decodeURIComponent(handOff[1]!) }
-  const tab = /^#\/a\/(.+)\/(schedule|history)$/.exec(location.hash)
+  const tab = /^#\/a\/(.+)\/(history)$/.exec(location.hash)
   if (tab !== null) return { kind: 'agent', id: decodeURIComponent(tab[1]!), tab: tab[2] as AgentTab }
   const agent = /^#\/a\/(.+)$/.exec(location.hash)
   if (agent !== null) return { kind: 'agent', id: decodeURIComponent(agent[1]!) }
@@ -99,7 +108,7 @@ export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): voi
   const hash = route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
     : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.tab === undefined ? '' : `/${route.tab}`}`
     : route.kind === 'handoff' ? `#/h/${encodeURIComponent(route.id)}`
-    : route.kind === 'schedule' ? '#/schedule'
+    : route.kind === 'schedule' ? (route.focus === undefined ? '#/schedule' : `#/schedule/${encodeURIComponent(route.focus)}`)
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`
       : route.kind === 'settings' ? (route.section === undefined ? '#/settings' : `#/settings/${encodeURIComponent(route.section)}`)
         : route.kind === 'home' ? '#/chat' : ''

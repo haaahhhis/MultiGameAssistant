@@ -36,7 +36,7 @@ import { readImageFile } from './image-file.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, type AgentReminder, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SessionEvent, type SkillInfo } from '@adg/protocol'
+import { AGENTS_CAPABILITY, areaOf, COMPACTION_CAPABILITY, threadsBetween, ErrorCode, INSTANCES_CAPABILITY, MEMORY_CAPABILITY, PERMISSIONS_CAPABILITY, PERSONA_CAPABILITY, QUESTIONS_CAPABILITY, RpcError, SKILLS_CAPABILITY, timetableText, type AgentReminder, type PipelineSchedule, type ModelSelection, type NotificationMethod, type NotificationParams, type QuestionAnswerItem, type RequestParams, type SessionEvent, type SkillInfo } from '@adg/protocol'
 import { ApprovalBroker, type ApprovalAnswerer } from './approvals.ts'
 import { importedSkills, importSkill, importUnchanged, removeSkill, saveSkill, skillSaveTool, userSkills, type ImportedSkill, type SkillImport, type SkillSaveDeps } from './skill-save.ts'
 import { invokedSkills, SkillScope, type ScopedSkillInput, type SkillOwner } from './skill-scope.ts'
@@ -199,6 +199,13 @@ interface PresetSession {
 interface PresetService {
   current(session: PresetSession): string
   set(session: PresetSession, name: string): void
+}
+
+/** A tool call as dsh's tools events give it (dsh-tools ToolExecution), the parts read here. */
+interface AgentToolCall {
+  readonly name: string
+  readonly agent?: { readonly session: { readonly id: string } }
+  readonly arguments: Record<string, unknown>
 }
 
 /** The slice of a dsh agent (dsh-agent runtime-types) a role narrows: its session, and its own scope. */
@@ -540,6 +547,11 @@ export class AdgGateway extends Service {
         if (noted !== undefined) exec.arguments = { ...exec.arguments, prompt: noted }
       }
       return next()
+    }) as never)
+    // An agent set a timed task or a reminder with its own tool: the UI tells the person, and takes them to 定时.
+    ctx.on('tools/result' as never, ((exec: AgentToolCall, result: { isError: boolean; value?: unknown }) => {
+      if (result.isError || (exec.name !== 'schedule_task_save' && exec.name !== 'schedule_create')) return
+      void this.announceSchedule(exec, result.value).catch(error => log.warn(`could not announce a timed task: ${String(error)}`))
     }) as never)
     ctx.on('agent/disposed' as never, ((payload: { agent: LiveAgent }) => {
       if (this.agents.get(payload.agent.session.id) === payload.agent) this.agents.delete(payload.agent.session.id)
@@ -1381,6 +1393,36 @@ Content-Length: 0
   agentOfSession(sessionId: string): { id: string; name: string } | undefined {
     const spec = this.specOf(sessionId)
     return spec === undefined || spec.subAgentOf !== undefined ? undefined : { id: spec.id, name: spec.name }
+  }
+
+  /**
+   * Tell the UI that an agent set a timed task (schedule_task_save, whose
+   * value carries the task) or a reminder for itself (schedule_create, found
+   * again among the reminders by its words). Only the app's own agents: a
+   * shared dsh's other chats are nothing of ours.
+   */
+  private async announceSchedule(exec: AgentToolCall, value: unknown): Promise<void> {
+    if (exec.agent === undefined) return
+    const spec = this.specOf(exec.agent.session.id)
+    if (spec === undefined) return
+    const by = spec.subAgentOf === undefined ? spec.id : spec.id.replace(/:sub$/, '')
+    if (exec.name === 'schedule_task_save') {
+      const task = (value as { task?: { id: string; agent: string; title: string; schedule: PipelineSchedule } } | null)?.task
+      if (task === undefined) return
+      this.broadcast('schedule/agentSet', { kind: 'task', id: task.id, by, agent: task.agent, title: task.title, when: timetableText(task.schedule), changed: typeof exec.arguments['id'] === 'string' })
+      return
+    }
+    const prompt = typeof exec.arguments['prompt'] === 'string' ? exec.arguments['prompt'] : ''
+    const reminder = (await this.reminders().catch(() => [])).find(r => r.prompt === prompt)
+    this.broadcast('schedule/agentSet', {
+      kind: 'reminder',
+      ...(reminder === undefined ? {} : { id: reminder.id }),
+      by,
+      agent: reminder?.agent ?? by,
+      title: reminder?.title ?? (prompt.split('\n')[0] ?? '').slice(0, 40),
+      when: reminder === undefined ? '' : reminder.rule === '一次' ? `一次 · ${new Date(reminder.next).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : reminder.rule,
+      changed: false,
+    })
   }
 
   /**

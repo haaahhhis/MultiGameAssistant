@@ -88,7 +88,7 @@ export function NavRail({ client, pages, current, onAgent, onPage, onSchedule, o
         )}
         {(main === undefined ? top : restTop).map(pageItem)}
         {capabilities.has('pipelines') && (
-          <RailItem icon="calendar" label="定时" title="每个 agent 的定时任务，和按时运行的流水线" active={current.kind === 'schedule'} onClick={onSchedule} />
+          <RailItem icon="calendar" label="定时" title="所有 agent 的定时任务、提醒和按时运行的流水线：在这里新建和修改" active={current.kind === 'schedule'} onClick={onSchedule} />
         )}
         <RailItem icon="settings" label="设置" active={current.kind === 'settings'} onClick={onSettings} />
         {/* Only while the connection is not there: connected needs no mark. */}

@@ -111,6 +111,38 @@ export const PipelineSchedule = z.object({
 })
 export type PipelineSchedule = z.infer<typeof PipelineSchedule>
 
+const DAY_NAMES = ['日', '一', '二', '三', '四', '五', '六']
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
+
+/** A timetable in words: 每天 09:00 / 每周一、三 09:00、21:30 / 已暂停. */
+export function timetableText(s: Pick<PipelineSchedule, 'enabled' | 'times' | 'days'> & { readonly after?: string | undefined }): string {
+  if (!s.enabled) return '已暂停'
+  if (s.times.length === 0) return s.after === undefined ? '没有设时间' : `「${s.after}」跑完后`
+  const days = s.days.length === 0 || s.days.length === 7 ? '每天' : `每周${WEEK_ORDER.filter(d => s.days.includes(d)).map(d => DAY_NAMES[d]).join('、')}`
+  return `${days} ${[...s.times].sort().join('、')}`
+}
+
+/**
+ * An agent set a timed task (schedule_task_save) or a reminder for itself
+ * (dsh's schedule_create) with its own tool, not the person on the 定时
+ * page: the UI says so, with the way to the 定时 page.
+ */
+export const ScheduleAgentSet = z.object({
+  kind: z.enum(['task', 'reminder']),
+  /** The timed task's id (`tasks/list`) or the reminder's (`reminders/list`), when known. */
+  id: z.string().optional(),
+  /** Who set it (role id; `main`: 助手). */
+  by: z.string(),
+  /** Who is handed it when it comes. */
+  agent: z.string(),
+  title: z.string(),
+  /** When, in words (每天 09:00, 一次 …); empty when not known. */
+  when: z.string(),
+  /** An existing one was changed, not a new one made. */
+  changed: z.boolean(),
+})
+export type ScheduleAgentSet = z.infer<typeof ScheduleAgentSet>
+
 /**
  * What the computer does once a pipeline has ended and nothing else is
  * running: after a countdown that can be cancelled (UI, Feishu). Not after a
@@ -415,6 +447,8 @@ export const PipelineNotifications = {
   'schedule/changed': z.object({}),
   /** A timed task was saved, removed, or one of its runs started or ended. */
   'tasks/changed': z.object({}),
+  /** An agent set a timed task or a reminder with its tool (the 定时 page's own changes are not announced). */
+  'schedule/agentSet': ScheduleAgentSet,
   /** Keeping awake started or stopped; a sleep / shutdown was asked for, began counting down, was cancelled or done. */
   'schedule/power': PowerStatus,
 } as const

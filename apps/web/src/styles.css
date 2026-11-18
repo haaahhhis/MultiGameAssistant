@@ -591,6 +591,42 @@ a.task-card.pipeline-line .muted { flex: 1; min-width: 0; overflow: hidden; text
 .day-chip { width: 30px; height: 30px; padding: 0; border-radius: 50%; font-size: 12.5px; font-weight: 400; }
 .day-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .task-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* 定时: only one agent's, or all (components/Schedule.tsx). */
+.schedule-filter { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 16px; background: var(--raised); color: var(--text-2); font-size: 13px; font-weight: 400; }
+.agent-chip:first-child { padding-left: 12px; }
+.agent-chip.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--text); font-weight: 500; }
+.agent-chip .agent-avatar.small { width: 22px; height: 22px; }
+.schedule-agent .link-button { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 400; }
+.schedule-agent .link-button .ui-icon { width: 13px; height: 13px; }
+.schedule-sub { margin: 4px 2px 0; }
+.daily-report-where { flex: 0 0 auto !important; }
+/* A timed task or reminder an agent's link points at: lit for a moment. */
+.task-card.lit { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); transition: box-shadow .4s var(--ease), border-color .4s var(--ease); }
+/* The form: who (an agent each), what (examples to start from), when (presets, days). */
+.task-form-step { display: flex; flex-direction: column; gap: 8px; }
+.task-form-step + .task-form-step { padding-top: 12px; border-top: 1px solid var(--border); }
+.task-form-label { font-size: 13px; font-weight: 600; }
+.agent-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.agent-pick-item { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border-radius: var(--r-md); background: var(--panel); text-align: left; font-weight: 400; }
+.agent-pick-item:hover:not(:disabled) { border-color: var(--border-strong); }
+.agent-pick-item.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent) inset; }
+.agent-pick-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.agent-pick-name { color: var(--text); font-size: 13.5px; font-weight: 500; }
+.agent-pick-desc { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.task-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.example-chip { height: 28px; padding: 0 11px; border-radius: 14px; border-style: dashed; color: var(--text-2); font-size: 12.5px; font-weight: 400; }
+.example-chip:hover:not(:disabled) { border-color: var(--accent-line); color: var(--accent); }
+.day-preset { height: 30px; padding: 0 11px; border-radius: 15px; font-size: 12.5px; font-weight: 400; }
+.day-preset.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.day-chips-gap { width: 6px; }
+/* An agent set a timed task or a reminder: a box at the top right, to 定时. */
+.schedule-notices { position: fixed; top: calc(var(--title-bar, 0px) + 14px); right: 18px; z-index: 30; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
+.schedule-notice { display: flex; align-items: flex-start; gap: 12px; padding: 14px 10px 14px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--raised); box-shadow: var(--shadow-2, 0 12px 32px rgb(0 0 0 / .16)); animation: rise .22s var(--ease); }
+.schedule-notice-text { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.schedule-notice-head { color: var(--muted); font-size: 12.5px; }
+.schedule-notice-title { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-notice-actions { display: flex; gap: 8px; margin-top: 8px; }
 .schedule-entry { margin-top: 6px; }
 /* Work handed to this agent: who asked; the app's own long instructions fold away */
 .task-note summary { cursor: pointer; font-weight: 500; }

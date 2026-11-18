@@ -65,6 +65,6 @@ test('the agent sets a timed task by the agent\'s name, and is told the names it
   const exec = { signal: new AbortController().signal } as Parameters<typeof save.execute>[1]
   const result = await save.execute({ agent: '游戏', title: '看活动', prompt: '看看', times: ['09:00'] }, exec) as { task: AgentTask; link: string }
   assert.equal(result.task.agent, 'games')
-  assert.equal(result.link, '#/a/games/schedule')
+  assert.equal(result.link, `#/schedule/${result.task.id}`)
   await assert.rejects(Promise.resolve(save.execute({ agent: '天气', title: 'x', prompt: 'y', times: ['09:00'] }, exec)), /助手、游戏/)
 })

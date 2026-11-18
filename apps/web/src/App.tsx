@@ -10,7 +10,7 @@ import { SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
 import { AgentHistory, useHasEarlier } from './components/SessionList.tsx'
 import { useShowEarlier } from './preferences.ts'
-import { AgentSchedule, ScheduleOverview } from './components/AgentSchedule.tsx'
+import { ScheduleNotices, ScheduleOverview } from './components/Schedule.tsx'
 import { HandOffPage } from './plugins/chat/Delegation.tsx'
 import { MAIN, MAIN_AGENT, agentIdOf, agentOf, useHome, useRoles } from './agents.ts'
 import type { PageContribution } from './plugins.ts'
@@ -24,7 +24,7 @@ const START_PAGE = 'games'
 
 /**
  * Two-column shell: the navigation rail (游戏, then each agent), then the
- * open agent's tabs — its one conversation, its timed tasks, the pages it
+ * open agent's tabs — its one conversation, the pages it
  * owns (脚本, 运行, 编排…), its earlier conversations (docs/design/
  * agent-roles.md §10–§12) — or a plugin page, or settings.
  */
@@ -105,7 +105,7 @@ export function App({ client }: { client: AdgClient }) {
   // The agent in front, whose tabs show: its conversation or tab, an earlier conversation of its, a page it owns.
   const tabAgent = view.kind === 'home' ? MAIN_AGENT : view.kind === 'agent' ? view.id
     : view.kind === 'session' ? (selectedItem === undefined ? undefined : agentIdOf(selectedItem, roles)) : pageOwner
-  const agentTab = (id: string, tab: string) => setRoute(tab === 'chat' ? { kind: 'agent', id } : tab === 'schedule' || tab === 'history' ? { kind: 'agent', id, tab } : { kind: 'page', id: tab })
+  const agentTab = (id: string, tab: string) => setRoute(tab === 'chat' ? { kind: 'agent', id } : tab === 'history' ? { kind: 'agent', id, tab } : { kind: 'page', id: tab })
 
   const rail: RailTarget = view.kind === 'settings' ? { kind: 'settings' } : view.kind === 'schedule' ? { kind: 'schedule' }
     : tabAgent !== undefined ? { kind: 'agent', id: tabAgent }
@@ -134,13 +134,12 @@ export function App({ client }: { client: AdgClient }) {
             <div className="agent-area">
               {agentTabs}
               {pageOwner !== undefined ? pageView
-                : view.kind === 'agent' && agentRouteTab === 'schedule' ? <AgentSchedule key={view.id} client={client} agentId={view.id} />
                 : view.kind === 'agent' && agentRouteTab === 'history' ? <AgentHistory key={view.id} client={client} agentId={view.id} onSelect={openSession} />
                 : view.kind === 'session' ? <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
                 : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} onAgent={openAgent} reminder={reminder} />}
             </div>
           )}
-          {view.kind === 'schedule' && <ScheduleOverview client={client} onAgent={id => setRoute({ kind: 'agent', id, tab: 'schedule' })} />}
+          {view.kind === 'schedule' && <ScheduleOverview client={client} focus={view.focus} agent={view.agent} />}
           {view.kind === 'session' && tabAgent === undefined && (
             <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
           )}
@@ -148,6 +147,7 @@ export function App({ client }: { client: AdgClient }) {
         </div>
       )}
       <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
+      <ScheduleNotices client={client} onOpen={id => setRoute({ kind: 'schedule', ...(id === undefined ? {} : { focus: id }) })} />
       <UiSwitch />
     </div>
     </RailWide.Provider>
@@ -155,7 +155,7 @@ export function App({ client }: { client: AdgClient }) {
   )
 }
 
-/** The open agent's tabs: its conversation, its timed tasks, the pages it owns. */
+/** The open agent's tabs: its conversation, the pages it owns (timed tasks are all on 定时, the rail's). */
 function AgentTabs({ client, agentId, pages, current, onTab }: {
   client: AdgClient
   agentId: string
@@ -164,14 +164,12 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
   onTab: (tab: string) => void
 }) {
   const roles = useRoles(client)
-  const capabilities = useStore(client.capabilities)
   const role = roles.find(r => r.id === agentId)
   const agent = role === undefined ? MAIN : agentOf(role)
   const hasEarlier = useHasEarlier(client, agentId)
   const earlier = useShowEarlier() && (hasEarlier || current === 'history')
   const tabs = [
     { id: 'chat', title: '对话', icon: 'chat' as const },
-    ...(capabilities.has('pipelines') ? [{ id: 'schedule', title: '定时', icon: 'calendar' as const }] : []),
     ...[...pages].sort((a, b) => a.order - b.order).map(p => ({ id: p.id, title: p.title, icon: p.icon })),
     ...(earlier ? [{ id: 'history' satisfies AgentTab, title: '以前的对话', icon: 'archive' as const }] : []),
   ]

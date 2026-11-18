@@ -393,7 +393,8 @@ export function taskTools(tasks: AgentTasks, agents: () => readonly { readonly i
           agent, title: a.title, prompt: a.prompt,
           schedule: { ...(before?.schedule ?? { catchUpMinutes: 10 }), enabled: a.enabled ?? true, times: a.times, days: a.days ?? [] },
         })
-        const link = `#/a/${encodeURIComponent(agent)}/schedule`
+        // Every timed task is on the one 定时 page; this one stands out there.
+        const link = `#/schedule/${encodeURIComponent(task.id)}`
         return { ok: true, task, link, next: `告诉用户设好了；回复里附上链接 [查看定时任务](${link})` }
       },
     }),

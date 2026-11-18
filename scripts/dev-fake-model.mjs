@@ -10,7 +10,9 @@
  * shell command that needs approval; after the tool result it reports the
  * output. One mentioning “交给” makes 助手 hand a task to the 游戏 agent
  * (agent_delegate); 游戏 answers it a few seconds later, and 助手 passes the
- * reply on when it comes back. Anything else is echoed back.
+ * reply on when it comes back. One mentioning “定时” makes 助手 set a timed
+ * task for 游戏 (schedule_task_save): the UI's notice of it, and its link to 定时.
+ * Anything else is echoed back.
  */
 import { startFakeLlm } from '../packages/test-kit/lib/index.js'
 import { connectGateway, FAKE_MODEL, removeFakeProvider, saveFakeProvider } from './lib/gateway.mjs'
@@ -26,6 +28,10 @@ const llm = await startFakeLlm({
     if (last?.role === 'tool') {
       const called = messages.findLast(m => m.role === 'assistant')?.tool_calls?.[0]?.function?.name
       if (called === 'agent_delegate') return { text: '（模拟模型）已经交给「游戏」去读明日方舟今天的活动，它读完会发回来。' }
+      if (called === 'schedule_task_save') {
+        const link = /"link":\s*"([^"]+)"/.exec(textOf(last.content))?.[1] ?? '#/schedule'
+        return { text: `（模拟模型）设好了：工作日每天 09:00 交给「游戏」看三天内结束的活动。[查看定时任务](${link})` }
+      }
       return { text: `命令已执行，输出：${textOf(last.content).trim() || '（无输出）'}` }
     }
     // The user's words come first among the user-role messages of this turn;
@@ -38,6 +44,11 @@ const llm = await startFakeLlm({
     if (/^（「[^」]+」交回了/.test(said)) return { text: `（模拟模型）游戏读完了：${said.split('\n\n')[1] ?? ''}` }
     if (/交给/.test(said) && body.tools.some(t => (t.function?.name ?? t.name) === 'agent_delegate')) {
       return { toolCalls: [{ name: 'agent_delegate', arguments: { agent: '游戏', task: '读一下明日方舟国服今天的活动，哪些今天结束。', expecting: '今天结束的活动，没有就说没有' } }] }
+    }
+    // Any of this turn's messages (earlier ones may still be waiting for an answer).
+    const turn = messages.slice(lastAssistant + 1).filter(m => m.role === 'user').map(m => textOf(m.content))
+    if (turn.some(w => /定时/.test(w)) && body.tools.some(t => (t.function?.name ?? t.name) === 'schedule_task_save')) {
+      return { toolCalls: [{ name: 'schedule_task_save', arguments: { agent: '游戏', title: '看三天内结束的活动', prompt: '查各个游戏三天内结束的活动，列出名字和剩余时间。', times: ['09:00'], days: [1, 2, 3, 4, 5] } }] }
     }
     if (/审批|命令/.test(said)) {
       return {
