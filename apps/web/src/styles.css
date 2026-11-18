@@ -54,6 +54,8 @@
   --font: "Geist Variable", "Noto Sans SC Variable", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
   --mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", Consolas, "SFMono-Regular", monospace;
   --serif: "Noto Serif SC", "Songti SC", serif;
+  /* Each agent's colour (its avatar), and 游戏 the page's. */
+  --tone-intervene: #d93d42; --tone-games: #8e4ec6; --tone-scripts: #0f9384; --tone-pipelines: #e2600f; --tone-games-page: #3a5bd9;
   color-scheme: light;
 }
 
@@ -97,6 +99,7 @@
     --shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 30px 60px -30px rgb(0 0 0 / .7);
     --shadow-pop: inset 0 1px 0 rgb(255 255 255 / .05), 0 16px 40px -12px rgb(0 0 0 / .7);
     --scrim: rgb(0 0 0 / .56);
+    --tone-intervene: #ff6b70; --tone-games: #c08bf0; --tone-scripts: #2fd1b4; --tone-pipelines: #ff9351; --tone-games-page: #8aa2ff;
     color-scheme: dark;
   }
 }
@@ -139,6 +142,7 @@
   --shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 30px 60px -30px rgb(0 0 0 / .7);
   --shadow-pop: inset 0 1px 0 rgb(255 255 255 / .05), 0 16px 40px -12px rgb(0 0 0 / .7);
   --scrim: rgb(0 0 0 / .56);
+  --tone-intervene: #ff6b70; --tone-games: #c08bf0; --tone-scripts: #2fd1b4; --tone-pipelines: #ff9351; --tone-games-page: #8aa2ff;
   color-scheme: dark;
 }
 
@@ -217,11 +221,23 @@ button.rail-item:active:not(:disabled) { transform: none; }
 .rail-item > .ui-icon { flex-shrink: 0; width: 22px; height: 22px; margin: 0 8px; }
 button.rail-item.active { color: var(--text); background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
 .rail-item.active .ui-icon { color: var(--accent); }
+.ui-icon-fill { opacity: .14; }
+.rail-item.active > .ui-icon .ui-icon-fill, .agent-tabs button.active .ui-icon-fill { opacity: .22; }
 .rail-divider { flex-shrink: 0; align-self: center; width: 28px; height: 1px; margin: 4px 0; background: var(--border); }
 .rail.wide .rail-divider { width: calc(100% - 24px); }
 .rail-item .rail-avatar { flex-shrink: 0; width: 38px; height: 38px; }
 .rail-agent .rail-avatar .ui-icon { width: 19px; height: 19px; color: inherit; }
-.rail-item.active .rail-avatar { box-shadow: 0 0 0 2px var(--accent-line); }
+.rail-item.active .rail-avatar { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 35%, transparent), 0 0 0 2px color-mix(in srgb, var(--tone) 40%, transparent); }
+/* 助手 and 游戏 in one place: the other one peeks from the avatar's corner; the face turns in when it flips. */
+.rail-switch-stack { position: relative; flex-shrink: 0; width: 38px; height: 38px; }
+.rail-switch-face { animation: switch-in .24s var(--ease); }
+.rail-item .rail-switch-peek { position: absolute; left: -3px; bottom: -3px; z-index: 1; width: 18px; height: 18px; background: color-mix(in srgb, var(--tone) 16%, var(--bg)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent), 0 0 0 2px var(--bg); transition: transform .16s var(--ease); }
+.rail-item .rail-switch-peek .ui-icon { width: 11px; height: 11px; }
+button.rail-switch:hover .rail-switch-peek { transform: scale(1.12); }
+.rail-switch-next { display: inline-flex; align-items: center; gap: 3px; margin-left: 7px; color: var(--faint); font-size: 11px; font-weight: 400; vertical-align: 1px; }
+.rail-switch-next .ui-icon { width: 11px; height: 11px; }
+@keyframes switch-in { from { opacity: .4; transform: rotate(-90deg) scale(.7); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rail-switch-face { animation: none; } }
 .rail-label { min-width: 0; max-width: 100%; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .rail-label.unread { color: var(--text); font-weight: 600; }
 /* Narrow: icons only; the name is in each entry's tooltip and read out by screen readers. */
@@ -532,6 +548,7 @@ a.small-button { color: var(--text); text-decoration: none; }
 .agent-tabs button .ui-icon { width: 16px; height: 16px; }
 .agent-tabs button:hover { color: var(--text); background: var(--hover); }
 .agent-tabs button.active { color: var(--text); background: var(--raised); font-weight: 500; box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
+.agent-tabs button.active .ui-icon { color: var(--accent); }
 /* In the desktop title bar, in its middle (as the Claude app has its mode switch): one slim group. */
 .agent-tabs.in-title-bar { position: fixed; top: 2px; left: 50%; z-index: 2001; transform: translateX(-50%); max-width: calc(100vw - 520px); height: calc(var(--title-bar, 34px) - 4px); padding: 2px; border-color: transparent; background: var(--sunken); -webkit-app-region: no-drag; app-region: no-drag; }
 .agent-tabs.in-title-bar button { height: 100%; padding: 0 14px; font-size: 13.5px; }
@@ -1671,12 +1688,20 @@ button.agent-row { display: flex; align-items: flex-start; gap: 10px; width: 100
 button.agent-row:hover:not(:disabled) { background: var(--hover); }
 button.agent-row:active:not(:disabled) { transform: none; }
 button.agent-row.active { background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
-.agent-avatar { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+.agent-avatar {
+  --tone: var(--accent);
+  position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 22%, transparent), color-mix(in srgb, var(--tone) 8%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 22%, transparent);
+  color: var(--tone);
+}
 .agent-avatar .ui-icon { width: 17px; height: 17px; }
-.agent-avatar.agent-intervene { background: color-mix(in srgb, #e5484d 16%, transparent); color: #d93d42; }
-.agent-avatar.agent-games { background: color-mix(in srgb, #8e4ec6 16%, transparent); color: #8e4ec6; }
-.agent-avatar.agent-scripts { background: color-mix(in srgb, #12a594 16%, transparent); color: #0f9384; }
-.agent-avatar.agent-pipelines { background: color-mix(in srgb, #f76b15 16%, transparent); color: #e2600f; }
+.agent-avatar .ui-icon-fill { opacity: .2; }
+.agent-avatar.agent-intervene { --tone: var(--tone-intervene); }
+.agent-avatar.agent-games { --tone: var(--tone-games); }
+.agent-avatar.agent-scripts { --tone: var(--tone-scripts); }
+.agent-avatar.agent-pipelines { --tone: var(--tone-pipelines); }
+.agent-avatar.page-games { --tone: var(--tone-games-page); }
 .agent-avatar.large { width: 56px; height: 56px; }
 .agent-avatar.large .ui-icon { width: 28px; height: 28px; }
 .agent-busy { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-fill); box-shadow: 0 0 0 2px var(--panel); animation: blink 1.6s var(--ease) infinite; }
