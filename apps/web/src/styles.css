@@ -196,7 +196,7 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 /*
  * Narrow (icons only) or wide (names beside them): every entry keeps its icon
  * in the same place and size either way, so widening or narrowing the rail
- * moves nothing but the names. Icons sit in a 32 px box whose centre is 34 px
+ * moves nothing but the names. Icons sit in a 38 px box whose centre is 34 px
  * from the rail's left edge (the middle of the narrow rail); each kind of
  * entry has one height.
  */
@@ -207,36 +207,36 @@ button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .rail-games { padding: 0; }
 .rail-footer { display: flex; flex-direction: column; gap: 4px; margin: 0 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 button.rail-item {
-  position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 8px 0 10px;
+  position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 100%; height: 46px; padding: 0 8px 0 7px;
   border: none; border-radius: var(--r-md); color: var(--muted); background: none; text-align: left; overflow: hidden;
 }
-.rail-agent, .rail-game { height: 48px !important; }
+.rail-agent, .rail-game { height: 56px !important; }
 button.rail-item:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 button.rail-item:active:not(:disabled) { transform: none; }
-/* A plain icon in its 32 px box. */
-.rail-item > .ui-icon { flex-shrink: 0; width: 19px; height: 19px; margin: 0 6.5px; }
+/* A plain icon in its 38 px box. */
+.rail-item > .ui-icon { flex-shrink: 0; width: 22px; height: 22px; margin: 0 8px; }
 button.rail-item.active { color: var(--text); background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
 .rail-item.active .ui-icon { color: var(--accent); }
 .rail-divider { flex-shrink: 0; align-self: center; width: 28px; height: 1px; margin: 4px 0; background: var(--border); }
 .rail.wide .rail-divider { width: calc(100% - 24px); }
-.rail-avatar { flex-shrink: 0; width: 32px; height: 32px; }
-.rail-agent .rail-avatar .ui-icon { width: 16px; height: 16px; color: inherit; }
+.rail-item .rail-avatar { flex-shrink: 0; width: 38px; height: 38px; }
+.rail-agent .rail-avatar .ui-icon { width: 19px; height: 19px; color: inherit; }
 .rail-item.active .rail-avatar { box-shadow: 0 0 0 2px var(--accent-line); }
-.rail-label { min-width: 0; max-width: 100%; overflow: hidden; font-size: 13px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.rail-label { min-width: 0; max-width: 100%; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .rail-label.unread { color: var(--text); font-weight: 600; }
 /* Narrow: icons only; the name is in each entry's tooltip and read out by screen readers. */
 .rail:not(.wide) .rail-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .rail-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; padding-right: 14px; }
-.rail-preview { overflow: hidden; color: var(--muted); font-size: 11.5px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.rail-preview { overflow: hidden; color: var(--muted); font-size: 12.5px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 /* Marks on the icon's corner, narrow or wide alike. */
-.rail-unread { position: absolute; top: 7px; left: 36px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fill); box-shadow: 0 0 0 2px var(--bg); }
-.rail-badge { position: absolute; top: 3px; left: 31px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--warn); color: var(--panel); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
+.rail-unread { position: absolute; top: 7px; left: 38px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fill); box-shadow: 0 0 0 2px var(--bg); }
+.rail-badge { position: absolute; top: 3px; left: 33px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--warn); color: var(--panel); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
 button.rail-item:disabled { opacity: .5; }
 .rail-connection { display: flex; align-items: center; justify-content: center; height: 24px; }
 .rail-connection.open .conn-dot { background: var(--ok); }
 .rail-connection.reconnecting .conn-dot, .rail-connection.connecting .conn-dot { background: var(--warn); animation: blink 1.2s var(--ease) infinite; }
 /* A game in the rail: its first character on its colour. */
-.game-avatar { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 50%; background: color-mix(in srgb, var(--game, var(--accent)) 18%, transparent); color: var(--game, var(--accent)); font-size: 13px; font-weight: 700; }
+.game-avatar { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 50%; background: color-mix(in srgb, var(--game, var(--accent)) 18%, transparent); color: var(--game, var(--accent)); font-size: 15px; font-weight: 700; }
 .rail-item.active .game-avatar { box-shadow: 0 0 0 2px var(--game, var(--accent-line)); }
 /* The program's own icon: no circle, no tint; the icon is its own shape. */
 .game-avatar.with-icon { border-radius: 8px; background: none; }
@@ -321,7 +321,6 @@ button.brand { display: flex; align-items: center; gap: 10px; padding: 8px; marg
 .settings-sidebar { gap: 20px; }
 .back-link { margin-top: 6px; }
 .settings-title { margin: 0; padding: 0 10px; font-size: 20px; }
-.settings-toggle { margin-top: 8px; padding: 0 10px; }
 .segmented-control { display: flex; gap: 2px; margin: 0 4px; padding: 3px; border-radius: var(--r-md); background: var(--panel); border: 1px solid var(--border); }
 .segmented-control button { flex: 1; min-width: 0; height: 30px; padding: 0 6px; border: none; border-radius: 7px; color: var(--muted); font-size: 12.5px; font-weight: 400; white-space: nowrap; }
 .segmented-control button.active { background: var(--raised); color: var(--text); font-weight: 500; box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
@@ -529,13 +528,13 @@ a.small-button { color: var(--text); text-decoration: none; }
 .agent-area { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }
 .agent-area > .main { flex: 1; }
 .agent-tabs { display: flex; flex-shrink: 0; gap: 2px; align-self: flex-start; max-width: 100%; overflow-x: auto; padding: 3px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); }
-.agent-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border: none; border-radius: 7px; background: none; color: var(--muted); font-size: 12.5px; font-weight: 400; white-space: nowrap; }
-.agent-tabs button .ui-icon { width: 14px; height: 14px; }
+.agent-tabs button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 15px; border: none; border-radius: 7px; background: none; color: var(--muted); font-size: 13.5px; font-weight: 400; white-space: nowrap; }
+.agent-tabs button .ui-icon { width: 16px; height: 16px; }
 .agent-tabs button:hover { color: var(--text); background: var(--hover); }
 .agent-tabs button.active { color: var(--text); background: var(--raised); font-weight: 500; box-shadow: inset 0 0 0 1px var(--border), var(--shadow-1); }
 /* In the desktop title bar, in its middle (as the Claude app has its mode switch): one slim group. */
-.agent-tabs.in-title-bar { position: fixed; top: 3px; left: 50%; z-index: 2001; transform: translateX(-50%); max-width: calc(100vw - 520px); height: calc(var(--title-bar, 34px) - 6px); padding: 2px; border-color: transparent; background: var(--sunken); -webkit-app-region: no-drag; app-region: no-drag; }
-.agent-tabs.in-title-bar button { height: 100%; padding: 0 11px; font-size: 12px; }
+.agent-tabs.in-title-bar { position: fixed; top: 2px; left: 50%; z-index: 2001; transform: translateX(-50%); max-width: calc(100vw - 520px); height: calc(var(--title-bar, 34px) - 4px); padding: 2px; border-color: transparent; background: var(--sunken); -webkit-app-region: no-drag; app-region: no-drag; }
+.agent-tabs.in-title-bar button { height: 100%; padding: 0 14px; font-size: 13.5px; }
 .agent-tabs.in-title-bar button.active { background: var(--panel); }
 /*
  * Without the desktop window (a browser, or dsh's frame): a strip of the page's own in its place, with the same

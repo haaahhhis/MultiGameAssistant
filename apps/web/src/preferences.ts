@@ -1,11 +1,15 @@
 import { useSyncExternalStore } from 'react'
 
-/** Whether agents show their 「以前的对话」 tab; kept per browser, like the theme. */
-const SHOW_EARLIER_KEY = 'adg.showEarlier'
+/**
+ * Whether agents show their 「以前的对话」 tab; kept per browser, like the theme.
+ * Off until turned on (设置 → 对话压缩), even with earlier conversations there;
+ * a new key, so the old 'adg.showEarlier' (on by default) no longer counts.
+ */
+const SHOW_EARLIER_KEY = 'adg.showEarlierTab'
 const listeners = new Set<() => void>()
 
 function readShowEarlier(): boolean {
-  try { return localStorage.getItem(SHOW_EARLIER_KEY) !== '0' } catch { return true }
+  try { return localStorage.getItem(SHOW_EARLIER_KEY) === '1' } catch { return false }
 }
 
 let showEarlier = readShowEarlier()
