@@ -166,6 +166,8 @@ export const PackSummary = z.object({
   builtin: z.boolean(),
   /** A script with this pack is in the library. */
   installed: z.boolean(),
+  /** The user's own (the agent wrote it, in the user's pack directory): `scripts/packs/remove` deletes it. */
+  own: z.boolean().optional(),
   /** Problems loading the pack, if any; the pack is skipped. */
   error: z.string().optional(),
 })
@@ -591,9 +593,19 @@ export const ScriptRequests = {
     params: z.object({ id: ScriptId }),
     result: z.object({ sessionId: z.string() }),
   },
+  /** Forget a script; its own script pack (one the agent wrote for it, that no other script uses) goes with it. */
   'scripts/remove': {
     capability: SCRIPTS_CAPABILITY,
     params: z.object({ id: ScriptId, deleteFiles: z.boolean().optional() }),
+    result: Empty,
+  },
+  /**
+   * Delete one of the user's own script packs (`own`). Scripts it describes
+   * stay, without its tasks; packs from the 技能库 are deleted there.
+   */
+  'scripts/packs/remove': {
+    capability: SCRIPTS_CAPABILITY,
+    params: z.object({ id: z.string().min(1) }),
     result: Empty,
   },
   /**

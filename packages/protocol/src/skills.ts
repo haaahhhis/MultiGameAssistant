@@ -43,6 +43,10 @@ export const SkillInfo = z.object({
   removable: z.boolean().optional(),
   /** A script pack's SKILL.md, or a game pack's guide (the 技能 page lists them as 脚本包 and 游戏包). */
   kind: z.enum(['script-pack', 'game-pack']).optional(),
+  /** A script pack's id (its SKILL.md is this skill). */
+  pack: z.string().optional(),
+  /** A script pack of the user's own (the agent wrote it): `scripts/packs/remove` deletes it. */
+  ownPack: z.boolean().optional(),
 })
 export type SkillInfo = z.infer<typeof SkillInfo>
 

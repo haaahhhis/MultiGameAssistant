@@ -28,6 +28,8 @@ function setup(taken: Record<string, string> = {}, app: { version?: string } = {
       'scripts/maa/SKILL.md': skill('maa', 'MAA 的安装与运行'),
     } as Record<string, string>,
     downloads: [] as string[],
+    /** The repository as it was at each git tag (a version it keeps). */
+    tags: {} as Record<string, Record<string, string>>,
     registered: new Map<string, string>(),
     owners: new Map<string, unknown>(),
     /** The pack kinds each packsChanged call named. */
@@ -38,8 +40,11 @@ function setup(taken: Record<string, string> = {}, app: { version?: string } = {
     dir,
     download: async (url, dest) => {
       state.downloads.push(url)
+      const tag = /\/refs\/tags\/(.+)$/.exec(url)?.[1]
+      const files = tag === undefined ? state.files : state.tags[decodeURIComponent(tag)]
+      if (files === undefined) throw new Error('HTTP 404')
       await mkdir(dirname(dest), { recursive: true })
-      await writeFile(dest, repoZip(state.files))
+      await writeFile(dest, repoZip(files))
     },
     extract: async (archive, dest) => { await extract(archive, dest) },
     taken: async () => new Map(Object.entries(taken)),
@@ -293,4 +298,44 @@ test('a downloaded one can be changed here: its description and instructions, th
   assert.match(state.registered.get('maa') ?? '', /先开模拟器/, 'the agents see it at once')
   assert.match(await hub.preview('maa-copilot'), /用 MAA 抄作业/, 'one not downloaded can be looked at')
   await assert.rejects(hub.save('maa-copilot', '还没下载的技能说明', '# 内容内容内容内容内容内容内容\n'), /没有从技能库下载过/)
+})
+
+test('any version the repository keeps can be taken, back or forward, from its git tag; one of another kind is refused', async () => {
+  const { hub, dir, state } = setup()
+  const pack = readFileSync(new URL('../../packs/packs/maa/adg.script.yaml', import.meta.url), 'utf8')
+  const entry = { name: 'maa', kind: 'script', scripts: ['maa'], games: ['arknights'] }
+  state.files = {
+    'index.json': JSON.stringify({ skills: [{ ...entry, path: 'games/arknights/maa/MultiGameAssistant/maa', author: 'MultiGameAssistant', version: '1.3.0', history: [{ version: '1.2.0', changes: '旧的做法' }, { version: '1.1.0' }] }] }),
+    'games/arknights/maa/MultiGameAssistant/maa/SKILL.md': skill('maa', 'MAA 的安装与运行', '# 1.3.0\n'),
+    'games/arknights/maa/MultiGameAssistant/maa/adg.script.yaml': pack,
+  }
+  // Kept where the repository had it then, and 1.1.0 from before it was a pack.
+  state.tags['maa@1.2.0'] = {
+    'index.json': JSON.stringify({ skills: [{ ...entry, path: 'games/arknights/maa', version: '1.2.0' }] }),
+    'games/arknights/maa/SKILL.md': skill('maa', 'MAA 的安装与运行', '# 1.2.0\n'),
+    'games/arknights/maa/adg.script.yaml': pack,
+  }
+  state.tags['maa@1.1.0'] = {
+    'index.json': JSON.stringify({ skills: [{ ...entry, path: 'games/arknights/maa', version: '1.1.0' }] }),
+    'games/arknights/maa/SKILL.md': skill('maa', 'MAA 的安装与运行', '# 1.1.0\n'),
+  }
+  const file = join(dir, 'skills', 'maa', 'SKILL.md')
+  const listed = await hub.install('maa')
+  assert.equal(listed.author, 'MultiGameAssistant')
+  assert.deepEqual(listed.history, [{ version: '1.2.0', changes: '旧的做法' }, { version: '1.1.0' }])
+
+  const back = await hub.installVersion('maa', '1.2.0')
+  assert.ok(state.downloads.at(-1)!.endsWith('/zip/refs/tags/maa%401.2.0'), state.downloads.at(-1))
+  assert.match(readFileSync(file, 'utf8'), /# 1\.2\.0/)
+  assert.deepEqual(back.installed && { version: back.installed.version, update: back.installed.update, held: back.installed.held }, { version: '1.2.0', update: false, held: true }, 'held: the newer one is not offered')
+  assert.deepEqual(state.packs.at(-1), 'script', 'the library reads the pack again')
+
+  await assert.rejects(hub.installVersion('maa', '1.1.0'), /1\.1\.0 版是技能，现在是脚本包/)
+  assert.match(readFileSync(file, 'utf8'), /# 1\.2\.0/, 'nothing changed')
+  await assert.rejects(hub.installVersion('maa', '9.9.9'), /没有「maa」的 9\.9\.9 版/)
+
+  const forward = await hub.installVersion('maa', '1.3.0')
+  assert.match(readFileSync(file, 'utf8'), /# 1\.3\.0/)
+  assert.deepEqual(forward.installed && { version: forward.installed.version, held: forward.installed.held }, { version: '1.3.0', held: undefined })
+  assert.ok(!existsSync(join(dir, 'downloads', 'maa@1.2.0')), 'the tag\'s copy is not kept')
 })

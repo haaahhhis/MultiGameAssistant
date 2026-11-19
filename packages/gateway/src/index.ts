@@ -812,6 +812,7 @@ export class AdgGateway extends Service {
         ...ownerInfo(this.skillScope.ownerOf(s.name)),
         ...(this.savedSkills?.registered.has(s.name) === true ? { removable: true } : {}),
         ...(this.skillScope.kindOf(s.name) === undefined ? {} : { kind: this.skillScope.kindOf(s.name)! }),
+        ...this.skillScope.packOf(s.name),
       })
       const saved = () => {
         if (this.savedSkills === undefined) throw new RpcError(ErrorCode.InvalidParams, '这里没有可以写的技能文件夹')

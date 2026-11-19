@@ -89,7 +89,7 @@ export class AdgAnalyzer extends Service {
             ...(pack.manifest.game?.name === undefined ? {} : { games: [pack.manifest.game.name] }),
           }
           try {
-            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir }, owner, kind: 'script-pack' }))
+            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir }, owner, kind: 'script-pack', pack: pack.manifest.id, ...(library.isOwnPack(pack.manifest.id) ? { ownPack: true } : {}) }))
           } catch (error) {
             log.warn(`pack ${pack.manifest.id}: skill not registered: ${error instanceof Error ? error.message : String(error)}`)
           }

@@ -199,6 +199,7 @@ export class ScriptLibrary {
       name: manifest.name,
       builtin,
       installed: used.has(manifest.id),
+      ...(this.isOwnPack(manifest.id) ? { own: true } : {}),
       ...(manifest.description === undefined ? {} : { description: manifest.description }),
       ...(manifest.source.github === undefined ? {} : { repo: manifest.source.github }),
       ...(manifest.source.mirrorchyan === undefined ? {} : { mirrorchyan: manifest.source.mirrorchyan.rid }),
@@ -1377,7 +1378,34 @@ export class ScriptLibrary {
     return this.#info(script)
   }
 
-  /** Forget a script; installed versions are deleted only with `deleteFiles`, imported directories never. */
+  /** One of the user's own packs: in the user's pack directory (the agent wrote it), not shipped or from the 技能库. */
+  isOwnPack(id: string): boolean {
+    const pack = this.#packs.get(id)
+    return pack !== undefined && !pack.builtin && pack.hub !== true && samePath(dirname(pack.dir), this.userPackDir)
+  }
+
+  /**
+   * Delete one of the user's own script packs. The scripts it describes stay,
+   * without its tasks (or with the pack it was used instead of, which is back).
+   */
+  async removePack(id: string): Promise<void> {
+    await this.reloadPacks()
+    const pack = this.#packs.get(id)
+    if (pack === undefined) throw new Error(`没有脚本包 ${id}`)
+    if (!this.isOwnPack(id)) throw new Error(pack.hub === true ? `脚本包 ${id} 是从技能库下载的：在「技能」页删除` : `脚本包 ${id} 是软件自带的，不能删除`)
+    await rm(pack.dir, { recursive: true, force: true })
+    if (pack.over === undefined) {
+      for (const script of this.#state.scripts.filter(s => s.packId === id)) {
+        delete script.packId
+        delete script.packVersion
+      }
+      await this.#save()
+    }
+    await this.reloadPacks()
+    this.#options.onChanged()
+  }
+
+  /** Forget a script; installed versions are deleted only with `deleteFiles`, imported directories never; its own pack (that no other script uses) goes too. */
   async remove(id: string, deleteFiles = false): Promise<void> {
     const script = this.#script(id)
     if (this.#jobs.active(id) !== undefined) throw new Error(`${id} 有任务正在进行，请先取消`)
@@ -1393,6 +1421,12 @@ export class ScriptLibrary {
     this.#state.setups = this.#state.setups.filter(s => s.scriptId !== id)
     this.#state.scripts = this.#state.scripts.filter(s => s.id !== id)
     await this.#save()
+    // The pack the agent wrote for it is of no use without it.
+    const packId = script.packId
+    if (packId !== undefined && this.isOwnPack(packId) && !this.#state.scripts.some(s => s.packId === packId)) {
+      await rm(this.#packs.get(packId)!.dir, { recursive: true, force: true })
+      await this.reloadPacks()
+    }
     this.#options.onChanged(id)
   }
 

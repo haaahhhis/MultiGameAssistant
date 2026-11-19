@@ -126,6 +126,10 @@ export function scriptsCapability(library: ScriptLibrary, summaries: { summarize
         await library.remove(p.id, p.deleteFiles === true)
         return {}
       },
+      'scripts/packs/remove': async params => {
+        await library.removePack((params as RequestParams<'scripts/packs/remove'>).id)
+        return {}
+      },
       'scripts/envCheck': params => library.envCheck((params as RequestParams<'scripts/envCheck'>).id),
       'scripts/envFix': async params => {
         const p = params as RequestParams<'scripts/envFix'>

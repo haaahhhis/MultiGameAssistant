@@ -249,3 +249,41 @@ test('after the tools folder moves, scripts in the former one keep working, move
     await next.close()
   }
 })
+
+test("the agent's own script pack can be deleted, and goes with the last script it describes; shipped ones stay", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'adg-own-pack-'))
+  const own = join(root, 'data', 'packs', 'mine')
+  mkdirSync(own, { recursive: true })
+  writeFileSync(join(own, 'adg.script.yaml'), PACK.replace('id: tool', 'id: mine').replace('Owner/Tool', 'Owner/Mine'))
+  mkdirSync(join(root, 'packs', 'tool'), { recursive: true })
+  writeFileSync(join(root, 'packs', 'tool', 'adg.script.yaml'), PACK)
+  const library = new ScriptLibrary({
+    toolsDir: join(root, 'tools'), dataDir: join(root, 'data'), packDirs: [join(root, 'packs')],
+    credential: async () => undefined, credentialConfigured: async () => false, envHost: noDotnet,
+    onChanged() {}, onJob() {}, log: { info() {}, warn() {} },
+  })
+  await library.start()
+  const packOf = (id: string) => library.list().packs.find(p => p.id === id)
+  assert.deepEqual([packOf('mine')?.own, packOf('tool')?.own], [true, undefined])
+  await assert.rejects(library.removePack('tool'), /软件自带/)
+
+  // Two scripts with it: removing one keeps it, removing the last deletes it.
+  for (const name of ['a', 'b']) mkdirSync(join(root, name), { recursive: true })
+  const a = await library.import({ path: join(root, 'a'), id: 'a', packId: 'mine' })
+  const b = await library.import({ path: join(root, 'b'), id: 'b', packId: 'mine' })
+  await library.remove(a.id)
+  assert.ok(existsSync(own), 'another script still uses it')
+  await library.remove(b.id)
+  assert.ok(!existsSync(own), 'gone with its last script')
+  assert.equal(packOf('mine'), undefined)
+
+  // Deleted by hand: the script it described stays, without it.
+  mkdirSync(own, { recursive: true })
+  writeFileSync(join(own, 'adg.script.yaml'), PACK.replace('id: tool', 'id: mine').replace('Owner/Tool', 'Owner/Mine'))
+  await library.reloadPacks()
+  const c = await library.import({ path: join(root, 'a'), id: 'c', packId: 'mine' })
+  await library.removePack('mine')
+  assert.ok(!existsSync(own))
+  assert.equal(library.get(c.id).packId, undefined)
+  library.dispose()
+})

@@ -198,7 +198,7 @@ export function ScriptDetail({ client, script, skillUpdates = [], job, setup, on
       <section className="card danger-zone">
         {!confirmRemove ? (
           <div className="key-actions">
-            <span className="muted small">{managed ? '从脚本库移除；可选择同时删除已安装的文件。' : '从脚本库移除；你的目录不会被删除。'}</span>
+            <span className="muted small">{managed ? '从脚本库移除；可选择同时删除已安装的文件。' : '从脚本库移除；你的目录不会被删除。'}agent 为它写的脚本包一起删掉，从技能库下载的保留。</span>
             <span className="spacer" />
             <button className="danger-outline small-button" disabled={running} onClick={() => setConfirmRemove(true)}>移除</button>
           </div>

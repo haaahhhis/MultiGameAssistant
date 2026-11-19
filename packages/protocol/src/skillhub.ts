@@ -37,6 +37,8 @@ export const HubItem = z.object({
   games: z.array(z.string()),
   scripts: z.array(z.string()),
   repo: z.string(),
+  /** Who published it (a GitHub name): the 技能库 lists packs by game, script, then author. */
+  author: z.string().optional(),
   path: z.string(),
   /** Fingerprint of its whole folder: a different one is another version. */
   hash: z.string(),
@@ -45,6 +47,8 @@ export const HubItem = z.object({
   changes: z.string().optional(),
   /** App versions it works with, e.g. `>=2.1.0`. */
   requires: z.string().optional(),
+  /** Earlier versions the repository keeps (git tags `<name>@<version>`), newest first: `skillhub/version` takes any. */
+  history: z.array(z.object({ version: z.string(), changes: z.string().optional() })).optional(),
   installed: z.object({
     at: z.number(),
     /** The repository has a newer version (not one gone back from). */
@@ -94,6 +98,16 @@ export const SkillHubRequests = {
     capability: SKILLHUB_CAPABILITY,
     params: ByName,
     result: z.object({ state: z.enum(['current', 'updated']), item: HubItem }),
+  },
+  /**
+   * Take one version the repository keeps, forward or back: the current one
+   * (`version`) or one of `history`. One not current is held (no update
+   * offered until another); one of another kind (not a pack then) is refused.
+   */
+  'skillhub/version': {
+    capability: SKILLHUB_CAPABILITY,
+    params: ByName.extend({ version: z.string().min(1).max(40) }),
+    result: HubItem,
   },
   /** Go back to the version the last update replaced. */
   'skillhub/rollback': {

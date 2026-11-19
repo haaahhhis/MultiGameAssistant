@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { MAX_SKILL_NAME, SKILL_NAME, type HubItem, type HubRepo, type RequestResult, type ScriptInfo, type SkillInfo, type SkillOwner } from '@adg/protocol'
+import { MAX_SKILL_NAME, SKILL_NAME, type HubItem, type RequestResult, type ScriptInfo, type SkillInfo, type SkillOwner } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { confirm } from '../../components/Dialog.tsx'
 import { Icon, type IconName } from '../../components/Icons.tsx'
@@ -9,45 +9,47 @@ import { desktop } from '../../desktop.ts'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText, useScriptList } from '../scripts/data.ts'
 import { findGame, placeLabel, placesOf, type GameRef } from '../../skillPlaces.ts'
+import { SkillHubPanel } from './SkillHubPanel.tsx'
 import './skills.css'
 
 type Hub = RequestResult<'skillhub/list'>
 
 /**
- * What the list is split into. Script packs and game packs are what the app
- * starts with, from the 技能库 (the user may delete any); skills are ways of
- * doing things; the user's own can be changed freely; the core ones keep the
- * app working and cannot be changed.
+ * What 已有的技能 is split into. Script packs and game packs come from the 技能库
+ * (the user may delete any); skills are ways of doing things, downloaded or the
+ * user's own (agent-saved or written here), each under its game; the core ones
+ * keep the app working and cannot be changed.
  */
-type Category = 'script-pack' | 'game-pack' | 'skill' | 'mine' | 'core' | 'available'
+type Category = 'script-pack' | 'game-pack' | 'skill' | 'core'
 const CATEGORIES: readonly { id: Category; label: string; icon: IconName; hint: string }[] = [
-  { id: 'script-pack', label: '脚本包', icon: 'package', hint: '脚本怎么装、有哪些任务、运行前改哪些设置；从技能库下载，用不上的可以删' },
-  { id: 'game-pack', label: '游戏包', icon: 'gamepad', hint: '游戏页从哪里读活动、游戏里怎么看；从技能库下载，不玩的可以删' },
-  { id: 'skill', label: '技能', icon: 'sparkles', hint: '从技能库下载的做法，只在处理对应的游戏和脚本时用' },
-  { id: 'mine', label: '我的技能', icon: 'pencil', hint: 'agent 做成一件事后存的，和你自己写的' },
+  { id: 'script-pack', label: '脚本包', icon: 'package', hint: '脚本怎么装、有哪些任务、运行前改哪些设置；按游戏分开，用不上的可以删' },
+  { id: 'game-pack', label: '游戏包', icon: 'gamepad', hint: '游戏页从哪里读活动、游戏里怎么看；不玩的可以删' },
+  { id: 'skill', label: '技能', icon: 'sparkles', hint: '按游戏分开：带底色的是从技能库下载的，白底的是你或 agent 写的；只在处理对应的游戏和脚本时用' },
   { id: 'core', label: '核心技能', icon: 'shield', hint: '软件自带、维持基本功能的技能：受保护，不能改，随软件更新' },
-  { id: 'available', label: '技能库里还有', icon: 'download', hint: '下载后 agent 马上就能用' },
 ]
 const LABEL: Readonly<Record<Category, string>> = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label])) as Record<Category, string>
+/** Sections whose rows are split by game. */
+const BY_GAME: ReadonlySet<Category> = new Set(['script-pack', 'skill'])
 
-/** One thing in the list: a skill the agents have, or one the 技能库 has that is not downloaded. */
+/** One skill the agents have. */
 interface Entry {
   readonly name: string
   readonly title: string
   readonly description: string
   readonly category: Category
   readonly skill?: SkillInfo
+  /** Downloaded from the 技能库. */
   readonly hub?: HubItem
   readonly owner?: SkillOwner
-  /** For a game the user plays or a script they have (one not downloaded yet). */
-  readonly suggested?: boolean
 }
+
+/** Made here: saved by the agent or written on this page, or a script pack the agent wrote. */
+const mineOf = (e: Entry) => e.skill?.removable === true || e.skill?.ownPack === true
 
 function categoryOf(skill: SkillInfo, hub: HubItem | undefined): Category {
   if (skill.kind === 'script-pack' || hub?.pack === 'script') return 'script-pack'
   if (skill.kind === 'game-pack' || hub?.pack === 'game') return 'game-pack'
-  if (skill.removable === true) return 'mine'
-  if (skill.source === 'bundled') return 'core'
+  if (skill.source === 'bundled' && skill.removable !== true) return 'core'
   return 'skill'
 }
 
@@ -67,11 +69,12 @@ const GENERAL = ':general'
 interface Draft { original?: string; hub?: boolean; name: string; description: string; content: string; scripts: string[]; games: string[] }
 
 /**
- * 技能: the script packs, game packs and skills the agents have, by kind, and
- * what else the 技能库 has. Anything downloaded can be updated, gone back,
- * changed or deleted; the user's own skills made, changed and deleted; the
- * core ones only read. The filter shows one game's (技能隔离: a skill for a
- * game or script is used only while working on it).
+ * 技能, in two tabs. 已有的技能: the script packs, game packs and skills the
+ * agents have, by kind and then by game; anything downloaded can be updated,
+ * gone back, changed or deleted, the user's own made, changed and deleted, the
+ * core ones only read (技能隔离: a skill for a game or script is used only
+ * while working on it). 技能库: what the repositories have, by game, script and
+ * author, to download (SkillHubPanel.tsx).
  */
 export function SkillsPage({ client, arg }: PageProps) {
   const status = useStore(client.connection.status)
@@ -81,9 +84,10 @@ export function SkillsPage({ client, arg }: PageProps) {
   const [hub, setHub] = useState<Hub | null>(null)
   const [query, setQuery] = useState('')
   const [game, setGame] = useState(ALL)
-  // #/p/skills/<name>, #/p/skills/hub (what the 技能库 has) or hub:<name> (from a script's page).
-  const [selected, setSelected] = useState<string>(arg?.startsWith('hub:') === true ? arg.slice(4) : arg === 'hub' ? '' : (arg ?? ''))
-  const [wantAvailable, setWantAvailable] = useState(arg === 'hub')
+  // #/p/skills/<name>, #/p/skills/hub (the 技能库) or hub:<name> (one in it, from a script's page).
+  const [tab, setTab] = useState<'mine' | 'hub'>(arg?.startsWith('hub') === true ? 'hub' : 'mine')
+  const [focus, setFocus] = useState<string | undefined>(arg?.startsWith('hub:') === true ? arg.slice(4) : undefined)
+  const [selected, setSelected] = useState<string>(arg === undefined || arg.startsWith('hub') ? '' : arg)
   const [content, setContent] = useState<{ name: string; text: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -93,7 +97,6 @@ export function SkillsPage({ client, arg }: PageProps) {
   const [copied, setCopied] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [moving, setMoving] = useState(false)
-  const [editingRepos, setEditingRepos] = useState(false)
   const [folded, setFolded] = useState(readFolded)
   const fold = (key: string) => setFolded(f => {
     const next = new Set(f)
@@ -107,7 +110,7 @@ export function SkillsPage({ client, arg }: PageProps) {
 
   useEffect(() => {
     if (arg === undefined) return
-    if (arg === 'hub') { setWantAvailable(true); setSelected('') } else setSelected(arg.startsWith('hub:') ? arg.slice(4) : arg)
+    if (arg.startsWith('hub')) { setTab('hub'); setFocus(arg.startsWith('hub:') ? arg.slice(4) : undefined) } else { setTab('mine'); setSelected(arg) }
     setDraft(null)
   }, [arg])
   useEffect(() => client.connection.on('skills/changed', () => setRevision(r => r + 1)), [client])
@@ -137,36 +140,41 @@ export function SkillsPage({ client, arg }: PageProps) {
     return () => { live = false }
   }, [client, status.state, hasHub, hubRevision])
 
-  // What the user plays and has: the 技能库's ones for them come first.
-  const mine = useMemo(() => ({
-    games: new Set(games.map(g => g.id)),
-    scripts: new Set(scripts.flatMap(s => [s.id, s.packId, s.known].filter((x): x is string => x !== undefined))),
-  }), [games, scripts])
-
   const entries = useMemo(() => {
-    const out: Entry[] = []
     const items = hub?.items ?? []
-    for (const skill of skills ?? []) {
+    return (skills ?? []).map((skill): Entry => {
       const item = skill.source === 'hub' ? items.find(i => i.name === skill.name && i.installed !== undefined) : undefined
-      out.push({
+      return {
         name: skill.name, title: item?.title ?? skill.name, description: skill.description, category: categoryOf(skill, item), skill,
         ...(item === undefined ? {} : { hub: item }), ...(skill.owner === undefined ? {} : { owner: skill.owner }),
-      })
-    }
-    for (const item of items) {
-      if (item.installed !== undefined || out.some(e => e.name === item.name)) continue
-      const owner = { ...(item.games.length === 0 ? {} : { games: item.games }), ...(item.scripts.length === 0 ? {} : { scripts: item.scripts }) }
-      out.push({
-        name: item.name, title: item.title ?? item.name, description: item.description, category: 'available', hub: item, owner,
-        suggested: item.games.some(g => mine.games.has(g)) || item.scripts.some(s => mine.scripts.has(s)),
-      })
-    }
-    return out
-  }, [skills, hub, mine])
+      }
+    })
+  }, [skills, hub])
 
   const placesOfEntry = (e: Entry) => placesOf(e.owner, scripts, games)
   /** Where it belongs, in words: 明日方舟 · MAA; empty for a general one. */
   const where = (e: Entry) => [...new Set(placesOfEntry(e).map(placeLabel))].join('、')
+  /** The game it is filed under: the game of its script or its own; else the 技能库's word for it; none: general. */
+  const gameOfEntry = (e: Entry): { id: string; name: string } | undefined => {
+    const placed = placesOfEntry(e).find(p => p.game !== undefined)?.game
+    if (placed !== undefined) return placed
+    const id = e.hub?.game ?? e.hub?.games[0] ?? e.owner?.games?.[0]
+    if (id === undefined) return undefined
+    const known = findGame(id, games)
+    return known !== undefined ? { id: known.id, name: known.name } : { id, name: (hub?.items ?? []).find(i => i.pack === 'game' && i.game === id)?.title ?? id }
+  }
+  /** A section's rows by game: the games on the game page first, general last. */
+  const byGame = (rows: readonly Entry[]) => {
+    const groups = new Map<string, { id: string; name: string; items: Entry[] }>()
+    for (const e of rows) {
+      const g = gameOfEntry(e) ?? { id: GENERAL, name: '通用' }
+      const group = groups.get(g.id) ?? { ...g, items: [] }
+      group.items.push(e)
+      groups.set(g.id, group)
+    }
+    const rank = (id: string) => { const at = games.findIndex(g => g.id === id); return at < 0 ? games.length : at }
+    return [...groups.values()].sort((a, b) => Number(a.id === GENERAL) - Number(b.id === GENERAL) || rank(a.id) - rank(b.id) || a.name.localeCompare(b.name))
+  }
   const needle = query.trim().toLowerCase()
   const shown = useMemo(() => entries.filter(e => {
     if (needle !== '' && !`${e.name} ${e.title} ${e.description} ${e.skill?.whenToUse ?? ''}`.toLowerCase().includes(needle)) return false
@@ -177,24 +185,23 @@ export function SkillsPage({ client, arg }: PageProps) {
   }), [entries, needle, game, scripts, games])
   const sections = useMemo(() => CATEGORIES.map(c => ({
     ...c,
-    items: shown.filter(e => e.category === c.id).sort((a, b) => Number(b.suggested === true) - Number(a.suggested === true) || a.title.localeCompare(b.title)),
-  })).filter(s => s.items.length > 0 || (s.id === 'mine' && needle === '' && game === ALL)), [shown, needle, game])
-  const ordered = sections.flatMap(s => s.items)
-  const current = shown.find(e => e.name === selected) ?? (wantAvailable ? ordered.find(e => e.category === 'available') : undefined) ?? ordered[0]
+    items: shown.filter(e => e.category === c.id).sort((a, b) => a.title.localeCompare(b.title)),
+  })).filter(s => s.items.length > 0 || (s.id === 'skill' && needle === '' && game === ALL)), [shown, needle, game])
+  // The rows as they are listed (by game inside some sections), for the first one to show.
+  const grouped = sections.map(s => ({ ...s, groups: BY_GAME.has(s.id) ? byGame(s.items) : undefined }))
+  const ordered = grouped.flatMap(s => s.groups?.flatMap(g => g.items) ?? s.items)
+  const current = shown.find(e => e.name === selected) ?? ordered[0]
 
-  // Its instructions: the agents' copy, or the repository's for one not downloaded yet.
+  // Its instructions, as the agents have them.
   useEffect(() => {
     setMoving(false)
     setCopied(false)
     if (current === undefined) { setContent(null); return }
     let live = true
     const name = current.name
-    const read = current.category === 'available'
-      ? client.connection.call('skillhub/preview', { name }).then(r => r.content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?/, ''))
-      : client.connection.call('skills/get', { name }).then(r => r.content)
-    read.then(text => { if (live) setContent({ name, text }) }, e => { if (live) { setContent({ name, text: '' }); setError(errorText(e)) } })
+    client.connection.call('skills/get', { name }).then(r => r.content).then(text => { if (live) setContent({ name, text }) }, e => { if (live) { setContent({ name, text: '' }); setError(errorText(e)) } })
     return () => { live = false }
-  }, [client, current?.name, current?.category, revision, hubRevision])
+  }, [client, current?.name, revision, hubRevision])
 
   const act = async (key: string, fn: () => Promise<string | void>) => {
     setBusy(key)
@@ -211,29 +218,33 @@ export function SkillsPage({ client, arg }: PageProps) {
       setBusy(null)
     }
   }
-  const choose = (name: string) => { setDraft(null); setEditingRepos(false); setMessage(null); setError(null); setSelected(name); setWantAvailable(false) }
+  const choose = (name: string) => { setDraft(null); setMessage(null); setError(null); setSelected(name) }
+  const switchTab = (next: 'mine' | 'hub') => { setTab(next); setDraft(null); setMessage(null); setError(null) }
 
   const remove = (e: Entry) => act(`remove:${e.name}`, async () => {
-    const what = e.category === 'script-pack'
-      ? { title: `删除脚本包「${e.title}」？`, message: '脚本页不再有它的安装方式和任务说明，agent 也不再用它的做法；已经装好的脚本不会删。以后可以在「技能库里还有」里再下载。' }
+    const what = e.skill?.ownPack === true
+      ? { title: `删除脚本包「${e.title}」？`, message: '这是 agent 为脚本写的脚本包：它的安装方式、任务和做法都会删掉，不能恢复（需要时让 agent 重新分析这个脚本）。用它的脚本保留，只是没有这些任务了。' }
+      : e.category === 'script-pack'
+      ? { title: `删除脚本包「${e.title}」？`, message: '脚本页不再有它的安装方式和任务说明，agent 也不再用它的做法；已经装好的脚本不会删。以后可以在「技能库」里再下载。' }
       : e.category === 'game-pack'
-        ? { title: `删除游戏包「${e.title}」？`, message: '游戏页不再显示这个游戏和它的活动。以后可以在「游戏 → 更多游戏」勾上，或在「技能库里还有」里再下载。' }
+        ? { title: `删除游戏包「${e.title}」？`, message: '游戏页不再按它读这个游戏的活动（SRA 公共 API 有这个游戏的话，可以在「游戏 → 更多游戏」里勾上）。以后可以在「技能库」里再下载。' }
         : e.hub !== undefined
-          ? { title: `删除技能「${e.title}」？`, message: '它的文件夹会一起删掉，agent 以后就用不到它了。以后可以在「技能库里还有」里再下载。' }
+          ? { title: `删除技能「${e.title}」？`, message: '它的文件夹会一起删掉，agent 以后就用不到它了。以后可以在「技能库」里再下载。' }
           : { title: `删除技能「${e.name}」？`, message: '它的文件夹会一起删掉，agent 以后就用不到它了。' }
     if (!await confirm({ ...what, confirmLabel: '删除', danger: true })) return
     if (e.hub !== undefined) await client.connection.call('skillhub/remove', { name: e.name })
+    else if (e.skill?.ownPack === true && e.skill.pack !== undefined) await client.connection.call('scripts/packs/remove', { id: e.skill.pack })
     else await client.connection.call('skills/remove', { name: e.name })
     setSelected('')
     return `已删除 ${e.title}`
   })
-  const install = (e: Entry) => act(`install:${e.name}`, async () => {
-    await client.connection.call('skillhub/install', { name: e.name, repo: e.hub!.repo })
-    return `已下载 ${e.title}${e.hub?.pack === 'script' ? '：脚本页可以按它安装这个脚本了' : e.hub?.pack === 'game' ? '：游戏页上有它了' : '，agent 现在就能用'}`
-  })
   const update = (e: Entry) => act(`update:${e.name}`, async () => {
     const r = await client.connection.call('skillhub/update', { name: e.name })
     return r.state === 'updated' ? `${e.title} 已更新` : '已是最新'
+  })
+  const switchVersion = (e: Entry, version: string) => act(`version:${e.name}`, async () => {
+    const item = await client.connection.call('skillhub/version', { name: e.name, version })
+    return `${e.title} 换成了 ${item.installed?.version ?? version}${version === e.hub?.version ? '（最新）' : '：技能库再有更新的版本时会再提示'}`
   })
   const rollback = (e: Entry) => act(`rollback:${e.name}`, async () => {
     const back = await client.connection.call('skillhub/rollback', { name: e.name })
@@ -244,29 +255,49 @@ export function SkillsPage({ client, arg }: PageProps) {
   const marks = (e: Entry) => (
     <>
       {e.hub?.installed?.update === true && e.hub.incompatible === undefined && <span className="skill-dot" title="技能库有新版" />}
-      {e.suggested === true && <span className="skill-row-tag" title="你关注的游戏、装了的脚本用得上">推荐</span>}
-      {e.category === 'available' && e.hub?.pack !== undefined && <span className="skill-row-tag subtle">{e.hub.pack === 'script' ? '脚本包' : '游戏包'}</span>}
       {e.category === 'core' && <span className="skill-row-mark" title="核心技能：受保护，不能改"><Icon name="shield" /></span>}
     </>
   )
+  const row = (e: Entry) => (
+    <button key={e.name} className={`script-row skill-row ${e.hub !== undefined ? 'from-hub' : mineOf(e) ? 'own' : ''} ${draft === null && current?.name === e.name ? 'active' : ''}`}
+      title={e.hub !== undefined ? `从技能库下载的（作者 ${e.hub.author ?? e.hub.repo}）` : mineOf(e) ? '你或 agent 写的' : undefined} onClick={() => choose(e.name)}>
+      <span className="script-row-main">
+        <span className="script-row-name">{e.title}</span>
+        <span className="muted small skills-row-desc">{where(e) || e.description}</span>
+      </span>
+      {marks(e)}
+    </button>
+  )
+  const updates = (hub?.items ?? []).filter(i => i.installed?.update === true && i.incompatible === undefined).length
 
   return (
     <section className="main scripts-page skills-page">
       <header className="page-header">
         <div className="breadcrumb"><h1>技能</h1></div>
+        {hasHub && (
+          <div className="tabs" role="tablist" aria-label="技能">
+            <button role="tab" aria-selected={tab === 'mine'} className={tab === 'mine' ? 'active' : ''} onClick={() => switchTab('mine')}>已有的技能</button>
+            <button role="tab" aria-selected={tab === 'hub'} className={tab === 'hub' ? 'active' : ''} onClick={() => switchTab('hub')}>
+              技能库{updates > 0 && <span className="skills-tab-badge" title={`${updates} 个有新版`}>{updates}</span>}
+            </button>
+          </div>
+        )}
         <div className="page-actions">
-          {hasHub && <span className="muted small skills-fetched">{hub?.fetchedAt === undefined ? '' : `技能库 ${relativeTime(hub.fetchedAt, now)}读取`}</span>}
-          {hasHub && (
-            <button className="small-button" disabled={busy !== null} title="现在读一次技能库，看有没有新版本" onClick={() => void act('refresh', async () => { await loadHub(true) })}>
-              <Icon name="refresh" />{busy === 'refresh' ? '读取中…' : '检查更新'}
+          {tab === 'mine' && (
+            <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => setDraft(blank())}>
+              <Icon name="plus" />新建技能
             </button>
           )}
-          {hasHub && <button className={`small-button ${editingRepos ? 'active' : ''}`} aria-expanded={editingRepos} onClick={() => { setEditingRepos(o => !o); setDraft(null) }}>技能仓库</button>}
-          <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => { setEditingRepos(false); setDraft(blank()) }}>
-            <Icon name="plus" />新建技能
-          </button>
         </div>
       </header>
+      {tab === 'hub' && hasHub ? (
+        <div className="skill-hub-body">
+          {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
+          {message !== null && <div className="notice info left small"><Icon name="check" /><span>{message}</span></div>}
+          <SkillHubPanel client={client} hub={hub} games={games} scripts={scripts} focus={focus} busy={busy} now={now} act={act}
+            onRefresh={() => loadHub(true)} onOpen={name => { switchTab('mine'); setSelected(name) }} />
+        </div>
+      ) : (
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="技能列表">
           <div className="skills-tools">
@@ -284,9 +315,10 @@ export function SkillsPage({ client, arg }: PageProps) {
           </div>
           {(skills === null || (hasHub && hub === null)) && error === null && <p className="muted small pad">正在读取…</p>}
           {skills !== null && needle !== '' && <p className="muted small skills-found">{shown.length === 0 ? '没有匹配的。' : `找到 ${shown.length} 个`}</p>}
-          {sections.map(section => {
+          {grouped.map(section => {
             // Searching or filtering shows every match, folded or not.
-            const open = needle !== '' || game !== ALL || !folded.has(section.id)
+            const searching = needle !== '' || game !== ALL
+            const open = searching || !folded.has(section.id)
             return (
               <div key={section.id} className={`skills-group ${open ? '' : 'folded'}`}>
                 <div className="skills-section-head" title={section.hint}>
@@ -296,22 +328,28 @@ export function SkillsPage({ client, arg }: PageProps) {
                     <span className="skills-group-name">{section.label}</span>
                     <span className="skills-count">{section.items.length}</span>
                   </button>
-                  {section.id === 'mine' && (
-                    <button className="icon-button skills-add" title="新建一个技能" aria-label="新建技能" disabled={status.state !== 'open'} onClick={() => { setEditingRepos(false); setDraft(blank()) }}>
+                  {section.id === 'skill' && (
+                    <button className="icon-button skills-add" title="新建一个技能" aria-label="新建技能" disabled={status.state !== 'open'} onClick={() => setDraft(blank())}>
                       <Icon name="plus" />
                     </button>
                   )}
                 </div>
-                {open && section.items.length === 0 && <p className="muted small skills-empty">{section.id === 'mine' ? 'agent 做成一件事后会提议存成技能；也可以自己写一个。' : '没有'}</p>}
-                {open && section.items.map(e => (
-                  <button key={e.name} className={`script-row skill-row ${draft === null && !editingRepos && current?.name === e.name ? 'active' : ''}`} onClick={() => choose(e.name)}>
-                    <span className="script-row-main">
-                      <span className="script-row-name">{e.title}</span>
-                      <span className="muted small skills-row-desc">{where(e) || e.description}</span>
-                    </span>
-                    {marks(e)}
-                  </button>
-                ))}
+                {open && section.items.length === 0 && <p className="muted small skills-empty">{section.id === 'skill' ? 'agent 做成一件事后会提议存成技能；也可以自己写一个，或在「技能库」里下载。' : '没有'}</p>}
+                {open && section.groups === undefined && section.items.map(row)}
+                {open && section.groups?.map(g => {
+                  const key = `${section.id}/${g.id}`
+                  const subOpen = searching || !folded.has(key)
+                  return (
+                    <div key={key} className={`skills-sub ${subOpen ? '' : 'folded'}`}>
+                      <button className="skills-sub-head" aria-expanded={subOpen} onClick={() => fold(key)}>
+                        <Icon name="chevron-down" className="skills-chevron" />
+                        <span className="skills-group-name">{g.name}</span>
+                        <span className="skills-count">{g.items.length}</span>
+                      </button>
+                      {subOpen && g.items.map(row)}
+                    </div>
+                  )
+                })}
               </div>
             )
           })}
@@ -320,15 +358,7 @@ export function SkillsPage({ client, arg }: PageProps) {
           <div className="script-detail">
             {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
             {message !== null && <div className="notice info left small"><Icon name="check" /><span>{message}</span></div>}
-            {hub?.errors.map(e => <div key={e} className="notice error left small"><Icon name="alert" /><span>技能库读不到：{e}{hub.items.length > 0 ? '（列出的是之前读到的）' : ''}</span></div>)}
-            {editingRepos && hub !== null ? (
-              <RepoEditor repos={hub.repos} disabled={busy !== null} onCancel={() => setEditingRepos(false)} onSave={repos => void act('repos', async () => {
-                await client.connection.call('skillhub/repos/set', { repos })
-                setEditingRepos(false)
-                await loadHub(true)
-                return '已保存，按新的仓库读取'
-              })} />
-            ) : draft !== null ? (
+            {draft !== null ? (
               <SkillForm client={client} draft={draft} scripts={scripts} games={games} onCancel={() => setDraft(null)}
                 onSaved={name => { setDraft(null); setSelected(name); setError(null); setMessage(draft.original === undefined ? '已保存，agent 现在就能用' : '已保存'); setRevision(r => r + 1) }} />
             ) : current === undefined ? (
@@ -345,7 +375,7 @@ export function SkillsPage({ client, arg }: PageProps) {
                 key={current.name} entry={current} where={where(current)} content={content?.name === current.name ? content.text : undefined}
                 busy={busy} copied={copied} moving={moving} now={now}
                 onCopy={() => { void navigator.clipboard?.writeText(`/${current.name} `).then(() => setCopied(true), () => {}) }}
-                onInstall={() => void install(current)} onUpdate={() => void update(current)} onRollback={() => void rollback(current)} onRemove={() => void remove(current)}
+                onUpdate={() => void update(current)} onVersion={version => void switchVersion(current, version)} onRollback={() => void rollback(current)} onRemove={() => void remove(current)}
                 onEdit={() => setDraft({
                   original: current.name, ...(current.hub === undefined ? {} : { hub: true }), name: current.name, description: current.description,
                   content: content?.name === current.name ? content.text.trim() : '', scripts: [...(current.owner?.scripts ?? [])], games: [...(current.owner?.games ?? [])],
@@ -361,12 +391,13 @@ export function SkillsPage({ client, arg }: PageProps) {
           </div>
         </div>
       </div>
+      )}
     </section>
   )
 }
 
 /** One entry in full: what it is, where it is used, its version, what can be done with it, and its instructions. */
-function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy, onInstall, onUpdate, onRollback, onRemove, onEdit, onMove, move }: {
+function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy, onUpdate, onVersion, onRollback, onRemove, onEdit, onMove, move }: {
   entry: Entry
   where: string
   /** Its instructions; undefined while they load. */
@@ -376,8 +407,9 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
   moving: boolean
   now: number
   onCopy: () => void
-  onInstall: () => void
   onUpdate: () => void
+  /** Take one of the versions the 技能库 keeps. */
+  onVersion: (version: string) => void
   onRollback: () => void
   onRemove: () => void
   onEdit: () => void
@@ -386,17 +418,22 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
 }) {
   const { skill, hub } = entry
   const installed = hub?.installed
-  const available = entry.category === 'available'
   const editable = skill?.removable === true || installed !== undefined
   const version = hub === undefined ? undefined : versionLabel(hub)
   const icon = CATEGORIES.find(c => c.id === entry.category)!.icon
-  const kind = available ? (hub?.pack === 'script' ? '脚本包' : hub?.pack === 'game' ? '游戏包' : '技能') : LABEL[entry.category]
   const pending = (key: string) => busy === `${key}:${entry.name}`
+  // The 技能库's current version and the earlier ones it keeps (git tags), newest first.
+  const versions = hub === undefined ? [] : [
+    ...(hub.version === undefined ? [] : [{ version: hub.version, changes: hub.changes, latest: true }]),
+    ...(hub.history ?? []).map(h => ({ ...h, latest: false })),
+  ]
+  const [pick, setPick] = useState(installed?.version ?? hub?.version ?? '')
+  const picked = versions.find(v => v.version === pick)
   return (
     <article className="card skill-card">
       <header className="skill-top">
         <div className="skill-title">
-          <div className="skill-kicker"><Icon name={icon} />{kind}{available ? ' · 技能库里有，还没下载' : hub !== undefined ? ' · 从技能库下载的' : ''}</div>
+          <div className="skill-kicker"><Icon name={icon} />{LABEL[entry.category]}{hub !== undefined ? ` · 从技能库下载的 · 作者 ${hub.author ?? hub.repo}` : mineOf(entry) ? ' · 你或 agent 写的' : ''}</div>
           <h2>{entry.title}</h2>
           <div className="skill-meta">
             {entry.title !== entry.name && <code className="skill-name">{entry.name}</code>}
@@ -411,9 +448,6 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
           </div>
         </div>
         <div className="skill-buttons">
-          {available && hub !== undefined && hub.blocked === undefined && hub.incompatible === undefined && (
-            <button className="small-button primary" disabled={busy !== null} onClick={onInstall}><Icon name="download" />{pending('install') ? '下载中…' : '下载'}</button>
-          )}
           {installed?.update === true && hub?.incompatible === undefined && (
             <button className="small-button primary" disabled={busy !== null} onClick={onUpdate}>{pending('update') ? '更新中…' : '更新'}</button>
           )}
@@ -434,7 +468,7 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
           {editable && (
             <button className="small-button" aria-expanded={moving} onClick={onMove} title="放错了游戏或脚本时，换到对的那个"><Icon name="gamepad" />更换游戏和脚本</button>
           )}
-          {editable && <button className="small-button danger-outline" disabled={busy !== null} onClick={onRemove}>{pending('remove') ? '删除中…' : '删除'}</button>}
+          {(editable || skill?.ownPack === true) && <button className="small-button danger-outline" disabled={busy !== null} onClick={onRemove}>{pending('remove') ? '删除中…' : '删除'}</button>}
           {skill?.path !== undefined && desktop()?.openPath !== undefined && (
             <button className="icon-button skill-folder" title={`打开所在文件夹：${skill.path}`} aria-label="打开所在文件夹"
               onClick={() => void desktop()?.openPath?.(skill.path!.replace(/[\\/][^\\/]+$/, ''))}>
@@ -451,16 +485,27 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
         {entry.category === 'game-pack' && <p className="muted small">游戏包：游戏页按它读这个游戏的活动，agent 按这里的做法看游戏画面。不玩这个游戏可以删掉，或在「游戏 → 更多游戏」里取消勾选。</p>}
         {entry.category === 'core' && <p className="muted small">核心技能维持软件的基本功能，受保护，不能改和删，随软件更新。</p>}
         {installed !== undefined && <p className="muted small">从技能库下载的：可以改，但技能库更新它时会整个换成新版本，这里改的不保留（被换掉的那版可以回退）。要一直留着的做法，另存成自己的技能。</p>}
-        {hub?.changes !== undefined && (available || installed?.update === true) && <p className="small hub-changes">{hub.version === undefined ? '' : `${hub.version}：`}{hub.changes}</p>}
-        {hub?.incompatible !== undefined && <p className="small hub-incompatible">{installed === undefined ? '' : '新版'}{hub.incompatible}</p>}
-        {available && hub?.blocked !== undefined && <p className="muted small">{hub.blocked}，没有下载（以你已有的为准）</p>}
+        {hub?.changes !== undefined && installed?.update === true && <p className="small hub-changes">{hub.version === undefined ? '' : `${hub.version}：`}{hub.changes}</p>}
+        {hub?.incompatible !== undefined && <p className="small hub-incompatible">新版{hub.incompatible}</p>}
       </div>
+      {installed !== undefined && versions.length > 1 && (
+        <div className="skill-versions">
+          <label className="field-label" htmlFor="skill-version">版本（技能库留着的每一版都能换，往前往后都行）</label>
+          <div className="skill-versions-row">
+            <select id="skill-version" className="text-input skill-version-select" value={pick} disabled={busy !== null} onChange={e => setPick(e.target.value)}>
+              {versions.map(v => <option key={v.version} value={v.version}>{v.version}{v.latest ? '（最新）' : ''}{v.version === installed.version ? '（正在用）' : ''}</option>)}
+            </select>
+            <button className="small-button" disabled={busy !== null || pick === installed.version} onClick={() => onVersion(pick)}>{pending('version') ? '切换中…' : '换成这个版本'}</button>
+          </div>
+          {picked?.changes !== undefined && <span className="muted small">{picked.version}：{picked.changes}</span>}
+          {picked !== undefined && !picked.latest && pick !== installed.version && <span className="muted small">换到旧版后不再提示更新，直到技能库有更新的版本；随时可以换回最新。</span>}
+        </div>
+      )}
       <section className="skill-body" aria-label="内容">
-        <div className="skill-body-label">{available ? '技能库里的内容' : '内容'}</div>
+        <div className="skill-body-label">内容</div>
         {content === undefined ? <p className="muted">正在读取…</p> : content.trim() === '' ? <p className="muted">（没有内容）</p> : <Markdown text={content} />}
       </section>
       {skill?.path !== undefined && <code className="muted small skill-path" title={skill.path}>{skill.path}</code>}
-      {available && hub !== undefined && <code className="muted small skill-path">{hub.repo}/{hub.path}</code>}
     </article>
   )
 }
@@ -471,32 +516,6 @@ function versionLabel(item: HubItem): string | undefined {
   if (item.installed === undefined) return item.version
   if (item.installed.update && item.version !== undefined && item.version !== here) return `${here ?? '旧版'} → ${item.version}`
   return here
-}
-
-/** Which repositories the 技能库 reads, in order (the first with a name wins). */
-function RepoEditor({ repos, disabled, onSave, onCancel }: { repos: readonly HubRepo[]; disabled: boolean; onSave: (repos: HubRepo[]) => void; onCancel: () => void }) {
-  const [text, setText] = useState(repos.map(r => (r.branch === 'main' ? r.repo : `${r.repo}@${r.branch}`)).join('\n'))
-  const parsed = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
-    const [repo, branch] = line.replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '').split('@')
-    return { repo: repo ?? '', branch: branch ?? 'main' }
-  })
-  const valid = parsed.length > 0 && parsed.every(r => /^[\w.-]+\/[\w.-]+$/.test(r.repo) && /^[\w./-]+$/.test(r.branch))
-  return (
-    <article className="card skill-card">
-      <div className="skill-title"><h2>技能仓库</h2></div>
-      <p className="muted small">脚本包、游戏包和技能从这些 GitHub 仓库下载（整个仓库打包下载，不用装 git，走「设置 → 脚本安装」的下载镜像），一天最多读一次。只有默认仓库 MultiGameAssistant/skills 的脚本包当作官方的；别的仓库里的会让 agent 照着做，只加你信得过的。</p>
-      <label className="field">
-        <span className="field-label">一行一个 owner/repo，可以写 @分支；前面的同名的优先</span>
-        <textarea className="text-input plain skill-content-input" rows={4} value={text} onChange={e => setText(e.target.value)} spellCheck={false} />
-      </label>
-      <div className="skill-actions">
-        <button className="link-button small" disabled={disabled} onClick={() => setText('MultiGameAssistant/skills')}>恢复默认</button>
-        <span className="spacer" />
-        <button className="small-button" disabled={disabled} onClick={onCancel}>取消</button>
-        <button className="small-button primary" disabled={disabled || !valid} onClick={() => onSave(parsed)}>保存</button>
-      </div>
-    </article>
-  )
 }
 
 /** Make a skill, or change one of the user's or a downloaded one (its name, and a downloaded one's owner, stay). */

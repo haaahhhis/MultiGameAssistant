@@ -44,7 +44,7 @@ export const DEFAULT_HUB_REPO = { repo: 'MultiGameAssistant/skills', branch: 'ma
 /** The repository is read again after this long. */
 const REFRESH_MS = 24 * 60 * 60_000
 /** What a repository read keeps; one kept in an older form is read again (it has no packs in it). */
-const READ_FORMAT = 2
+const READ_FORMAT = 3
 const SKILL_FILE = 'SKILL.md'
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -75,6 +75,8 @@ export interface HubSkill {
   readonly games: readonly string[]
   readonly scripts: readonly string[]
   readonly repo: string
+  /** Who published it: the index's `author` (a GitHub name), else the repository's owner. */
+  readonly author: string
   /** Its folder in the repository. */
   readonly path: string
   /** Fingerprint of its folder as published (every file in it). */
@@ -85,7 +87,14 @@ export interface HubSkill {
   readonly changes?: string
   /** App versions it works with, e.g. `>=2.1.0`. */
   readonly requires?: string
+  /** Earlier versions the repository keeps (each a git tag `<name>@<version>`), newest first. */
+  readonly history?: readonly HubVersion[]
 }
+
+export interface HubVersion { readonly version: string; readonly changes?: string }
+
+/** The git tag a published version is kept under. */
+export const versionTag = (name: string, version: string) => `${name}@${version}`
 
 export interface HubItem extends HubSkill {
   readonly installed?: {
@@ -136,6 +145,8 @@ const Index = z.object({
     changes: z.string().max(300).optional(),
     requires: z.string().max(60).optional(),
     default: z.boolean().optional(),
+    author: z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/).optional(),
+    history: z.array(z.object({ version: z.string().min(1).max(40), changes: z.string().max(300).optional() })).max(100).optional(),
   })),
 })
 
@@ -251,7 +262,7 @@ export class SkillHub {
       const content = await readFile(join(this.skillsDir, name, SKILL_FILE), 'utf8').catch(() => '')
       const front = frontmatter(content)
       const pack = await packKind(join(this.skillsDir, name))
-      items.push({ name, description: front?.description ?? '', kind: pack ?? 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false), ...(pack === undefined ? {} : { pack }) })
+      items.push({ name, description: front?.description ?? '', kind: pack ?? 'general', games: [], scripts: [], repo: record.repo, author: record.repo.split('/')[0] ?? record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false), ...(pack === undefined ? {} : { pack }) })
     }
     return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }) }
   }
@@ -303,6 +314,52 @@ export class SkillHub {
     this.#checkCompatible(skill)
     await this.#put(skill)
     return { state: 'updated', item: await this.#item(skill, await this.#options.taken()) }
+  }
+
+  /**
+   * Take one version the repository keeps, forward or back: its current one,
+   * or one of its `history` (downloaded from the git tag `<name>@<version>`,
+   * through the same download mirror; no git needed). One that is not the
+   * current one is held: no update is offered until the repository has
+   * another. A version of another kind (a script pack that was a skill only
+   * then) is refused: its scripts would lose their tasks, the game page its game.
+   */
+  async installVersion(name: string, version: string, signal?: AbortSignal): Promise<HubItem> {
+    const record = this.#state.installed[name]
+    const skill = await this.#find(name, record?.repo, signal)
+    if (record === undefined) {
+      const blocked = (await this.#options.taken()).get(name)
+      if (blocked !== undefined) throw new Error(`已有同名的${blocked}「${name}」，没有下载`)
+    }
+    if (skill.version === version) {
+      if (record?.hash !== skill.hash) {
+        this.#checkCompatible(skill)
+        await this.#put(skill)
+      } else if (record.held !== undefined) {
+        delete record.held
+        await this.#save()
+      }
+      return this.#item(skill, await this.#options.taken())
+    }
+    if (!(skill.history ?? []).some(h => h.version === version)) throw new Error(`技能库没有「${name}」的 ${version} 版`)
+    const snapshot = await this.#readTag(skill.repo, versionTag(name, version), signal)
+    try {
+      const old = snapshot.skills.find(s => s.name === name)
+      if (old === undefined) throw new Error(`「${name}」${version} 版在仓库的标签 ${versionTag(name, version)} 里找不到`)
+      if (old.pack !== skill.pack) {
+        const what = (p: HubSkill['pack']) => p === 'script' ? '脚本包' : p === 'game' ? '游戏包' : '技能'
+        throw new Error(`「${name}」${version} 版是${what(old.pack)}，现在是${what(skill.pack)}：换过去${skill.pack === 'script' ? '脚本就没有它的任务了' : skill.pack === 'game' ? '游戏页就读不到这个游戏了' : '用法会变'}，不能换`)
+      }
+      this.#checkCompatible(old)
+      await this.#put({ ...old, repo: skill.repo, path: skill.path, version }, join(snapshot.root, ...old.path.split('/')))
+      // Not the repository's current one: no update offered until another comes.
+      this.#state.installed[name] = { ...this.#state.installed[name]!, held: skill.hash }
+      await this.#save()
+    } finally {
+      await rm(snapshot.root, { recursive: true, force: true })
+    }
+    this.#options.log.info(`skill hub: ${name} switched to ${version}`)
+    return this.#item(skill, await this.#options.taken())
   }
 
   /** Go back to the version the last update replaced; the newer one is not offered again until the repository has another. */
@@ -401,9 +458,32 @@ export class SkillHub {
     return join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'), SKILL_FILE)
   }
 
-  /** Copy the repository's version in as the downloaded skill. */
-  async #put(skill: HubSkill): Promise<void> {
-    const from = join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'))
+  /** A version of the repository as it was at a git tag: downloaded and unpacked (the caller removes `root`). */
+  async #readTag(repo: string, tag: string, signal?: AbortSignal): Promise<{ root: string; skills: HubSkill[] }> {
+    const work = join(this.#options.dir, 'downloads')
+    await mkdir(work, { recursive: true })
+    const key = `${repoKey({ repo, branch: '' })}-${tag.replace(/[^\w.-]+/g, '_')}-${this.#now()}`
+    const archive = join(work, `${key}.zip`)
+    const root = join(work, key)
+    try {
+      try {
+        await this.#options.download(`https://codeload.github.com/${repo}/zip/refs/tags/${encodeURIComponent(tag)}`, archive, signal)
+      } catch (error) {
+        if (signal?.aborted === true) throw error
+        throw new Error(`下载 ${repo} 的标签 ${tag} 失败：${errorText(error)}`)
+      }
+      await this.#options.extract(archive, root, signal)
+      return { root, skills: await readSkills(root, repo) }
+    } catch (error) {
+      await rm(root, { recursive: true, force: true })
+      throw error
+    } finally {
+      await rm(archive, { force: true })
+    }
+  }
+
+  /** Copy a version in as the downloaded skill: the repository's current one, or `from` (one kept under a tag). */
+  async #put(skill: HubSkill, from = join(this.#options.dir, 'repos', repoKey({ repo: skill.repo, branch: '' }), ...skill.path.split('/'))): Promise<void> {
     const to = join(this.skillsDir, skill.name)
     const before = this.#state.installed[skill.name]
     // The version being replaced is kept to go back to (one, the last).
@@ -453,9 +533,11 @@ export class SkillHub {
 
   async #item(found: HubSkill, taken: ReadonlyMap<string, string>): Promise<HubItem> {
     // Only what a HubSkill has (what was read and kept may carry more).
-    const { name, description, title, kind, games, scripts, repo, path, hash, version, changes, requires, pack, game, sra } = found
+    const { name, description, title, kind, games, scripts, repo, path, hash, version, changes, requires, pack, game, sra, history } = found
+    // A list read before authors were kept: the repository's owner.
+    const author = typeof found.author === 'string' && found.author !== '' ? found.author : repo.split('/')[0] ?? repo
     const skill: HubSkill = {
-      name, description, kind, games, scripts, repo, path, hash,
+      name, description, kind, games, scripts, repo, author, path, hash,
       ...(title === undefined ? {} : { title }),
       ...(version === undefined ? {} : { version }),
       ...(changes === undefined ? {} : { changes }),
@@ -464,6 +546,7 @@ export class SkillHub {
       ...(game === undefined ? {} : { game }),
       ...(sra === undefined ? {} : { sra }),
       ...(found.default === true ? { default: true } : {}),
+      ...(history === undefined || history.length === 0 ? {} : { history: history.map(h => ({ version: h.version, ...(h.changes === undefined ? {} : { changes: h.changes }) })) }),
     }
     const incompatible = this.#incompatible(skill)
     const record = this.#state.installed[skill.name]
@@ -505,7 +588,7 @@ export class SkillHub {
 /** The skills in an unpacked repository: as its `index.json` lists them, else every SKILL.md. */
 export async function readSkills(root: string, repo: string): Promise<HubSkill[]> {
   const indexText = await readFile(join(root, 'index.json'), 'utf8').catch(() => undefined)
-  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined; version?: string | undefined; changes?: string | undefined; requires?: string | undefined; default?: boolean | undefined }[] = []
+  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined; version?: string | undefined; changes?: string | undefined; requires?: string | undefined; default?: boolean | undefined; author?: string | undefined; history?: { version: string; changes?: string | undefined }[] | undefined }[] = []
   if (indexText !== undefined) {
     const parsed = Index.safeParse(JSON.parse(indexText.replace(/^﻿/, '')))
     if (!parsed.success) throw new Error(`index.json 格式不对：${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join('; ')}`)
@@ -536,6 +619,7 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
       games: pack?.game !== undefined && !games.includes(pack.game) ? [pack.game, ...games] : games,
       scripts: entry.scripts ?? [],
       repo,
+      author: entry.author ?? repo.split('/')[0] ?? repo,
       path,
       hash: await folderHash(full),
       ...(entry.title === undefined ? {} : { title: entry.title }),
@@ -543,6 +627,7 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
       ...(changes === undefined ? {} : { changes }),
       ...(requires === undefined ? {} : { requires }),
       ...(entry.default === true ? { default: true } : {}),
+      ...(entry.history === undefined || entry.history.length === 0 ? {} : { history: entry.history.map(h => ({ version: h.version, ...(h.changes === undefined ? {} : { changes: h.changes }) })) }),
       ...(pack === undefined ? {} : { pack: pack.kind, ...(pack.game === undefined ? {} : { game: pack.game, sra: pack.sra }) }),
     })
   }

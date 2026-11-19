@@ -133,6 +133,12 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
         skillsChanged()
         return result
       },
+      'skillhub/version': async (params, call) => {
+        const p = params as RequestParams<'skillhub/version'>
+        const item = await hub.installVersion(p.name, p.version, call.signal)
+        skillsChanged()
+        return item
+      },
       'skillhub/rollback': async params => {
         const item = await hub.rollback((params as RequestParams<'skillhub/rollback'>).name)
         skillsChanged()
@@ -206,7 +212,7 @@ function hubTools(hub: SkillHub, approve: Approve, changed: () => void): ToolDef
         const shown = items.filter(i => (a.game == null || i.games.includes(a.game)) && (a.script == null || i.scripts.includes(a.script)))
         return {
           errors,
-          skills: shown.map(i => ({ name: i.name, description: i.description, kind: i.kind, games: i.games, scripts: i.scripts, repo: i.repo, version: i.version, changes: i.changes, installed: i.installed, blocked: i.blocked, incompatible: i.incompatible })),
+          skills: shown.map(i => ({ name: i.name, description: i.description, kind: i.kind, games: i.games, scripts: i.scripts, repo: i.repo, author: i.author, version: i.version, changes: i.changes, history: i.history, installed: i.installed, blocked: i.blocked, incompatible: i.incompatible })),
         }
       },
       presentCall: () => ({ card: 'generic', title: '查看技能库', kind: 'read' }),

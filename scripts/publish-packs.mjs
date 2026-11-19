@@ -4,7 +4,8 @@
  * repository (MultiGameAssistant/skills), beside each one's SKILL.md: a script
  * pack's adg.script.yaml into the folder of the skill named like its id, a
  * game pack's game.yaml into game-<id>'s. The app downloads them from there.
- * Then bump the versions of the folders that changed in its index.json and
+ * Then, for each folder that changed, move its version into history and bump
+ * it in its index.json, and
  * run its check (node .github/scripts/check.mjs HEAD).
  *
  *   node scripts/publish-packs.mjs <skills checkout>
