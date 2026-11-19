@@ -127,7 +127,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
   return [
     tool({
       name: TOOL_NAMES.list,
-      description: '列出脚本库：已安装或已导入的脚本（id、版本、目录、运行环境检查结果），以及内置脚本包里还没安装的脚本。用户提到某个脚本时先调用它。',
+      description: '列出脚本库：已安装或已导入的脚本（id、版本、目录、运行环境检查结果），以及官方脚本包（从技能库下载的）里还没安装的脚本。用户提到某个脚本时先调用它。',
       properties: {},
       readOnly: true,
       kind: 'read',
@@ -145,7 +145,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.search,
-      description: '按游戏名或脚本名搜索脚本：GitHub 仓库（按星数排序，标出有内置脚本包的），以及 Mirror酱 上有 Windows 版的工具（资源 id 可直接用于 script_install 的 mirrorchyan；查询不需要 CDK）。',
+      description: '按游戏名或脚本名搜索脚本：GitHub 仓库（按星数排序，标出有官方脚本包的），以及 Mirror酱 上有 Windows 版的工具（资源 id 可直接用于 script_install 的 mirrorchyan；查询不需要 CDK）。',
       properties: { query: { type: 'string', description: '关键词，例如 "原神"、"MAA 明日方舟" 或 "星穹铁道 自动化"。' } },
       required: ['query'],
       readOnly: true,
@@ -183,7 +183,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         '从 GitHub（repo 或用户给的链接 url）或 Mirror酱（mirrorchyan，资源 id）安装脚本到统一的工具目录（tools/<id>/<版本>/），自动选择适合本机的文件、校验、解压，并检查运行环境。',
         '用户贴了 GitHub 链接就原样放进 url：仓库主页、发布页（/releases/tag/…）、某个文件的下载链接、分支（/tree/…）、.git 地址、加了下载加速前缀的链接都可以，版本和文件会从链接里读出来。',
         '默认装最新正式版；仓库没有发布版本时装默认分支的源码（之后跟着这个分支更新）——这等于拉代码，只在确实没有发布版本、并且用户同意时这样装。几个文件都适合本机时会返回让你先问用户选哪一个。填了 Mirror酱 CDK 且脚本在 Mirror酱 发布时 GitHub 安装也从 Mirror酱 下载。',
-        '不在内置脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。装好后还没有脚本包的，按结果里的 next 去分析。',
+        '不在官方脚本包或已知列表里的仓库 / 资源会先请用户确认。已安装的脚本再次调用即为更新到指定版本。装好后还没有脚本包的，按结果里的 next 去分析。',
       ].join(''),
       properties: {
         repo,
@@ -222,7 +222,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
           if (a.repo === undefined) throw new Error('请给出 repo（GitHub 仓库）或 mirrorchyan（Mirror酱 资源 id）')
           const what = a.branch !== undefined ? `${a.branch} 分支的源码` : a.tag === undefined ? '最新发布版本（没有发布版本时装默认分支的源码）' : ` ${a.tag}${a.asset === undefined ? '' : ` 的 ${a.asset}`}`
           if (!library.isKnownRepo(a.repo)) {
-            await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${what}。这个仓库不在内置脚本包里，请确认它来源可信（${await library.repoFacts(a.repo, exec.signal)}）。`)
+            await approve(exec, `从 GitHub 仓库 ${a.repo} 下载并安装${what}。这个仓库不在官方脚本包里，请确认它来源可信（${await library.repoFacts(a.repo, exec.signal)}）。`)
           }
           started = library.install({ repo: a.repo, tag: a.tag, asset: a.asset, branch: a.branch, id: a.id, byAgent: true })
         }
@@ -253,7 +253,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
         const a = parse(z.object({ id: ScriptId, repo: opt(GitHubRepo), mirrorchyan: opt(MirrorRid) }), args)
         let before = library.get(a.id)
         if (a.repo !== undefined && a.repo.toLowerCase() !== before.channels.github?.repo.toLowerCase()) {
-          await approve(exec, `把 ${before.name} 的 GitHub 更新渠道设为 ${a.repo}${library.isKnownRepo(a.repo) ? '' : '（不在内置脚本包里，请确认它就是这个脚本、来源可信）'}。`)
+          await approve(exec, `把 ${before.name} 的 GitHub 更新渠道设为 ${a.repo}${library.isKnownRepo(a.repo) ? '' : '（不在官方脚本包里，请确认它就是这个脚本、来源可信）'}。`)
           before = await library.setUpdateSource(a.id, { repo: a.repo })
         }
         if (a.mirrorchyan !== undefined && a.mirrorchyan.toLowerCase() !== before.channels.mirrorchyan?.rid.toLowerCase()) {
@@ -318,7 +318,7 @@ export function scriptTools(library: ScriptLibrary, approve: Approve): ToolDefin
     }),
     tool({
       name: TOOL_NAMES.import,
-      description: `把用户电脑上已有的脚本目录登记到脚本库（原地使用，不移动、不复制、不修改）。会按内置脚本包自动识别是哪个脚本。用 ${TOOL_NAMES.setupRun} 装好的目录也用它导入（id 填那个脚本的 id），这样安装或更新才算完成，版本和更新渠道会接上。`,
+      description: `把用户电脑上已有的脚本目录登记到脚本库（原地使用，不移动、不复制、不修改）。会按官方脚本包自动识别是哪个脚本。用 ${TOOL_NAMES.setupRun} 装好的目录也用它导入（id 填那个脚本的 id），这样安装或更新才算完成，版本和更新渠道会接上。`,
       properties: {
         path: { type: 'string', description: '脚本所在目录的绝对路径。' },
         id: { type: 'string', description: '脚本 id；省略时自动生成。' },

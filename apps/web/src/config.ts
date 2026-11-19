@@ -12,6 +12,8 @@
  * uses the same.
  */
 const TOKEN_KEY = 'adg.token'
+/** The dev server's fixed token (vite.config.ts); empty in a build. */
+declare const __ADG_DEV_TOKEN__: string
 
 /** Served under dsh's web server (the dsh plugin's sidebar entry), not by the gateway's own port. */
 export const MOUNTED = /^\/adg(\/|$)/.test(location.pathname)
@@ -38,7 +40,10 @@ export function readToken(): string | null {
     history.replaceState(history.state, '', url)
     return fromUrl
   }
-  try { return sessionStorage.getItem(TOKEN_KEY) } catch { return null }
+  let kept: string | null = null
+  try { kept = sessionStorage.getItem(TOKEN_KEY) } catch { /* private mode */ }
+  // Opened by hand from the dev server: its host's fixed token.
+  return kept ?? (typeof __ADG_DEV_TOKEN__ === 'string' && __ADG_DEV_TOKEN__ !== '' ? __ADG_DEV_TOKEN__ : null)
 }
 
 export function saveToken(token: string): void {

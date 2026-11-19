@@ -21,10 +21,10 @@
  *    plugins is still one module). dsh's own packages stay imports: the dsh
  *    that loads the plugin provides them (peerDependencies). Everything else
  *    (zod, yaml, ws, …) is bundled in, so installing downloads nothing more.
- * 2. Files the code finds next to itself: the built-in packs at `lib/packs`
- *    and `lib/games` (@adg/packs looks beside its module, which is now a file
- *    in lib/), the core skills at `skills/` (`../skills/` from lib/), and the
- *    built UI at `web/`, which the gateway serves when nothing else is named.
+ * 2. Files the code finds next to itself: the core skills at `skills/`
+ *    (`../skills/` from lib/), and the built UI at `web/`, which the gateway
+ *    serves when nothing else is named. No script packs or game packs: those
+ *    come from the 技能库 (MultiGameAssistant/skills) on the first start.
  * 3. A patch of its own made from packages/bundle's cordis.patch.yml: the
  *    app's plugins (each `@adg/<x>` renamed to `<package>/<x>`, a subpath this
  *    package exports), the gateway set to share, and the app's agent preset;
@@ -110,9 +110,7 @@ for (const output of Object.values(result.metafile.outputs)) {
   }
 }
 
-step('packs, skills and the UI')
-cpSync(join(root, 'packages', 'packs', 'packs'), join(staging, 'lib', 'packs'), { recursive: true })
-cpSync(join(root, 'packages', 'packs', 'games'), join(staging, 'lib', 'games'), { recursive: true })
+step('skills and the UI')
 mkdirSync(join(staging, 'skills'))
 for (const pkg of ['analyzer', 'game-intel', 'orchestrator']) {
   for (const file of readdirSync(join(root, 'packages', pkg, 'skills'))) {

@@ -67,7 +67,7 @@ export function GuideCard({ client, script }: { client: AdgClient; script: Scrip
           <h3>使用说明</h3>
           <p className="muted small">
             {guide === undefined ? '读取中…'
-              : guide.written ? `脚本包 ${guide.packId} 的说明${guide.builtin ? '（内置）' : ''}`
+              : guide.written ? `脚本包 ${guide.packId} 的说明${guide.builtin ? '（官方）' : ''}`
                 : '这个脚本包还没有写使用说明，下面只有任务和运行时的临时修改；可以在「脚本包」里点「让 agent 改进」补上。'}
           </p>
         </div>

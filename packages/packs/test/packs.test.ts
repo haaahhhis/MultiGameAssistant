@@ -8,7 +8,7 @@ import { guideIssues, guideView, parseGameManifest, parseManifest, renderTask } 
 const DIR = fileURLToPath(new URL('../packs/', import.meta.url))
 const load = (id: string) => parseManifest(readFileSync(join(DIR, id, 'adg.script.yaml'), 'utf8'), `${id}/adg.script.yaml`)
 
-test('every built-in pack is valid; its skill is in the skills repository, not shipped', () => {
+test('every official pack is valid; its skill is in the skills repository', () => {
   for (const id of readdirSync(DIR)) {
     const pack = load(id)
     assert.equal(pack.id, id)

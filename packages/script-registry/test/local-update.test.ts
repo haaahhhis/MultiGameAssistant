@@ -237,7 +237,7 @@ test('a local import without a pack: no channel until the user names its reposit
     const result = await tools.find(t => t.name === TOOL_NAMES.update)!.execute({ id: info.id, repo: 'Someone/Other' }, exec) as { ok: boolean }
     assert.equal(result.ok, true)
     assert.equal(asked.length, 2)
-    assert.match(asked[0]!, /GitHub 更新渠道.*Someone\/Other.*不在内置脚本包里/)
+    assert.match(asked[0]!, /GitHub 更新渠道.*Someone\/Other.*不在官方脚本包里/)
     assert.match(asked[1]!, /更新到 2\.0\.0.*先备份/)
     assert.equal(readFileSync(join(dir, 'other.exe'), 'utf8'), 'MZ 2')
     await tools.find(t => t.name === TOOL_NAMES.rollback)!.execute({ id: info.id }, exec)

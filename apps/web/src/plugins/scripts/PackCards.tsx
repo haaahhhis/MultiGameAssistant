@@ -73,7 +73,7 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
     await client.connection.call('packs/restore', { packId: script.packId!, version: version.id })
     setRestored(true)
   })
-  const versionLabel = (version: PackVersion) => `${version.builtin === true ? '内置脚本包' : `${relativeTime(version.at ?? now, now)}被替换`} · 任务：${version.tasks.map(t => t.title).join('、') || '无'}`
+  const versionLabel = (version: PackVersion) => `${version.builtin === true ? '官方脚本包' : `${relativeTime(version.at ?? now, now)}被替换`} · 任务：${version.tasks.map(t => t.title).join('、') || '无'}`
 
   const draft = drafts[0]
   const previous = versions[0]
@@ -120,7 +120,7 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
           <div className="key-actions">
             <span className="muted small">{previous.builtin === true ? '现在用的是自己写的脚本包，可以换回' : '上一版脚本包：'}{versionLabel(previous)}</span>
             <span className="spacer" />
-            <button className="small-button" disabled={busy || status.state !== 'open'} title="现在用的这一版会留在历史里，可以再恢复回来" onClick={() => void restore(previous)}>{previous.builtin === true ? '恢复内置的' : '恢复上一版'}</button>
+            <button className="small-button" disabled={busy || status.state !== 'open'} title="现在用的这一版会留在历史里，可以再恢复回来" onClick={() => void restore(previous)}>{previous.builtin === true ? '恢复官方的' : '恢复上一版'}</button>
           </div>
           {versions.length > 1 && (
             <details className="draft-docs">
@@ -145,7 +145,7 @@ export function PackCard({ client, script, openSession }: { client: AdgClient; s
             </details>
           )}
           {draft.noDocs !== undefined && <p className="muted small">没有找到项目文档，按代码分析：{draft.noDocs}</p>}
-          {draft.current !== undefined && <p className="muted small">接受后会替换当前的{draft.current.builtin ? '内置' : ''}脚本包（之前的版本会保留在历史里）。</p>}
+          {draft.current !== undefined && <p className="muted small">接受后会替换当前的{draft.current.builtin ? '官方' : ''}脚本包（之前的版本会保留在历史里）。</p>}
           <div className="segmented draft-tabs">
             <label className={open === 'manifest' ? 'active' : ''}><input type="checkbox" checked={open === 'manifest'} onChange={() => setOpen(o => o === 'manifest' ? null : 'manifest')} />adg.script.yaml</label>
             <label className={open === 'skill' ? 'active' : ''}><input type="checkbox" checked={open === 'skill'} onChange={() => setOpen(o => o === 'skill' ? null : 'skill')} />SKILL.md</label>

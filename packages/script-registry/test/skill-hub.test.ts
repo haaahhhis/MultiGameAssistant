@@ -30,6 +30,8 @@ function setup(taken: Record<string, string> = {}, app: { version?: string } = {
     downloads: [] as string[],
     registered: new Map<string, string>(),
     owners: new Map<string, unknown>(),
+    /** The pack kinds each packsChanged call named. */
+    packs: [] as string[],
     clock: 1_000_000,
   }
   const hub = new SkillHub({
@@ -42,6 +44,7 @@ function setup(taken: Record<string, string> = {}, app: { version?: string } = {
     extract: async (archive, dest) => { await extract(archive, dest) },
     taken: async () => new Map(Object.entries(taken)),
     register: (name, entry) => { if (entry === undefined) state.registered.delete(name); else { state.registered.set(name, entry.content); state.owners.set(name, entry.owner) } },
+    packsChanged: kinds => { state.packs.push([...kinds].sort().join('+')) },
     now: () => state.clock,
     appVersion: () => app.version,
     log: { info() {}, warn() {} },
@@ -226,4 +229,93 @@ test('downloads recorded before folders were fingerprinted are fingerprinted as 
   assert.equal(item.installed?.update, false)
   assert.equal(state.downloads.length, before + 1, 'the repository is read again for the new fingerprints')
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).installed['game-arknights'].folder, true)
+})
+
+const packFile = (path: string) => readFileSync(new URL(`../../packs/${path}`, import.meta.url), 'utf8')
+
+/** The repository as it is now: each game's pack and its script's beside their SKILL.md, the first start's marked default. */
+function packRepo(state: ReturnType<typeof setup>['state']) {
+  state.files = {
+    'index.json': JSON.stringify({ skills: [
+      { name: 'game-arknights', path: 'games/arknights/game-arknights', kind: 'game', games: ['arknights'], scripts: ['maa'], default: true },
+      { name: 'maa', path: 'games/arknights/maa', kind: 'script', games: ['arknights'], scripts: ['maa'], default: true },
+      { name: 'maa-copilot', path: 'games/arknights/maa-copilot', kind: 'script', games: ['arknights'], scripts: ['maa'] },
+      { name: 'game-starrail', path: 'games/starrail/game-starrail', kind: 'game', games: ['starrail'], default: true },
+      { name: 'notes', path: 'general/notes' },
+    ] }),
+    'games/arknights/game-arknights/SKILL.md': skill('game-arknights', '明日方舟的活动和进度'),
+    'games/arknights/game-arknights/game.yaml': packFile('games/arknights/game.yaml'),
+    'games/arknights/maa/SKILL.md': skill('maa', 'MAA 的安装与运行'),
+    'games/arknights/maa/adg.script.yaml': packFile('packs/maa/adg.script.yaml'),
+    'games/arknights/maa-copilot/SKILL.md': skill('maa-copilot', '用 MAA 抄作业打活动关'),
+    'games/starrail/game-starrail/SKILL.md': skill('game-starrail', '星穹铁道的活动和进度'),
+    'games/starrail/game-starrail/game.yaml': packFile('games/starrail/game.yaml'),
+    'general/notes/SKILL.md': skill('notes', '通用的记录方法'),
+  }
+}
+
+test('a folder with adg.script.yaml is a script pack, one with game.yaml a game pack (its game and SRA ids)', async () => {
+  const { hub, state } = setup()
+  packRepo(state)
+  const items = new Map((await hub.list()).items.map(i => [i.name, i]))
+  assert.equal(items.get('maa')?.pack, 'script')
+  assert.equal(items.get('game-arknights')?.pack, 'game')
+  assert.equal(items.get('game-arknights')?.game, 'arknights')
+  assert.deepEqual(items.get('game-arknights')?.sra, ['ak'])
+  assert.equal(items.get('maa-copilot')?.pack, undefined, 'a skill beside them is a skill')
+  assert.equal(items.get('game-starrail')?.default, true)
+  assert.equal(items.get('notes')?.default, undefined)
+})
+
+test('the first start downloads the default ones, once: one deleted stays deleted; one the user\'s own skill names is left to theirs', async () => {
+  const { hub, dir, state } = setup({ 'game-starrail': '技能（你保存的或脚本包、游戏包的）' })
+  packRepo(state)
+  assert.deepEqual((await hub.list()).defaults?.pending, ['game-arknights', 'maa'])
+  assert.deepEqual(await hub.seedDefaults(), ['game-arknights', 'maa'])
+  assert.ok(existsSync(join(dir, 'skills', 'maa', 'adg.script.yaml')), 'the pack file comes with it: the library reads it there')
+  assert.ok(state.packs.includes('script') && state.packs.includes('game'), 'the library and the game page read their packs again')
+  assert.equal((await hub.list()).defaults, undefined, 'nothing left to do')
+  assert.ok(hub.isTrusted('maa'), 'from the default repository: trusted like the app')
+
+  await hub.remove('maa')
+  assert.deepEqual(await hub.seedDefaults(), [], 'not downloaded by itself again')
+  assert.equal((await hub.list()).items.find(i => i.name === 'maa')?.installed, undefined)
+  assert.equal(state.registered.has('game-starrail'), false)
+})
+
+test('a default one downloaded before it carried its pack is updated to the version that does', async () => {
+  const { hub, dir, state } = setup()
+  packRepo(state)
+  const withPack = state.files['games/arknights/maa/adg.script.yaml']!
+  delete state.files['games/arknights/maa/adg.script.yaml']
+  await hub.install('maa')
+  state.files['games/arknights/maa/adg.script.yaml'] = withPack
+  await hub.list({ refresh: true })
+  assert.ok((await hub.seedDefaults()).includes('maa'))
+  assert.ok(existsSync(join(dir, 'skills', 'maa', 'adg.script.yaml')))
+})
+
+test('a game on: its game pack and the script packs that play it; off: everything downloaded for it', async () => {
+  const { hub, state } = setup()
+  packRepo(state)
+  assert.deepEqual((await hub.forGame('arknights', true)).sort(), ['game-arknights', 'maa'])
+  await hub.install('maa-copilot')
+  await hub.install('notes')
+  assert.deepEqual((await hub.forGame('arknights', false)).sort(), ['game-arknights', 'maa', 'maa-copilot'])
+  const installed = (await hub.list()).items.filter(i => i.installed !== undefined).map(i => i.name)
+  assert.deepEqual(installed, ['notes'], 'a general skill stays')
+  await assert.rejects(hub.forGame('zzz', true), /没有游戏 zzz 的游戏包/)
+})
+
+test('a downloaded one can be changed here: its description and instructions, the rest of its frontmatter kept', async () => {
+  const { hub, dir, state } = setup()
+  packRepo(state)
+  state.files['games/arknights/maa/SKILL.md'] = '---\nname: maa\ndescription: MAA 的安装与运行\nversion: 1.2.0\n---\n\n# 原来的\n'
+  await hub.install('maa')
+  await hub.save('maa', 'MAA 的安装、运行：我自己的说法', '# 我的做法\n先开模拟器。\n')
+  const text = readFileSync(join(dir, 'skills', 'maa', 'SKILL.md'), 'utf8')
+  assert.match(text, /^---\nname: maa\ndescription: "MAA 的安装、运行：我自己的说法"\nversion: 1\.2\.0\n---/)
+  assert.match(state.registered.get('maa') ?? '', /先开模拟器/, 'the agents see it at once')
+  assert.match(await hub.preview('maa-copilot'), /用 MAA 抄作业/, 'one not downloaded can be looked at')
+  await assert.rejects(hub.save('maa-copilot', '还没下载的技能说明', '# 内容内容内容内容内容内容内容\n'), /没有从技能库下载过/)
 })

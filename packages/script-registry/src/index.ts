@@ -6,9 +6,11 @@
  * - the `scripts@1` gateway capability for the UI's script library page;
  * - the skills repository (技能库, `skillhub@1` and `skill_hub_*` tools).
  *
- * Script Packs come from `@adg/packs` (built in) and `<dataDir>/packs` (the
- * user's, overriding built-ins by id). SKILL.md registration into the agent's
- * skill catalog arrives with the analyzer (M2).
+ * Script Packs come from the 技能库 (downloaded into `<dataDir>/skill-hub/skills`;
+ * the user may delete any) and `<dataDir>/packs` (the user's, overriding those
+ * by id). The app ships none: the ones a new install starts with are the
+ * repository's `default` ones, downloaded on the first start. The user packs'
+ * SKILL.md are registered by the analyzer, the 技能库's by the hub.
  */
 import { join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
@@ -17,7 +19,6 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@adg/gateway'
 import { SCRIPT_ROLE } from './role.ts'
-import { PACKS_DIR } from '@adg/packs'
 import { InstallSettings } from '@adg/protocol'
 import { ExeIcons } from '@adg/protocol/node'
 import { z } from 'zod'
@@ -62,7 +63,7 @@ const ConfigSchema = z.object({
   formerToolsDirs: z.array(z.string().min(1)).optional(),
   /** Library state (`scripts.json`) and the user's packs (`packs/`). */
   dataDir: z.string().min(1),
-  /** Built-in pack directories; default: the `@adg/packs` package. */
+  /** Official pack directories besides the 技能库's downloads (none by default: the app ships no packs). */
   packDirs: z.array(z.string().min(1)).optional(),
   /** Install settings used until the user changes them in the UI. */
   defaults: InstallSettings.partial().optional(),
@@ -112,7 +113,9 @@ export class AdgScripts extends Service {
       toolsDir: spec.toolsDir,
       ...(spec.formerToolsDirs === undefined ? {} : { formerToolsDirs: spec.formerToolsDirs }),
       dataDir: spec.dataDir,
-      packDirs: spec.packDirs ?? [PACKS_DIR],
+      packDirs: spec.packDirs ?? [],
+      // Until the hub has read where each came from, none is trusted (it reads them again then).
+      hubPacks: { dir: join(spec.dataDir, 'skill-hub', 'skills'), trusted: id => this.skillHub?.isTrusted(id) ?? false },
       ...(spec.defaults === undefined ? {} : { defaults: stripUndefined(spec.defaults) }),
       credential: async name => (await ctx.get('credentials')?.resolve(ref(name)))?.value,
       credentialConfigured: async name => (await ctx.get('credentials')?.describe(ref(name)))?.configured ?? false,

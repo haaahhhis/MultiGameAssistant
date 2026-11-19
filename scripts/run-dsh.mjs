@@ -18,4 +18,8 @@ const child = spawn(process.execPath, [bin, ...args], {
   stdio: 'inherit',
 })
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
-child.on('exit', code => process.exit(code ?? 0))
+child.on('exit', (code, signal) => {
+  // Said, so a host that went away by itself (scripts/dev-open.mjs runs it in the background) leaves why in its log.
+  console.error(`${new Date().toISOString()} dsh exited (${signal === null ? `code ${code}` : `signal ${signal}`})`)
+  process.exit(code ?? 0)
+})

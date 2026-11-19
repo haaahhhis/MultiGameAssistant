@@ -124,7 +124,7 @@ export function InstallPanel({ client, initialRepo, jobs, onDone, openSession, o
       )}
       {loaded !== null && loaded.releases.length > 0 && (
         <>
-          <label className="field-label" htmlFor="release-select">版本{loaded.packId !== undefined && <span className="chip subtle">内置脚本包 {loaded.packId}</span>}</label>
+          <label className="field-label" htmlFor="release-select">版本{loaded.packId !== undefined && <span className="chip subtle">官方脚本包 {loaded.packId}</span>}</label>
           <Select id="release-select" value={tag} disabled={busy} onChange={next => {
             setTag(next)
             setAsset(loaded.releases.find(r => r.tag === next)?.suggestedAsset ?? '')
@@ -467,7 +467,7 @@ export function ImportPanel({ client, onImported, onClose }: { client: AdgClient
         <label className="field-label" htmlFor="import-name">显示名称（可选）</label>
         <input id="import-name" className="text-input plain" value={name} onChange={e => setName(e.target.value)} placeholder="留空则按脚本包或目录名" disabled={busy} />
         <div className="key-actions">
-          <span className="muted small">会按内置脚本包自动识别是哪个脚本。</span>
+          <span className="muted small">会按官方脚本包自动识别是哪个脚本。</span>
           <span className="spacer" />
           <button className="primary" type="submit" disabled={busy || path.trim() === ''}>{busy ? '导入中…' : '导入'}</button>
         </div>

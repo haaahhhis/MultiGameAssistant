@@ -25,7 +25,6 @@
     "@adg/installer": "workspace:*",
     "@adg/notify": "workspace:*",
     "@adg/pack-schema": "workspace:*",
-    "@adg/packs": "workspace:*",
     "@adg/protocol": "workspace:*",
     "@modelcontextprotocol/client": "2.2.0",
     "zod": "4.4.3"

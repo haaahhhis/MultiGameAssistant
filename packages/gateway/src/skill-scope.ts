@@ -51,6 +51,8 @@ export interface ScopedSkillInput {
   readonly path?: string
   readonly resourceBase?: { kind: 'directory'; path: string }
   readonly owner?: SkillOwner
+  /** A script pack's SKILL.md or a game pack's guide (shown so on the 技能 page). */
+  readonly kind?: 'script-pack' | 'game-pack'
 }
 
 /** The part of dsh's skill provider contract used here. */
@@ -144,6 +146,10 @@ export class SkillScope {
 
   ownerOf(name: string): SkillOwner | undefined {
     return this.#skills.get(name)?.owner
+  }
+
+  kindOf(name: string): ScopedSkillInput['kind'] {
+    return this.#skills.get(name)?.kind
   }
 
   /** A session's focus; undefined: no session (everything shows). A session never focused shows the general skills only. */

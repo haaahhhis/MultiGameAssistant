@@ -186,6 +186,7 @@
 .catalog-picker { display: flex; flex-direction: column; gap: 8px; }
 .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 12px; }
 .catalog-grid .check-label { font-size: 13px; }
+.catalog-pack { font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* overflow: clip, not hidden, so the axis can stick to the page's scroller; it sticks above the scroller's padding, or rows would show through there */
 .card.games-overview-board { padding: 0 0 8px; gap: 0; overflow: clip; }

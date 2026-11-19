@@ -18,7 +18,6 @@ import type {} from '@adg/runner'
 import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
-import { GAMES_DIR } from '@adg/packs'
 import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
@@ -48,7 +47,11 @@ declare module '@deepseek-ai/cordis' {
 const ConfigSchema = z.object({
   /** The calendar and screenshots: `<dataDir>/games/`; the user's Game Packs: `<dataDir>/games/<id>/game.yaml`. */
   dataDir: z.string().min(1),
-  /** Built-in Game Packs. @default @adg/packs/games */
+  /**
+   * The official Game Packs: the 技能库's downloads (`<dataDir>/skill-hub/skills/game-<id>/game.yaml`,
+   * beside the guide the hub registers as a skill). The app ships none; deleting one there removes the game.
+   * @default <dataDir>/skill-hub/skills
+   */
   gamesDir: z.string().optional(),
 })
 export type Config = z.input<typeof ConfigSchema>
@@ -114,7 +117,7 @@ export class AdgGameIntel extends Service {
     const log = ctx.logger('adg-game-intel')
     this.log = log
     this.dir = join(spec.dataDir, 'games')
-    this.builtinDir = spec.gamesDir ?? GAMES_DIR
+    this.builtinDir = spec.gamesDir ?? join(spec.dataDir, 'skill-hub', 'skills')
     this.calendar = new Calendar(this.dir)
     this.icons = new ExeIcons(join(this.dir, 'icons'))
     const calendar = this.calendar
@@ -156,7 +159,7 @@ export class AdgGameIntel extends Service {
           if (skill === undefined) { log.warn(`game ${game.manifest.id}: GAME.md has no usable frontmatter`); continue }
           try {
             const owner = { games: [game.manifest.id, game.manifest.name] }
-            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: game.builtin ? 'bundled' : 'custom', path: join(game.dir, GAME_GUIDE_FILE), resourceBase: { kind: 'directory', path: game.dir }, owner }))
+            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: game.builtin ? 'bundled' : 'custom', path: join(game.dir, GAME_GUIDE_FILE), resourceBase: { kind: 'directory', path: game.dir }, owner, kind: 'game-pack' }))
           } catch (error) {
             log.warn(`game ${game.manifest.id}: skill not registered: ${error instanceof Error ? error.message : String(error)}`)
           }
@@ -276,6 +279,8 @@ export class AdgGameIntel extends Service {
           },
           'games/catalog': async () => {
             await this.ready
+            // A game pack may have come or gone with the 技能库 since.
+            await this.loadGames(log)
             const followed = new Set(calendar.settings.followed)
             return {
               games: SRA_GAMES.map(g => {
@@ -779,7 +784,7 @@ export class AdgGameIntel extends Service {
     if (!parsed.success) throw new Error(`游戏包写得不对：${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('；')}`)
     const manifest = parsed.data
     const existing = this.games.find(g => g.manifest.id === manifest.id)
-    if (existing !== undefined && existing.builtin && existing.followed !== true) throw new Error(`已经有内置的游戏「${existing.manifest.name}」（${manifest.id}），换一个 id，或者直接用它`)
+    if (existing !== undefined && existing.builtin && existing.followed !== true) throw new Error(`已经有技能库的游戏包「${existing.manifest.name}」（${manifest.id}），换一个 id，或者直接用它`)
     const dir = join(this.dir, manifest.id)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, GAME_MANIFEST_FILE), `# 由 agent 用 game_add 写的游戏包；可以直接改（JSON 也是 YAML）。\n${JSON.stringify(input, null, 2)}\n`)

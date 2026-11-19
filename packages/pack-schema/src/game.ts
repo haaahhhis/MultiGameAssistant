@@ -1,9 +1,10 @@
 /**
  * The Game Pack contract: `game.yaml` (this schema)
  * plus `GAME.md` — how to reach the event, mission and mail pages and what
- * they look like — for the agent. Built-in packs live in
- * `@adg/packs/games/<id>/`; the user's in `<data dir>/games/<id>/` replace a
- * built-in one of the same id.
+ * they look like — for the agent. The official packs come from the 技能库
+ * (`<data dir>/skill-hub/skills/game-<id>/`, their guide as the SKILL.md
+ * beside it); the user's in `<data dir>/games/<id>/` replace an official one
+ * of the same id.
  */
 import { parse as parseYaml, YAMLParseError } from 'yaml'
 import { z } from 'zod'

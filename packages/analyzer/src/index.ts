@@ -77,7 +77,8 @@ export class AdgAnalyzer extends Service {
         if (guide !== undefined) disposers.push(scoped.adgGateway.generalSkill({ ...guide, source: 'bundled' }, () => scoped.skills.register({ ...guide, source: 'bundled' })))
         const { scripts: inLibrary } = library.list()
         for (const pack of library.packs()) {
-          if (pack.skill === undefined) continue
+          // A pack from the 技能库: the hub registers its SKILL.md (as the skill it downloaded).
+          if (pack.skill === undefined || pack.hub === true) continue
           const skill = parseSkill(pack.skill, pack.manifest.id)
           if (skill === undefined) {
             log.warn(`pack ${pack.manifest.id}: SKILL.md has no usable frontmatter; not registered as a skill`)
@@ -88,7 +89,7 @@ export class AdgAnalyzer extends Service {
             ...(pack.manifest.game?.name === undefined ? {} : { games: [pack.manifest.game.name] }),
           }
           try {
-            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir }, owner }))
+            disposers.push(scoped.adgGateway.skillScope.register({ ...skill, source: pack.builtin ? 'bundled' : 'custom', path: join(pack.dir, SKILL_FILE), resourceBase: { kind: 'directory', path: pack.dir }, owner, kind: 'script-pack' }))
           } catch (error) {
             log.warn(`pack ${pack.manifest.id}: skill not registered: ${error instanceof Error ? error.message : String(error)}`)
           }
@@ -153,7 +154,7 @@ export class AdgAnalyzer extends Service {
             await scripts.ready
             const { packId, version } = params as RequestParams<'packs/restore'>
             if (version === BUILTIN_PACK_VERSION) {
-              if (library.pack(packId)?.over === undefined) throw new Error(`${packId} 没有内置的脚本包可以恢复`)
+              if (library.pack(packId)?.over === undefined) throw new Error(`${packId} 没有官方的脚本包可以恢复`)
               await drafts.discard(packId)
             } else {
               await drafts.restore(packId, version)
@@ -255,7 +256,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'script_help',
-      description: '运行脚本程序的帮助参数（默认 --help），拿到它自己说明的命令和任务。最多运行 20 秒后结束。没有内置脚本包的脚本会先请用户确认，因为这会启动它的程序。',
+      description: '运行脚本程序的帮助参数（默认 --help），拿到它自己说明的命令和任务。最多运行 20 秒后结束。没有官方脚本包（技能库下载的）的脚本会先请用户确认，因为这会启动它的程序。',
       properties: {
         id,
         exe: { type: 'string', description: '要运行的程序（相对脚本目录）；省略时用脚本包的启动程序或找到的第一个可执行文件。' },
@@ -312,7 +313,7 @@ function analyzerTools(deps: ToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'pack_propose',
-      description: '保存脚本包（adg.script.yaml 和 SKILL.md），直接生效，不用用户再确认：新写一份，或者用原来的 id 改已有的一份（内置的、用户确认过的都可以；被替换的那一版留在历史里）。会按 schema 校验，并检查 manifest 里给用户看的使用说明（guide、任务和参数的 description、临时修改的 note）：缺了或混进了给 agent 的内容（工具名、脚本包字段、占位符、核验依据、待确认）都会失败并返回具体位置，脚本包保持原样，修正后重新提交；通过后这个脚本马上用新的脚本包，之后的 script_run、script_tasks 都按它来。不会修改脚本本身。',
+      description: '保存脚本包（adg.script.yaml 和 SKILL.md），直接生效，不用用户再确认：新写一份，或者用原来的 id 改已有的一份（官方的、用户确认过的都可以；被替换的那一版留在历史里）。会按 schema 校验，并检查 manifest 里给用户看的使用说明（guide、任务和参数的 description、临时修改的 note）：缺了或混进了给 agent 的内容（工具名、脚本包字段、占位符、核验依据、待确认）都会失败并返回具体位置，脚本包保持原样，修正后重新提交；通过后这个脚本马上用新的脚本包，之后的 script_run、script_tasks 都按它来。不会修改脚本本身。',
       properties: {
         pack_id: { type: 'string', description: '脚本包 id（与 manifest 里的 id 相同；改进已有脚本包时用原 id）。' },
         script_id: { type: 'string', description: '这个包描述的脚本库里的脚本 id。' },

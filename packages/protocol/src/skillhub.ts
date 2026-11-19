@@ -1,9 +1,11 @@
 /**
- * `skillhub@1`: the skills repository (技能库) — skills for particular games
- * and scripts, downloaded from a GitHub repository when the user wants them.
- * A downloaded skill follows the repository: an update replaces it. Core
- * skills ship with the app and cannot be changed; the user's own skills are
- * not tracked. Served by `@adg/script-registry`.
+ * `skillhub@1`: the skills repository (技能库) — script packs, game packs and
+ * skills for particular games and scripts, downloaded from a GitHub
+ * repository. The ones the repository marks `default` are downloaded on the
+ * first start; the user may delete any of them (they are not downloaded
+ * again) and download others. A downloaded one follows the repository: an
+ * update replaces it. Core skills ship with the app and cannot be changed;
+ * the user's own skills are not tracked. Served by `@adg/script-registry`.
  */
 import { z } from 'zod'
 import { GitHubRepo } from './scripts.ts'
@@ -19,6 +21,17 @@ export const HubItem = z.object({
   description: z.string(),
   title: z.string().optional(),
   kind: z.enum(['game', 'script', 'general']),
+  /**
+   * A script pack (its folder has `adg.script.yaml`: how the script installs,
+   * its tasks; the pack id is the name) or a game pack (`game.yaml`: where the
+   * game page reads events). Absent: a skill only.
+   */
+  pack: z.enum(['script', 'game']).optional(),
+  /** A game pack's game id, and the SRA public API's ids for it (the games page's 更多游戏 list). */
+  game: z.string().optional(),
+  sra: z.array(z.string()).optional(),
+  /** Downloaded on the first start (until the user deletes it). */
+  default: z.boolean().optional(),
   /** Game ids and script / pack ids it is for: the page suggests it for the ones the user has. */
   games: z.array(z.string()),
   scripts: z.array(z.string()),
@@ -56,7 +69,39 @@ export const SkillHubRequests = {
   'skillhub/list': {
     capability: SKILLHUB_CAPABILITY,
     params: z.object({ refresh: z.boolean().optional() }),
-    result: z.object({ items: z.array(HubItem), repos: z.array(HubRepo), errors: z.array(z.string()), fetchedAt: z.number().optional() }),
+    result: z.object({
+      items: z.array(HubItem), repos: z.array(HubRepo), errors: z.array(z.string()), fetchedAt: z.number().optional(),
+      /** The first start's downloads (the `default` ones): still to do, or why they could not be done yet (tried again later). */
+      defaults: z.object({ pending: z.array(z.string()), error: z.string().optional() }).optional(),
+    }),
+  },
+  /** Do the first start's downloads now (they are tried again by themselves too, while they cannot all be done). */
+  'skillhub/defaults': {
+    capability: SKILLHUB_CAPABILITY,
+    params: z.object({}),
+    result: z.object({ names: z.array(z.string()) }),
+  },
+  /** A skill's SKILL.md as the repository has it, for one not downloaded yet. */
+  'skillhub/preview': {
+    capability: SKILLHUB_CAPABILITY,
+    params: ByName,
+    result: z.object({ content: z.string() }),
+  },
+  /** Change a downloaded one's SKILL.md (its description and instructions); the next update replaces it like the rest. */
+  'skillhub/save': {
+    capability: SKILLHUB_CAPABILITY,
+    params: ByName.extend({ description: z.string().trim().min(10).max(400), content: z.string().trim().min(20).max(20_000) }),
+    result: z.object({}),
+  },
+  /**
+   * Everything the repository has for one game: `on` downloads its game pack
+   * and the script packs that play it; off deletes what was downloaded for it
+   * (packs and skills). The games page's 更多游戏 list ticks and unticks this.
+   */
+  'skillhub/game': {
+    capability: SKILLHUB_CAPABILITY,
+    params: z.object({ game: z.string().min(1).max(64), on: z.boolean() }),
+    result: z.object({ names: z.array(z.string()) }),
   },
   'skillhub/install': {
     capability: SKILLHUB_CAPABILITY,

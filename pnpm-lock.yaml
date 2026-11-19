@@ -451,9 +451,6 @@ importers:
       '@adg/pack-schema':
         specifier: workspace:*
         version: link:../pack-schema
-      '@adg/packs':
-        specifier: workspace:*
-        version: link:../packs
       '@adg/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -877,9 +874,6 @@ importers:
       '@adg/pack-schema':
         specifier: workspace:*
         version: link:../pack-schema
-      '@adg/packs':
-        specifier: workspace:*
-        version: link:../packs
       '@adg/protocol':
         specifier: workspace:*
         version: link:../protocol

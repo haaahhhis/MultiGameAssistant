@@ -18,17 +18,22 @@ import type { Approve } from './tools.ts'
 
 /** Where each kind of skill comes from, in the words of "已有同名的…". */
 function takenLabel(source: string): string {
-  if (source === 'bundled') return '内置技能'
+  if (source === 'bundled') return '核心技能'
   if (source === 'custom') return '技能（你保存的或脚本包、游戏包的）'
   if (source.startsWith('user-')) return '技能（你的技能文件夹）'
   return '技能'
 }
 
+/** Try the first start's downloads again after this long while they cannot all be done (offline, the repository unreadable). */
+const DEFAULTS_RETRY_MS = 30 * 60_000
+
 export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promise<void>, approve: Approve, log: { info(m: string): void; warn(m: string): void }): SkillHub {
-  const entries = new Map<string, { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } }>()
+  const entries = new Map<string, { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] }; pack?: 'script' | 'game' }>()
   const disposers = new Map<string, () => void>()
   let skills: Context['skills'] | undefined
   const changed = () => ctx.get('adgGateway')?.broadcast('skillhub/changed', {})
+  // What the 技能 page lists changed too (a skill came, went or changed).
+  const skillsChanged = () => { changed(); ctx.get('adgGateway')?.broadcast('skills/changed', {}) }
 
   const apply = (name: string) => {
     disposers.get(name)?.()
@@ -37,13 +42,22 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     const scope = ctx.get('adgGateway')?.skillScope
     if (entry === undefined || scope === undefined) return
     try {
-      disposers.set(name, scope.register({ name, description: entry.description, content: entry.content, source: 'hub', path: entry.path, resourceBase: { kind: 'directory', path: entry.dir }, ...(entry.owner === undefined ? {} : { owner: entry.owner }) }))
+      const kind = entry.pack === 'script' ? 'script-pack' : entry.pack === 'game' ? 'game-pack' : undefined
+      disposers.set(name, scope.register({ name, description: entry.description, content: entry.content, source: 'hub', path: entry.path, resourceBase: { kind: 'directory', path: entry.dir }, ...(entry.owner === undefined ? {} : { owner: entry.owner }), ...(kind === undefined ? {} : { kind }) }))
     } catch (error) {
       log.warn(`skill hub: ${name} not registered: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
+  // A downloaded script pack is the library's (its packs are read from the hub's folder); a game pack the game page's.
+  const packsChanged = (kinds: ReadonlySet<'script' | 'game'>) => {
+    const gateway = ctx.get('adgGateway')
+    if (kinds.has('script')) void library.reloadPacks().then(() => gateway?.broadcast('scripts/changed', {}), error => log.warn(`packs not read again: ${error instanceof Error ? error.message : String(error)}`))
+    if (kinds.has('game')) gateway?.broadcast('games/changed', {})
+  }
+
   const hub = new SkillHub({
+    packsChanged,
     dir: join(library.dataDir, 'skill-hub'),
     download: (url, dest, signal) => library.downloadFromGitHub(url, dest, signal),
     extract: async (archive, dest, signal) => { await library.unpack(archive, dest, signal) },
@@ -61,7 +75,26 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
     appVersion: () => process.env['ADG_APP_VERSION'] || pluginVersion(),
     log,
   })
-  const started = ready.then(() => hub.start())
+  // The library read the hub's packs before the hub knew where each came from (which are trusted): read them again.
+  const started = ready.then(() => hub.start()).then(() => library.reloadPacks())
+
+  // The first start: the script packs and game packs a new install starts with, from the 技能库 (tried again while offline).
+  ctx.effect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stop = new AbortController()
+    const seed = () => {
+      void started.then(() => hub.seedDefaults(stop.signal)).then(names => {
+        if (names.length > 0) skillsChanged()
+      }, () => {
+        if (stop.signal.aborted) return
+        changed()
+        timer = setTimeout(seed, DEFAULTS_RETRY_MS)
+        timer.unref?.()
+      })
+    }
+    seed()
+    return () => { stop.abort(); clearTimeout(timer) }
+  }, 'adg-skill-hub first downloads')
 
   // Registered through the gateway's skill scope (skill isolation); the registry itself only answers what is taken.
   ctx.inject(['skills', 'adgGateway'], scoped => {
@@ -80,29 +113,48 @@ export function startSkillHub(ctx: Context, library: ScriptLibrary, ready: Promi
       'skillhub/install': async (params, call) => {
         const p = params as RequestParams<'skillhub/install'>
         const item = await hub.install(p.name, p.repo, call.signal)
-        changed()
+        skillsChanged()
         return item
       },
       'skillhub/update': async (params, call) => {
         const result = await hub.update((params as RequestParams<'skillhub/update'>).name, call.signal)
-        changed()
+        skillsChanged()
         return result
       },
       'skillhub/rollback': async params => {
         const item = await hub.rollback((params as RequestParams<'skillhub/rollback'>).name)
-        changed()
+        skillsChanged()
         return item
       },
       'skillhub/remove': async params => {
         await hub.remove((params as RequestParams<'skillhub/remove'>).name)
-        changed()
+        skillsChanged()
         return {}
+      },
+      'skillhub/defaults': async (_params, call) => {
+        try {
+          return { names: await hub.seedDefaults(call.signal) }
+        } finally {
+          skillsChanged()
+        }
+      },
+      'skillhub/preview': async params => ({ content: await hub.preview((params as RequestParams<'skillhub/preview'>).name) }),
+      'skillhub/save': async params => {
+        const p = params as RequestParams<'skillhub/save'>
+        await hub.save(p.name, p.description, p.content)
+        skillsChanged()
+        return {}
+      },
+      'skillhub/game': async (params, call) => {
+        const p = params as RequestParams<'skillhub/game'>
+        const names = await hub.forGame(p.game, p.on, call.signal)
+        skillsChanged()
+        return { names }
       },
       'skillhub/owner': async params => {
         const p = params as RequestParams<'skillhub/owner'>
         await hub.setOwner(p.name, p.owner)
-        changed()
-        ctx.get('adgGateway')?.broadcast('skills/changed', {})
+        skillsChanged()
         return {}
       },
       'skillhub/repos/set': async params => {

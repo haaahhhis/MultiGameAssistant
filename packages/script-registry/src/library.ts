@@ -55,8 +55,13 @@ export interface LibraryOptions {
   readonly formerToolsDirs?: readonly string[]
   /** Holds `scripts.json` and the user's own packs (`packs/`). */
   readonly dataDir: string
-  /** Built-in pack directories; `<dataDir>/packs` is appended as the user's. */
+  /** Official pack directories (tests; the app has none built in); `<dataDir>/packs` is appended as the user's. */
   readonly packDirs: readonly string[]
+  /**
+   * The packs downloaded from the 技能库 (`<dataDir>/skill-hub/skills`), read
+   * before the user's: official when they came from the default repository.
+   */
+  readonly hubPacks?: { readonly dir: string; readonly trusted: (id: string) => boolean }
   /** Settings used until the user changes them. */
   readonly defaults?: Partial<InstallSettings>
   /** Resolve a credential's value (the GitHub token). */
@@ -143,6 +148,7 @@ export class ScriptLibrary {
   async reloadPacks(): Promise<void> {
     const dirs: PackDir[] = [
       ...this.#options.packDirs.map(dir => ({ dir, builtin: true })),
+      ...(this.#options.hubPacks === undefined ? [] : [{ dir: this.#options.hubPacks.dir, builtin: false, trusted: this.#options.hubPacks.trusted, hub: true }]),
       { dir: join(this.#options.dataDir, 'packs'), builtin: false },
     ]
     const { packs, errors } = await loadPacks(dirs)

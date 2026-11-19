@@ -82,7 +82,7 @@ export function mcpTools(library: ScriptLibrary, integrations: ScriptIntegration
     }),
     tool({
       name: MCP_TOOL_NAMES.tools,
-      description: '连接脚本的 MCP 服务，列出它的工具（名字、说明、参数的 JSON Schema），附上脚本包对这些工具的说明。第一次连接一个不是内置脚本包描述的服务时会先请用户同意（它会启动脚本目录里的程序）。由脚本程序自己提供的服务（needsRunning，或 http 地址）要先把脚本打开。',
+      description: '连接脚本的 MCP 服务，列出它的工具（名字、说明、参数的 JSON Schema），附上脚本包对这些工具的说明。第一次连接一个不是官方脚本包（技能库下载的）描述的服务时会先请用户同意（它会启动脚本目录里的程序）。由脚本程序自己提供的服务（needsRunning，或 http 地址）要先把脚本打开。',
       properties: { id, server },
       required: ['id'],
       kind: 'execute',

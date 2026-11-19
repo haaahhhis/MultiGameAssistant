@@ -85,6 +85,25 @@ export function presetOverride(upstream, id) {
   ]
   const inserts = [{ after: compaction.at, lines: compactionConfig }]
 
+  // The app's agents read their own skills only (its core ones, the 技能库's, the ones saved here), not the
+  // folders other agents on the machine share: ~/.agents/skills, ~/.dsh/skills, a working folder's
+  // .agents/skills or .dsh/skills. dsh's bundled skills stay.
+  const skills = rowOf(row, '@deepseek-ai/dsh-skill-filesystem', id)
+  const own = [
+    `${skills.indent}  # The app's agents read their own skills only, not the folders other agents on the machine share`,
+    `${skills.indent}  # (~/.agents/skills, ~/.dsh/skills, a working folder's .agents/skills or .dsh/skills); dsh's bundled ones stay.`,
+    `${skills.indent}  includeDefaultRoots: false`,
+    `${skills.indent}  bundledSkillDir: !!js "process.env.DSH_BUNDLED_SKILL_DIR || undefined"`,
+  ]
+  if (row[skills.at + 1] === `${skills.indent}config:`) {
+    const end = row.findIndex((l, i) => i > skills.at + 1 && !l.startsWith(`${skills.indent}  `))
+    const config = row.slice(skills.at + 2, end === -1 ? undefined : end)
+    if (config.some(l => /^\s*(includeDefaultRoots|bundledSkillDir):/.test(l))) throw new Error(`dsh-skill-filesystem now sets its own roots in ${id}.patch.yml: merge it in scripts/lib/standard-preset.mjs`)
+    inserts.push({ after: skills.at + 1, lines: own })
+  } else {
+    inserts.push({ after: skills.at, lines: [`${skills.indent}config:`, ...own] })
+  }
+
   if (id === 'standard') {
     // The children of standard's agents run under ptc (设置 → 对话压缩 → 子 agent 用代码调用工具).
     const subagent = rowOf(row, '@deepseek-ai/dsh-tool-subagent', id)

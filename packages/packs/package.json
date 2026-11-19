@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "Built-in Script Packs (packs/<id>/adg.script.yaml + SKILL.md) and Game Packs (games/<id>/game.yaml + GAME.md); data only",
+  "description": "The official Script Packs (packs/<id>/adg.script.yaml) and Game Packs (games/<id>/game.yaml) as published to the skills repository; tests and publishing only, not shipped",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",

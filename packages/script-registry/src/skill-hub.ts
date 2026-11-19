@@ -1,16 +1,24 @@
 /**
- * The skills repository (技能库): skills for particular games and scripts
- * that MultiGameAssistant does not ship, downloaded when the user wants them
- * from a GitHub repository (default `MultiGameAssistant/skills`).
+ * The skills repository (技能库): script packs, game packs and skills for
+ * particular games and scripts that MultiGameAssistant does not ship,
+ * downloaded from a GitHub repository (default `MultiGameAssistant/skills`).
  *
  * - The repository is read as one zip (no git needed; through the download
  *   mirror), at most once a day unless asked. Its `index.json` lists the
- *   skills (`name`, `path`, `kind`, `games`, `scripts`); without one every
- *   `SKILL.md` in it is a skill. A skill's description is its frontmatter's.
- * - A downloaded skill lives in `<dataDir>/skill-hub/skills/<name>/` and
- *   follows the repository: an update replaces it with the repository's
- *   version whether or not it was changed here. What should last is saved as
- *   one of the user's own skills.
+ *   skills (`name`, `path`, `kind`, `games`, `scripts`, `default`); without
+ *   one every `SKILL.md` in it is a skill. A skill's description is its
+ *   frontmatter's.
+ * - A folder with `adg.script.yaml` beside its SKILL.md is a script pack (its
+ *   id is the name); one with `game.yaml` is a game pack. The script library
+ *   and the game page read the downloaded ones from here, so deleting one
+ *   deletes the pack: nothing of a game the user does not play has to stay.
+ * - The ones marked `default` are downloaded on the first start, once each:
+ *   one the user deleted is not downloaded again.
+ * - A downloaded skill lives in `<dataDir>/skill-hub/skills/<name>/` (the
+ *   app's own data: not a skill folder other agents read) and follows the
+ *   repository: an update replaces it with the repository's version whether
+ *   or not it was changed here. What should last is saved as one of the
+ *   user's own skills.
  * - Versions: a skill is its whole folder (SKILL.md and the scripts and
  *   references beside it), fingerprinted together; any changed file is a new
  *   version. The index may also give a `version` and one line of `changes`
@@ -24,6 +32,7 @@
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { satisfies } from '@adg/installer'
+import { GAME_MANIFEST_FILE, MANIFEST_FILE, parseGameManifest, parseManifest } from '@adg/pack-schema'
 import { join, relative, resolve, sep } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
 import { z } from 'zod'
@@ -32,8 +41,18 @@ export const DEFAULT_HUB_REPO = { repo: 'MultiGameAssistant/skills', branch: 'ma
 
 /** The repository is read again after this long. */
 const REFRESH_MS = 24 * 60 * 60_000
+/** What a repository read keeps; one kept in an older form is read again (it has no packs in it). */
+const READ_FORMAT = 2
 const SKILL_FILE = 'SKILL.md'
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** Which pack a skill's folder is, by the file beside its SKILL.md. */
+export async function packKind(dir: string): Promise<'script' | 'game' | undefined> {
+  const has = (file: string) => stat(join(dir, file)).then(s => s.isFile(), () => false)
+  if (await has(MANIFEST_FILE)) return 'script'
+  if (await has(GAME_MANIFEST_FILE)) return 'game'
+  return undefined
+}
 
 export interface HubRepo { readonly repo: string; readonly branch: string }
 
@@ -43,6 +62,13 @@ export interface HubSkill {
   readonly title?: string
   /** `game`: a game's guide; `script`: a script's; `general`. */
   readonly kind: 'game' | 'script' | 'general'
+  /** A script pack (`adg.script.yaml`; its id is the name) or a game pack (`game.yaml`). */
+  readonly pack?: 'script' | 'game'
+  /** A game pack's game id, and its SRA public API ids. */
+  readonly game?: string
+  readonly sra?: readonly string[]
+  /** Downloaded on the first start. */
+  readonly default?: boolean
   /** Game ids (game packs) and script / pack ids it is for. */
   readonly games: readonly string[]
   readonly scripts: readonly string[]
@@ -92,7 +118,9 @@ const Installed = z.object({
 const State = z.object({
   repos: z.array(z.object({ repo: z.string(), branch: z.string() })).optional(),
   installed: z.record(z.string(), Installed).default({}),
-  read: z.record(z.string(), z.object({ at: z.number(), skills: z.array(z.looseObject({ name: z.string(), repo: z.string(), path: z.string(), hash: z.string() })) })).default({}),
+  read: z.record(z.string(), z.object({ at: z.number(), format: z.number().optional(), skills: z.array(z.looseObject({ name: z.string(), repo: z.string(), path: z.string(), hash: z.string() })) })).default({}),
+  /** The `default` ones downloaded on a first start (or there already, or deleted since): not downloaded by themselves again. */
+  seeded: z.array(z.string()).optional(),
 })
 type State = z.infer<typeof State>
 
@@ -107,6 +135,7 @@ const Index = z.object({
     version: z.string().max(40).optional(),
     changes: z.string().max(300).optional(),
     requires: z.string().max(60).optional(),
+    default: z.boolean().optional(),
   })),
 })
 
@@ -120,9 +149,11 @@ export interface SkillHubOptions {
   /** Names of skills that are not this hub's (core, packs, the user's): not to be taken. */
   readonly taken: () => Promise<ReadonlyMap<string, string>>
   /** Register (or re-register) a downloaded skill with the agents; undefined unregisters. */
-  readonly register: (name: string, skill: { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] } } | undefined) => void
+  readonly register: (name: string, skill: { description: string; content: string; path: string; dir: string; owner?: { games?: string[]; scripts?: string[] }; pack?: 'script' | 'game' } | undefined) => void
   /** This app's version, for a skill's `requires`; undefined (run from source): any. */
   readonly appVersion?: () => string | undefined
+  /** A script pack or a game pack came, changed or went: the script library and the game page read them again. */
+  readonly packsChanged?: (kinds: ReadonlySet<'script' | 'game'>) => void
   readonly now?: () => number
   readonly log: { info(message: string): void; warn(message: string): void }
 }
@@ -187,7 +218,7 @@ export class SkillHub {
    * them now; otherwise what was read today (a repository that cannot be
    * read gives what was read before, and says so in `errors`).
    */
-  async list(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<{ items: HubItem[]; repos: HubRepo[]; errors: string[]; fetchedAt?: number }> {
+  async list(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<{ items: HubItem[]; repos: HubRepo[]; errors: string[]; fetchedAt?: number; defaults?: { pending: string[]; error?: string } }> {
     await this.start()
     const errors: string[] = []
     const skills: HubSkill[] = []
@@ -195,9 +226,9 @@ export class SkillHub {
     for (const repo of this.repos()) {
       const key = repoKey(repo)
       let read = this.#state.read[key]
-      if (options.refresh === true || read === undefined || this.#now() - read.at >= REFRESH_MS) {
+      if (options.refresh === true || read === undefined || read.format !== READ_FORMAT || this.#now() - read.at >= REFRESH_MS) {
         try {
-          const fresh = { at: this.#now(), skills: (await this.#readRepo(repo, options.signal)) as unknown as State['read'][string]['skills'] }
+          const fresh = { at: this.#now(), format: READ_FORMAT, skills: (await this.#readRepo(repo, options.signal)) as unknown as State['read'][string]['skills'] }
           this.#state.read[key] = fresh
           read = fresh
           await this.#save()
@@ -219,9 +250,126 @@ export class SkillHub {
       if (items.some(i => i.name === name)) continue
       const content = await readFile(join(this.skillsDir, name, SKILL_FILE), 'utf8').catch(() => '')
       const front = frontmatter(content)
-      items.push({ name, description: front?.description ?? '', kind: 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false) })
+      const pack = await packKind(join(this.skillsDir, name))
+      items.push({ name, description: front?.description ?? '', kind: pack ?? 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false), ...(pack === undefined ? {} : { pack }) })
     }
-    return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }) }
+    const pending = this.#pendingDefaults(items)
+    const defaults = pending.length === 0 && this.#defaultsError === undefined ? undefined : { pending, ...(this.#defaultsError === undefined ? {} : { error: this.#defaultsError }) }
+    return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }), ...(defaults === undefined ? {} : { defaults }) }
+  }
+
+  // ── the first start's downloads ──
+
+  /** Why the `default` ones could not all be downloaded the last time; undefined: they were (or not tried yet). */
+  #defaultsError: string | undefined
+
+  /** The `default` ones still to download here. */
+  #pendingDefaults(items: readonly HubItem[]): string[] {
+    const seeded = new Set(this.#state.seeded ?? [])
+    return items.filter(i => i.default === true && !seeded.has(i.name) && i.installed === undefined && i.blocked === undefined && i.incompatible === undefined).map(i => i.name)
+  }
+
+  /**
+   * Download what the repository marks `default` (the script packs and game
+   * packs a new install starts with), once each: one deleted later is not
+   * downloaded again. One downloaded before it carried its pack file (the
+   * app used to ship the packs) is updated to the version that does. A name
+   * the user's own skill has is left to theirs. What fails is tried again
+   * the next time.
+   * @returns the names downloaded or updated.
+   */
+  async seedDefaults(signal?: AbortSignal): Promise<string[]> {
+    await this.start()
+    const { items, errors } = await this.list(signal === undefined ? {} : { signal })
+    if (items.length === 0 && errors.length > 0) {
+      this.#defaultsError = errors.join('；')
+      throw new Error(this.#defaultsError)
+    }
+    const seeded = new Set(this.#state.seeded ?? [])
+    const done: string[] = []
+    const failed: string[] = []
+    for (const item of items) {
+      if (item.default !== true || seeded.has(item.name) || item.incompatible !== undefined) continue
+      try {
+        if (item.installed === undefined && item.blocked === undefined) {
+          await this.install(item.name, item.repo, signal)
+          done.push(item.name)
+        } else if (item.installed !== undefined && item.pack !== undefined && item.installed.update && (await packKind(join(this.skillsDir, item.name))) === undefined) {
+          await this.update(item.name, signal)
+          done.push(item.name)
+        }
+        seeded.add(item.name)
+        this.#state.seeded = [...seeded]
+        await this.#save()
+      } catch (error) {
+        if (signal?.aborted === true) throw error
+        failed.push(`${item.name}：${errorText(error)}`)
+      }
+    }
+    this.#defaultsError = failed.length === 0 ? undefined : failed.join('；')
+    if (done.length > 0) this.#options.log.info(`skill hub: downloaded on first start: ${done.join(', ')}`)
+    if (failed.length > 0) this.#options.log.warn(`skill hub: not downloaded on first start: ${this.#defaultsError}`)
+    return done
+  }
+
+  // ── one game's packs ──
+
+  /**
+   * `on`: download the game pack for `game` (a game id) and the script packs
+   * that play it; off: delete everything downloaded for it (its packs and
+   * skills). Deleted ones count as seeded: not downloaded by themselves again.
+   * @returns the names downloaded or deleted.
+   */
+  async forGame(game: string, on: boolean, signal?: AbortSignal): Promise<string[]> {
+    const { items } = await this.list(signal === undefined ? {} : { signal })
+    const forIt = (i: HubItem) => i.game === game || i.games.includes(game)
+    const names: string[] = []
+    if (on) {
+      const wanted = items.filter(i => i.pack !== undefined && forIt(i) && i.installed === undefined && i.blocked === undefined && i.incompatible === undefined)
+      if (!items.some(i => i.pack === 'game' && i.game === game)) throw new Error(`技能库里没有游戏 ${game} 的游戏包`)
+      for (const item of wanted) {
+        await this.install(item.name, item.repo, signal)
+        names.push(item.name)
+      }
+      return names
+    }
+    for (const item of items) {
+      if (item.installed === undefined || !forIt(item)) continue
+      // A skill for this game and another one the user still has stays.
+      const others = item.games.filter(g => g !== game)
+      if (item.pack === undefined && others.some(g => items.some(i => i.installed !== undefined && i.pack === 'game' && i.game === g))) continue
+      await this.remove(item.name)
+      names.push(item.name)
+    }
+    return names
+  }
+
+  // ── changing a downloaded one ──
+
+  /** Write a downloaded skill's description and instructions (the rest of its frontmatter and folder stay). */
+  async save(name: string, description: string, content: string): Promise<void> {
+    this.#record(name)
+    const file = join(this.skillsDir, name, SKILL_FILE)
+    const before = await readFile(file, 'utf8').catch(() => '')
+    const head = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(before)?.[1] ?? `name: ${name}`
+    const lines = head.split(/\r?\n/).filter(line => !/^description:/.test(line))
+    if (!lines.some(line => /^name:/.test(line))) lines.unshift(`name: ${name}`)
+    const at = lines.findIndex(line => /^name:/.test(line)) + 1
+    lines.splice(at, 0, `description: ${JSON.stringify(description.replace(/\s+/g, ' ').trim())}`)
+    await writeFileAtomic(file, `---\n${lines.join('\n')}\n---\n\n${content.trim()}\n`)
+    await this.#register(name)
+    this.#options.log.info(`skill hub: ${name} changed on the 技能 page`)
+  }
+
+  /** A skill's SKILL.md as the repository has it (one not downloaded yet, to look at first). */
+  async preview(name: string): Promise<string> {
+    const skill = await this.#find(name, undefined)
+    return readFile(this.#repoFile(skill), 'utf8')
+  }
+
+  /** Downloaded from the default repository (MultiGameAssistant/skills): its packs are trusted like the app's own. */
+  isTrusted(name: string): boolean {
+    return this.#state.installed[name]?.repo.toLowerCase() === DEFAULT_HUB_REPO.repo.toLowerCase()
   }
 
   /** Download a skill from the repository (the first that has it, or `repo`). */
@@ -252,8 +400,10 @@ export class SkillHub {
     const previous = record.previous
     if (previous === undefined || !(await stat(kept).then(st => st.isDirectory(), () => false))) throw new Error(`「${name}」没有上一个版本可以回退`)
     const held = record.hash
+    const packs = new Set([await packKind(join(this.skillsDir, name)), await packKind(kept)].filter(k => k !== undefined))
     await rm(join(this.skillsDir, name), { recursive: true, force: true })
     await rename(kept, join(this.skillsDir, name))
+    if (packs.size > 0) this.#options.packsChanged?.(packs)
     const { previous: _previous, version: _version, ...rest } = record
     this.#state.installed[name] = { ...rest, hash: previous.hash, at: this.#now(), folder: true, held, ...(previous.version === undefined ? {} : { version: previous.version }) }
     await this.#save()
@@ -266,11 +416,16 @@ export class SkillHub {
 
   async remove(name: string): Promise<void> {
     this.#record(name)
+    const pack = await packKind(join(this.skillsDir, name))
     this.#options.register(name, undefined)
     await rm(join(this.#previousDir, name), { recursive: true, force: true })
     await rm(join(this.skillsDir, name), { recursive: true, force: true })
     delete this.#state.installed[name]
+    // A deleted default one is not downloaded by itself again.
+    this.#state.seeded = [...new Set([...(this.#state.seeded ?? []), name])]
     await this.#save()
+    if (pack !== undefined) this.#options.packsChanged?.(new Set([pack]))
+    this.#options.log.info(`skill hub: deleted ${name}`)
   }
 
   /** Put a downloaded skill under other games and scripts (empty: general); `null`: back to the repository's. */
@@ -349,6 +504,7 @@ export class SkillHub {
       await rename(to, join(this.#previousDir, skill.name))
       previous = { hash: before.hash, at: before.at, ...(before.version === undefined ? {} : { version: before.version }) }
     }
+    const packs = new Set([previous === undefined ? undefined : await packKind(join(this.#previousDir, skill.name)), await packKind(from)].filter(k => k !== undefined))
     await rm(to, { recursive: true, force: true })
     await mkdir(this.skillsDir, { recursive: true })
     await cp(from, to, { recursive: true })
@@ -362,6 +518,7 @@ export class SkillHub {
     }
     await this.#save()
     await this.#register(skill.name)
+    if (packs.size > 0) this.#options.packsChanged?.(packs)
   }
 
   async #register(name: string): Promise<void> {
@@ -380,18 +537,23 @@ export class SkillHub {
     const games = ids(listed?.games)
     const scripts = ids(listed?.scripts)
     const owner = games.length + scripts.length === 0 ? undefined : { ...(games.length === 0 ? {} : { games }), ...(scripts.length === 0 ? {} : { scripts }) }
-    this.#options.register(name, { description: front.description, content: front.body, path, dir: join(this.skillsDir, name), ...(owner === undefined ? {} : { owner }) })
+    const pack = await packKind(join(this.skillsDir, name))
+    this.#options.register(name, { description: front.description, content: front.body, path, dir: join(this.skillsDir, name), ...(owner === undefined ? {} : { owner }), ...(pack === undefined ? {} : { pack }) })
   }
 
   async #item(found: HubSkill, taken: ReadonlyMap<string, string>): Promise<HubItem> {
     // Only what a HubSkill has (what was read and kept may carry more).
-    const { name, description, title, kind, games, scripts, repo, path, hash, version, changes, requires } = found
+    const { name, description, title, kind, games, scripts, repo, path, hash, version, changes, requires, pack, game, sra } = found
     const skill: HubSkill = {
       name, description, kind, games, scripts, repo, path, hash,
       ...(title === undefined ? {} : { title }),
       ...(version === undefined ? {} : { version }),
       ...(changes === undefined ? {} : { changes }),
       ...(requires === undefined ? {} : { requires }),
+      ...(pack === undefined ? {} : { pack }),
+      ...(game === undefined ? {} : { game }),
+      ...(sra === undefined ? {} : { sra }),
+      ...(found.default === true ? { default: true } : {}),
     }
     const incompatible = this.#incompatible(skill)
     const record = this.#state.installed[skill.name]
@@ -433,7 +595,7 @@ export class SkillHub {
 /** The skills in an unpacked repository: as its `index.json` lists them, else every SKILL.md. */
 export async function readSkills(root: string, repo: string): Promise<HubSkill[]> {
   const indexText = await readFile(join(root, 'index.json'), 'utf8').catch(() => undefined)
-  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined; version?: string | undefined; changes?: string | undefined; requires?: string | undefined }[] = []
+  const listed: { name?: string; path: string; title?: string | undefined; kind?: HubSkill['kind'] | undefined; games?: string[] | undefined; scripts?: string[] | undefined; version?: string | undefined; changes?: string | undefined; requires?: string | undefined; default?: boolean | undefined }[] = []
   if (indexText !== undefined) {
     const parsed = Index.safeParse(JSON.parse(indexText.replace(/^﻿/, '')))
     if (!parsed.success) throw new Error(`index.json 格式不对：${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join('; ')}`)
@@ -455,11 +617,13 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
     const name = entry.name ?? front.name
     if (name === undefined || !NAME.test(name) || skills.some(s => s.name === name)) continue
     if (front.name !== undefined && front.name !== name) continue
+    const pack = await packOf(full, name)
+    const games = entry.games ?? []
     skills.push({
       name,
       description: front.description,
-      kind: entry.kind ?? (name.startsWith('game-') ? 'game' : 'general'),
-      games: entry.games ?? [],
+      kind: entry.kind ?? (pack?.kind ?? (name.startsWith('game-') ? 'game' : 'general')),
+      games: pack?.game !== undefined && !games.includes(pack.game) ? [pack.game, ...games] : games,
       scripts: entry.scripts ?? [],
       repo,
       path,
@@ -468,9 +632,33 @@ export async function readSkills(root: string, repo: string): Promise<HubSkill[]
       ...(version === undefined ? {} : { version }),
       ...(changes === undefined ? {} : { changes }),
       ...(requires === undefined ? {} : { requires }),
+      ...(entry.default === true ? { default: true } : {}),
+      ...(pack === undefined ? {} : { pack: pack.kind, ...(pack.game === undefined ? {} : { game: pack.game, sra: pack.sra }) }),
     })
   }
   return skills
+}
+
+/**
+ * The pack a repository folder is: a script pack whose id is its name, or a
+ * game pack (its game id and SRA ids). A pack file that does not read is no
+ * pack (the folder is still a skill).
+ */
+async function packOf(dir: string, name: string): Promise<{ kind: 'script' | 'game'; game?: string; sra?: string[] } | undefined> {
+  const kind = await packKind(dir)
+  try {
+    if (kind === 'script') {
+      const manifest = parseManifest(await readFile(join(dir, MANIFEST_FILE), 'utf8'), `${name}/${MANIFEST_FILE}`)
+      return manifest.id === name ? { kind } : undefined
+    }
+    if (kind === 'game') {
+      const manifest = parseGameManifest(await readFile(join(dir, GAME_MANIFEST_FILE), 'utf8'), `${name}/${GAME_MANIFEST_FILE}`)
+      return { kind, game: manifest.id, sra: manifest.sources.map(s => s.sra?.game).filter((s): s is string => s !== undefined) }
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
 }
 
 async function findSkillFolders(root: string, sub: string, depth: number): Promise<string[]> {

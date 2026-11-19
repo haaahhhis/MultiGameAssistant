@@ -181,6 +181,10 @@
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
+              # The app's agents read their own skills only, not the folders other agents on the machine share
+              # (~/.agents/skills, ~/.dsh/skills, a working folder's .agents/skills or .dsh/skills); dsh's bundled ones stay.
+              includeDefaultRoots: false
+              bundledSkillDir: !!js "process.env.DSH_BUNDLED_SKILL_DIR || undefined"
               customSkillDirs:
                 - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
           - id: tool-skill
@@ -330,6 +334,11 @@
             name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              # The app's agents read their own skills only, not the folders other agents on the machine share
+              # (~/.agents/skills, ~/.dsh/skills, a working folder's .agents/skills or .dsh/skills); dsh's bundled ones stay.
+              includeDefaultRoots: false
+              bundledSkillDir: !!js "process.env.DSH_BUNDLED_SKILL_DIR || undefined"
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal

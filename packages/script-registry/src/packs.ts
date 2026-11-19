@@ -1,7 +1,7 @@
 /**
  * Script Pack discovery: every `<dir>/<id>/adg.script.yaml` in the pack
  * directories. Later directories override earlier ones by id, so a user pack
- * replaces a built-in one. A broken pack is reported and skipped, never fatal.
+ * replaces an official one. A broken pack is reported and skipped, never fatal.
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -9,14 +9,20 @@ import { MANIFEST_FILE, parseManifest, SKILL_FILE, type ScriptManifest } from '@
 
 export interface PackDir {
   readonly dir: string
-  /** Shipped with MultiGameAssistant. */
+  /** Official: from the app's own 技能库 (MultiGameAssistant/skills), trusted like the app (its MCP servers, its mirror). */
   readonly builtin: boolean
+  /** Whether one pack here is official, when that differs by pack (the skills repository's: by the repository it came from). */
+  readonly trusted?: (id: string) => boolean
+  /** The 技能库's downloads: each pack's SKILL.md is registered by the hub, not by the analyzer. */
+  readonly hub?: boolean
 }
 
 export interface LoadedPack {
   readonly manifest: ScriptManifest
   readonly dir: string
   readonly builtin: boolean
+  /** Downloaded from the 技能库 (deleting it there deletes the pack). */
+  readonly hub?: boolean
   /** `SKILL.md`, when present. */
   readonly skill?: string
   /** The built-in pack of the same id this user pack is used instead of: what is back in use when the user pack goes. */
@@ -33,9 +39,10 @@ export interface PackLoadError {
 export async function loadPacks(dirs: readonly PackDir[]): Promise<{ packs: Map<string, LoadedPack>; errors: PackLoadError[] }> {
   const packs = new Map<string, LoadedPack>()
   const errors: PackLoadError[] = []
-  for (const { dir, builtin } of dirs) {
+  for (const { dir, builtin: official, trusted, hub } of dirs) {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
+      const builtin = trusted?.(entry.name) ?? official
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const packDir = join(dir, entry.name)
       const file = join(packDir, MANIFEST_FILE)
@@ -50,7 +57,7 @@ export async function loadPacks(dirs: readonly PackDir[]): Promise<{ packs: Map<
         if (manifest.id !== entry.name) throw new Error(`${file}: id "${manifest.id}" must match its directory name "${entry.name}"`)
         const skill = await readFile(join(packDir, SKILL_FILE), 'utf8').catch(() => undefined)
         const under = packs.get(manifest.id)
-        packs.set(manifest.id, { manifest, dir: packDir, builtin, ...(skill === undefined ? {} : { skill }), ...(!builtin && under?.builtin === true ? { over: under } : {}) })
+        packs.set(manifest.id, { manifest, dir: packDir, builtin, ...(hub === true ? { hub: true } : {}), ...(skill === undefined ? {} : { skill }), ...(!builtin && under?.builtin === true ? { over: under } : {}) })
       } catch (error) {
         errors.push({ id: entry.name, dir: packDir, builtin, error: error instanceof Error ? error.message : String(error) })
       }

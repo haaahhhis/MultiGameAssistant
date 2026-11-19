@@ -25,7 +25,6 @@
   "dependencies": {
     "@adg/notify": "workspace:*",
     "@adg/pack-schema": "workspace:*",
-    "@adg/packs": "workspace:*",
     "@adg/protocol": "workspace:*",
     "zod": "4.4.3"
   },
