@@ -41,6 +41,10 @@ const paths = {
   compress: 'M12 3v6M9 6l3 3 3-3M12 21v-6M9 18l3-3 3 3M4 12h16',
   globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3.5 9h17M3.5 15h17M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9Z',
   list: 'M9 6h11M9 12h11M9 18h11M4.5 6v.01M4.5 12v.01M4.5 18v.01',
+  /** 定时: timed tasks and reminders. */
+  clock: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM12 7.5V12l3 2',
+  /** 全部活动: every game's events on one timeline. */
+  timeline: 'M4.75 5h7.5a1.75 1.75 0 0 1 0 3.5h-7.5a1.75 1.75 0 0 1 0-3.5ZM9.75 10.25h9.5a1.75 1.75 0 0 1 0 3.5h-9.5a1.75 1.75 0 0 1 0-3.5ZM6.75 15.5h6.5a1.75 1.75 0 0 1 0 3.5h-6.5a1.75 1.75 0 0 1 0-3.5Z',
   more: 'M5.5 12h.01M12 12h.01M18.5 12h.01',
   /** 游戏 (the page): a game library, a card in front with two behind it; not the 游戏 agent's controller. */
   library: 'M6.5 9h11A2.5 2.5 0 0 1 20 11.5v6a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-6A2.5 2.5 0 0 1 6.5 9ZM6.5 6h11M8.5 3.25h7M10.75 12.25v4.5l3.75-2.25-3.75-2.25Z',
@@ -56,6 +60,8 @@ export type IconName = keyof typeof paths
  * avatars and the agent tabs). Icons not here are outline only.
  */
 const fills: Partial<Record<IconName, string>> = {
+  clock: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17Z',
+  timeline: 'M4.75 5h7.5a1.75 1.75 0 0 1 0 3.5h-7.5a1.75 1.75 0 0 1 0-3.5ZM9.75 10.25h9.5a1.75 1.75 0 0 1 0 3.5h-9.5a1.75 1.75 0 0 1 0-3.5ZM6.75 15.5h6.5a1.75 1.75 0 0 1 0 3.5h-6.5a1.75 1.75 0 0 1 0-3.5Z',
   chat: 'M6 4.5h12A3.5 3.5 0 0 1 21.5 8v6.5A3.5 3.5 0 0 1 18 18h-5.2l-4.3 3.2a.6.6 0 0 1-1-.5V18H6a3.5 3.5 0 0 1-3.5-3.5V8A3.5 3.5 0 0 1 6 4.5Z',
   alert: 'M10.27 4.5a2 2 0 0 1 3.46 0l7.36 12.75A2 2 0 0 1 19.36 20.25H4.64a2 2 0 0 1-1.73-3L10.27 4.5Z',
   gamepad: 'M7.75 6.5h8.5a5 5 0 0 1 4.93 5.83l-.72 4.27a2.6 2.6 0 0 1-4.45 1.37L14.25 16h-4.5l-1.76 1.97a2.6 2.6 0 0 1-4.45-1.37l-.72-4.27A5 5 0 0 1 7.75 6.5Z',

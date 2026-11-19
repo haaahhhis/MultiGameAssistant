@@ -1,5 +1,5 @@
 /**
- * 技能库: what the skills repositories have, laid out like 已有的技能 — a
+ * 技能库: what the skills repositories have, laid out like the 技能 list — a
  * directory on the left (game → script → author → the packs and skills, as
  * the repository files them; a game's own under 「游戏本身」, ones for no game
  * under 通用) and the one picked on the right: what it is, its versions,
@@ -107,15 +107,17 @@ export function HubList({ tree, selected, searching, folded, onFold, onPick }: {
                   <div key={author.key} className="hub-author-block">
                     <div className="hub-author-label">{author.name}{author.name === OFFICIAL && <span className="hub-official">官方</span>}</div>
                     {author.children.map(item => (
-                      <button key={`${item.repo}/${item.name}`} className={`script-row skill-row ${item.installed !== undefined ? 'from-hub' : ''} ${selected === item.name ? 'active' : ''}`}
+                      <button key={`${item.repo}/${item.name}`} className={`script-row skill-row ${selected === item.name ? 'active' : ''}`}
                         title={item.installed !== undefined ? '已下载' : undefined} onClick={() => onPick(item.name)}>
                         <span className="script-row-main">
-                          <span className="script-row-name">{item.title ?? item.name}</span>
+                          <span className="skill-row-name-line">
+                            <span className="script-row-name">{item.title ?? item.name}</span>
+                            {item.installed !== undefined && <span className="skill-row-from">已下载</span>}
+                          </span>
                           <span className="muted small skills-row-desc">{item.description}</span>
                         </span>
                         <span className={`skill-row-tag ${item.pack === undefined ? 'subtle' : ''}`}>{kindLabel(item)}</span>
                         {item.installed?.update === true && item.incompatible === undefined && <span className="skill-dot" title="有新版" />}
-                        {item.installed !== undefined && item.installed.update !== true && <span className="skill-row-mark" title="已下载"><Icon name="check" /></span>}
                       </button>
                     ))}
                   </div>
@@ -138,7 +140,7 @@ export function HubDetail({ client, item, where, busy, now, act, onOpen }: {
   busy: string | null
   now: number
   act: (key: string, fn: () => Promise<string | void>) => Promise<void>
-  /** Show a downloaded one in 已有的技能. */
+  /** Show a downloaded one in the 技能 list. */
   onOpen: (name: string) => void
 }) {
   const [content, setContent] = useState<string | null>(null)
@@ -196,7 +198,7 @@ export function HubDetail({ client, item, where, busy, now, act, onOpen }: {
           {installed?.update === true && item.incompatible === undefined && (
             <button className="small-button primary" disabled={busy !== null} onClick={update}>{pending('update') ? '更新中…' : '更新'}</button>
           )}
-          {installed !== undefined && <button className="small-button" onClick={() => onOpen(item.name)}>在已有的技能里查看</button>}
+          {installed !== undefined && <button className="small-button" onClick={() => onOpen(item.name)}>在技能列表里查看</button>}
         </div>
       </header>
       <p className="skill-desc">{item.description}</p>

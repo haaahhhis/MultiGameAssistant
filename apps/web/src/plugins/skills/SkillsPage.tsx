@@ -23,7 +23,7 @@ type Category = 'script-pack' | 'game-pack' | 'skill' | 'core'
 const CATEGORIES: readonly { id: Category; label: string; icon: IconName; hint: string }[] = [
   { id: 'script-pack', label: '脚本包', icon: 'package', hint: '脚本怎么装、有哪些任务、运行前改哪些设置；按游戏分开，用不上的可以删' },
   { id: 'game-pack', label: '游戏包', icon: 'gamepad', hint: '游戏页从哪里读活动、游戏里怎么看；不玩的可以删' },
-  { id: 'skill', label: '技能', icon: 'sparkles', hint: '按游戏分开：带底色的是从技能库下载的，白底的是你或 agent 写的；只在处理对应的游戏和脚本时用' },
+  { id: 'skill', label: '技能', icon: 'sparkles', hint: '按游戏分开：名字旁写着「下载」的是从技能库下载的，其余是你或 agent 写的；只在处理对应的游戏和脚本时用' },
   { id: 'core', label: '核心技能', icon: 'shield', hint: '软件自带、维持基本功能的技能：受保护，不能改，随软件更新' },
 ]
 const LABEL: Readonly<Record<Category, string>> = Object.fromEntries(CATEGORIES.map(c => [c.id, c.label])) as Record<Category, string>
@@ -68,12 +68,13 @@ const GENERAL = ':general'
 interface Draft { original?: string; hub?: boolean; name: string; description: string; content: string; scripts: string[]; games: string[] }
 
 /**
- * 技能, in two tabs. 已有的技能: the script packs, game packs and skills the
+ * 技能: the script packs, game packs and skills the
  * agents have, by kind and then by game; anything downloaded can be updated,
  * gone back, changed or deleted, the user's own made, changed and deleted, the
  * core ones only read (技能隔离: a skill for a game or script is used only
- * while working on it). 技能库: what the repositories have, by game, script and
- * author, to download (SkillHubPanel.tsx).
+ * while working on it). 「技能库」 opens what the repositories have, by game,
+ * script and author, to download (SkillHubPanel.tsx); it and 「新建技能」 have a
+ * 返回 back to the list.
  */
 export function SkillsPage({ client, arg }: PageProps) {
   const status = useStore(client.connection.status)
@@ -260,16 +261,21 @@ export function SkillsPage({ client, arg }: PageProps) {
     </>
   )
   const row = (e: Entry) => (
-    <button key={e.name} className={`script-row skill-row ${e.hub !== undefined ? 'from-hub' : mineOf(e) ? 'own' : ''} ${draft === null && current?.name === e.name ? 'active' : ''}`}
+    <button key={e.name} className={`script-row skill-row ${draft === null && current?.name === e.name ? 'active' : ''}`}
       title={e.hub !== undefined ? `从技能库下载的（作者 ${e.hub.author ?? e.hub.repo}）` : mineOf(e) ? '你或 agent 写的' : undefined} onClick={() => choose(e.name)}>
       <span className="script-row-main">
-        <span className="script-row-name">{e.title}</span>
+        <span className="skill-row-name-line">
+          <span className="script-row-name">{e.title}</span>
+          {e.hub !== undefined && <span className="skill-row-from">下载</span>}
+        </span>
         <span className="muted small skills-row-desc">{where(e) || e.description}</span>
       </span>
       {marks(e)}
     </button>
   )
   const updates = (hub?.items ?? []).filter(i => i.installed?.update === true && i.incompatible === undefined).length
+  /** Away from the list (in the 技能库, or writing one): the header has 返回. */
+  const away = (tab === 'hub' && hasHub) || draft !== null
 
   // 技能库: the directory, the one picked, and where it is filed (game · script).
   const hubNeedle = hubQuery.trim().toLowerCase()
@@ -287,21 +293,27 @@ export function SkillsPage({ client, arg }: PageProps) {
   return (
     <section className="main scripts-page skills-page">
       <header className="page-header skills-header">
-        <div className="breadcrumb"><h1>技能</h1></div>
-        {hasHub ? (
-          <div className="tabs skills-tabs" role="tablist" aria-label="技能">
-            <button role="tab" aria-selected={tab === 'mine'} className={tab === 'mine' ? 'active' : ''} onClick={() => switchTab('mine')}>已有的技能</button>
-            <button role="tab" aria-selected={tab === 'hub'} className={tab === 'hub' ? 'active' : ''} onClick={() => switchTab('hub')}>
-              技能库{updates > 0 && <span className="skills-tab-badge" title={`${updates} 个有新版`}>{updates}</span>}
+        <div className="breadcrumb">
+          {away && (
+            <button className="small-button skills-back" title="回到技能列表" onClick={() => (tab === 'hub' && hasHub ? switchTab('mine') : setDraft(null))}>
+              <Icon name="back" />返回
             </button>
-          </div>
-        ) : <span />}
+          )}
+          <h1>{tab === 'hub' && hasHub ? '技能库' : draft === null ? '技能' : draft.original === undefined ? '新建技能' : `编辑 ${draft.original}`}</h1>
+        </div>
         <div className="page-actions">
-          {tab === 'mine' ? (
-            <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => setDraft(blank())}>
-              <Icon name="plus" />新建技能
-            </button>
-          ) : (
+          {tab === 'mine' || !hasHub ? (draft === null && (
+            <>
+              {hasHub && (
+                <button className="small-button" title="下载脚本包、游戏包和别人写的技能" onClick={() => switchTab('hub')}>
+                  <Icon name="library" />技能库{updates > 0 && <span className="skills-hub-badge" title={`${updates} 个有新版`}>{updates}</span>}
+                </button>
+              )}
+              <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => setDraft(blank())}>
+                <Icon name="plus" />新建技能
+              </button>
+            </>
+          )) : (
             <>
               <span className="muted small skills-fetched">{hub?.fetchedAt === undefined ? '' : `${relativeTime(hub.fetchedAt, now)}读取`}</span>
               <button className="small-button" disabled={busy !== null} title="现在读一次技能库，看有没有新版本" onClick={() => void act('refresh', async () => { await loadHub(true) })}>

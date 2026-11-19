@@ -161,7 +161,7 @@ export function Overview({ client, games, activities, now, soonDays, onOpenGame,
           </div>
           <div className="ov-side" />
         </div>
-        {sections.every(s => s.rows.length === 0) && <div className="empty"><Icon name="calendar" /><p>{games.length === 0 ? '没有游戏。' : '显示的游戏现在没有活动。点「刷新全部」读取，或点上面游戏卡片的眼睛多显示几个。'}</p></div>}
+        {sections.every(s => s.rows.length === 0) && <div className="empty"><Icon name="timeline" /><p>{games.length === 0 ? '没有游戏。' : '显示的游戏现在没有活动。点「刷新全部」读取，或点上面游戏卡片的眼睛多显示几个。'}</p></div>}
         {sections.filter(s => s.rows.length > 0).map(s => (
           <div key={s.key} className={`ov-section ${s.key === 'soon' ? 'warn' : ''} ${s.game !== undefined ? 'by-game' : ''}`} style={s.game === undefined ? undefined : { '--game': color.get(s.game.id) } as CSSProperties}>
             <div className="ov-section-title">

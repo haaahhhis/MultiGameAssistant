@@ -23,6 +23,13 @@
 .game-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .game-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .game-side .card { padding: 16px 18px; gap: 12px; }
+/* 全部活动 in the rail: a square tile among the games' round avatars, not a plain nav icon like 定时. */
+.overview-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent); }
+.overview-avatar .ui-icon { width: 21px; height: 21px; }
+.rail-item.active .overview-avatar { background: var(--accent); color: var(--raised); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* Over the rail's own rule (an active item's icon in the accent), which would hide it on the accent tile. */
+.rail-item.rail-overview.active .overview-avatar .ui-icon { color: var(--raised); }
+.rail-item.active .overview-avatar .ui-icon-fill { opacity: .35; }
 .game-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .game-section-head { display: flex; align-items: center; gap: 8px; min-height: 30px; }
 .game-section-head h3 { margin: 0; font-size: 15px; }

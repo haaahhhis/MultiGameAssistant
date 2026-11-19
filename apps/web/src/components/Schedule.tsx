@@ -489,7 +489,7 @@ export function ScheduleNotices({ client, onOpen }: { client: AdgClient; onOpen:
               <span className="schedule-notice-title">{n.title}</span>
               <span className="muted small">{n.kind === 'task' && n.agent !== n.by ? `交给${to?.name ?? n.agent}` : ''}{n.kind === 'task' && n.agent !== n.by && n.when !== '' ? ' · ' : ''}{n.when}</span>
               <span className="schedule-notice-actions">
-                <button className="small-button primary" onClick={() => { close(n.key); onOpen(n.id) }}><Icon name="calendar" />去定时任务看看</button>
+                <button className="small-button primary" onClick={() => { close(n.key); onOpen(n.id) }}><Icon name="clock" />去定时任务看看</button>
               </span>
             </div>
             <button className="icon-button" onClick={() => close(n.key)} title="知道了" aria-label="关闭"><Icon name="close" /></button>

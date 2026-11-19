@@ -123,7 +123,11 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
   const slot = useContext(RailSlot)
   const railList = slot === null ? null : (
     <div className="rail-games" role="tablist" aria-label="游戏">
-      <RailItem icon="calendar" label="全部活动" active={showOverview} onClick={() => select('')} />
+      <button role="tab" aria-selected={showOverview} className={`rail-item rail-game rail-overview ${showOverview ? 'active' : ''}`}
+        title="全部活动：所有游戏的活动排在一条时间线上" onClick={() => select('')}>
+        <span className="rail-avatar overview-avatar"><Icon name="timeline" /></span>
+        <span className="rail-label">全部活动</span>
+      </button>
       {games.map(g => {
         const { soon, title } = counts(g)
         return (
@@ -158,7 +162,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
       <header className="page-header games-header">
         <div className="breadcrumb"><h1>{slot === null ? '游戏' : heading}</h1></div>
         {slot === null ? <nav className="game-tabs" role="tablist" aria-label="游戏">
-          <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="calendar" />全部活动</button>
+          <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="timeline" />全部活动</button>
           <span className="game-tabs-divider" />
           {games.map(tab)}
           <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-haspopup="dialog" title="选择游戏页上显示哪些游戏，或按名字添加" onClick={() => setCatalogOpen(true)}><Icon name="plus" />更多游戏</button>
