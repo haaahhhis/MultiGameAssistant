@@ -2,7 +2,8 @@
  * The app's overrides of dsh's `standard` and `ptc` agent presets
  * (packages/bundle/cordis.patch.yml): dsh-web-app's own presets/*.patch.yml,
  * each changed in the same places. Its compaction-basic row gets `auto`,
- * `thresholdRatio` and `retainRatio` from the app's compaction.json
+ * `thresholdRatio`, `retainRatio` and the summarizer (`summarizationProvider`,
+ * `summarizationModel`, `maxTokens`) from the app's compaction.json
  * (设置 → 对话压缩, packages/gateway/src/compaction-settings.ts), read when the
  * agent service starts, and the compaction group gets the app's low-context
  * mode (packages/gateway/src/low-context.ts), which reads the same file before
@@ -41,6 +42,10 @@ const RATIO = `(Math.min(100, Math.max(5, Number(${SETTINGS}.threshold) || 80)) 
 const FILE = "(process.env.ADG_DATA_DIR || dshHomePath('adg/data')) + '/compaction.json'"
 /** The preset sub-agents start under: `ptc` unless turned off (undefined: the parent's own). */
 const CHILD_PRESET = `${SETTINGS}.ptcSubagents === false ? undefined : 'ptc'`
+/** The model that writes the summaries, when one is set whole (dsh wants the provider and the model as a pair); else undefined. */
+const SUMMARIZER = `(s => s !== null && typeof s === 'object' && typeof s.provider === 'string' && s.provider !== '' && typeof s.model === 'string' && s.model !== '' ? s : undefined)(${SETTINGS}.summarizer)`
+/** What a summary must fit in: the summarizer's own output limit when below dsh's default 65536 (also its headroom default). */
+const SUMMARY_CAP = `(m => Number.isInteger(m) && m > 0 ? Math.min(m, 65536) : 65536)(${SUMMARIZER}?.maxTokens)`
 
 /** dsh-web-app's presets/<id>.patch.yml as installed with dsh. */
 export function upstreamPreset(root, id) {
@@ -77,6 +82,10 @@ export function presetOverride(upstream, id) {
     `${indent}  thresholdRatio: !!js "${RATIO}"`,
     // dsh keeps 16% of the window word for word, which must be below the threshold: half of a low one.
     `${indent}  retainRatio: !!js "Math.min(0.16, ${RATIO} / 2)"`,
+    // The model that writes the summaries ('' as a pair: the conversation's own, dsh's default), and what they fit in.
+    `${indent}  summarizationProvider: !!js "${SUMMARIZER}?.provider ?? ''"`,
+    `${indent}  summarizationModel: !!js "${SUMMARIZER}?.model ?? ''"`,
+    `${indent}  maxTokens: !!js "${SUMMARY_CAP}"`,
     // Low-context mode: compacts all but the latest messages, before each step (it uses this group's compaction).
     `${indent.slice(2)}- id: adg-low-context`,
     `${indent}name: '@adg/gateway/low-context'`,

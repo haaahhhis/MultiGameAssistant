@@ -28,6 +28,9 @@
  *
  * `ptcSubagents` (in the same file, for the same reason: what the agents cost)
  * starts sub-agents under dsh's ptc preset, read when the service starts.
+ *
+ * `summarizer` picks the model that writes the summaries (null: the
+ * conversation's own), read when the service starts as well.
  */
 import { z } from 'zod'
 
@@ -67,8 +70,21 @@ export const CompactionSettings = z.object({
    * at every step. Off: they run the standard preset, one tool call per step. Read when the agent service starts.
    */
   ptcSubagents: z.boolean().default(true),
+  /**
+   * The model that writes every summary (automatic, by hand, low-context mode); null: the model the conversation
+   * is using (dsh's own choice). Another model reads the span without the conversation's prompt cache, and needs a
+   * context window that holds it. `maxTokens`: the most the summary may be, the model's own output limit when its
+   * route declares one (the host fills it in). Read when the agent service starts.
+   */
+  summarizer: z.object({
+    provider: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
+    maxTokens: z.number().int().positive().optional(),
+  }).nullable().default(null),
 })
 export type CompactionSettings = z.infer<typeof CompactionSettings>
+/** What dsh asks a summary to fit in when nothing says less (dsh-compaction-basic's own default). */
+export const SUMMARY_MAX_TOKENS = 65536
 
 const State = z.object({ settings: CompactionSettings, applied: CompactionSettings })
 

@@ -81,6 +81,15 @@ function routesOf(value: unknown): Record<string, StoredProfile> {
   return typeof providers === 'object' && providers !== null ? providers as Record<string, StoredProfile> : {}
 }
 
+/** A route's declared output limit for one of its models (its `maxTokens`), if the route declares one. */
+export function declaredMaxTokens(settings: ProvidersDeps['settings'], namespace: string, provider: string, model: string): number | undefined {
+  const descriptor = settings.describe({ redactSecrets: true }).find(d => d.ns === namespace)
+  if (descriptor === undefined) return undefined
+  const profile = routesOf(descriptor.value)[provider] ?? routesOf(descriptor.user)[provider]
+  const models: unknown[] = Array.isArray(profile?.models) ? profile.models : []
+  return models.map(toProviderModel).find(m => m?.id === model)?.maxTokens
+}
+
 /** Read a stored or discovered model entry into the protocol shape, dropping anything unusable. */
 export function toProviderModel(entry: unknown): ProviderModel | undefined {
   if (typeof entry !== 'object' || entry === null) return undefined

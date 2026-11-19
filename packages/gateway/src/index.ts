@@ -30,7 +30,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import { credentialsCapability } from './credentials.ts'
-import { addRouteDefaults, providersCapability } from './providers.ts'
+import { addRouteDefaults, declaredMaxTokens, providersCapability } from './providers.ts'
 import { aboutCapability } from './about.ts'
 import { readImageFile } from './image-file.ts'
 import type {} from '@deepseek-ai/dsh-user-questions/types'
@@ -44,7 +44,7 @@ import { skillFocusTool } from './skill-focus-tool.ts'
 import { IDENTITY_PROMPT, PersonaStore, personaOf, personaPrompt } from './persona.ts'
 import { timeFacts, timeMessage, timeNote, type TimedEvent } from './time-context.ts'
 import { compactSession } from './compact.ts'
-import { CompactionStore } from './compaction-settings.ts'
+import { CompactionStore, type OutputLimit } from './compaction-settings.ts'
 import { MemoryStore, memoryTools } from './memory.ts'
 import { MemoryViews, type ViewAgent, type ViewSession } from './memory-view.ts'
 import { AutoMemory } from './memory-auto.ts'
@@ -356,6 +356,8 @@ export class AdgGateway extends Service {
    */
   private memoryViews: MemoryViews | undefined
   private compaction: CompactionStore | undefined
+  /** A model's declared output limit, from the routes in 设置 → 模型服务 (while that service is there). */
+  private outputLimit: OutputLimit | undefined
   private readonly log: ReturnType<Context['logger']>
   /** The skills kept in this app's skills folder (`skillsDir`): written by skill_save and the 技能 page. */
   private savedSkills: { readonly registered: ReadonlyMap<string, unknown>; readonly deps: SkillSaveDeps; remove(name: string): Promise<void> } | undefined
@@ -604,6 +606,11 @@ export class AdgGateway extends Service {
       void addRouteDefaults(scoped.settings, config.providersNamespace ?? 'llm-pi-ai')
         .then(n => { if (n > 0) ctx.logger('adg-gateway').info(`updated ${n} model route(s) with the retry policy or the system role`) })
         .catch(error => ctx.logger('adg-gateway').warn(`updating model routes failed: ${String(error)}`))
+      const namespace = config.providersNamespace ?? 'llm-pi-ai'
+      scoped.effect(() => {
+        this.outputLimit = (provider, model) => declaredMaxTokens(scoped.settings, namespace, provider, model)
+        return () => { this.outputLimit = undefined }
+      }, 'adg-gateway output limits')
       scoped.effect(() => this.registry.register(providersCapability({
         settings: scoped.settings,
         llm: scoped.llm,
@@ -1063,7 +1070,7 @@ export class AdgGateway extends Service {
         version: 1,
         methods: {
           'compaction/get': () => compaction.state(),
-          'compaction/set': params => compaction.set((params as RequestParams<'compaction/set'>).settings),
+          'compaction/set': params => compaction.set((params as RequestParams<'compaction/set'>).settings, this.outputLimit),
         },
       }), 'adg-gateway capability compaction')
     }

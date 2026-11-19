@@ -50,6 +50,23 @@ test('the settings expressions read compaction.json and fall back to dsh\'s defa
   assert.equal(evaluate(expression(block, 'auto'), { [file]: 'not json' }), true)
 })
 
+test('the summarizer goes to dsh as a pair, or as an empty pair (the conversation\'s own model); its cap follows its output limit', () => {
+  const block = standardOverride(upstreamStandard(root))
+  const pair = files => [evaluate(expression(block, 'summarizationProvider'), files), evaluate(expression(block, 'summarizationModel'), files)]
+  const cap = files => evaluate(expression(block, 'maxTokens'), files)
+  assert.deepEqual(pair({}), ['', ''], 'none set: the conversation\'s own')
+  assert.equal(cap({}), 65536, 'dsh\'s own default')
+  assert.deepEqual(pair({ [file]: '{"summarizer":null}' }), ['', ''])
+  assert.deepEqual(pair({ [file]: '{"summarizer":{"provider":"deepseek-official","model":"deepseek-flash"}}' }), ['deepseek-official', 'deepseek-flash'])
+  assert.equal(cap({ [file]: '{"summarizer":{"provider":"relay","model":"small","maxTokens":8192}}' }), 8192, 'what the model can write')
+  assert.equal(cap({ [file]: '{"summarizer":{"provider":"relay","model":"big","maxTokens":200000}}' }), 65536, 'never above dsh\'s default')
+  // Never half a pair, which dsh refuses at start.
+  assert.deepEqual(pair({ [file]: '{"summarizer":{"provider":"relay","model":""}}' }), ['', ''])
+  assert.deepEqual(pair({ [file]: '{"summarizer":{"provider":"relay"}}' }), ['', ''])
+  assert.equal(cap({ [file]: '{"summarizer":{"provider":"relay","model":"","maxTokens":8192}}' }), 65536, 'no cap from a summarizer that is not one')
+  assert.deepEqual(pair({ [file]: 'not json' }), ['', ''])
+})
+
 test('sub-agents run ptc unless 设置 turns it off; then they inherit their parent\'s preset', () => {
   const source = expression(standardOverride(upstreamStandard(root)), 'agentPreset')
   assert.equal(evaluate(source, {}), 'ptc', 'on by default')

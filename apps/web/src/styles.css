@@ -930,6 +930,8 @@ button.model-option .ui-icon { width: 15px; height: 15px; color: var(--accent); 
 .compaction-warn { margin-top: 6px; }
 .compaction-archive { margin-top: 12px; }
 .compaction-archive-days { margin-top: 8px; max-width: 360px; }
+.compaction-summarizer { margin-top: 12px; }
+.compaction-summarizer .select-trigger { max-width: 360px; }
 .compaction-page .card p .ui-icon { width: 14px; height: 14px; vertical-align: -2px; }
 .about-card { display: flex; flex-direction: column; gap: 10px; }
 .about-card h3 { margin: 0; }

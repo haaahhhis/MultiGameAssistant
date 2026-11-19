@@ -6,7 +6,8 @@
  * app can restart the service from here. Low-context mode (the last 12 hours
  * kept, older compacted once a task is over) and its archiving (summaries of
  * conversation older than some days leave the context too) are read each
- * time: they need no restart.
+ * time: they need no restart. Which model writes the summaries (the
+ * conversation's own, or one picked here) is read at start too.
  */
 import { useEffect, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
@@ -15,13 +16,18 @@ import { confirm } from '../../components/Dialog.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { Select } from '../../components/Select.tsx'
 import { desktop } from '../../desktop.ts'
-import { useStore } from '../../hooks.ts'
+import { useModelCatalog, useStore } from '../../hooks.ts'
 import { setShowEarlier, useShowEarlier } from '../../preferences.ts'
 import { errorText } from '../scripts/data.ts'
 
 type State = { settings: CompactionSettings; applied: CompactionSettings }
 
-const same = (a: CompactionSettings, b: CompactionSettings) => a.auto === b.auto && a.threshold === b.threshold
+type Summarizer = CompactionSettings['summarizer']
+const sameSummarizer = (a: Summarizer, b: Summarizer) => (a === null || b === null) ? a === b : a.provider === b.provider && a.model === b.model
+const same = (a: CompactionSettings, b: CompactionSettings) => a.auto === b.auto && a.threshold === b.threshold && sameSummarizer(a.summarizer, b.summarizer)
+/** A Select value for a model ('' is the conversation's own). */
+const SEP = '\u0000'
+const keyOf = (s: Summarizer) => s === null ? '' : `${s.provider}${SEP}${s.model}`
 
 export function CompactionPage({ client }: { client: AdgClient }) {
   const status = useStore(client.connection.status)
@@ -31,6 +37,14 @@ export function CompactionPage({ client }: { client: AdgClient }) {
   /** The slider while it moves; saved once it rests. */
   const [threshold, setThreshold] = useState<number | null>(null)
   const restartService = desktop()?.restartService
+  const { catalog } = useModelCatalog(client)
+  /** A model's name as the model list gives it, with its service. */
+  const modelName = (s: Summarizer) => {
+    if (s === null) return '对话自己的模型'
+    const group = catalog?.groups.find(g => g.id === s.provider)
+    const model = group?.models.find(m => m.id === s.model)
+    return model === undefined ? `${s.provider} / ${s.model}` : `${group!.name} · ${model.name}`
+  }
   const showEarlier = useShowEarlier()
 
   useEffect(() => {
@@ -68,6 +82,9 @@ export function CompactionPage({ client }: { client: AdgClient }) {
     await restartService()
   }
 
+  const picked = state?.settings.summarizer ?? null
+  const missing = picked !== null && catalog !== null && !catalog.groups.some(g => g.id === picked.provider && g.models.some(m => m.id === picked.model))
+
   return (
     <div className="settings-page compaction-page">
       <h2>对话压缩</h2>
@@ -95,10 +112,27 @@ export function CompactionPage({ client }: { client: AdgClient }) {
               <span className="notice warn-box left small compaction-warn"><Icon name="alert" /><span>这么低时，光是系统提示和工具说明就可能接近这个用量，几乎每一步都会压缩一次，每次都要调用模型写摘要。想让上下文保持很短，用下面的「低上下文模式」更合适。</span></span>
             )}
           </label>
+          <label className="field compaction-summarizer">
+            <span className="field-title">写摘要的模型</span>
+            <Select aria-label="写摘要的模型" value={keyOf(state.settings.summarizer)} disabled={busy || catalog === null}
+              onChange={value => {
+                const [provider = '', model = ''] = value.split(SEP)
+                void save({ ...state.settings, summarizer: value === '' ? null : { provider, model } })
+              }}
+              options={[
+                { value: '', label: '和对话用同一个模型（默认）', hint: '能用上对话的提示缓存' },
+                ...(catalog?.groups ?? []).flatMap(g => g.models.map(m => ({ value: `${g.id}${SEP}${m.id}`, label: m.name, hint: g.name }))),
+                ...(missing ? [{ value: keyOf(state.settings.summarizer), label: `${state.settings.summarizer!.provider} / ${state.settings.summarizer!.model}`, hint: '已不在模型列表里' }] : []),
+              ]} />
+            <span className="muted small">自动压缩、手动压缩和低上下文模式都由它读一遍要压缩的那段对话，写出摘要。默认用对话自己的模型，这段对话大多能命中它的提示缓存；换成别的模型时整段按没命中缓存计费，而且它的上下文要装得下这一段，装不下时压缩会失败。</span>
+            {missing && (
+              <span className="notice warn-box left small compaction-warn"><Icon name="alert" /><span>「{state.settings.summarizer!.provider} / {state.settings.summarizer!.model}」已经不在模型列表里了（服务被删掉或没有 Key），压缩会失败：换一个，或改回和对话用同一个模型。</span></span>
+            )}
+          </label>
           {!same(state.settings, state.applied) && (
             <div className="notice left">
               <Icon name="info" />
-              <span>改动要重启 agent 服务才生效（现在还是：{state.applied.auto ? `自动压缩，${state.applied.threshold}%` : '不自动压缩'}）。{restartService === undefined ? '重启 MultiGameAssistant（或 dsh）后生效。' : ''}</span>
+              <span>改动要重启 agent 服务才生效（现在还是：{state.applied.auto ? `自动压缩，${state.applied.threshold}%` : '不自动压缩'}；摘要由{modelName(state.applied.summarizer)}写）。{restartService === undefined ? '重启 MultiGameAssistant（或 dsh）后生效。' : ''}</span>
               {restartService !== undefined && <button className="small-button" onClick={() => void restart()}>重启 agent 服务</button>}
             </div>
           )}
