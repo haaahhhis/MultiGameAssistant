@@ -5,15 +5,18 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
+import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type GameNotice } from '@adg/protocol'
 import { z } from 'zod'
-import type { OwnPatch, ReadEvent } from './calendar.ts'
+import type { OwnPatch, ReadEvent, ReadNotice } from './calendar.ts'
 import { leftText, parseDateText, shortDate } from './time.ts'
 
 export interface GameToolDeps {
   readonly games: () => GameInfo[]
   readonly activities: (game?: string) => Activity[]
-  readonly refresh: (game?: string) => Promise<Array<{ game: string; ok: boolean; count: number; detail?: string | undefined }>>
+  /** Announcements (version updates, long-term notices, news). */
+  readonly notices: (game?: string) => GameNotice[]
+  readonly recordNotices: (game: string, notices: readonly ReadNotice[]) => Promise<GameNotice[]>
+  readonly refresh: (game?: string) => Promise<Array<{ game: string; ok: boolean; count: number; notices?: number | undefined; detail?: string | undefined }>>
   readonly record: (game: string, from: 'screen' | 'site', events: readonly ReadEvent[], sessionId: string | undefined, keepScreenshot: boolean) => Promise<Array<{ activity: Activity; matched: boolean }>>
   readonly launch: (game: string, signal: AbortSignal) => Promise<{ script: string; lines: string[] }>
   readonly close: (game: string, signal: AbortSignal) => Promise<{ script: string; lines: string[] }>
@@ -70,6 +73,7 @@ function tool(spec: {
 }
 
 const GAME: JsonSchemaNode = { type: 'string', description: '游戏 id（game_list 可查），例如 arknights、starrail、endfield。' }
+const NOTICE_KIND: Readonly<Record<GameNotice['kind'], string>> = { update: '版本更新', notice: '公告', news: '资讯' }
 
 export function gameTools(deps: GameToolDeps): ToolDefinition[] {
   const known = (id: string) => {
@@ -103,7 +107,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
   return [
     tool({
       name: 'game_add',
-      description: '给一个还没有游戏包的游戏建一个（用户自己的游戏包），之后游戏页就能显示它的活动。来源三种：sra（SRA 公共 API 的游戏 id）、smw（Semantic MediaWiki 的 api.php 查询，能读到活动起止时间）、只有 homepage（官网公告等，由 agent 读）。能自动读的会马上读一次。用户说「加一个 XX 游戏」或游戏页让你找来源时用。',
+      description: '给一个还没有游戏包的游戏建一个（用户自己的游戏包，同一个 id 再写就是改它），之后游戏页就能显示它的活动和公告。来源四种：sra（SRA 公共 API 的游戏 id）、smw（Semantic MediaWiki 的 api.php 查询，能读到活动起止时间）、steam_appid（Steam 上的官方公告：版本更新、补丁说明，单机游戏用）、只有 homepage（官网公告等，由 agent 读）。单机游戏（没有限时活动）写 single=true，游戏页先列公告。能自动读的会马上读一次。用户说「加一个 XX 游戏」或游戏页让你找来源时用。',
       properties: {
         id: { type: 'string', description: '小写英文、数字和短横线，例如 wuthering-waves。' },
         name: { type: 'string', description: '中文正式名。' },
@@ -121,11 +125,13 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
               homepage: { type: 'string', description: '人能打开的页面地址。' },
               sra_game: { type: 'string', description: 'SRA 公共 API 的游戏 id（可选）。' },
               smw: { type: 'object', description: 'Semantic MediaWiki 查询（可选）：{ api, conditions, title?, start, end, shopEnd?, dates: date|text, page? }。' },
+              steam_appid: { type: 'number', description: 'Steam 的 app id（可选，商店页 store.steampowered.com/app/<数字> 里的数字）：插件每天读它在 Steam 的官方公告（版本更新、补丁说明）。sra_game、smw、steam_appid 一个来源只写一个。' },
             },
             required: ['id', 'name'],
             additionalProperties: false,
           },
         },
+        single: { type: 'boolean', description: '单机游戏（买断制、没有限时活动）：游戏页先列公告和版本更新。' },
         guide: { type: 'string', description: 'GAME.md 正文（可选）：哪些来源看什么、公告页怎么找活动。' },
       },
       required: ['id', 'name', 'sources'],
@@ -134,7 +140,8 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       execute: async args => {
         const a = parse(z.object({
           id: z.string(), name: z.string(), aliases: z.array(z.string()).nullish(), timezone: z.string().nullish(), daily_reset: z.string().nullish(),
-          sources: z.array(z.object({ id: z.string(), name: z.string(), homepage: z.string().nullish(), sra_game: z.string().nullish(), smw: z.record(z.string(), z.unknown()).nullish() })).min(1),
+          sources: z.array(z.object({ id: z.string(), name: z.string(), homepage: z.string().nullish(), sra_game: z.string().nullish(), smw: z.record(z.string(), z.unknown()).nullish(), steam_appid: z.number().int().positive().nullish() })).min(1),
+          single: z.boolean().nullish(),
           guide: z.string().nullish(),
         }), args)
         const manifest = {
@@ -142,11 +149,13 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
           ...(a.aliases == null ? {} : { aliases: a.aliases }),
           ...(a.timezone == null ? {} : { timezone: a.timezone }),
           ...(a.daily_reset == null ? {} : { dailyReset: a.daily_reset }),
+          ...(a.single === true ? { single: true } : {}),
           sources: a.sources.map(s => ({
             id: s.id, name: s.name,
             ...(s.homepage == null ? {} : { homepage: s.homepage }),
             ...(s.sra_game == null ? {} : { sra: { game: s.sra_game } }),
             ...(s.smw == null ? {} : { smw: s.smw }),
+            ...(s.steam_appid == null ? {} : { steam: { appid: s.steam_appid } }),
           })),
         }
         const game = await deps.add(manifest, a.guide ?? undefined)
@@ -172,7 +181,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
     }),
     tool({
       name: 'game_activities',
-      description: '活动日历：各游戏进行中和即将开始的活动、结束时间和剩余天数、在游戏里读到的未完成项。用户问「方舟有什么活动」「还剩几天」时先看这个；太久没刷新（refreshed 很旧）就先 game_sites_refresh。',
+      description: '活动日历和公告：各游戏进行中和即将开始的活动、结束时间和剩余天数、在游戏里读到的未完成项，以及最近的公告（版本更新、长期公告；单机游戏主要看这个）。用户问「方舟有什么活动」「还剩几天」「XX 最近更新了什么」时先看这个；太久没刷新（refreshed 很旧）就先 game_sites_refresh。',
       properties: { game: { ...GAME, description: '只看这个游戏（不填看全部）。' } },
       readOnly: true,
       kind: 'read',
@@ -181,7 +190,22 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
         const a = parse(z.object({ game: z.string().nullish() }), args)
         const games = a.game == null ? deps.games() : [known(a.game)]
         return {
-          games: games.map(g => ({ game: g.id, name: g.name, activities: deps.activities(g.id).map(x => brief(x, g.timezone)) })),
+          games: games.map(g => {
+            const notices = deps.notices(g.id).slice(0, 10)
+            return {
+              game: g.id, name: g.name, ...(g.single === true ? { single_player: true } : {}),
+              activities: deps.activities(g.id).map(x => brief(x, g.timezone)),
+              ...(notices.length === 0 ? {} : { notices: notices.map(n => ({
+                id: n.id, title: n.title, kind: NOTICE_KIND[n.kind],
+                ...(n.publishedAt === undefined ? {} : { date: shortDate(n.publishedAt, g.timezone) }),
+                ...(n.version === undefined ? {} : { version: n.version }),
+                ...(n.summary === undefined ? {} : { summary: n.summary }),
+                ...(n.url === undefined ? {} : { url: n.url }),
+                ...(n.lasting === true ? { lasting: true } : {}),
+                from: n.source.name,
+              })) }),
+            }
+          }),
         }
       },
     }),
@@ -263,6 +287,74 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
         return {
           recorded: written.map(w => ({ ...brief(w.activity, game.timezone), ...(w.matched ? {} : { note: '日历里原来没有这个活动，新加了一条' }) })),
           next: a.source === 'screen' ? '读完了就回到游戏主界面；有 mismatch 的告诉用户以数据站为准。' : '记下了。',
+        }
+      },
+    }),
+    tool({
+      name: 'game_notice',
+      description: [
+        '把读到的公告记到游戏页的「公告」里，它们不是有起止时间的限时活动（限时活动用 game_record）：',
+        'kind=update 版本更新、补丁说明（写上版本号）；kind=notice 公告，长期有效的（常驻规则、长期活动说明、停服 / 维护安排）写 lasting=true，会一直留在最前面；kind=news 其他资讯。',
+        '单机游戏主要记这个。同一个网址（没有网址时同一个标题）再记就是更新原来那条；lasting=false 可以把长期公告收回。只记有出处的内容，summary 用一两句中文写清楚改了什么。',
+      ].join(''),
+      properties: {
+        game: GAME,
+        notices: {
+          type: 'array',
+          description: '每篇公告一条。',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: '公告标题（原文）。' },
+              kind: { type: 'string', enum: ['update', 'notice', 'news'], description: 'update：版本更新 / 补丁；notice：公告；news：其他资讯。' },
+              published_at: { type: 'string', description: '发布日期，写成 2026/11/19 或 2026/11/19 10:00（游戏服务器时间）。' },
+              version: { type: 'string', description: 'kind=update：版本号，例如 v1.0.3。' },
+              summary: { type: 'string', description: '一两句话：改了什么、要注意什么。' },
+              url: { type: 'string', description: '公告的网址。' },
+              cover: { type: 'string', description: '公告配图的地址（https，可选）。' },
+              lasting: { type: 'boolean', description: '长期有效的公告，一直留在最前面；false 收回。' },
+            },
+            required: ['title', 'kind'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['game', 'notices'],
+      kind: 'other',
+      title: a => `记录公告：${String(a['game'] ?? '')}`,
+      execute: async args => {
+        const a = parse(z.object({
+          game: z.string(),
+          notices: z.array(z.object({
+            title: z.string().trim().min(1).max(200),
+            kind: z.enum(['update', 'notice', 'news']),
+            published_at: z.string().nullish(),
+            version: z.string().max(40).nullish(),
+            summary: z.string().max(600).nullish(),
+            url: z.string().nullish(),
+            cover: z.string().nullish(),
+            lasting: z.boolean().nullish(),
+          })).min(1).max(30),
+        }), args)
+        const game = known(a.game)
+        const notices: ReadNotice[] = a.notices.map(n => {
+          const at = n.published_at == null ? undefined : parseDateText(n.published_at, game.timezone, deps.now())
+          const url = n.url != null && /^https?:\/\//.test(n.url) ? n.url : undefined
+          const cover = n.cover != null && n.cover.startsWith('https://') ? n.cover : undefined
+          return {
+            title: n.title, kind: n.kind,
+            ...(at == null ? {} : { publishedAt: at }),
+            ...(n.version == null ? {} : { version: n.version }),
+            ...(n.summary == null ? {} : { summary: n.summary }),
+            ...(url === undefined ? {} : { url }),
+            ...(cover === undefined ? {} : { cover }),
+            ...(n.lasting == null ? {} : { lasting: n.lasting }),
+          }
+        })
+        const kept = await deps.recordNotices(game.id, notices)
+        return {
+          recorded: kept.map(n => ({ id: n.id, title: n.title, kind: NOTICE_KIND[n.kind], ...(n.publishedAt === undefined ? {} : { date: shortDate(n.publishedAt, game.timezone) }), ...(n.lasting === true ? { lasting: true } : {}) })),
+          next: '记下了，游戏页的「公告」里能看到。',
         }
       },
     }),

@@ -5,7 +5,8 @@
  * whose end is still ahead counts; permanent ones (ending 9999/01/01, 长期)
  * are left out.
  */
-import type { GameManifest, SmwSource, SraSource } from '@adg/pack-schema'
+import type { GameManifest, SmwSource, SraSource, SteamSource } from '@adg/pack-schema'
+import type { ReadNotice } from './calendar.ts'
 import { MS, parseDateText, wallClock } from './time.ts'
 
 export interface SiteEvent {
@@ -39,6 +40,69 @@ export interface SitePool {
   readonly endsAt: number
   readonly cover?: string
   readonly up: readonly string[]
+}
+
+/** Steam's announcement pictures are written with this placeholder for their host. */
+const STEAM_CLAN_IMAGE = 'https://clan.akamai.steamstatic.com/images'
+const UPDATE_WORDS = /patch|update|hotfix|bug ?fix|fixes|release notes|changelog|版本|更新|补丁|修复|热修/i
+const VERSION_IN_TITLE = /\bv?\d+\.\d+(?:\.\d+){0,2}[a-z]?\b/i
+
+/** A Steam announcement's text without its BBCode, HTML and picture placeholders. */
+function plainSteamText(text: string): string {
+  return text
+    .replace(/\[img[^\]]*\][\s\S]*?\[\/img\]/gi, ' ')
+    .replace(/\{STEAM_CLAN_IMAGE\}\S*/g, ' ')
+    .replace(/\[\/?[a-z0-9*]+(?:[= ][^\]]*)?\]/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** The first picture in a Steam announcement, as an https address. */
+function steamImage(text: string): string | undefined {
+  const raw = /\[img(?:\s+src="([^"]+)")?[^\]]*\]([^[]*)\[\/img\]/i.exec(text) ?? /<img[^>]+src="([^"]+)"/i.exec(text)
+  const found = (raw?.[1] ?? raw?.[2])?.trim()
+  if (found === undefined || found === '') return undefined
+  const url = found.replace('{STEAM_CLAN_IMAGE}', STEAM_CLAN_IMAGE)
+  return url.startsWith('https://') ? url : undefined
+}
+
+/** A game's announcements as Steam's news API gives them, newest first. */
+export function parseSteam(body: unknown): ReadNotice[] {
+  const items = (body as { appnews?: { newsitems?: unknown } } | undefined)?.appnews?.newsitems
+  if (!Array.isArray(items)) throw new Error('Steam 新闻的格式不对（没有 appnews.newsitems）')
+  const out: ReadNotice[] = []
+  for (const raw of items) {
+    const item = raw as Record<string, unknown>
+    const title = typeof item['title'] === 'string' ? item['title'].trim() : ''
+    if (title === '') continue
+    const contents = typeof item['contents'] === 'string' ? item['contents'] : ''
+    const tags = Array.isArray(item['tags']) ? item['tags'].filter((t): t is string => typeof t === 'string') : []
+    const summary = plainSteamText(contents)
+    const cover = steamImage(contents)
+    const version = VERSION_IN_TITLE.exec(title)?.[0]
+    out.push({
+      title,
+      kind: tags.includes('patchnotes') || UPDATE_WORDS.test(title) ? 'update' : 'notice',
+      ...(typeof item['date'] === 'number' ? { publishedAt: item['date'] * 1000 } : {}),
+      ...(typeof item['url'] === 'string' && item['url'].startsWith('https://') ? { url: item['url'] } : {}),
+      ...(summary === '' ? {} : { summary: summary.length > 240 ? `${summary.slice(0, 240)}…` : summary }),
+      ...(cover === undefined ? {} : { cover }),
+      ...(version === undefined ? {} : { version }),
+    })
+  }
+  return out
+}
+
+/** A game's official announcements on Steam (its news feed): version updates, patch notes, notices. */
+export async function readSteam(steam: SteamSource, fetchImpl: Fetch, signal?: AbortSignal): Promise<ReadNotice[]> {
+  // The whole text (no maxlength): Steam flattens a shortened one, running paragraphs together and dropping its pictures.
+  const url = `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=${steam.appid}&count=20&feeds=steam_community_announcements&format=json`
+  const timeout = AbortSignal.timeout(TIMEOUT_MS)
+  const response = await fetchImpl(url, { signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]), headers: { 'user-agent': USER_AGENT, accept: 'application/json' } })
+  if (!response.ok) throw new Error(response.status === 403 || response.status === 404 ? `Steam 上没有 app ${steam.appid} 的新闻（HTTP ${response.status}）` : `HTTP ${response.status}`)
+  return parseSteam(await response.json())
 }
 
 export type Fetch = (url: string, init: { signal: AbortSignal; headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>

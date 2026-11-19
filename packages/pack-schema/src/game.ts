@@ -57,15 +57,27 @@ export const SraSource = z.object({
 })
 export type SraSource = z.infer<typeof SraSource>
 
+/**
+ * A game's official announcements on Steam (its news feed, through Steam's
+ * public news API: free, no key): version updates, patch notes, long-term
+ * notices — what a single-player game has instead of timed events.
+ */
+export const SteamSource = z.object({
+  /** The game's Steam app id (the number in store.steampowered.com/app/<id>/). */
+  appid: z.number().int().positive(),
+})
+export type SteamSource = z.infer<typeof SteamSource>
+
 export const GameSource = z.object({
   id: Id,
   name: z.string().min(1),
   /** Where a person (or the agent, with web_fetch) reads it. */
   homepage: Url.optional(),
-  /** Read by the plugin itself (smw or sra); without either the source is only for the agent. */
+  /** Read by the plugin itself (smw, sra or steam); without one the source is only for the agent. */
   smw: SmwSource.optional(),
   sra: SraSource.optional(),
-}).refine(s => s.smw === undefined || s.sra === undefined, 'smw 和 sra 只能写一个')
+  steam: SteamSource.optional(),
+}).refine(s => [s.smw, s.sra, s.steam].filter(x => x !== undefined).length <= 1, 'smw、sra 和 steam 只能写一个')
 export type GameSource = z.infer<typeof GameSource>
 
 export const GameManifest = z.object({
@@ -86,6 +98,11 @@ export const GameManifest = z.object({
     window: z.string().min(1).optional(),
   }).optional(),
   sources: z.array(GameSource).default([]),
+  /**
+   * A single-player game: no timed events, so its page leads with its
+   * announcements (version updates, patch notes, long-term notices).
+   */
+  single: z.boolean().optional(),
   /** A picture for the game (https), shown when the data sites give none that loads. */
   art: Url.refine(u => u.startsWith('https://'), 'https').optional(),
 })

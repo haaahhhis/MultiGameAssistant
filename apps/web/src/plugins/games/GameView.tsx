@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type MirrorSearchItem, type Pipeline, type PipelineSummary } from '@adg/protocol'
+import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type GameNotice, type MirrorSearchItem, type Pipeline, type PipelineSummary } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import { useStore } from '../../hooks.ts'
@@ -12,6 +12,9 @@ const DAY = 86_400_000
 const HOUR = 3_600_000
 const MINUTE = 60_000
 type Pool = NonNullable<GameInfo['pools']>[number]
+/** Announcements shown before 「展开全部」. */
+const NOTICES_SHOWN = 5
+const NOTICE_KIND: Record<GameNotice['kind'], string> = { update: '版本更新', notice: '公告', news: '资讯' }
 
 /** "11 天 2 时", "5 时 20 分". */
 export function countdown(end: number, now: number): string {
@@ -47,10 +50,12 @@ export function zoneLabel(timeZone: string, at: number): string {
  * stands (progress, the agent's last look), the pipelines that play it on a
  * timetable, and where its data comes from.
  */
-export function GameView({ client, game, activities, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onDiscover, onRemove, onChanged, openSession, openScripts }: {
+export function GameView({ client, game, activities, notices, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onDiscover, onRemove, onChanged, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   activities: readonly Activity[]
+  /** Its announcements: the long-term ones first, then the newest. */
+  notices: readonly GameNotice[]
   color: string
   now: number
   soonDays: number
@@ -74,6 +79,7 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   openScripts: () => void
 }) {
   const [showFinished, setShowFinished] = useState(false)
+  const [showAllNotices, setShowAllNotices] = useState(false)
   const live = activities.filter(a => Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
   const byEnd = (a: Activity, b: Activity) => (a.endsAt ?? Infinity) - (b.endsAt ?? Infinity)
   const running = live.filter(a => (a.startsAt ?? 0) <= now).sort(byEnd)
@@ -96,10 +102,39 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
     </div>
   )
 
+  const single = game.single === true
+  const latestUpdate = notices.find(n => n.kind === 'update')
+  const noticeSection = (notices.length > 0 || single) ? (
+    <section className="game-section game-notices" aria-label="公告">
+      <div className="game-section-head">
+        <h3>{single ? '公告与更新' : '公告'}</h3>
+        <span className="count">{notices.length}</span>
+        <span className="spacer" />
+        {single && <span className="muted small">{auto ? '每天自动读官方公告' : '让 agent 上网查'}</span>}
+        <button className="icon-button" title="让 agent 上网查最新的公告和更新" aria-label="让 agent 查公告" disabled={busy !== null || game.webReading?.state === 'running'} onClick={() => onReadWeb()}>
+          <Icon name="search" />
+        </button>
+        {auto && (
+          <button className="icon-button" title="刷新数据站（不用模型）" disabled={busy !== null} onClick={onRefresh}>
+            <Icon name="refresh" />
+          </button>
+        )}
+      </div>
+      {notices.length === 0 && <p className="muted small schedule-empty">还没有公告。点右上角让 agent 上网查；在 Steam 上的游戏，加上 Steam 来源后每天自动读它的官方公告。</p>}
+      <ul className="notice-list">
+        {(showAllNotices ? notices : notices.slice(0, NOTICES_SHOWN)).map(n => <NoticeRow key={n.id} client={client} notice={n} now={now} />)}
+      </ul>
+      {notices.length > NOTICES_SHOWN && (
+        <button className="link-button small notice-more" onClick={() => setShowAllNotices(s => !s)}>{showAllNotices ? '收起' : `展开全部 ${notices.length} 条`}</button>
+      )}
+    </section>
+  ) : null
+
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
       {/* A screenshot is an event's background, not the version's art. */}
-      <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)} />
+      <VersionHero client={client} game={game} now={now} update={latestUpdate}
+        covers={[latestUpdate?.cover, ...running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)]} />
       <div className="game-columns">
         <div className="game-main">
           {game.sources.length === 0 && (
@@ -119,6 +154,9 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
               <div className="pool-list">{game.pools!.map(p => <PoolCard key={`${p.name}-${p.endsAt}`} client={client} pool={p} game={game} now={now} />)}</div>
             </section>
           )}
+          {/* A single-player game leads with its announcements; others with their events. */}
+          {single && noticeSection}
+          {(!single || live.length > 0 || finishedOnes.length > 0) ? (
           <section className="game-section game-events" aria-label="活动日程">
             <div className="game-section-head">
               <h3>活动日程</h3>
@@ -149,10 +187,16 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
               </section>
             )}
           </section>
+          ) : (
+            <p className="muted small single-no-events">
+              单机游戏没有限时活动。有要记的事（限时折扣、联动）可以<button className="link-button small" onClick={onAdd}>自己加一个</button>。
+            </p>
+          )}
+          {!single && noticeSection}
         </div>
 
         <aside className="game-side">
-          <StatusCard game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onRemove={onRemove} openSession={openSession} />
+          <StatusCard game={game} single={single} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onRemove={onRemove} openSession={openSession} />
           <section className="card game-runs-card">
             <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
           </section>
@@ -185,7 +229,7 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
  * at the foot of the picture, and under it the version's span as a track — how
  * far through it is, and the time left at its end.
  */
-function VersionHero({ client, game, now, covers }: { client: AdgClient; game: GameInfo; now: number; covers: readonly (string | undefined)[] }) {
+function VersionHero({ client, game, now, update, covers }: { client: AdgClient; game: GameInfo; now: number; update: GameNotice | undefined; covers: readonly (string | undefined)[] }) {
   const v = game.version
   // The version's art when it loads; else the pack's own picture; else an event's cover.
   const art = useFirstImage(client, [v?.cover, game.art, ...covers])
@@ -197,11 +241,22 @@ function VersionHero({ client, game, now, covers }: { client: AdgClient; game: G
       {art !== undefined && <img className="version-art" src={art} alt="" />}
       <div className="version-shade" />
       <div className="version-caption">
-        <span className="version-kicker">{game.name}{v === undefined ? '' : <> · <b>{v.name}</b> 版本</>}</span>
+        <span className="version-kicker">{game.name}{v !== undefined ? <> · <b>{v.name}</b> 版本</> : update?.version !== undefined ? <> · 最新 <b>{update.version}</b></> : ''}</span>
         <h2>{v?.title ?? game.name}</h2>
       </div>
       <div className="version-strip">
-        {v === undefined && <span className="small version-none">{game.sources.length === 0 ? '还没有数据来源' : game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}</span>}
+        {v === undefined && update !== undefined && (
+          <span className="small version-none version-update" title={update.title}>
+            最新更新：{update.title}{update.publishedAt === undefined ? '' : ` · ${relativeTime(update.publishedAt, now)}`}
+          </span>
+        )}
+        {v === undefined && update === undefined && (
+          <span className="small version-none">
+            {game.single === true
+              ? (game.sources.some(s => s.auto) ? '还没有更新公告：点「公告与更新」右上角刷新' : '还没有更新公告：点「公告与更新」右上角让 agent 查')
+              : game.sources.length === 0 ? '还没有数据来源' : game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}
+          </span>
+        )}
         {v !== undefined && through !== undefined && (
           <>
             <span className="version-end">{day(v.startsAt!)}</span>
@@ -251,8 +306,10 @@ function AddLink({ client, game, onAdded }: { client: AdgClient; game: GameInfo;
   )
 }
 
-function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onRemove, openSession }: {
+function StatusCard({ game, single, running, soon, now, busy, onRead, onReadWeb, onRemove, openSession }: {
   game: GameInfo
+  /** A single-player game: no events to be through, nothing to read in the game. */
+  single: boolean
   running: readonly Activity[]
   soon: readonly Activity[]
   now: number
@@ -269,7 +326,10 @@ function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onRemov
   const reading = game.reading
   return (
     <section className="card status-card">
-      <h3>我的状态</h3>
+      <h3>{single ? '这个游戏' : '我的状态'}</h3>
+      {single && running.length === 0 ? (
+        <p className="muted small">单机游戏：这里先放它的官方公告和版本更新，agent 也能读到它们（game_activities）。</p>
+      ) : (<>
       <div className="status-figures">
         <div className="status-figure"><strong>{running.length}</strong><span>进行中</span></div>
         <div className={`status-figure ${soon.length > 0 ? 'warn' : ''}`}><strong>{soon.length}</strong><span>快结束未做完</span></div>
@@ -287,10 +347,11 @@ function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onRemov
         <li><i className="unknown" />没记录<b>{unknown}</b></li>
       </ul>
       <p className="muted small">进度来自你在活动卡片里勾的，和 agent 进游戏读到的。</p>
+      </>)}
       <div className="game-actions">
-        {game.followed !== true && <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
-        <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title="agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历" onClick={() => onReadWeb()}>
-          <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : '让 agent 上网查活动'}
+        {game.followed !== true && !single && <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
+        <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title={single ? 'agent 读官方的更新日志、Steam 新闻和公告，记下版本更新和长期公告' : 'agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历'} onClick={() => onReadWeb()}>
+          <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : single ? '让 agent 查最新公告' : '让 agent 上网查活动'}
         </button>
         <button className="small-button" disabled={busy !== null}
           title={game.own === true ? '删掉这个游戏和它的活动（你或 agent 加的）' : game.followed === true ? '不再关注，游戏页上不再显示' : '游戏页上不再显示；它的游戏包和脚本包不删'}
@@ -485,6 +546,33 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
         </span>
       </span>
     </button>
+  )
+}
+
+/** An announcement: its kind, the version, when it came out, its title (a link to it), what it says, and where it came from. */
+function NoticeRow({ client, notice: n, now }: { client: AdgClient; notice: GameNotice; now: number }) {
+  const art = useRemoteImage(client, n.cover)
+  const url = n.url !== undefined && /^https?:\/\//.test(n.url) ? n.url : undefined
+  const fresh = n.publishedAt !== undefined && now - n.publishedAt >= 0 && now - n.publishedAt < 3 * DAY
+  return (
+    <li className={`notice-row ${n.lasting === true ? 'lasting' : ''}`}>
+      {art !== undefined && <img className="notice-art" src={art} alt="" loading="lazy" />}
+      <div className="notice-body">
+        <div className="notice-meta">
+          <span className={`notice-kind ${n.kind}`}>{NOTICE_KIND[n.kind]}</span>
+          {n.lasting === true && <span className="notice-kind lasting" title="长期有效的公告，一直排在前面">长期</span>}
+          {n.version !== undefined && <span className="notice-version">{n.version}</span>}
+          {fresh && <span className="badge ok">新</span>}
+          <span className="spacer" />
+          {n.publishedAt !== undefined && <span className="muted small" title={new Date(n.publishedAt).toLocaleString('zh-CN', { hour12: false })}>{new Date(n.publishedAt).toLocaleDateString('zh-CN')}</span>}
+        </div>
+        {url !== undefined
+          ? <a className="notice-title" href={url} target="_blank" rel="noreferrer" title="在浏览器里打开">{n.title}</a>
+          : <span className="notice-title">{n.title}</span>}
+        {n.summary !== undefined && <p className="notice-summary">{n.summary}</p>}
+        <span className="muted small notice-source">{n.source.name}</span>
+      </div>
+    </li>
   )
 }
 

@@ -13,7 +13,7 @@ export {
 export { guideIssues, guideView, keyText, valueText } from './guide.ts'
 export { renderTask, TaskInputError, type RenderedTask } from './render.ts'
 export { PackError, parseManifest } from './parse.ts'
-export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, SraSource, type GameManifestInput } from './game.ts'
+export { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, GameSource, parseGameManifest, SmwSource, SraSource, SteamSource, type GameManifestInput } from './game.ts'
 export { parseJsonc, stripJsonc } from './jsonc.ts'
 export { chooseAsset, expand, globToRegExp, versionOfTag, type AssetChoice } from './match.ts'
 

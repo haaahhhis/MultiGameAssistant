@@ -1,27 +1,31 @@
 /**
- * 技能库: what the skills repositories have, to pick from and download. Laid
- * out as the repository files them: by game, then the script that plays it,
- * then who published it, then the packs and skills themselves. A game's own
- * packs (its game pack, its game skills) sit under 「游戏本身」; skills for no
- * game under 通用. The repositories read are chosen here too (「仓库」).
+ * 技能库: what the skills repositories have, laid out like 已有的技能 — a
+ * directory on the left (game → script → author → the packs and skills, as
+ * the repository files them; a game's own under 「游戏本身」, ones for no game
+ * under 通用) and the one picked on the right: what it is, its versions,
+ * download or update, and its instructions. The repositories read are chosen
+ * on the right too (「仓库」 in the page header).
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
 import type { HubItem, HubRepo, RequestResult, ScriptInfo } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
+import { Select } from '../../components/Select.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
 import type { GameRef } from '../../skillPlaces.ts'
 
-type Hub = RequestResult<'skillhub/list'>
-const OFFICIAL = 'MultiGameAssistant'
-const KIND_LABEL = (i: HubItem) => i.pack === 'script' ? '脚本包' : i.pack === 'game' ? '游戏包' : '技能'
+export type Hub = RequestResult<'skillhub/list'>
+export const OFFICIAL = 'MultiGameAssistant'
+export const kindLabel = (i: HubItem) => i.pack === 'script' ? '脚本包' : i.pack === 'game' ? '游戏包' : '技能'
+const authorOf = (i: HubItem) => i.author ?? i.repo.split('/')[0] ?? i.repo
 
 interface Branch<T> { readonly key: string; readonly name: string; readonly children: T }
-type Tree = Branch<Branch<Branch<HubItem[]>[]>[]>[]
+/** game → script → author → items. */
+export type HubTree = Branch<Branch<Branch<HubItem[]>[]>[]>[]
 
 /** Games, scripts and authors, in the order people look for them: the games on the page and the scripts installed first. */
-function buildTree(items: readonly HubItem[], games: readonly GameRef[], scripts: readonly ScriptInfo[]): Tree {
+export function buildTree(items: readonly HubItem[], games: readonly GameRef[], scripts: readonly ScriptInfo[]): HubTree {
   const scriptPack = (id: string) => items.find(i => i.pack === 'script' && i.name === id)
   const gameOf = (i: HubItem): string | undefined => {
     if (i.pack === 'game') return i.game ?? i.games[0]
@@ -36,196 +40,214 @@ function buildTree(items: readonly HubItem[], games: readonly GameRef[], scripts
   const gameRank = (id: string) => { const at = games.findIndex(g => g.id === id); return at < 0 ? games.length : at }
   const installedScript = (id: string) => scripts.some(s => s.id === id || s.packId === id)
   const itemRank = (i: HubItem) => i.pack === 'game' ? 0 : i.pack === 'script' ? 1 : 2
-
-  const byGame = new Map<string, HubItem[]>()
-  for (const item of items) {
-    const key = gameOf(item) ?? ''
-    byGame.set(key, [...byGame.get(key) ?? [], item])
+  const group = <T,>(list: readonly T[], key: (t: T) => string) => {
+    const out = new Map<string, T[]>()
+    for (const t of list) out.set(key(t), [...out.get(key(t)) ?? [], t])
+    return out
   }
-  const gameKeys = [...byGame.keys()].sort((a, b) => Number(a === '') - Number(b === '') || gameRank(a) - gameRank(b) || gameName(a).localeCompare(gameName(b)))
-  return gameKeys.map(gameKey => {
-    const byScript = new Map<string, HubItem[]>()
-    for (const item of byGame.get(gameKey)!) {
-      const key = scriptOf(item) ?? ''
-      byScript.set(key, [...byScript.get(key) ?? [], item])
-    }
-    const scriptKeys = [...byScript.keys()].sort((a, b) => Number(b === '') - Number(a === '') || Number(installedScript(b)) - Number(installedScript(a)) || scriptName(a).localeCompare(scriptName(b)))
-    return {
-      key: gameKey,
-      name: gameKey === '' ? '通用' : gameName(gameKey),
-      children: scriptKeys.map(scriptKey => {
-        const byAuthor = new Map<string, HubItem[]>()
-        for (const item of byScript.get(scriptKey)!) {
-          const author = item.author ?? item.repo.split('/')[0] ?? item.repo
-          byAuthor.set(author, [...byAuthor.get(author) ?? [], item])
-        }
-        const authors = [...byAuthor.keys()].sort((a, b) => Number(b === OFFICIAL) - Number(a === OFFICIAL) || a.localeCompare(b))
-        return {
-          key: scriptKey,
-          name: scriptKey === '' ? (gameKey === '' ? '不分脚本' : '游戏本身') : scriptName(scriptKey),
-          children: authors.map(author => ({
-            key: author,
-            name: author,
-            children: [...byAuthor.get(author)!].sort((a, b) => itemRank(a) - itemRank(b) || (a.title ?? a.name).localeCompare(b.title ?? b.name)),
-          })),
-        }
-      }),
-    }
-  })
+
+  const byGame = group(items, i => gameOf(i) ?? '')
+  return [...byGame.keys()]
+    .sort((a, b) => Number(a === '') - Number(b === '') || gameRank(a) - gameRank(b) || gameName(a).localeCompare(gameName(b)))
+    .map(gameKey => {
+      const byScript = group(byGame.get(gameKey)!, i => scriptOf(i) ?? '')
+      return {
+        key: gameKey,
+        name: gameKey === '' ? '通用' : gameName(gameKey),
+        children: [...byScript.keys()]
+          .sort((a, b) => Number(b === '') - Number(a === '') || Number(installedScript(b)) - Number(installedScript(a)) || scriptName(a).localeCompare(scriptName(b)))
+          .map(scriptKey => {
+            const byAuthor = group(byScript.get(scriptKey)!, authorOf)
+            return {
+              key: scriptKey,
+              name: scriptKey === '' ? (gameKey === '' ? '不分脚本' : '游戏本身') : scriptName(scriptKey),
+              children: [...byAuthor.keys()]
+                .sort((a, b) => Number(b === OFFICIAL) - Number(a === OFFICIAL) || a.localeCompare(b))
+                .map(author => ({
+                  key: author,
+                  name: author,
+                  children: [...byAuthor.get(author)!].sort((a, b) => itemRank(a) - itemRank(b) || (a.title ?? a.name).localeCompare(b.title ?? b.name)),
+                })),
+            }
+          }),
+      }
+    })
 }
 
-export function SkillHubPanel({ client, hub, games, scripts, focus, busy, now, act, onRefresh, onOpen }: {
+/** The directory on the left: games fold, then each script with its authors and their packs. */
+export function HubList({ tree, selected, searching, folded, onFold, onPick }: {
+  tree: HubTree
+  selected: string | undefined
+  /** Searching shows every match, folded or not. */
+  searching: boolean
+  folded: ReadonlySet<string>
+  onFold: (key: string) => void
+  onPick: (name: string) => void
+}) {
+  return (
+    <>
+      {tree.map(game => {
+        const key = `hub:${game.key || ':general'}`
+        const open = searching || !folded.has(key)
+        const count = game.children.reduce((n, s) => n + s.children.reduce((m, a) => m + a.children.length, 0), 0)
+        return (
+          <div key={key} className={`skills-group ${open ? '' : 'folded'}`}>
+            <div className="skills-section-head">
+              <button className="skills-fold" aria-expanded={open} onClick={() => onFold(key)}>
+                <Icon name="chevron-down" className="skills-chevron" />
+                <Icon name={game.key === '' ? 'layers' : 'gamepad'} className="skills-section-icon" />
+                <span className="skills-group-name">{game.name}</span>
+                <span className="skills-count">{count}</span>
+              </button>
+            </div>
+            {open && game.children.map(script => (
+              <div key={script.key || ':own'} className="skills-sub hub-sub">
+                <div className="hub-script-label"><Icon name={script.key === '' ? 'gamepad' : 'package'} />{script.name}</div>
+                {script.children.map(author => (
+                  <div key={author.key} className="hub-author-block">
+                    <div className="hub-author-label">{author.name}{author.name === OFFICIAL && <span className="hub-official">官方</span>}</div>
+                    {author.children.map(item => (
+                      <button key={`${item.repo}/${item.name}`} className={`script-row skill-row ${item.installed !== undefined ? 'from-hub' : ''} ${selected === item.name ? 'active' : ''}`}
+                        title={item.installed !== undefined ? '已下载' : undefined} onClick={() => onPick(item.name)}>
+                        <span className="script-row-main">
+                          <span className="script-row-name">{item.title ?? item.name}</span>
+                          <span className="muted small skills-row-desc">{item.description}</span>
+                        </span>
+                        <span className={`skill-row-tag ${item.pack === undefined ? 'subtle' : ''}`}>{kindLabel(item)}</span>
+                        {item.installed?.update === true && item.incompatible === undefined && <span className="skill-dot" title="有新版" />}
+                        {item.installed !== undefined && item.installed.update !== true && <span className="skill-row-mark" title="已下载"><Icon name="check" /></span>}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+/** The one picked: what it is, its versions, download or update, its instructions. */
+export function HubDetail({ client, item, where, busy, now, act, onOpen }: {
   client: AdgClient
-  hub: Hub | null
-  /** The games on the game page and the installed scripts: first, and their names. */
-  games: readonly GameRef[]
-  scripts: readonly ScriptInfo[]
-  /** One to show first (a link from a script's page). */
-  focus?: string | undefined
+  item: HubItem
+  /** The game and script it is filed under, in words. */
+  where: string
   busy: string | null
   now: number
-  /** Run something with the page's busy state and messages. */
   act: (key: string, fn: () => Promise<string | void>) => Promise<void>
-  onRefresh: () => Promise<unknown>
   /** Show a downloaded one in 已有的技能. */
   onOpen: (name: string) => void
 }) {
-  const [query, setQuery] = useState('')
-  const [editingRepos, setEditingRepos] = useState(false)
-  const [preview, setPreview] = useState<{ name: string; text: string | null } | null>(null)
-  const needle = query.trim().toLowerCase()
-  const items = useMemo(() => (hub?.items ?? []).filter(i => needle === '' || `${i.name} ${i.title ?? ''} ${i.description} ${i.author ?? ''}`.toLowerCase().includes(needle)), [hub, needle])
-  const tree = useMemo(() => buildTree(items, games, scripts), [items, games, scripts])
-  const focused = useRef<HTMLLIElement | null>(null)
-  useEffect(() => { focused.current?.scrollIntoView({ block: 'center' }) }, [focus, hub !== null])
+  const [content, setContent] = useState<string | null>(null)
+  const installed = item.installed
+  const versions = [
+    ...(item.version === undefined ? [] : [{ version: item.version, changes: item.changes, latest: true }]),
+    ...(item.history ?? []).map(h => ({ ...h, latest: false })),
+  ]
+  const [pick, setPick] = useState(installed?.version ?? item.version ?? '')
+  const picked = versions.find(v => v.version === pick)
+  const canGet = item.blocked === undefined && item.incompatible === undefined
+  const pending = (key: string) => busy === `${key}:${item.name}`
+  useEffect(() => {
+    let live = true
+    setContent(null)
+    client.connection.call('skillhub/preview', { name: item.name }).then(
+      r => { if (live) setContent(r.content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')) },
+      () => { if (live) setContent('') },
+    )
+    return () => { live = false }
+  }, [client, item.name, item.hash])
 
-  const showPreview = (name: string) => {
-    if (preview?.name === name) { setPreview(null); return }
-    setPreview({ name, text: null })
-    client.connection.call('skillhub/preview', { name }).then(
-      r => setPreview(p => p?.name === name ? { name, text: r.content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?/, '') } : p),
-      () => setPreview(p => p?.name === name ? { name, text: '' } : p),
-    )
-  }
-  const pending = (key: string, item: HubItem) => busy === `${key}:${item.name}`
-  const row = (item: HubItem) => {
-    const installed = item.installed
-    const canGet = installed === undefined && item.blocked === undefined && item.incompatible === undefined
-    return (
-      <li key={`${item.repo}/${item.name}`} ref={item.name === focus ? focused : undefined} className={`hub-item ${item.name === focus ? 'focused' : ''} ${installed !== undefined ? 'installed' : ''}`}>
-        <div className="hub-main">
-          <div className="hub-title">
-            <strong>{item.title ?? item.name}</strong>
-            <span className={`hub-kind ${item.pack ?? 'skill'}`}>{KIND_LABEL(item)}</span>
-            {item.title !== undefined && <code className="muted small">{item.name}</code>}
-            {item.version !== undefined && <span className="muted small">{installed?.version !== undefined && installed.version !== item.version ? `${installed.version} → ${item.version}` : item.version}</span>}
-            {(item.history?.length ?? 0) > 0 && <span className="muted small" title={item.history!.map(h => h.version).join('、')}>共 {item.history!.length + 1} 个版本</span>}
-            {installed !== undefined && <span className="badge ok" title={`${relativeTime(installed.at, now)}下载`}>已下载</span>}
-            {installed?.update === true && item.incompatible === undefined && <span className="badge warn">有新版</span>}
-          </div>
-          <span className="muted small">{item.description}</span>
-          {item.blocked !== undefined && <span className="muted small">{item.blocked}，没有下载（以你已有的为准）</span>}
-          {item.incompatible !== undefined && <span className="small hub-incompatible">{item.incompatible}</span>}
-          {preview?.name === item.name && (
-            <div className="hub-preview">{preview.text === null ? <p className="muted small">正在读取…</p> : preview.text.trim() === '' ? <p className="muted small">（没有内容）</p> : <Markdown text={preview.text} />}</div>
-          )}
-        </div>
-        <div className="hub-actions">
-          <button className="small-button" aria-expanded={preview?.name === item.name} onClick={() => showPreview(item.name)}>{preview?.name === item.name ? '收起' : '内容'}</button>
-          {canGet && (
-            <button className="small-button primary" disabled={busy !== null} onClick={() => void act(`install:${item.name}`, async () => {
-              await client.connection.call('skillhub/install', { name: item.name, repo: item.repo })
-              return `已下载 ${item.title ?? item.name}${item.pack === 'script' ? '：脚本页可以按它安装这个脚本了' : item.pack === 'game' ? '：游戏页可以显示它了' : '，agent 现在就能用'}`
-            })}><Icon name="download" />{pending('install', item) ? '下载中…' : '下载'}</button>
-          )}
-          {installed?.update === true && item.incompatible === undefined && (
-            <button className="small-button primary" disabled={busy !== null} onClick={() => void act(`update:${item.name}`, async () => {
-              const r = await client.connection.call('skillhub/update', { name: item.name })
-              return r.state === 'updated' ? `${item.title ?? item.name} 已更新` : '已是最新'
-            })}>{pending('update', item) ? '更新中…' : '更新'}</button>
-          )}
-          {installed !== undefined && <button className="small-button" onClick={() => onOpen(item.name)}>查看</button>}
-        </div>
-      </li>
-    )
-  }
+  const install = () => void act(`install:${item.name}`, async () => {
+    await client.connection.call('skillhub/install', { name: item.name, repo: item.repo })
+    return `已下载 ${item.title ?? item.name}${item.pack === 'script' ? '：脚本页可以按它安装这个脚本了' : item.pack === 'game' ? '：游戏页可以显示它了' : '，agent 现在就能用'}`
+  })
+  const update = () => void act(`update:${item.name}`, async () => {
+    const r = await client.connection.call('skillhub/update', { name: item.name })
+    return r.state === 'updated' ? `${item.title ?? item.name} 已更新` : '已是最新'
+  })
+  const takeVersion = () => void act(`version:${item.name}`, async () => {
+    await client.connection.call('skillhub/version', { name: item.name, version: pick })
+    return `${item.title ?? item.name} ${installed === undefined ? '下载了' : '换成了'} ${pick}${picked?.latest === true ? '（最新）' : ''}`
+  })
 
   return (
-    <div className="skill-hub">
-      <section className="card skill-hub-head">
-        <div className="skill-hub-top">
-          <div className="skill-hub-intro">
-            <h3>技能库</h3>
-            <p className="muted small">脚本包、游戏包和技能放在 {hub?.repos.map(r => r.repo).join('、') ?? `${OFFICIAL}/skills`}，按游戏、脚本、作者分好，需要哪个下载哪个；下载的跟着技能库走，更新时整个换成新版本。</p>
-          </div>
-          <div className="skill-hub-buttons">
-            <span className="muted small">{hub?.fetchedAt === undefined ? '' : `${relativeTime(hub.fetchedAt, now)}读取`}</span>
-            <button className="small-button" disabled={busy !== null} onClick={() => void act('refresh', async () => { await onRefresh() })}><Icon name="refresh" />{busy === 'refresh' ? '读取中…' : '检查更新'}</button>
-            <button className={`small-button ${editingRepos ? 'active' : ''}`} aria-expanded={editingRepos} onClick={() => setEditingRepos(e => !e)}>仓库</button>
+    <article className="card skill-card">
+      <header className="skill-top">
+        <div className="skill-title">
+          <div className="skill-kicker"><Icon name={item.pack === 'game' ? 'gamepad' : item.pack === 'script' ? 'package' : 'sparkles'} />{kindLabel(item)} · 作者 {authorOf(item)}{authorOf(item) === OFFICIAL ? '（官方）' : ''}</div>
+          <h2>{item.title ?? item.name}</h2>
+          <div className="skill-meta">
+            {item.title !== undefined && <code className="skill-name">{item.name}</code>}
+            {where !== '' && <span className="badge"><Icon name={item.pack === 'script' || item.scripts.length > 0 ? 'package' : 'gamepad'} />{where}</span>}
+            {item.version !== undefined && <span className="badge">{item.version}</span>}
+            {versions.length > 1 && <span className="badge" title={versions.map(v => v.version).join('、')}>共 {versions.length} 个版本</span>}
+            {installed !== undefined && <span className="badge ok" title={`${relativeTime(installed.at, now)}下载`}>已下载{installed.version === undefined || installed.version === item.version ? '' : ` ${installed.version}`}</span>}
+            {installed?.update === true && item.incompatible === undefined && <span className="badge warn">有新版</span>}
           </div>
         </div>
-        {editingRepos && hub !== null && (
-          <RepoEditor repos={hub.repos} disabled={busy !== null} onSave={repos => void act('repos', async () => {
-            await client.connection.call('skillhub/repos/set', { repos })
-            setEditingRepos(false)
-            await onRefresh()
-            return '已保存，按新的仓库读取'
-          })} />
-        )}
-        <div className="skills-search hub-search">
-          <Icon name="search" />
-          <input className="text-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索游戏、脚本、作者或技能" aria-label="搜索技能库" />
+        <div className="skill-buttons">
+          {installed === undefined && canGet && (
+            <button className="small-button primary" disabled={busy !== null} onClick={install}><Icon name="download" />{pending('install') ? '下载中…' : '下载'}</button>
+          )}
+          {installed?.update === true && item.incompatible === undefined && (
+            <button className="small-button primary" disabled={busy !== null} onClick={update}>{pending('update') ? '更新中…' : '更新'}</button>
+          )}
+          {installed !== undefined && <button className="small-button" onClick={() => onOpen(item.name)}>在已有的技能里查看</button>}
         </div>
-        {hub?.errors.map(e => <div key={e} className="notice error left small"><Icon name="alert" /><span>读不到：{e}{hub.items.length > 0 ? '（下面是之前读到的）' : ''}</span></div>)}
+      </header>
+      <p className="skill-desc">{item.description}</p>
+      <div className="skill-notes">
+        {item.changes !== undefined && (installed === undefined || installed.update) && <p className="small hub-changes">{item.version === undefined ? '' : `${item.version}：`}{item.changes}</p>}
+        {item.incompatible !== undefined && <p className="small hub-incompatible">{item.incompatible}</p>}
+        {item.blocked !== undefined && <p className="muted small">{item.blocked}，没有下载（以你已有的为准）</p>}
+      </div>
+      {versions.length > 1 && canGet && (
+        <div className="skill-versions">
+          <span className="field-label">版本（技能库留着的每一版都能{installed === undefined ? '下载' : '换'}）</span>
+          <div className="skill-versions-row">
+            <Select className="skill-version-select" value={pick} onChange={setPick} disabled={busy !== null} aria-label="版本"
+              options={versions.map(v => ({ value: v.version, label: `${v.version}${v.latest ? '（最新）' : ''}${v.version === installed?.version ? '（正在用）' : ''}`, ...(v.changes === undefined ? {} : { hint: v.changes }) }))} />
+            <button className="small-button" disabled={busy !== null || pick === installed?.version} onClick={takeVersion}>
+              {pending('version') ? '下载中…' : installed === undefined ? '下载这个版本' : '换成这个版本'}
+            </button>
+          </div>
+        </div>
+      )}
+      <section className="skill-body" aria-label="内容">
+        <div className="skill-body-label">技能库里的内容</div>
+        {content === null ? <p className="muted">正在读取…</p> : content.trim() === '' ? <p className="muted">（没有内容）</p> : <Markdown text={content} />}
       </section>
-
-      {hub === null && <p className="muted">正在读取技能库…</p>}
-      {hub !== null && items.length === 0 && <p className="muted">{needle === '' ? '技能库里还没有东西。' : '没有匹配的。'}</p>}
-      {tree.map(game => (
-        <section key={game.key || ':general'} className="card hub-game">
-          <div className="hub-game-head">
-            <Icon name={game.key === '' ? 'layers' : 'gamepad'} />
-            <h3>{game.name}</h3>
-            {games.some(g => g.id === game.key) && <span className="badge" title="游戏页上有这个游戏">在玩</span>}
-          </div>
-          {game.children.map(script => (
-            <div key={script.key || ':none'} className="hub-script">
-              <div className="hub-script-head"><Icon name={script.key === '' ? 'gamepad' : 'package'} />{script.name}</div>
-              {script.children.map(author => (
-                <div key={author.key} className="hub-author">
-                  <div className="hub-author-head">
-                    <span>作者 {author.name}</span>
-                    {author.name === OFFICIAL && <span className="badge ok">官方</span>}
-                  </div>
-                  <ul className="hub-list">{author.children.map(row)}</ul>
-                </div>
-              ))}
-            </div>
-          ))}
-        </section>
-      ))}
-    </div>
+      <code className="muted small skill-path">{item.repo}/{item.path}</code>
+    </article>
   )
 }
 
 /** Which repositories the 技能库 reads, in order (the first with a name wins). */
-function RepoEditor({ repos, disabled, onSave }: { repos: readonly HubRepo[]; disabled: boolean; onSave: (repos: HubRepo[]) => void }) {
+export function RepoEditor({ repos, disabled, onSave, onCancel }: { repos: readonly HubRepo[]; disabled: boolean; onSave: (repos: HubRepo[]) => void; onCancel: () => void }) {
   const [text, setText] = useState(repos.map(r => (r.branch === 'main' ? r.repo : `${r.repo}@${r.branch}`)).join('\n'))
-  const parsed = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
+  const parsed = useMemo(() => text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
     const [repo, branch] = line.replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '').split('@')
     return { repo: repo ?? '', branch: branch ?? 'main' }
-  })
+  }), [text])
   const valid = parsed.length > 0 && parsed.every(r => /^[\w.-]+\/[\w.-]+$/.test(r.repo) && /^[\w./-]+$/.test(r.branch))
   return (
-    <div className="hub-repos">
-      <label className="field-label" htmlFor="hub-repos">技能仓库（一行一个 owner/repo，可以写 @分支；前面的同名技能优先）</label>
-      <textarea id="hub-repos" className="text-input plain" rows={3} value={text} onChange={e => setText(e.target.value)} spellCheck={false} />
+    <article className="card skill-card">
+      <div className="skill-title"><h2>技能仓库</h2></div>
+      <p className="muted small">脚本包、游戏包和技能从这些 GitHub 仓库下载（整个仓库打包下载，不用装 git，走「设置 → 脚本安装」的下载镜像），一天最多读一次。只有默认仓库 {OFFICIAL}/skills 的脚本包当作官方的；别的仓库里的会让 agent 照着做，只加你信得过的。</p>
+      <label className="field">
+        <span className="field-label">一行一个 owner/repo，可以写 @分支；前面的同名的优先</span>
+        <textarea className="text-input plain skill-content-input" rows={4} value={text} onChange={e => setText(e.target.value)} spellCheck={false} />
+      </label>
       <div className="skill-actions">
-        <span className="muted small">整个仓库打包下载，不用装 git，走「设置 → 脚本安装」的下载镜像。只有默认仓库的脚本包当作官方的；别的仓库里的会让 agent 照着做，只加你信得过的。</span>
+        <button className="link-button small" disabled={disabled} onClick={() => setText(`${OFFICIAL}/skills`)}>恢复默认</button>
         <span className="spacer" />
-        <button className="small-button" disabled={disabled} onClick={() => setText(`${OFFICIAL}/skills`)}>恢复默认</button>
+        <button className="small-button" disabled={disabled} onClick={onCancel}>取消</button>
         <button className="small-button primary" disabled={disabled || !valid} onClick={() => onSave(parsed)}>保存</button>
       </div>
-    </div>
+    </article>
   )
 }

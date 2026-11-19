@@ -10,6 +10,34 @@ import { ClockTime } from './pipelines.ts'
 
 export const GAMES_CAPABILITY = 'games'
 
+/**
+ * An announcement about a game that is not a timed event: a version update or
+ * patch notes, a long-term notice, news. Single-player games have these
+ * instead of events. From a data site (Steam's news) or read by the agent
+ * (`game_notice`); the newest are kept, long-term ones always.
+ */
+export const GameNotice = z.object({
+  /** `<game>/<key>`. */
+  id: z.string(),
+  game: z.string(),
+  title: z.string(),
+  /** `update`: a version update or patch notes; `notice`: an announcement; `news`: other news. */
+  kind: z.enum(['update', 'notice', 'news']),
+  publishedAt: z.number().optional(),
+  /** The version it is about ("v1.0.3"). */
+  version: z.string().optional(),
+  summary: z.string().optional(),
+  url: z.string().optional(),
+  /** Its picture (https). */
+  cover: z.string().optional(),
+  /** Stays relevant (a long-term notice): kept and listed first. */
+  lasting: z.boolean().optional(),
+  source: z.object({ id: z.string(), name: z.string() }),
+  /** When it was read. */
+  at: z.number(),
+})
+export type GameNotice = z.infer<typeof GameNotice>
+
 export const Activity = z.object({
   /** `<game>/<key>`; the key is the normalised name, so a site and the screen meet on it. */
   id: z.string(),
@@ -129,6 +157,8 @@ export const GameInfo = z.object({
   sra: z.array(z.string()).optional(),
   /** Made here (added by name, or by the agent): `games/remove` deletes it. */
   own: z.boolean().optional(),
+  /** A single-player game: its page leads with announcements (no timed events). */
+  single: z.boolean().optional(),
   /** The game's current version, from a data site that knows it. */
   version: z.object({
     name: z.string(),
@@ -204,13 +234,13 @@ export const GamesRequests = {
   'games/list': {
     capability: GAMES_CAPABILITY,
     params: z.object({}),
-    result: z.object({ games: z.array(GameInfo), activities: z.array(Activity), settings: GamesSettings, report: ReportInfo }),
+    result: z.object({ games: z.array(GameInfo), activities: z.array(Activity), notices: z.array(GameNotice).default([]), settings: GamesSettings, report: ReportInfo }),
   },
   /** Read the data sites now (one game, or all). */
   'games/refresh': {
     capability: GAMES_CAPABILITY,
     params: z.object({ game: z.string().optional() }),
-    result: z.object({ results: z.array(z.object({ game: z.string(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })) }),
+    result: z.object({ results: z.array(z.object({ game: z.string(), ok: z.boolean(), count: z.number(), notices: z.number().optional(), detail: z.string().optional() })) }),
   },
   /** Ask the agent to read the game screen; it works in a session of its own. */
   /**

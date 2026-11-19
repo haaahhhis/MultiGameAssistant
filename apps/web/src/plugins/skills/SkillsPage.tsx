@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { MAX_SKILL_NAME, SKILL_NAME, type HubItem, type RequestResult, type ScriptInfo, type SkillInfo, type SkillOwner } from '@adg/protocol'
+import { MAX_SKILL_NAME, SKILL_NAME, type HubItem, type ScriptInfo, type SkillInfo, type SkillOwner } from '@adg/protocol'
 import type { PageProps } from '../../plugins.ts'
 import { confirm } from '../../components/Dialog.tsx'
 import { Icon, type IconName } from '../../components/Icons.tsx'
@@ -9,10 +9,9 @@ import { desktop } from '../../desktop.ts'
 import { useNow, useStore } from '../../hooks.ts'
 import { errorText, useScriptList } from '../scripts/data.ts'
 import { findGame, placeLabel, placesOf, type GameRef } from '../../skillPlaces.ts'
-import { SkillHubPanel } from './SkillHubPanel.tsx'
+import { Select } from '../../components/Select.tsx'
+import { buildTree, HubDetail, HubList, RepoEditor, type Hub } from './SkillHubPanel.tsx'
 import './skills.css'
-
-type Hub = RequestResult<'skillhub/list'>
 
 /**
  * What 已有的技能 is split into. Script packs and game packs come from the 技能库
@@ -86,7 +85,9 @@ export function SkillsPage({ client, arg }: PageProps) {
   const [game, setGame] = useState(ALL)
   // #/p/skills/<name>, #/p/skills/hub (the 技能库) or hub:<name> (one in it, from a script's page).
   const [tab, setTab] = useState<'mine' | 'hub'>(arg?.startsWith('hub') === true ? 'hub' : 'mine')
-  const [focus, setFocus] = useState<string | undefined>(arg?.startsWith('hub:') === true ? arg.slice(4) : undefined)
+  const [hubSelected, setHubSelected] = useState<string>(arg?.startsWith('hub:') === true ? arg.slice(4) : '')
+  const [hubQuery, setHubQuery] = useState('')
+  const [editingRepos, setEditingRepos] = useState(false)
   const [selected, setSelected] = useState<string>(arg === undefined || arg.startsWith('hub') ? '' : arg)
   const [content, setContent] = useState<{ name: string; text: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -110,7 +111,7 @@ export function SkillsPage({ client, arg }: PageProps) {
 
   useEffect(() => {
     if (arg === undefined) return
-    if (arg.startsWith('hub')) { setTab('hub'); setFocus(arg.startsWith('hub:') ? arg.slice(4) : undefined) } else { setTab('mine'); setSelected(arg) }
+    if (arg.startsWith('hub')) { setTab('hub'); if (arg.startsWith('hub:')) setHubSelected(arg.slice(4)) } else { setTab('mine'); setSelected(arg) }
     setDraft(null)
   }, [arg])
   useEffect(() => client.connection.on('skills/changed', () => setRevision(r => r + 1)), [client])
@@ -270,33 +271,81 @@ export function SkillsPage({ client, arg }: PageProps) {
   )
   const updates = (hub?.items ?? []).filter(i => i.installed?.update === true && i.incompatible === undefined).length
 
+  // 技能库: the directory, the one picked, and where it is filed (game · script).
+  const hubNeedle = hubQuery.trim().toLowerCase()
+  const hubItems = useMemo(() => (hub?.items ?? []).filter(i => hubNeedle === '' || `${i.name} ${i.title ?? ''} ${i.description} ${i.author ?? ''}`.toLowerCase().includes(hubNeedle)), [hub, hubNeedle])
+  const tree = useMemo(() => buildTree(hubItems, games, scripts), [hubItems, games, scripts])
+  const hubOrdered = tree.flatMap(g => g.children.flatMap(s => s.children.flatMap(a => a.children)))
+  const hubCurrent = hubOrdered.find(i => i.name === hubSelected) ?? hubOrdered[0]
+  const hubWhere = (name: string) => {
+    for (const g of tree) for (const s of g.children) if (s.children.some(a => a.children.some(i => i.name === name))) {
+      return g.key === '' ? (s.key === '' ? '' : s.name) : s.key === '' ? g.name : `${g.name} · ${s.name}`
+    }
+    return ''
+  }
+
   return (
     <section className="main scripts-page skills-page">
-      <header className="page-header">
+      <header className="page-header skills-header">
         <div className="breadcrumb"><h1>技能</h1></div>
-        {hasHub && (
-          <div className="tabs" role="tablist" aria-label="技能">
+        {hasHub ? (
+          <div className="tabs skills-tabs" role="tablist" aria-label="技能">
             <button role="tab" aria-selected={tab === 'mine'} className={tab === 'mine' ? 'active' : ''} onClick={() => switchTab('mine')}>已有的技能</button>
             <button role="tab" aria-selected={tab === 'hub'} className={tab === 'hub' ? 'active' : ''} onClick={() => switchTab('hub')}>
               技能库{updates > 0 && <span className="skills-tab-badge" title={`${updates} 个有新版`}>{updates}</span>}
             </button>
           </div>
-        )}
+        ) : <span />}
         <div className="page-actions">
-          {tab === 'mine' && (
+          {tab === 'mine' ? (
             <button className="small-button primary" disabled={status.state !== 'open'} onClick={() => setDraft(blank())}>
               <Icon name="plus" />新建技能
             </button>
+          ) : (
+            <>
+              <span className="muted small skills-fetched">{hub?.fetchedAt === undefined ? '' : `${relativeTime(hub.fetchedAt, now)}读取`}</span>
+              <button className="small-button" disabled={busy !== null} title="现在读一次技能库，看有没有新版本" onClick={() => void act('refresh', async () => { await loadHub(true) })}>
+                <Icon name="refresh" />{busy === 'refresh' ? '读取中…' : '检查更新'}
+              </button>
+              <button className={`small-button ${editingRepos ? 'active' : ''}`} aria-expanded={editingRepos} onClick={() => setEditingRepos(o => !o)}>仓库</button>
+            </>
           )}
         </div>
       </header>
       {tab === 'hub' && hasHub ? (
-        <div className="skill-hub-body">
-          {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
-          {message !== null && <div className="notice info left small"><Icon name="check" /><span>{message}</span></div>}
-          <SkillHubPanel client={client} hub={hub} games={games} scripts={scripts} focus={focus} busy={busy} now={now} act={act}
-            onRefresh={() => loadHub(true)} onOpen={name => { switchTab('mine'); setSelected(name) }} />
+      <div className="scripts-body">
+        <aside className="scripts-list" aria-label="技能库目录">
+          <div className="skills-tools">
+            <div className="skills-search">
+              <Icon name="search" />
+              <input className="text-input" value={hubQuery} onChange={e => setHubQuery(e.target.value)} placeholder="搜索游戏、脚本、作者或技能" aria-label="搜索技能库" />
+            </div>
+          </div>
+          {hub === null && error === null && <p className="muted small pad">正在读取技能库…</p>}
+          {hub !== null && hubNeedle !== '' && <p className="muted small skills-found">{hubOrdered.length === 0 ? '没有匹配的。' : `找到 ${hubOrdered.length} 个`}</p>}
+          {hub !== null && hubNeedle === '' && hubOrdered.length === 0 && <p className="muted small pad">技能库里还没有东西。</p>}
+          <HubList tree={tree} selected={editingRepos ? undefined : hubCurrent?.name} searching={hubNeedle !== ''} folded={folded} onFold={fold}
+            onPick={name => { setHubSelected(name); setEditingRepos(false); setMessage(null); setError(null) }} />
+        </aside>
+        <div className="scripts-detail">
+          <div className="script-detail">
+            {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
+            {message !== null && <div className="notice info left small"><Icon name="check" /><span>{message}</span></div>}
+            {hub?.errors.map(e => <div key={e} className="notice error left small"><Icon name="alert" /><span>技能库读不到：{e}{hub.items.length > 0 ? '（列出的是之前读到的）' : ''}</span></div>)}
+            {editingRepos && hub !== null ? (
+              <RepoEditor repos={hub.repos} disabled={busy !== null} onCancel={() => setEditingRepos(false)} onSave={repos => void act('repos', async () => {
+                await client.connection.call('skillhub/repos/set', { repos })
+                setEditingRepos(false)
+                await loadHub(true)
+                return '已保存，按新的仓库读取'
+              })} />
+            ) : hubCurrent !== undefined ? (
+              <HubDetail key={hubCurrent.name} client={client} item={hubCurrent} where={hubWhere(hubCurrent.name)} busy={busy} now={now} act={act}
+                onOpen={name => { switchTab('mine'); setSelected(name) }} />
+            ) : null}
+          </div>
         </div>
+      </div>
       ) : (
       <div className="scripts-body">
         <aside className="scripts-list" aria-label="技能列表">
@@ -306,11 +355,11 @@ export function SkillsPage({ client, arg }: PageProps) {
               <input className="text-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索脚本包、游戏包和技能" aria-label="搜索" />
             </div>
             {games.length > 0 && (
-              <select className="text-input skills-filter" value={game} aria-label="只看一个游戏的" onChange={e => setGame(e.target.value)}>
-                <option value={ALL}>所有游戏</option>
-                {games.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                <option value={GENERAL}>通用（不分游戏）</option>
-              </select>
+              <Select className="skills-filter" value={game} onChange={setGame} aria-label="只看一个游戏的" options={[
+                { value: ALL, label: '所有游戏' },
+                ...games.map(g => ({ value: g.id, label: g.name })),
+                { value: GENERAL, label: '通用', hint: '不分游戏的技能' },
+              ]} />
             )}
           </div>
           {(skills === null || (hasHub && hub === null)) && error === null && <p className="muted small pad">正在读取…</p>}
@@ -492,9 +541,8 @@ function SkillDetail({ entry, where, content, busy, copied, moving, now, onCopy,
         <div className="skill-versions">
           <label className="field-label" htmlFor="skill-version">版本（技能库留着的每一版都能换，往前往后都行）</label>
           <div className="skill-versions-row">
-            <select id="skill-version" className="text-input skill-version-select" value={pick} disabled={busy !== null} onChange={e => setPick(e.target.value)}>
-              {versions.map(v => <option key={v.version} value={v.version}>{v.version}{v.latest ? '（最新）' : ''}{v.version === installed.version ? '（正在用）' : ''}</option>)}
-            </select>
+            <Select id="skill-version" className="skill-version-select" value={pick} disabled={busy !== null} onChange={setPick} aria-label="版本"
+              options={versions.map(v => ({ value: v.version, label: `${v.version}${v.latest ? '（最新）' : ''}${v.version === installed.version ? '（正在用）' : ''}`, ...(v.changes === undefined ? {} : { hint: v.changes }) }))} />
             <button className="small-button" disabled={busy !== null || pick === installed.version} onClick={() => onVersion(pick)}>{pending('version') ? '切换中…' : '换成这个版本'}</button>
           </div>
           {picked?.changes !== undefined && <span className="muted small">{picked.version}：{picked.changes}</span>}

@@ -1,6 +1,6 @@
 ---
 name: web-reading
-description: 从网上查游戏资讯（版本、活动、卡池、维护公告、兑换码等）的方法：先用公开 API，再用 Wiki 的查询接口，最后才读网页；少请求、少花模型。用户要查游戏相关的网上信息、或游戏包里没有能自动读的数据站时使用。
+description: 从网上查游戏资讯（版本、活动、卡池、维护公告、版本更新公告、兑换码等）的方法：先用公开 API，再用 Wiki 的查询接口，最后才读网页；少请求、少花模型。用户要查游戏相关的网上信息、或游戏包里没有能自动读的数据站时使用。
 ---
 
 # 从网上查游戏资讯
@@ -16,6 +16,10 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
      返回当前版本号 `version`、版本名 `versionName`、版本起止 `startTime` / `endTime`、活动列表 `activities[]`（`name`、`kind`、`description`、`startTime`、`endTime`），有的还有卡池 `pools[]`（`name`、`type`、`upCharacters`、起止时间）。时间是服务器时间（不带时区，国服按北京时间）。
      游戏标识：`sr` 崩坏：星穹铁道、`ys` 原神、`zzz` 绝区零、`ww` 鸣潮、`nte` 异环、`ak` 明日方舟、`end` 明日方舟：终末地、`xtlr` 星塔旅人、`ba-cn` / `ba-jp` / `ba-global` 蔚蓝档案。英文数据加语言后缀：`{game}-en-US.json`。说明页：https://starrailassistant.top/reference/public-api/
    - 游戏包里已经写了 `sra` 来源的游戏（明日方舟、终末地、星穹铁道），插件每天自己读，不用你再读；别的游戏直接用 `web_fetch` 读这个 JSON。
+   - **Steam 新闻**（Steam 上的游戏，单机游戏尤其好用；免费、不用 key）：
+     `GET https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=10&maxlength=800&feeds=steam_community_announcements&format=json`
+     `appid` 是商店页 `store.steampowered.com/app/<数字>` 里的数字。返回 `appnews.newsitems[]`：`title`、`url`、`date`（Unix 秒）、`contents`（加了 `maxlength` 是截短的纯文本，够看就行）、`tags`（含 `patchnotes` 的是补丁说明）。只要官方公告就带上 `feeds=steam_community_announcements`。
+     游戏包里写了 `steam: { appid: … }` 来源的，插件每天自己读，不用你再读。
 3. **Wiki 的查询接口**：PRTS、B 站游戏 WIKI 都是 MediaWiki，用 `api.php` 拿结构化结果，比读页面省得多：
    - 按属性查（Semantic MediaWiki）：`https://prts.wiki/api.php?action=ask&format=json&query=[[分类:有活动信息的页面]]|?活动开始时间|?活动结束时间|limit=50`
    - 读一个页面的正文：`api.php?action=parse&page=页面名&prop=wikitext&format=json`
@@ -36,4 +40,5 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
 ## 记下来
 
 - 查到的活动用 `game_record`（`source: site`，带上 `url`）写进日历，以后看板、日报都能用，不用再查一遍。
-- 某个游戏有好用的固定接口，但游戏包里还没有：告诉用户可以在游戏包的 `game.yaml` 里加一个来源（`sra: { game: … }` 或 `smw: …`），以后插件每天自己读，不花模型。
+- 版本更新、补丁说明、长期有效的公告这些没有起止时间的，用 `game_notice` 记到游戏的「公告」里（kind=update / notice / news，长期的 lasting=true）。单机游戏主要记这个。
+- 某个游戏有好用的固定接口，但游戏包里还没有：告诉用户可以在游戏包的 `game.yaml` 里加一个来源（`sra: { game: … }`、`smw: …` 或 `steam: { appid: … }`），以后插件每天自己读，不花模型。

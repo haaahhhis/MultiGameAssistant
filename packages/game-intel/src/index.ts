@@ -18,14 +18,14 @@ import type {} from '@adg/runner'
 import type {} from '@adg/script-registry'
 import { sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
-import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type RequestParams, taskMessage } from '@adg/protocol'
+import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type GameNotice, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
-import { Calendar, type OwnPatch, type ReadEvent } from './calendar.ts'
+import { Calendar, type OwnPatch, type ReadEvent, type ReadNotice } from './calendar.ts'
 import { ExeIcons } from '@adg/protocol/node'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
-import { readSmw, readSra, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
+import { readSmw, readSra, readSteam, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
 import { matchScripts } from './script-match.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
@@ -33,7 +33,7 @@ import { gameTools } from './tools.ts'
 export { Calendar, DEFAULT_SETTINGS, OWN_FIELDS, type OwnFields, type OwnPatch, type ReadEvent } from './calendar.ts'
 export { DailyReport, localDay, realClock, type Clock, type DailyDeps } from './daily.ts'
 export { buildReport, recentDigest, type ReportGame } from './report.ts'
-export { parseAsk, parseSra, readSmw, readSra, readValue, smwQuery, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
+export { parseAsk, parseSra, parseSteam, readSmw, readSra, readSteam, readValue, smwQuery, type Fetch, type SiteEvent, type SiteVersion } from './sources.ts'
 export { gameTools, type GameToolDeps } from './tools.ts'
 export { daysLeft, leftText, parseDateText, parseRemaining, shortDate, wallClock, zonedTime } from './time.ts'
 export { idKey, nameKey, sameEvent } from './names.ts'
@@ -178,6 +178,8 @@ export class AdgGameIntel extends Service {
       for (const tool of gameTools({
         games: () => this.infos(),
         activities: game => calendar.list(game),
+        notices: game => calendar.notices(game),
+        recordNotices: async (game, notices) => { await this.ready; return this.recordNotices(game, notices) },
         refresh: async game => { await this.ready; return this.refresh(game) },
         record: async (game, from, events, sessionId, keep) => { await this.ready; return this.record(game, from, events, sessionId, keep) },
         launch: async (game, signal) => { await this.ready; return this.launch(game, signal) },
@@ -221,7 +223,7 @@ export class AdgGameIntel extends Service {
             await this.loadGames(log)
             // The events of the games on the page only (one taken off or deleted shows none).
             const shown = new Set(this.games.map(g => g.manifest.id))
-            return { games: this.infos(), activities: calendar.list().filter(a => shown.has(a.game)), settings: calendar.settings, report: { ...calendar.report, ...(this.daily.next() === undefined ? {} : { next: this.daily.next() }) } }
+            return { games: this.infos(), activities: calendar.list().filter(a => shown.has(a.game)), notices: calendar.notices().filter(n => shown.has(n.game)), settings: calendar.settings, report: { ...calendar.report, ...(this.daily.next() === undefined ? {} : { next: this.daily.next() }) } }
           },
           'games/refresh': async params => {
             await this.ready
@@ -675,12 +677,13 @@ export class AdgGameIntel extends Service {
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: scripts.get(m.id) ?? m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
-        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
+        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined || s.steam !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
         builtin,
         ...(m.art === undefined ? {} : { art: m.art }),
         ...(followed === true ? { followed: true } : {}),
         ...(sra.length === 0 ? {} : { sra }),
         ...(own === true ? { own: true } : {}),
+        ...(m.single === true ? { single: true } : {}),
         ...(refreshed === undefined ? {} : { refreshed }),
         ...(reading === undefined ? {} : { reading }),
         ...(webReading === undefined ? {} : { webReading }),
@@ -693,22 +696,31 @@ export class AdgGameIntel extends Service {
   // ── data sites ──
 
   /** Read every readable data site (of one game, or all). */
-  async refresh(gameId?: string): Promise<Array<{ game: string; ok: boolean; count: number; detail?: string }>> {
+  async refresh(gameId?: string): Promise<Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }>> {
     const games = gameId === undefined ? this.games : [this.game(gameId)]
-    const results: Array<{ game: string; ok: boolean; count: number; detail?: string }> = []
+    const results: Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }> = []
     for (const { manifest } of games) {
-      const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined)
+      const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined || s.steam !== undefined)
       if (sources.length === 0) {
-        results.push({ game: manifest.id, ok: false, count: 0, detail: `没有能直接读的数据站：用 web_fetch（只拿到空壳时用内置浏览器）看 ${manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'}，再用 game_record（source=site）记下` })
+        const where = manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'
+        results.push({ game: manifest.id, ok: false, count: 0, detail: manifest.single === true
+          ? `没有能直接读的公告来源：用 web_fetch 看 ${where}，版本更新和公告用 game_notice 记下`
+          : `没有能直接读的数据站：用 web_fetch（只拿到空壳时用内置浏览器）看 ${where}，再用 game_record（source=site）记下` })
         continue
       }
       const failures: string[] = []
       let count = 0
+      let notices = 0
       let version: ({ source: string } & SiteVersion) | undefined
       let pools: SitePool[] | undefined
       for (const source of sources) {
         const now = this.clock.now()
         try {
+          // Announcements (Steam's news): kept beside the events, no dates to put on the calendar.
+          if (source.steam !== undefined) {
+            notices += (await this.calendar.applyNotices(manifest.id, { id: source.id, name: source.name }, await readSteam(source.steam, this.fetch), now)).length
+            continue
+          }
           let events: SiteEvent[]
           if (source.sra !== undefined) {
             const read = await readSra(source.sra, manifest, now, this.fetch)
@@ -724,9 +736,9 @@ export class AdgGameIntel extends Service {
           failures.push(`${source.name}：${error instanceof Error ? error.message : String(error)}`)
         }
       }
-      if (failures.length > 0 && count === 0) await this.calendar.refreshFailed(manifest.id, failures.join('；'), this.clock.now())
+      if (failures.length > 0 && count + notices === 0) await this.calendar.refreshFailed(manifest.id, failures.join('；'), this.clock.now())
       else await this.calendar.refreshDone(manifest.id, this.calendar.list(manifest.id).filter(a => a.sources?.some(s => !s.web) === true).length, this.clock.now(), version, pools)
-      results.push({ game: manifest.id, ok: failures.length === 0 || count > 0, count, ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
+      results.push({ game: manifest.id, ok: failures.length === 0 || count + notices > 0, count, ...(notices === 0 ? {} : { notices }), ...(failures.length === 0 ? {} : { detail: failures.join('；') }) })
       this.changed(manifest.id)
     }
     // Events that ended went with their screenshots and pictures.
@@ -735,6 +747,18 @@ export class AdgGameIntel extends Service {
   }
 
   // ── what the agent read ──
+
+  /** Announcements the agent read (game_notice), each credited to the site it came from. */
+  async recordNotices(gameId: string, notices: readonly ReadNotice[]): Promise<GameNotice[]> {
+    this.game(gameId)
+    const kept: GameNotice[] = []
+    for (const notice of notices) {
+      const host = notice.url !== undefined && URL.canParse(notice.url) ? hostName(notice.url) : undefined
+      kept.push(...await this.calendar.applyNotices(gameId, { id: 'agent', name: host === undefined ? 'agent 查到' : `${host}（agent 查到）` }, [notice], this.clock.now()))
+    }
+    this.changed(gameId)
+    return kept
+  }
 
   private async record(gameId: string, from: 'screen' | 'site', events: readonly ReadEvent[], sessionId: string | undefined, keep: boolean): Promise<Array<{ activity: Activity; matched: boolean }>> {
     const { manifest } = this.game(gameId)
@@ -936,8 +960,9 @@ export class AdgGameIntel extends Service {
       `1. SRA 公共 API：已知的游戏 id 有 ${known}。它是其中之一，就写一个 sra 来源：{ "id": "sra", "name": "SRA 公共 API", "sra": { "game": "<那个 id>" } }。`,
       '2. Wiki：B 站游戏 WIKI（wiki.biligame.com/<缩写>）或官方 / 玩家 Wiki，试它的 api.php?action=ask 能不能查到带开始、结束时间的活动页；能的话写成 smw 来源（conditions、start、end 等属性名照实写，dates 按存法选 date 或 text）。',
       '3. 官网的新闻 / 公告列表页：写成只有 homepage 的来源（agent 读）。',
+      '   单机游戏（买断制、没有限时活动的）：在 Steam 上有的，再写一个 Steam 来源（steam_appid 是商店页 store.steampowered.com/app/<数字> 里的数字），插件每天自动读它在 Steam 的官方公告（版本更新、补丁说明）；game_add 时写 single=true。',
       `4. 用 game_add 写它的游戏包：id 一定用 ${manifest.id}（换了 id 游戏页上就成了另一个游戏），name 用它的中文正式名（用户写的名字是「${manifest.name}」），aliases 写常见简称，timezone 写服务器时区，sources 写找到的（原来有的保留）；guide 写几行：哪些来源看什么、公告页怎么找活动。`,
-      '5. 写好后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。',
+      '5. 写好后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。单机游戏读一次官方的更新日志，用 game_notice 记下最近的版本更新和长期公告。',
       '6. 找不到这个游戏（名字不对、没有公开的活动信息）就不要 game_add，直接说明找了哪里、为什么没找到。',
       '不要向用户提问；最后告诉用户加了什么来源、哪些能自动读、现在有几个活动。',
     ].join('\n')
@@ -961,13 +986,19 @@ export class AdgGameIntel extends Service {
     const where = chosen.length === 0
       ? '游戏包里没有写网页来源：按技能 web-reading 的顺序自己找（先 SRA 公共 API 和 Wiki 接口，再官网公告，最后 web_search）。'
       : `要读的来源：${chosen.map(s => `${s.name}${s.homepage === undefined ? '' : `（${s.homepage}）`}`).join('；')}。`
-    const prompt = [
+    const prompt = (manifest.single === true ? [
+      `上网查单机游戏「${manifest.name}」最近的官方公告（游戏 id：${manifest.id}），按技能 web-reading 和 game-intel：`,
+      `1. 先 game_activities（game=${manifest.id}）看已经记了哪些公告，不用重复记。`,
+      `2. ${where}看官方的更新日志或公告列表（Steam 新闻、官网博客、公告页），只打开最近的几篇。`,
+      '3. 版本更新、补丁说明用 game_notice 记下（kind=update，写上版本号、发布日期、一两句改了什么和网址；有配图就写进 cover）；长期有效的公告 kind=notice、lasting=true；其他资讯 kind=news。单机游戏一般没有限时活动，真有（限时折扣、联动、节日活动）才用 game_record。',
+      '4. 不打开游戏，不向用户提问。最后用两三句话总结：最新版本是什么、改了什么、有没有要注意的公告。',
+    ] : [
       `上网查「${manifest.name}」现在的活动和最新消息（游戏 id：${manifest.id}），按技能 web-reading 和 game-intel：`,
       `1. 先 game_activities（game=${manifest.id}）看日历里已经有什么，不用重复查。`,
       `2. ${where}先读列表页，只打开最近的活动、版本和维护公告。`,
-      '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。',
+      '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。版本更新公告和长期有效的公告（没有结束时间的）用 game_notice 记下（kind=update 或 notice，长期的写 lasting=true）。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：现在有哪些活动、哪些快结束、有什么新消息（新版本、维护、福利）。',
-    ].join('\n')
+    ]).join('\n')
     void conversations.ask(sessionId, taskMessage('你', `游戏资讯：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
       answer => this.calendar.setReading(`${manifest.id}#web`, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
       error => this.calendar.setReading(`${manifest.id}#web`, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),

@@ -11,10 +11,11 @@
  * goes when no source lists it any more (and the game screen never showed
  * it), or when it has ended.
  */
+import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
-import { GamesSettings, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
+import { GameNotice, GamesSettings, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
 import type { SitePool, SiteEvent, SiteVersion } from './sources.ts'
@@ -110,6 +111,27 @@ function saidBy(item: Stored, source: string): Said | undefined {
   return item.facts[source]
 }
 
+/** An announcement as a data site gives it or the agent read it (`Calendar.applyNotices`). */
+export interface ReadNotice {
+  readonly title: string
+  readonly kind: GameNotice['kind']
+  readonly publishedAt?: number | undefined
+  readonly version?: string | undefined
+  readonly summary?: string | undefined
+  readonly url?: string | undefined
+  readonly cover?: string | undefined
+  /** Stays relevant: kept and listed first; `false` takes it back. */
+  readonly lasting?: boolean | undefined
+}
+
+/** Announcements kept per game besides the long-term ones. */
+const MAX_NOTICES = 40
+
+/** The same announcement: the same address, else the same title. */
+function noticeKey(url: string | undefined, title: string): string {
+  return url !== undefined && url !== '' ? `u:${url.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()}` : `t:${title.trim().replace(/\s+/g, ' ').toLowerCase()}`
+}
+
 const StoredSchema = z.object({
   activities: z.array(z.looseObject({ id: z.string(), game: z.string(), name: z.string() })).default([]),
   refreshed: z.record(z.string(), z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })).default({}),
@@ -125,13 +147,15 @@ const StoredSchema = z.object({
   }).default({ report: {}, followed: [], hidden: [] }),
   /** Pages the user added to a game (games/source/add), by game. */
   links: z.record(z.string(), z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), at: z.number() }))).default({}),
+  /** Announcements (version updates, long-term notices, news), by game. */
+  notices: z.record(z.string(), z.array(GameNotice)).default({}),
 })
 type Saved = z.infer<typeof StoredSchema>
 
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [], hidden: [] }, versions: {}, pools: {}, links: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [], hidden: [] }, versions: {}, pools: {}, links: {}, notices: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -145,7 +169,7 @@ export class Calendar {
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
       this.#items = saved.activities.map(a => migrate({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] } as unknown as Stored))
-      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools, links: saved.links }
+      this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools, links: saved.links, notices: saved.notices }
     } catch {
       // first start, or unreadable: start empty
     }
@@ -202,6 +226,7 @@ export class Calendar {
     }
     for (const v of Object.values(this.#saved.versions)) if (v.cover !== undefined) out.add(v.cover)
     for (const list of Object.values(this.#saved.pools)) for (const p of list) if (p.cover !== undefined) out.add(p.cover)
+    for (const list of Object.values(this.#saved.notices)) for (const n of list) if (n.cover !== undefined) out.add(n.cover)
     return out
   }
 
@@ -260,8 +285,58 @@ export class Calendar {
     delete this.#saved.versions[gameId]
     delete this.#saved.pools[gameId]
     delete this.#saved.links[gameId]
+    delete this.#saved.notices[gameId]
     this.#saved.settings.hidden = this.#saved.settings.hidden.filter(id => id !== gameId)
     await this.save()
+  }
+
+  /** Announcements (of one game, or all): the long-term ones first, then the newest. */
+  notices(game?: string): GameNotice[] {
+    const all = game === undefined ? Object.values(this.#saved.notices).flat() : this.#saved.notices[game] ?? []
+    return [...all].sort((a, b) => Number(b.lasting === true) - Number(a.lasting === true) || (b.publishedAt ?? b.at) - (a.publishedAt ?? a.at))
+  }
+
+  /**
+   * Keep announcements a data site gives or the agent read. One already kept
+   * (the same address, else the same title) is brought up to date; besides
+   * the long-term ones, the newest ${MAX_NOTICES} are kept.
+   * @returns them as kept.
+   */
+  async applyNotices(game: string, source: { id: string; name: string }, read: readonly ReadNotice[], now: number): Promise<GameNotice[]> {
+    const list = [...(this.#saved.notices[game] ?? [])]
+    const out: GameNotice[] = []
+    for (const n of read) {
+      const title = n.title.replace(/\s+/g, ' ').trim()
+      if (title === '') continue
+      const url = n.url?.trim() || undefined
+      const key = noticeKey(url, title)
+      const at = list.findIndex(x => noticeKey(x.url, x.title) === key || (url !== undefined && x.url === undefined && noticeKey(undefined, x.title) === noticeKey(undefined, title)))
+      const before = at < 0 ? undefined : list[at]
+      const keep = <T,>(value: T | undefined, old: T | undefined) => value ?? old
+      const publishedAt = keep(n.publishedAt, before?.publishedAt)
+      const version = keep(n.version?.trim() || undefined, before?.version)
+      const summary = keep(n.summary?.trim() || undefined, before?.summary)
+      const cover = keep(n.cover?.trim() || undefined, before?.cover)
+      const lasting = n.lasting ?? before?.lasting
+      const next: GameNotice = {
+        id: before?.id ?? `${game}/${createHash('sha1').update(key).digest('hex').slice(0, 12)}`,
+        game, title, kind: n.kind, source, at: now,
+        ...(publishedAt === undefined ? {} : { publishedAt }),
+        ...(version === undefined ? {} : { version }),
+        ...(summary === undefined ? {} : { summary: summary.slice(0, 600) }),
+        ...(url ?? before?.url) === undefined ? {} : { url: (url ?? before?.url)! },
+        ...(cover === undefined ? {} : { cover }),
+        ...(lasting === true ? { lasting: true } : {}),
+      }
+      if (at < 0) list.push(next)
+      else list[at] = next
+      out.push(next)
+    }
+    const lastingOnes = list.filter(x => x.lasting === true)
+    const rest = list.filter(x => x.lasting !== true).sort((a, b) => (b.publishedAt ?? b.at) - (a.publishedAt ?? a.at)).slice(0, MAX_NOTICES)
+    this.#saved.notices[game] = [...lastingOnes, ...rest]
+    await this.save()
+    return out
   }
 
   /** Follow or stop following an SRA game; stopping forgets its events. */

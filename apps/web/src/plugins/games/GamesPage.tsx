@@ -80,7 +80,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
     const readable = (id: string) => games.find(g => g.id === id)?.sources.some(s => s.auto) === true
     const failed = results.filter(r => readable(r.game) && !r.ok)
     if (failed.length > 0) throw new Error(failed.map(r => `${name(r.game)}没读到：${r.detail ?? '未知原因'}`).join('；'))
-    return game === undefined ? `刷新完成：${results.filter(r => readable(r.game)).map(r => `${name(r.game)} ${r.count} 个活动`).join('；')}` : undefined
+    return game === undefined ? `刷新完成：${results.filter(r => readable(r.game)).map(r => `${name(r.game)} ${[...(r.count > 0 || r.notices === undefined ? [`${r.count} 个活动`] : []), ...(r.notices === undefined ? [] : [`${r.notices} 条公告`])].join('、')}`).join('；')}` : undefined
   })
 
   /** A game on the page by its name, known or not (one nothing knows yet is made empty); then its page. */
@@ -178,6 +178,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
         {data !== null && current !== undefined && (
           <GameView
             key={current.id} client={client} game={current} activities={data.activities.filter(a => a.game === current.id)}
+            notices={(data.notices ?? []).filter(n => n.game === current.id)}
             color={colors.get(current.id) ?? PALETTE[0]!} now={now} soonDays={data.settings.report.soonDays} busy={busy}
             open={dialog?.kind === 'activity' ? dialog.id : null} adding={dialog?.kind === 'add'}
             onOpen={id => setDialog({ kind: 'activity', id })} onAdd={() => setDialog({ kind: 'add', game: current.id })}
