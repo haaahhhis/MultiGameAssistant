@@ -11,6 +11,7 @@ import { Icon } from './Icons.tsx'
 import { SideBar } from './sessionTools.ts'
 import { CommandsPanel, SIDE_PANELS, SidePanelHost, TasksPanel, commandsOf, type SidePanelId } from './SidePanels.tsx'
 import { SubAgentPane, settledTasks, subAgentIds, taskLabels, useSubAgents, type OpenTask } from '../plugins/chat/SubTasks.tsx'
+import { SessionPackOffer } from '../plugins/games/PackOffer.tsx'
 
 export function SessionView({ client, sessionId, reminder, initialPrompt, onInitialSent, onAgent }: {
   client: AdgClient
@@ -142,6 +143,8 @@ function OpenSession({ client, session, reminder, initialPrompt, onInitialSent, 
             <>
               <Composer client={client} session={session} running={state.running} disabled={connection.state !== 'open'}
                 initialPrompt={initialPrompt} onInitialSent={onInitialSent} reminder={reminder} />
+              {/* The 技能库's packs for the games and scripts it works on, asked about once. */}
+              <SessionPackOffer client={client} sessionId={session.id} />
             </>
           )}
         </div>

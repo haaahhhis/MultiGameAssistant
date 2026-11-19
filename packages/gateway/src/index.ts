@@ -818,6 +818,10 @@ export class AdgGateway extends Service {
         return this.savedSkills
       }
       const options = (signal: AbortSignal) => ({ ...(this.workspace === undefined ? {} : { cwd: this.workspace }), signal })
+      // A conversation turning to a game: the page it is open on offers that game's packs.
+      scoped.effect(() => this.skillScope.onFocus((sessionId, focus) => {
+        if (this.isOwn(sessionId)) this.broadcast('skills/focused', { sessionId, scripts: [...focus.scripts], games: [...focus.games] })
+      }), 'adg-gateway skill focus')
       scoped.effect(() => this.registry.register({
         id: SKILLS_CAPABILITY,
         version: 1,
@@ -828,6 +832,10 @@ export class AdgGateway extends Service {
             const skill = await scoped.skills.get(name, options(call.signal))
             if (skill === undefined) throw new RpcError(ErrorCode.NotFound, `no skill ${name}`)
             return { ...info(skill), content: skill.content }
+          },
+          'skills/focus': async params => {
+            const focus = this.skillScope.focusOf((params as RequestParams<'skills/focus'>).sessionId)
+            return { scripts: [...(focus?.scripts ?? [])], games: [...(focus?.games ?? [])] }
           },
           'skills/save': async params => {
             const p = params as RequestParams<'skills/save'>

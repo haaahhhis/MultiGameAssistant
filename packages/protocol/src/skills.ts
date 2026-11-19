@@ -76,6 +76,12 @@ export const SkillsRequests = {
     }),
     result: z.object({ name: z.string(), replaced: z.boolean() }),
   },
+  /** The scripts and games a session is working on (技能隔离's focus): the page offers their packs from the 技能库. */
+  'skills/focus': {
+    capability: SKILLS_CAPABILITY,
+    params: z.object({ sessionId: z.string() }),
+    result: SkillOwner.required(),
+  },
   /** Delete one of this app's skills folder (`removable`). */
   'skills/remove': {
     capability: SKILLS_CAPABILITY,
@@ -87,4 +93,6 @@ export const SkillsRequests = {
 export const SkillsNotifications = {
   /** A skill was saved or deleted; re-read `skills/list`. */
   'skills/changed': z.object({}),
+  /** A session's focus changed (the agent turned to a script or game). */
+  'skills/focused': z.object({ sessionId: z.string(), scripts: z.array(z.string()), games: z.array(z.string()) }),
 } as const

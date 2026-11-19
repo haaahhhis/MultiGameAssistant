@@ -267,44 +267,19 @@ test('a folder with adg.script.yaml is a script pack, one with game.yaml a game 
   assert.equal(items.get('notes')?.default, undefined)
 })
 
-test('the first start downloads the default ones, once: one deleted stays deleted; one the user\'s own skill names is left to theirs', async () => {
-  const { hub, dir, state } = setup({ 'game-starrail': '技能（你保存的或脚本包、游戏包的）' })
-  packRepo(state)
-  assert.deepEqual((await hub.list()).defaults?.pending, ['game-arknights', 'maa'])
-  assert.deepEqual(await hub.seedDefaults(), ['game-arknights', 'maa'])
-  assert.ok(existsSync(join(dir, 'skills', 'maa', 'adg.script.yaml')), 'the pack file comes with it: the library reads it there')
-  assert.ok(state.packs.includes('script') && state.packs.includes('game'), 'the library and the game page read their packs again')
-  assert.equal((await hub.list()).defaults, undefined, 'nothing left to do')
-  assert.ok(hub.isTrusted('maa'), 'from the default repository: trusted like the app')
-
-  await hub.remove('maa')
-  assert.deepEqual(await hub.seedDefaults(), [], 'not downloaded by itself again')
-  assert.equal((await hub.list()).items.find(i => i.name === 'maa')?.installed, undefined)
-  assert.equal(state.registered.has('game-starrail'), false)
-})
-
-test('a default one downloaded before it carried its pack is updated to the version that does', async () => {
-  const { hub, dir, state } = setup()
-  packRepo(state)
-  const withPack = state.files['games/arknights/maa/adg.script.yaml']!
-  delete state.files['games/arknights/maa/adg.script.yaml']
-  await hub.install('maa')
-  state.files['games/arknights/maa/adg.script.yaml'] = withPack
-  await hub.list({ refresh: true })
-  assert.ok((await hub.seedDefaults()).includes('maa'))
-  assert.ok(existsSync(join(dir, 'skills', 'maa', 'adg.script.yaml')))
-})
-
-test('a game on: its game pack and the script packs that play it; off: everything downloaded for it', async () => {
+test('a downloaded pack tells the library or the game page when it comes and goes; nothing is downloaded by itself', async () => {
   const { hub, state } = setup()
   packRepo(state)
-  assert.deepEqual((await hub.forGame('arknights', true)).sort(), ['game-arknights', 'maa'])
-  await hub.install('maa-copilot')
+  await hub.list()
+  assert.equal(state.downloads.length, 1)
+  assert.equal((await hub.list()).items.filter(i => i.installed !== undefined).length, 0, 'not even the default ones')
+  await hub.install('maa')
+  await hub.install('game-arknights')
+  assert.deepEqual(state.packs, ['script', 'game'])
+  assert.ok(hub.isTrusted('maa'), 'from the default repository: trusted like the app')
+  await hub.remove('game-arknights')
   await hub.install('notes')
-  assert.deepEqual((await hub.forGame('arknights', false)).sort(), ['game-arknights', 'maa', 'maa-copilot'])
-  const installed = (await hub.list()).items.filter(i => i.installed !== undefined).map(i => i.name)
-  assert.deepEqual(installed, ['notes'], 'a general skill stays')
-  await assert.rejects(hub.forGame('zzz', true), /没有游戏 zzz 的游戏包/)
+  assert.deepEqual(state.packs, ['script', 'game', 'game'], 'a skill is no pack')
 })
 
 test('a downloaded one can be changed here: its description and instructions, the rest of its frontmatter kept', async () => {

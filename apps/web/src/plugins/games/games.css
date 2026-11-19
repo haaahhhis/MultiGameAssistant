@@ -26,6 +26,11 @@
 .game-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .game-section-head { display: flex; align-items: center; gap: 8px; min-height: 30px; }
 .game-section-head h3 { margin: 0; font-size: 15px; }
+/* A game added by name: nothing known yet about where to read it. */
+.game-unknown { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 14px 16px; border: 1px dashed color-mix(in srgb, var(--game, var(--accent)) 45%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--game, var(--accent)) 6%, transparent); }
+.game-unknown-text { flex: 1 1 260px; min-width: 0; }
+.game-unknown-text h3 { margin: 0 0 4px; font-size: 15px; }
+.game-unknown-text p { margin: 0; }
 .game-section-head .count, .schedule-group-title .count { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 500; }
 .game-section-head .icon-button { width: 30px; height: 30px; }
 .game-section-head .icon-button[aria-pressed="true"] { color: var(--accent); }
@@ -186,7 +191,6 @@
 .catalog-picker { display: flex; flex-direction: column; gap: 8px; }
 .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 12px; }
 .catalog-grid .check-label { font-size: 13px; }
-.catalog-pack { font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* overflow: clip, not hidden, so the axis can stick to the page's scroller; it sticks above the scroller's padding, or rows would show through there */
 .card.games-overview-board { padding: 0 0 8px; gap: 0; overflow: clip; }
@@ -353,6 +357,16 @@ button.source-open { border: none; border-left: 1px solid var(--border); border-
 /* 更多游戏: a smaller window, as tall as its list (up to the usual height). */
 .activity-dialog.catalog-dialog { width: min(640px, 100%); height: auto; max-height: min(640px, 100%); }
 .catalog-dialog-body { padding: 16px 20px 20px; }
+/* The 技能库's packs for a game, offered when its page or a conversation about it is opened. */
+.activity-dialog.pack-offer-dialog { width: min(560px, 100%); height: auto; max-height: min(600px, 100%); }
+.pack-offer-body { padding: 12px 18px 14px; }
+.pack-offer-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pack-offer-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.pack-offer-item:hover { background: var(--hover, color-mix(in srgb, var(--text) 5%, transparent)); }
+.pack-offer-item input { margin-top: 3px; accent-color: var(--accent-fill); }
+.pack-offer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pack-offer-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
+.pack-offer-kind { font-size: 11px; font-weight: 500; line-height: 16px; padding: 0 5px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .dialog-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: none; border-radius: var(--r-md); color: var(--muted); background: none; cursor: pointer; }
 .dialog-close:hover { color: var(--text); background: var(--hover); }
 .dialog-close .ui-icon { width: 15px; height: 15px; }

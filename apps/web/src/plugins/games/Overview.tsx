@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type HubItem, type RequestResult } from '@adg/protocol'
-import { confirm } from '../../components/Dialog.tsx'
+import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type RequestResult } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { ImageViewer } from '../../components/ImageViewer.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
-import { useNow, useStore } from '../../hooks.ts'
+import { useNow } from '../../hooks.ts'
 import { errorText } from '../scripts/data.ts'
 import { ActivityEditor } from './ActivityEditor.tsx'
 import { useFirstImage, useRemoteImage } from './images.ts'
@@ -439,16 +438,13 @@ export function ActivityDetail({ client, activity: listed, game, onOpenGame, onC
 }
 
 /**
- * Every game the SRA public API knows, ticked when it is on the game page.
- * Any can be ticked off, also one the app starts with: a game the 技能库 has
- * a game pack for comes with it and the script packs that play it (ticking
- * downloads them, unticking deletes them); another is followed through the
- * API alone. A game pack of the user's own is changed where it was made.
+ * Which games are on the game page: every game the SRA public API knows,
+ * ticked when it is shown, and any other added by its name. Only what is
+ * shown changes here: nothing is downloaded or deleted (a game's page offers
+ * the 技能库's packs for it when it is opened).
  */
-export function CatalogPicker({ client, onChanged, onDiscover }: { client: AdgClient; onChanged: () => void; onDiscover?: (name: string) => void }) {
-  const capabilities = useStore(client.capabilities)
+export function CatalogPicker({ client, onChanged, onCreate }: { client: AdgClient; onChanged: () => void; onCreate?: (name: string) => void }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
-  const [hub, setHub] = useState<readonly HubItem[]>([])
   const [wanted, setWanted] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -456,74 +452,42 @@ export function CatalogPicker({ client, onChanged, onDiscover }: { client: AdgCl
   useEffect(() => {
     let live = true
     client.connection.call('games/catalog', {}).then(r => { if (live) setCatalog(r.games) }).catch(e => { if (live) setError(errorText(e)) })
-    if (capabilities.has('skillhub')) client.connection.call('skillhub/list', {}).then(r => { if (live) setHub(r.items) }, () => {})
     return () => { live = false }
-  }, [client, revision, capabilities])
-  const run = async (sra: string, fn: () => Promise<unknown>) => {
-    setBusy(sra)
+  }, [client, revision])
+  const toggle = async (g: Catalog[number], show: boolean) => {
+    setBusy(g.sra)
     setError(null)
+    // Ticked at once; the list read again says how it stands.
+    setCatalog(c => c?.map(x => x.sra === g.sra ? { ...x, followed: show } : x) ?? c)
     try {
-      await fn()
-      setRevision(r => r + 1)
+      await client.connection.call('games/follow', { sra: g.sra, follow: show })
       onChanged()
     } catch (e) {
       setError(errorText(e))
     } finally {
       setBusy(null)
+      setRevision(r => r + 1)
     }
-  }
-  /** The 技能库's game pack for an SRA game, and what else it would bring or take. */
-  const packOf = (sra: string) => hub.find(i => i.pack === 'game' && i.sra?.includes(sra))
-  const toggle = (g: Catalog[number], on: boolean) => {
-    const pack = packOf(g.sra)
-    const game = pack?.game
-    if (on) {
-      if (pack !== undefined && game !== undefined && pack.blocked === undefined && pack.incompatible === undefined) return run(g.sra, () => client.connection.call('skillhub/game', { game, on: true }))
-      return run(g.sra, () => client.connection.call('games/follow', { sra: g.sra, follow: true }))
-    }
-    // Off: what was downloaded for it goes (the scripts installed stay), and it is no longer followed either.
-    const fromHub = g.pack !== undefined && pack?.installed !== undefined && pack.game === g.pack
-    return run(g.sra, async () => {
-      if (fromHub) {
-        const going = hub.filter(i => i.installed !== undefined && (i.game === g.pack || i.games.includes(g.pack!)))
-        const packs = going.filter(i => i.pack === 'script').map(i => i.title ?? i.name)
-        const ok = await confirm({
-          title: `不再看${g.name}？`,
-          message: `会删掉从技能库下载的${g.name}游戏包${packs.length === 0 ? '' : `、${packs.join('、')}的脚本包`}${going.some(i => i.pack === undefined) ? '和相关技能' : ''}。已经装好的脚本不会删，只是没有脚本包的任务了；以后再勾上会重新下载。`,
-          confirmLabel: '删掉',
-          danger: true,
-        })
-        if (!ok) return
-        await client.connection.call('skillhub/game', { game: g.pack!, on: false })
-      }
-      if (g.followed) await client.connection.call('games/follow', { sra: g.sra, follow: false })
-    })
   }
   return (
     <div className="catalog-picker">
-      <p className="muted small">这些游戏的活动来自 <a href="https://starrailassistant.top/reference/public-api/" target="_blank" rel="noreferrer">SRA 公共 API</a>（社区按官方公告整理，免费，不用模型）。勾上的游戏每天自动读一次；标着「游戏包」的会从技能库一起下载它的游戏包和脚本包，取消勾选会一起删掉。</p>
+      <p className="muted small">这些游戏的活动来自 <a href="https://starrailassistant.top/reference/public-api/" target="_blank" rel="noreferrer">SRA 公共 API</a>（社区按官方公告整理，免费，不用模型）。勾上就显示在游戏页上，每天自动读一次；取消勾选只是不再显示。</p>
       {catalog === null && error === null && <p className="muted small">正在读取…</p>}
       <div className="catalog-grid">
-        {catalog?.map(g => {
-          const pack = packOf(g.sra)
-          // A game pack of the user's own (made by the agent): not this list's to delete.
-          const own = g.pack !== undefined && !(pack?.installed !== undefined && pack.game === g.pack)
-          return (
-            <label key={g.sra} className={`check-label ${own ? 'muted' : ''}`} title={own ? '这是你自己的游戏包（agent 建的），在游戏页上删' : pack !== undefined ? '技能库有它的游戏包：勾上会一起下载游戏包和脚本包' : undefined}>
-              <input type="checkbox" checked={g.pack !== undefined || g.followed} disabled={own || busy !== null} onChange={e => void toggle(g, e.target.checked)} />
-              {g.name}
-              {pack !== undefined && <span className="catalog-pack">游戏包</span>}
-              {busy === g.sra ? '…' : ''}
-            </label>
-          )
-        })}
+        {catalog?.map(g => (
+          <label key={g.sra} className="check-label">
+            <input type="checkbox" checked={g.followed} disabled={busy === g.sra} onChange={e => void toggle(g, e.target.checked)} />
+            {g.name}
+            {busy === g.sra ? '…' : ''}
+          </label>
+        ))}
       </div>
-      {onDiscover !== undefined && (
-        <form className="discover-row" onSubmit={e => { e.preventDefault(); const name = wanted.trim(); if (name !== '') { onDiscover(name); setWanted('') } }}>
+      {onCreate !== undefined && (
+        <form className="discover-row" onSubmit={e => { e.preventDefault(); const name = wanted.trim(); if (name !== '') { onCreate(name); setWanted('') } }}>
           <span className="field-title">列表里没有？</span>
           <input className="text-input plain" value={wanted} maxLength={60} placeholder="输入游戏名，例如：重返未来：1999" onChange={e => setWanted(e.target.value)} />
-          <button className="small-button primary" type="submit" disabled={wanted.trim() === ''}><Icon name="search" />让 agent 去找</button>
-          <span className="muted small">agent 会找它的 Wiki、官网公告等来源，建一个游戏包加到游戏页。</span>
+          <button className="small-button primary" type="submit" disabled={wanted.trim() === ''}><Icon name="plus" />添加</button>
+          <span className="muted small">先加一个空的游戏页，再在它的页面上让 agent 去找活动来源。</span>
         </form>
       )}
       {error !== null && <div className="notice error left small"><Icon name="alert" /><span>{error}</span></div>}

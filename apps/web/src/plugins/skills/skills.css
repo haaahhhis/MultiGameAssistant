@@ -5,8 +5,6 @@
 .skills-search .ui-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--muted); }
 .skills-search .text-input { width: 100%; height: 34px; padding-left: 32px; box-sizing: border-box; }
 .skills-filter { width: 100%; height: 32px; box-sizing: border-box; font-size: 13px; }
-.skills-defaults { margin: 0 0 10px; }
-.skills-defaults .link-button { padding: 0; }
 .skills-found { margin: -2px 4px 8px; }
 
 /* A section per kind (folds); rows with what each is for under its name. */

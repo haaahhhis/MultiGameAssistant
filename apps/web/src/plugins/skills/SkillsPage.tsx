@@ -241,7 +241,6 @@ export function SkillsPage({ client, arg }: PageProps) {
   })
   const blank = (): Draft => ({ name: '', description: '', content: '', scripts: [], games: game !== ALL && game !== GENERAL ? [game] : [] })
 
-  const defaults = hub?.defaults
   const marks = (e: Entry) => (
     <>
       {e.hub?.installed?.update === true && e.hub.incompatible === undefined && <span className="skill-dot" title="技能库有新版" />}
@@ -283,18 +282,6 @@ export function SkillsPage({ client, arg }: PageProps) {
               </select>
             )}
           </div>
-          {defaults !== undefined && (
-            <div className={`notice ${defaults.error === undefined ? 'info' : 'error'} left small skills-defaults`}>
-              <Icon name={defaults.error === undefined ? 'download' : 'alert'} />
-              <span>
-                {defaults.error === undefined ? `正在从技能库下载软件自带的：${defaults.pending.join('、')}` : `软件自带的脚本包和游戏包还没下载下来（${defaults.error}），会自动再试`}
-                {' '}<button className="link-button small" disabled={busy !== null} onClick={() => void act('defaults', async () => {
-                  const { names } = await client.connection.call('skillhub/defaults', {})
-                  return names.length === 0 ? '没有要下载的' : `已下载 ${names.join('、')}`
-                })}>{busy === 'defaults' ? '下载中…' : '现在下载'}</button>
-              </span>
-            </div>
-          )}
           {(skills === null || (hasHub && hub === null)) && error === null && <p className="muted small pad">正在读取…</p>}
           {skills !== null && needle !== '' && <p className="muted small skills-found">{shown.length === 0 ? '没有匹配的。' : `找到 ${shown.length} 个`}</p>}
           {sections.map(section => {

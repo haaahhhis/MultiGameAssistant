@@ -16,6 +16,9 @@ await prepareAdgProfile({ home, bundleDir: join(root, 'packages', 'bundle'), dsh
 const child = spawn(process.execPath, [bin, ...args], {
   env: { ...process.env, DSH_HOME: home },
   stdio: 'inherit',
+  // Started in the background (scripts/dev-open.mjs) this has no console, and Windows would give dsh a window of
+  // its own: closing it ends dsh (exit 0xC000013A). From a terminal it shares that terminal either way.
+  windowsHide: true,
 })
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
 child.on('exit', (code, signal) => {

@@ -117,7 +117,12 @@ const StoredSchema = z.object({
   report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional(), lastText: z.string().optional() }).default({}),
   versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(), source: z.string(), at: z.number() })).default({}),
   pools: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number(), cover: z.string().optional(), up: z.array(z.string()) }))).default({}),
-  settings: z.object({ report: GamesSettings.shape.report.partial().default({}), followed: z.array(z.string()).default([]) }).default({ report: {}, followed: [] }),
+  settings: z.object({
+    report: GamesSettings.shape.report.partial().default({}),
+    followed: z.array(z.string()).default([]),
+    /** Game packs taken off the game page (the pack stays installed). */
+    hidden: z.array(z.string()).default([]),
+  }).default({ report: {}, followed: [], hidden: [] }),
   /** Pages the user added to a game (games/source/add), by game. */
   links: z.record(z.string(), z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), at: z.number() }))).default({}),
 })
@@ -126,7 +131,7 @@ type Saved = z.infer<typeof StoredSchema>
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [] }, versions: {}, pools: {}, links: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [], hidden: [] }, versions: {}, pools: {}, links: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -168,7 +173,7 @@ export class Calendar {
 
   get settings(): GamesSettings {
     const saved = Object.fromEntries(Object.entries(this.#saved.settings.report).filter(([, v]) => v !== undefined))
-    return { report: { ...DEFAULT_SETTINGS.report, ...saved }, followed: [...this.#saved.settings.followed] }
+    return { report: { ...DEFAULT_SETTINGS.report, ...saved }, followed: [...this.#saved.settings.followed], hidden: [...this.#saved.settings.hidden] }
   }
 
   get report(): Saved['report'] {
@@ -238,6 +243,25 @@ export class Calendar {
     this.#saved.settings.report = { ...this.#saved.settings.report, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) }
     await this.save()
     return this.settings
+  }
+
+  /** Take a game pack off the game page, or put it back (its events are kept for then). */
+  async hide(gameId: string, hidden: boolean): Promise<void> {
+    const list = this.#saved.settings.hidden.filter(id => id !== gameId)
+    this.#saved.settings.hidden = hidden ? [...list, gameId] : list
+    await this.save()
+  }
+
+  /** Forget everything about a game (one made here that is deleted): its events, readings, version, pools and pages. */
+  async forget(gameId: string): Promise<void> {
+    this.#items = this.#items.filter(a => a.game !== gameId)
+    for (const key of [gameId, `${gameId}#web`]) delete this.#saved.readings[key]
+    delete this.#saved.refreshed[gameId]
+    delete this.#saved.versions[gameId]
+    delete this.#saved.pools[gameId]
+    delete this.#saved.links[gameId]
+    this.#saved.settings.hidden = this.#saved.settings.hidden.filter(id => id !== gameId)
+    await this.save()
   }
 
   /** Follow or stop following an SRA game; stopping forgets its events. */

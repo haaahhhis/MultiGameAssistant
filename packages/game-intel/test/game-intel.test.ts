@@ -282,6 +282,26 @@ test('following an SRA game without a pack, and stopping, which forgets its even
   assert.deepEqual([calendar.settings.followed, calendar.list('sra-ys')], [[], []])
 })
 
+test('a game pack taken off the game page keeps its events until shown again; one made here is forgotten when deleted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adg-hide-'))
+  const calendar = new Calendar(dir)
+  await calendar.applySite('arknights', { id: 'sra', name: 'SRA 公共 API' }, [{ name: '危机合约', aliases: [], endsAt: NOW + DAY }], NOW, TZ)
+  await calendar.hide('arknights', true)
+  await calendar.hide('arknights', true)
+  assert.deepEqual(calendar.settings.hidden, ['arknights'])
+  assert.equal(calendar.list('arknights').length, 1)
+  await calendar.hide('arknights', false)
+  assert.deepEqual(calendar.settings.hidden, [])
+  // Made by name, then deleted: nothing of it is left, and it is not hidden either.
+  await calendar.applySite('my-game', { id: 'link-1', name: '官网' }, [{ name: '开服活动', aliases: [], endsAt: NOW + DAY }], NOW, TZ)
+  await calendar.addLink('my-game', { name: '官网', url: 'https://example.com/news', at: NOW })
+  await calendar.hide('my-game', true)
+  await calendar.forget('my-game')
+  const reloaded = new Calendar(dir)
+  await reloaded.load()
+  assert.deepEqual([reloaded.list('my-game'), reloaded.links('my-game'), reloaded.settings.hidden, reloaded.list('arknights').length], [[], [], [], 1])
+})
+
 test("the user's own events: added by hand, kept through refreshes, with no end until taken off", async () => {
   const dir = mkdtempSync(join(tmpdir(), 'adg-own-'))
   const calendar = new Calendar(dir)

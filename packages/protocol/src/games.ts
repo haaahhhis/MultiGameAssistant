@@ -125,6 +125,10 @@ export const GameInfo = z.object({
   art: z.string().optional(),
   /** Followed from the SRA public API without a Game Pack (no scripts, no screen reading): can be unfollowed. */
   followed: z.boolean().optional(),
+  /** The SRA public API's ids its sources read (to match it with the 技能库's packs for the game). */
+  sra: z.array(z.string()).optional(),
+  /** Made here (added by name, or by the agent): `games/remove` deletes it. */
+  own: z.boolean().optional(),
   /** The game's current version, from a data site that knows it. */
   version: z.object({
     name: z.string(),
@@ -179,6 +183,8 @@ export const GamesSettings = z.object({
   }),
   /** SRA game ids followed besides the Game Packs (`ys`, `zzz`…), see `games/catalog`. */
   followed: z.array(z.string()),
+  /** Game packs (from the 技能库) the user took off the game page: still installed, not shown. */
+  hidden: z.array(z.string()).optional(),
 })
 export type GamesSettings = z.infer<typeof GamesSettings>
 
@@ -258,10 +264,31 @@ export const GamesRequests = {
     params: z.object({ game: z.string().min(1) }),
     result: z.object({ icon: z.object({ mediaType: z.string(), data: z.string() }).optional() }),
   },
-  /** Ask the agent to find where a game's events can be read and add it (a game pack of the user's own). */
+  /**
+   * Put a game on the game page by its name, whatever is known about it: one
+   * already there (or taken off it) is shown; one the SRA public API knows is
+   * followed; any other is made empty, for the agent to find its sources from
+   * its page (`games/discover`). Packs are not downloaded here.
+   */
+  'games/create': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ name: z.string().trim().min(1).max(60) }),
+    result: z.object({ game: z.string() }),
+  },
+  /**
+   * Take a game off the game page: one followed from the SRA public API is no
+   * longer followed, a game pack from the 技能库 is hidden (the pack stays
+   * installed), one made here is deleted with its events.
+   */
+  'games/remove': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string() }),
+    result: z.object({}),
+  },
+  /** The agent finds where a game on the page can be read (its game pack's sources), from the game's page. */
   'games/discover': {
     capability: GAMES_CAPABILITY,
-    params: z.object({ name: z.string().min(1).max(60) }),
+    params: z.object({ game: z.string() }),
     result: z.object({ sessionId: z.string() }),
   },
   /**
@@ -292,7 +319,11 @@ export const GamesRequests = {
     params: z.object({}),
     result: z.object({ games: z.array(z.object({ sra: z.string(), name: z.string(), followed: z.boolean(), pack: z.string().optional() })) }),
   },
-  /** Follow (or stop following) an SRA game that has no Game Pack: its events come in with the daily refresh. */
+  /**
+   * Show (or stop showing) an SRA game on the game page: followed through the
+   * API, or, when a game pack reads it, that game pack shown or hidden (the
+   * pack is not downloaded or deleted). Its events come in with the daily refresh.
+   */
   'games/follow': {
     capability: GAMES_CAPABILITY,
     params: z.object({ sra: z.string(), follow: z.boolean() }),

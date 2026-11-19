@@ -13,6 +13,8 @@ import { ActivityDialog, ActivityDialogBody } from './ActivityDialog.tsx'
 import { GameAvatar } from './GameAvatar.tsx'
 import { GameView, useGameColors } from './GameView.tsx'
 import { CatalogPicker, Overview, PALETTE, progressOf } from './Overview.tsx'
+import { PackOffer } from './PackOffer.tsx'
+import { confirm } from '../../components/Dialog.tsx'
 import './games.css'
 
 type Listing = RequestResult<'games/list'>
@@ -81,6 +83,36 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
     return game === undefined ? `刷新完成：${results.filter(r => readable(r.game)).map(r => `${name(r.game)} ${r.count} 个活动`).join('；')}` : undefined
   })
 
+  /** A game on the page by its name, known or not (one nothing knows yet is made empty); then its page. */
+  const create = (name: string) => act('create', async () => {
+    const { game } = await client.connection.call('games/create', { name })
+    setSelected(game)
+  })
+  /** Game packs came from the 技能库 (the page offered them): their games are shown, and one added by name for it with nothing yet goes. */
+  const installed = (packGames: string[]) => {
+    const was = current
+    void act('installed', async () => {
+      let shown: string | undefined
+      for (const g of packGames) shown ??= (await client.connection.call('games/create', { name: g })).game
+      if (shown === undefined) return
+      if (was !== undefined && was.own === true && was.sources.length === 0 && was.id !== shown) await client.connection.call('games/remove', { game: was.id })
+      setSelected(shown)
+    })
+  }
+  const remove = async (game: GameInfo) => {
+    if (game.own === true && !await confirm({
+      title: `删除${game.name}？`,
+      message: `会删掉${game.name}和它的活动记录（你自己记的也一起删）。脚本、脚本包和技能不受影响；以后可以在「更多游戏」里按名字再加回来。`,
+      confirmLabel: '删除',
+      danger: true,
+    })) return
+    await act(`remove:${game.id}`, async () => {
+      await client.connection.call('games/remove', { game: game.id })
+      setSelected('')
+      return game.own === true ? `已删除${game.name}` : `${game.name}不再显示：在「更多游戏」里勾上或按名字添加就回来`
+    })
+  }
+
   const counts = (g: GameInfo) => {
     const mine = (data?.activities ?? []).filter(a => a.game === g.id && (a.startsAt ?? 0) <= now && Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
     const soon = mine.filter(a => progressOf(a).state !== 'finished' && a.endsAt !== undefined && a.endsAt > now && a.endsAt - now < (data?.settings.report.soonDays ?? 3) * DAY).length
@@ -103,7 +135,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
           </button>
         )
       })}
-      <RailItem icon="plus" label="更多游戏" title="关注更多游戏（SRA 公共 API）" active={catalogOpen} onClick={() => setCatalogOpen(true)} />
+      <RailItem icon="plus" label="更多游戏" title="选择游戏页上显示哪些游戏，或按名字添加" active={catalogOpen} onClick={() => setCatalogOpen(true)} />
     </div>
   )
   const heading = current?.name ?? '全部活动'
@@ -129,7 +161,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
           <button role="tab" aria-selected={showOverview} className={`game-tab ${showOverview ? 'active' : ''}`} onClick={() => select('')}><Icon name="calendar" />全部活动</button>
           <span className="game-tabs-divider" />
           {games.map(tab)}
-          <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-haspopup="dialog" title="关注更多游戏（SRA 公共 API）" onClick={() => setCatalogOpen(true)}><Icon name="plus" />更多游戏</button>
+          <button className={`game-tab add ${catalogOpen ? 'active' : ''}`} aria-haspopup="dialog" title="选择游戏页上显示哪些游戏，或按名字添加" onClick={() => setCatalogOpen(true)}><Icon name="plus" />更多游戏</button>
         </nav> : <span className="spacer" />}
         <div className="page-actions">
           <button className="small-button" disabled={busy !== null || games.length === 0} onClick={() => void refresh()}><Icon name="refresh" />{busy === 'refresh:' ? '刷新中…' : '刷新全部'}</button>
@@ -138,7 +170,7 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
       <div className="games-body">
         {error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
         {message !== null && <div className="notice info left small"><Icon name="info" /><span>{message}</span></div>}
-        {data !== null && games.length === 0 && <div className="empty"><Icon name="gamepad" /><p>没有游戏。点「更多游戏」关注几个。</p></div>}
+        {data !== null && games.length === 0 && <div className="empty"><Icon name="gamepad" /><p>没有游戏。点「更多游戏」勾选几个，或按名字添加。</p></div>}
         {data !== null && showOverview && games.length > 0 && (
           <Overview client={client} games={games} activities={data.activities} now={now} soonDays={data.settings.report.soonDays}
             onOpenGame={select} onChanged={() => setRevision(r => r + 1)} />
@@ -158,12 +190,12 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
               const { sessionId } = await client.connection.call('games/read', { game: current.id, how: 'web', ...(source === undefined ? {} : { source }) })
               openSession(sessionId)
             })}
-            onUnfollow={() => void act(`unfollow:${current.id}`, async () => {
-              // A followed game's id is sra-<the API's id> (game-intel's followedId).
-              await client.connection.call('games/follow', { sra: current.id.replace(/^sra-/, ''), follow: false })
-              setSelected('')
-              return `不再关注${current.name}`
+            onDiscover={() => void act(`discover:${current.id}`, async () => {
+              // The agent works from here: the page shows it looking, and its conversation is a click away.
+              await client.connection.call('games/discover', { game: current.id })
+              return `agent 正在找${current.name}的活动来源，找到后这个页面会更新`
             })}
+            onRemove={() => void remove(current)}
             onChanged={() => setRevision(r => r + 1)}
             openSession={openSession} openScripts={() => openPage('scripts')}
           />
@@ -171,19 +203,23 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
       </div>
       {/* 更多游戏: a window over the board, not a card pushed in at its top. */}
       {catalogOpen && (
-        <ActivityDialog color="var(--accent)" label="关注更多游戏" onClose={closeCatalog} className="catalog-dialog">
+        <ActivityDialog color="var(--accent)" label="更多游戏" onClose={closeCatalog} className="catalog-dialog">
           <header className="dialog-head">
             <div className="dialog-title">
               <h3>更多游戏</h3>
-              <div className="dialog-meta">勾上就关注，马上生效；列表里没有的，让 agent 去找</div>
+              <div className="dialog-meta">勾上就显示在游戏页上，马上生效；列表里没有的，按名字添加</div>
             </div>
             <button className="dialog-close" aria-label="关闭" title="关闭（Esc）" onClick={closeCatalog}><Icon name="close" /></button>
           </header>
           <div className="dialog-form catalog-dialog-body">
-            <CatalogPicker client={client} onChanged={() => setRevision(r => r + 1)}
-              onDiscover={name => { closeCatalog(); void act('discover', async () => { const { sessionId } = await client.connection.call('games/discover', { name }); openSession(sessionId) }) }} />
+            <CatalogPicker client={client} onChanged={() => setRevision(r => r + 1)} onCreate={name => { closeCatalog(); void create(name) }} />
           </div>
         </ActivityDialog>
+      )}
+      {/* Opening a game asks once about the 技能库's packs for it (none is downloaded by choosing games). */}
+      {current !== undefined && !catalogOpen && (
+        <PackOffer client={client} target={{ games: [{ id: current.id, name: current.name, aliases: current.aliases, ...(current.sra === undefined ? {} : { sra: current.sra }) }] }}
+          label={`「${current.name}」`} onInstalled={installed} />
       )}
       {data !== null && dialog !== null && (() => {
         const changed = () => setRevision(r => r + 1)

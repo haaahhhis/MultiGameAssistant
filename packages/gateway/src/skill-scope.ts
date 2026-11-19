@@ -175,7 +175,16 @@ export class SkillScope {
     while (this.#focus.size > MAX_SESSIONS) this.#focus.delete(this.#focus.keys().next().value!)
     this.#invalidate()
     this.#save()
+    for (const listener of this.#focusListeners) listener(sessionId, merged)
     return merged
+  }
+
+  readonly #focusListeners = new Set<(sessionId: string, focus: Focus) => void>()
+
+  /** Run `listener` after a session's focus is set (the page offers its games' packs). @returns the disposer. */
+  onFocus(listener: (sessionId: string, focus: Focus) => void): () => void {
+    this.#focusListeners.add(listener)
+    return () => { this.#focusListeners.delete(listener) }
   }
 
   /** The skills a focus shows (general ones included). */

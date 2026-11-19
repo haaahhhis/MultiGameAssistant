@@ -12,8 +12,10 @@
  *   id is the name); one with `game.yaml` is a game pack. The script library
  *   and the game page read the downloaded ones from here, so deleting one
  *   deletes the pack: nothing of a game the user does not play has to stay.
- * - The ones marked `default` are downloaded on the first start, once each:
- *   one the user deleted is not downloaded again.
+ * - Nothing is downloaded by itself, but a script's pack the library had and
+ *   lost (it used to ship with the app): which games are shown is the user's
+ *   choice apart from this; the game page and a conversation about a game
+ *   offer its packs (the `default` ones ticked).
  * - A downloaded skill lives in `<dataDir>/skill-hub/skills/<name>/` (the
  *   app's own data: not a skill folder other agents read) and follows the
  *   repository: an update replaces it with the repository's version whether
@@ -67,7 +69,7 @@ export interface HubSkill {
   /** A game pack's game id, and its SRA public API ids. */
   readonly game?: string
   readonly sra?: readonly string[]
-  /** Downloaded on the first start. */
+  /** Offered ticked among a game's packs. */
   readonly default?: boolean
   /** Game ids (game packs) and script / pack ids it is for. */
   readonly games: readonly string[]
@@ -119,8 +121,6 @@ const State = z.object({
   repos: z.array(z.object({ repo: z.string(), branch: z.string() })).optional(),
   installed: z.record(z.string(), Installed).default({}),
   read: z.record(z.string(), z.object({ at: z.number(), format: z.number().optional(), skills: z.array(z.looseObject({ name: z.string(), repo: z.string(), path: z.string(), hash: z.string() })) })).default({}),
-  /** The `default` ones downloaded on a first start (or there already, or deleted since): not downloaded by themselves again. */
-  seeded: z.array(z.string()).optional(),
 })
 type State = z.infer<typeof State>
 
@@ -218,7 +218,7 @@ export class SkillHub {
    * them now; otherwise what was read today (a repository that cannot be
    * read gives what was read before, and says so in `errors`).
    */
-  async list(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<{ items: HubItem[]; repos: HubRepo[]; errors: string[]; fetchedAt?: number; defaults?: { pending: string[]; error?: string } }> {
+  async list(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<{ items: HubItem[]; repos: HubRepo[]; errors: string[]; fetchedAt?: number }> {
     await this.start()
     const errors: string[] = []
     const skills: HubSkill[] = []
@@ -253,95 +253,7 @@ export class SkillHub {
       const pack = await packKind(join(this.skillsDir, name))
       items.push({ name, description: front?.description ?? '', kind: pack ?? 'general', games: [], scripts: [], repo: record.repo, path: record.path, hash: record.hash, installed: installedOf(record, false), ...(pack === undefined ? {} : { pack }) })
     }
-    const pending = this.#pendingDefaults(items)
-    const defaults = pending.length === 0 && this.#defaultsError === undefined ? undefined : { pending, ...(this.#defaultsError === undefined ? {} : { error: this.#defaultsError }) }
-    return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }), ...(defaults === undefined ? {} : { defaults }) }
-  }
-
-  // ── the first start's downloads ──
-
-  /** Why the `default` ones could not all be downloaded the last time; undefined: they were (or not tried yet). */
-  #defaultsError: string | undefined
-
-  /** The `default` ones still to download here. */
-  #pendingDefaults(items: readonly HubItem[]): string[] {
-    const seeded = new Set(this.#state.seeded ?? [])
-    return items.filter(i => i.default === true && !seeded.has(i.name) && i.installed === undefined && i.blocked === undefined && i.incompatible === undefined).map(i => i.name)
-  }
-
-  /**
-   * Download what the repository marks `default` (the script packs and game
-   * packs a new install starts with), once each: one deleted later is not
-   * downloaded again. One downloaded before it carried its pack file (the
-   * app used to ship the packs) is updated to the version that does. A name
-   * the user's own skill has is left to theirs. What fails is tried again
-   * the next time.
-   * @returns the names downloaded or updated.
-   */
-  async seedDefaults(signal?: AbortSignal): Promise<string[]> {
-    await this.start()
-    const { items, errors } = await this.list(signal === undefined ? {} : { signal })
-    if (items.length === 0 && errors.length > 0) {
-      this.#defaultsError = errors.join('；')
-      throw new Error(this.#defaultsError)
-    }
-    const seeded = new Set(this.#state.seeded ?? [])
-    const done: string[] = []
-    const failed: string[] = []
-    for (const item of items) {
-      if (item.default !== true || seeded.has(item.name) || item.incompatible !== undefined) continue
-      try {
-        if (item.installed === undefined && item.blocked === undefined) {
-          await this.install(item.name, item.repo, signal)
-          done.push(item.name)
-        } else if (item.installed !== undefined && item.pack !== undefined && item.installed.update && (await packKind(join(this.skillsDir, item.name))) === undefined) {
-          await this.update(item.name, signal)
-          done.push(item.name)
-        }
-        seeded.add(item.name)
-        this.#state.seeded = [...seeded]
-        await this.#save()
-      } catch (error) {
-        if (signal?.aborted === true) throw error
-        failed.push(`${item.name}：${errorText(error)}`)
-      }
-    }
-    this.#defaultsError = failed.length === 0 ? undefined : failed.join('；')
-    if (done.length > 0) this.#options.log.info(`skill hub: downloaded on first start: ${done.join(', ')}`)
-    if (failed.length > 0) this.#options.log.warn(`skill hub: not downloaded on first start: ${this.#defaultsError}`)
-    return done
-  }
-
-  // ── one game's packs ──
-
-  /**
-   * `on`: download the game pack for `game` (a game id) and the script packs
-   * that play it; off: delete everything downloaded for it (its packs and
-   * skills). Deleted ones count as seeded: not downloaded by themselves again.
-   * @returns the names downloaded or deleted.
-   */
-  async forGame(game: string, on: boolean, signal?: AbortSignal): Promise<string[]> {
-    const { items } = await this.list(signal === undefined ? {} : { signal })
-    const forIt = (i: HubItem) => i.game === game || i.games.includes(game)
-    const names: string[] = []
-    if (on) {
-      const wanted = items.filter(i => i.pack !== undefined && forIt(i) && i.installed === undefined && i.blocked === undefined && i.incompatible === undefined)
-      if (!items.some(i => i.pack === 'game' && i.game === game)) throw new Error(`技能库里没有游戏 ${game} 的游戏包`)
-      for (const item of wanted) {
-        await this.install(item.name, item.repo, signal)
-        names.push(item.name)
-      }
-      return names
-    }
-    for (const item of items) {
-      if (item.installed === undefined || !forIt(item)) continue
-      // A skill for this game and another one the user still has stays.
-      const others = item.games.filter(g => g !== game)
-      if (item.pack === undefined && others.some(g => items.some(i => i.installed !== undefined && i.pack === 'game' && i.game === g))) continue
-      await this.remove(item.name)
-      names.push(item.name)
-    }
-    return names
+    return { items, repos: this.repos(), errors, ...(fetchedAt === undefined ? {} : { fetchedAt }) }
   }
 
   // ── changing a downloaded one ──
@@ -421,8 +333,6 @@ export class SkillHub {
     await rm(join(this.#previousDir, name), { recursive: true, force: true })
     await rm(join(this.skillsDir, name), { recursive: true, force: true })
     delete this.#state.installed[name]
-    // A deleted default one is not downloaded by itself again.
-    this.#state.seeded = [...new Set([...(this.#state.seeded ?? []), name])]
     await this.#save()
     if (pack !== undefined) this.#options.packsChanged?.(new Set([pack]))
     this.#options.log.info(`skill hub: deleted ${name}`)

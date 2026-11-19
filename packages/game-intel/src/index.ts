@@ -89,6 +89,8 @@ interface LoadedGame {
   readonly manifest: GameManifest
   readonly dir: string
   readonly builtin: boolean
+  /** Made here (by name on the game page, or by the agent's game_add): taking it off deletes it. */
+  readonly own?: boolean
   readonly guide?: string
   /** An SRA game followed without a pack. */
   readonly followed?: boolean
@@ -102,6 +104,8 @@ export class AdgGameIntel extends Service {
   fetch: Fetch = (url, init) => fetch(url, init)
   clock: Clock = realClock
   private games: LoadedGame[] = []
+  /** Every game pack there is, the ones taken off the game page too (`games` is what the page shows). */
+  private allGames: LoadedGame[] = []
   private readonly daily: DailyReport
   private readonly dir: string
   /** Game programs' icons (exe-icon.ts). */
@@ -215,7 +219,9 @@ export class AdgGameIntel extends Service {
           'games/list': async () => {
             await this.ready
             await this.loadGames(log)
-            return { games: this.infos(), activities: calendar.list(), settings: calendar.settings, report: { ...calendar.report, ...(this.daily.next() === undefined ? {} : { next: this.daily.next() }) } }
+            // The events of the games on the page only (one taken off or deleted shows none).
+            const shown = new Set(this.games.map(g => g.manifest.id))
+            return { games: this.infos(), activities: calendar.list().filter(a => shown.has(a.game)), settings: calendar.settings, report: { ...calendar.report, ...(this.daily.next() === undefined ? {} : { next: this.daily.next() }) } }
           },
           'games/refresh': async params => {
             await this.ready
@@ -275,17 +281,27 @@ export class AdgGameIntel extends Service {
           },
           'games/discover': async params => {
             await this.ready
-            return { sessionId: await this.discover((params as RequestParams<'games/discover'>).name) }
+            return { sessionId: await this.discover((params as RequestParams<'games/discover'>).game) }
+          },
+          'games/create': async params => {
+            await this.ready
+            return { game: await this.createGame((params as RequestParams<'games/create'>).name) }
+          },
+          'games/remove': async params => {
+            await this.ready
+            await this.removeGame((params as RequestParams<'games/remove'>).game)
+            return {}
           },
           'games/catalog': async () => {
             await this.ready
             // A game pack may have come or gone with the 技能库 since.
             await this.loadGames(log)
-            const followed = new Set(calendar.settings.followed)
+            // Ticked: on the game page, followed or through a game pack that reads it.
             return {
               games: SRA_GAMES.map(g => {
-                const pack = this.games.find(l => !l.followed && l.manifest.sources.some(s => s.sra?.game === g.sra))?.manifest.id
-                return { sra: g.sra, name: g.name, followed: followed.has(g.sra), ...(pack === undefined ? {} : { pack }) }
+                const shown = this.games.find(l => l.manifest.sources.some(s => s.sra?.game === g.sra))
+                const pack = shown === undefined || shown.followed === true ? undefined : shown.manifest.id
+                return { sra: g.sra, name: g.name, followed: shown !== undefined, ...(pack === undefined ? {} : { pack }) }
               }),
             }
           },
@@ -293,11 +309,7 @@ export class AdgGameIntel extends Service {
             await this.ready
             const { sra, follow } = params as RequestParams<'games/follow'>
             if (!SRA_GAMES.some(g => g.sra === sra)) throw new Error(`SRA 公共 API 没有游戏 ${sra}`)
-            await calendar.follow(sra, follow, followedId(sra))
-            await this.loadGames(log)
-            changed()
-            // Its events, now rather than tomorrow morning.
-            if (follow && this.games.some(g => g.manifest.id === followedId(sra))) void this.refresh(followedId(sra)).catch(() => [])
+            await this.showSra(sra, follow)
             return {}
           },
           'games/activity/progress': async params => {
@@ -382,13 +394,16 @@ export class AdgGameIntel extends Service {
         try {
           const manifest = parseGameManifest(text, `${id}/${GAME_MANIFEST_FILE}`)
           const guide = await readFile(join(dir, GAME_GUIDE_FILE), 'utf8').catch(() => undefined)
-          // The user's pack replaces a built-in one of the same id.
-          found.set(manifest.id, { manifest, dir, builtin, ...(guide === undefined ? {} : { guide }) })
+          // The user's pack replaces an official one of the same id.
+          found.set(manifest.id, { manifest, dir, builtin, ...(builtin ? {} : { own: true }), ...(guide === undefined ? {} : { guide }) })
         } catch (error) {
           log.warn(`game pack ${id}: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
     }
+    // Game packs the user took off the game page: still installed (their skills too), not shown.
+    this.allGames = [...found.values()]
+    for (const id of this.calendar.settings.hidden ?? []) found.delete(id)
     // SRA games followed without a pack (one a pack already reads is not added twice).
     const covered = new Set([...found.values()].flatMap(g => g.manifest.sources.map(s => s.sra?.game).filter((s): s is string => s !== undefined)))
     for (const sra of this.calendar.settings.followed) {
@@ -650,7 +665,8 @@ export class AdgGameIntel extends Service {
 
   infos(): GameInfo[] {
     const scripts = this.scriptsByGame()
-    return this.games.map(({ manifest: m, builtin, followed }) => {
+    return this.games.map(({ manifest: m, builtin, followed, own }) => {
+      const sra = m.sources.map(s => s.sra?.game).filter((id): id is string => id !== undefined)
       const refreshed = this.calendar.refreshed(m.id)
       const reading = this.calendar.reading(m.id)
       const webReading = this.calendar.reading(`${m.id}#web`)
@@ -663,6 +679,8 @@ export class AdgGameIntel extends Service {
         builtin,
         ...(m.art === undefined ? {} : { art: m.art }),
         ...(followed === true ? { followed: true } : {}),
+        ...(sra.length === 0 ? {} : { sra }),
+        ...(own === true ? { own: true } : {}),
         ...(refreshed === undefined ? {} : { refreshed }),
         ...(reading === undefined ? {} : { reading }),
         ...(webReading === undefined ? {} : { webReading }),
@@ -791,29 +809,142 @@ export class AdgGameIntel extends Service {
     if (guide !== undefined && guide.trim() !== '') {
       await writeFile(join(dir, GAME_GUIDE_FILE), `---\nname: game-${manifest.id}\ndescription: ${JSON.stringify(`${manifest.name}的活动和资讯：从哪里看、怎么看。用户问${manifest.name}的活动时使用。`)}\n---\n\n${guide.trim()}\n`)
     }
+    if (this.calendar.settings.hidden?.includes(manifest.id) === true) await this.calendar.hide(manifest.id, false)
     await this.loadGames(this.log)
     this.changed(manifest.id)
     if (manifest.sources.some(s => s.smw !== undefined || s.sra !== undefined)) void this.refresh(manifest.id).catch(() => [])
     return this.infos().find(g => g.id === manifest.id)!
   }
 
-  /** The agent looks for where a game's events and news can be read, and adds it (game_add). */
-  async discover(name: string): Promise<string> {
+  // ── which games are on the page (apart from the 技能库's packs) ──
+
+  /**
+   * Show an SRA game, or stop: a game pack that reads it (from the 技能库 or
+   * made here) is shown or taken off with it, the pack staying installed;
+   * without one the API is followed. @returns the game's id on the page.
+   */
+  private async showSra(sra: string, show: boolean): Promise<string> {
+    const packs = this.allGames.filter(g => g.manifest.sources.some(s => s.sra?.game === sra))
+    for (const pack of packs) await this.calendar.hide(pack.manifest.id, !show)
+    await this.calendar.follow(sra, show && packs.length === 0, followedId(sra))
+    await this.loadGames(this.log)
+    this.changed()
+    const id = packs[0]?.manifest.id ?? followedId(sra)
+    // Its events, now rather than tomorrow morning.
+    if (show && this.games.some(g => g.manifest.id === id)) void this.refresh(id).catch(() => [])
+    return id
+  }
+
+  /**
+   * Put a game on the page by its name: one there already is it; one taken
+   * off comes back; one the SRA public API knows is followed; any other is
+   * made here, empty (no sources yet), for the agent to find its sources from
+   * its page. No pack is downloaded: the page offers the 技能库's for it.
+   * @returns its id.
+   */
+  async createGame(name: string): Promise<string> {
+    const wanted = name.trim()
+    if (wanted === '') throw new Error('写一个游戏名')
+    const key = wanted.toLowerCase()
+    await this.loadGames(this.log)
+    const named = (g: LoadedGame) => [g.manifest.id, g.manifest.name, ...g.manifest.aliases].some(n => n.toLowerCase() === key)
+    const shown = this.games.find(named)
+    if (shown !== undefined) return shown.manifest.id
+    const away = this.allGames.find(named)
+    if (away !== undefined) {
+      await this.calendar.hide(away.manifest.id, false)
+      await this.loadGames(this.log)
+      this.changed(away.manifest.id)
+      return away.manifest.id
+    }
+    const sra = SRA_GAMES.find(g => g.sra === key || g.name.toLowerCase() === key || g.words.some(w => w.toLowerCase() === key))
+    if (sra !== undefined) return this.showSra(sra.sra, true)
+    const id = await this.freeId(wanted)
+    const dir = join(this.dir, id)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, GAME_MANIFEST_FILE), `# 在游戏页按名字添加的游戏：来源由 agent 找（游戏页上的「让 agent 去找」），也可以直接改（JSON 也是 YAML）。\n${JSON.stringify({ id, name: wanted, sources: [] }, null, 2)}\n`)
+    await this.loadGames(this.log)
+    this.changed(id)
+    return id
+  }
+
+  /** An id for a game made by name: its letters and digits, else a short fingerprint of the name; not one in use. */
+  private async freeId(name: string): Promise<string> {
+    const slug = name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    const base = slug.length >= 2 ? slug.slice(0, 40).replace(/-+$/, '') : `game-${createHash('sha256').update(name).digest('hex').slice(0, 8)}`
+    const taken = new Set([
+      ...this.allGames.map(g => g.manifest.id),
+      ...SRA_GAMES.map(g => followedId(g.sra)),
+      // Folders the plugin keeps beside the packs.
+      'images', 'evidence', 'icons',
+      ...await readdir(this.dir).catch(() => [] as string[]),
+    ])
+    for (let n = 1; ; n++) {
+      const id = n === 1 ? base : `${base}-${n}`
+      if (!taken.has(id)) return id
+    }
+  }
+
+  /**
+   * Take a game off the page: an SRA game is no longer followed, a game pack
+   * from the 技能库 is hidden (it stays installed, with its skills), one made
+   * here is deleted with its events.
+   */
+  async removeGame(gameId: string): Promise<void> {
+    await this.loadGames(this.log)
+    const game = this.game(gameId)
+    const sras = game.manifest.sources.map(s => s.sra?.game).filter((s): s is string => s !== undefined)
+    if (game.followed === true) {
+      for (const sra of sras) await this.calendar.follow(sra, false, gameId)
+    } else if (game.own === true) {
+      await rm(game.dir, { recursive: true, force: true })
+      await this.calendar.forget(gameId)
+    } else {
+      await this.calendar.hide(gameId, true)
+    }
+    // Nor followed through the API it reads: it would come back as that.
+    for (const sra of sras) if (this.calendar.settings.followed.includes(sra)) await this.calendar.follow(sra, false, followedId(sra))
+    await this.loadGames(this.log)
+    // One made here over an official pack of the same id: that one is not shown either.
+    if (this.games.some(g => g.manifest.id === gameId)) {
+      await this.calendar.hide(gameId, true)
+      await this.loadGames(this.log)
+    }
+    this.changed()
+  }
+
+  /**
+   * The agent finds where a game on the page can be read (one added by name
+   * has no sources yet) and writes them into its game pack (game_add, the same
+   * id), from the game's page, which shows it working (its web reading). An
+   * official pack is not rewritten: the agent reads the web for it instead.
+   */
+  async discover(gameId: string): Promise<string> {
+    const game = this.game(gameId)
+    if (game.builtin && game.followed !== true) return this.readWeb(gameId)
+    const { manifest } = game
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.home(GAME_ROLE.id)
+    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
+    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
+    await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
+    this.changed(manifest.id)
     const known = SRA_GAMES.map(g => `${g.sra}（${g.name}）`).join('、')
+    const has = manifest.sources.length === 0 ? '还没有任何来源' : `现在的来源：${manifest.sources.map(s => s.name).join('、')}`
     const prompt = [
-      `用户想在游戏页看到「${name}」的活动和资讯。先 game_list 看是不是已经有了（名字或别名对得上就告诉用户在哪，不用再加）。没有的话，按技能 web-reading 找它的来源：`,
-      `1. SRA 公共 API：已知的游戏 id 有 ${known}。是其中之一就告诉用户在「游戏 → 更多游戏」里勾上即可，不用 game_add。`,
+      `游戏页上有「${manifest.name}」（游戏 id：${manifest.id}），${has}。按技能 web-reading 找能读到它活动和资讯的来源，写进它的游戏包：`,
+      `1. SRA 公共 API：已知的游戏 id 有 ${known}。它是其中之一，就写一个 sra 来源：{ "id": "sra", "name": "SRA 公共 API", "sra": { "game": "<那个 id>" } }。`,
       '2. Wiki：B 站游戏 WIKI（wiki.biligame.com/<缩写>）或官方 / 玩家 Wiki，试它的 api.php?action=ask 能不能查到带开始、结束时间的活动页；能的话写成 smw 来源（conditions、start、end 等属性名照实写，dates 按存法选 date 或 text）。',
       '3. 官网的新闻 / 公告列表页：写成只有 homepage 的来源（agent 读）。',
-      '4. 用 game_add 创建游戏包：id 用小写英文和短横线，name 用中文正式名，aliases 写常见简称，timezone 写服务器时区；guide 写几行：哪些来源看什么、公告页怎么找活动。',
-      '5. 创建后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。',
+      `4. 用 game_add 写它的游戏包：id 一定用 ${manifest.id}（换了 id 游戏页上就成了另一个游戏），name 用它的中文正式名（用户写的名字是「${manifest.name}」），aliases 写常见简称，timezone 写服务器时区，sources 写找到的（原来有的保留）；guide 写几行：哪些来源看什么、公告页怎么找活动。`,
+      '5. 写好后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。',
+      '6. 找不到这个游戏（名字不对、没有公开的活动信息）就不要 game_add，直接说明找了哪里、为什么没找到。',
       '不要向用户提问；最后告诉用户加了什么来源、哪些能自动读、现在有几个活动。',
     ].join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `添加游戏：${name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).catch(() => {}).finally(() => this.changed())
+    void conversations.ask(sessionId, taskMessage('你', `找活动来源：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
+      answer => this.calendar.setReading(`${manifest.id}#web`, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
+      error => this.calendar.setReading(`${manifest.id}#web`, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
+    ).finally(() => this.changed(manifest.id))
     return sessionId
   }
 

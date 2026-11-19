@@ -47,7 +47,7 @@ export function zoneLabel(timeZone: string, at: number): string {
  * stands (progress, the agent's last look), the pipelines that play it on a
  * timetable, and where its data comes from.
  */
-export function GameView({ client, game, activities, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onUnfollow, onChanged, openSession, openScripts }: {
+export function GameView({ client, game, activities, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onDiscover, onRemove, onChanged, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   activities: readonly Activity[]
@@ -65,7 +65,10 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
   onRead: () => void
   /** The agent reads the web: one source of the game pack, or all it cannot read itself. */
   onReadWeb: (source?: string) => void
-  onUnfollow: () => void
+  /** The agent finds where the game can be read and writes it into its game pack (one added by name has nothing yet). */
+  onDiscover: () => void
+  /** Take it off the game page (one added here is deleted). */
+  onRemove: () => void
   onChanged: () => void
   openSession: (id: string) => void
   openScripts: () => void
@@ -99,6 +102,17 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
       <VersionHero client={client} game={game} now={now} covers={running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)} />
       <div className="game-columns">
         <div className="game-main">
+          {game.sources.length === 0 && (
+            <section className="game-section game-unknown">
+              <div className="game-unknown-text">
+                <h3>还不知道去哪里看「{game.name}」的活动</h3>
+                <p className="muted small">让 agent 去找它的 Wiki、官网公告等来源，写进这个游戏的游戏包；找到能自动读的，以后每天自动刷新。也可以在「数据来源」里自己添加网址，或点「活动日程」的「+」自己记。</p>
+              </div>
+              <button className="small-button primary" disabled={busy !== null || game.webReading?.state === 'running'} onClick={onDiscover}>
+                <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在找…' : '让 agent 去找'}
+              </button>
+            </section>
+          )}
           {(game.pools?.length ?? 0) > 0 && (
             <section className="game-section pools-card">
               <div className="game-section-head"><h3>卡池</h3><span className="count">{game.pools!.length}</span></div>
@@ -138,7 +152,7 @@ export function GameView({ client, game, activities, color, now, soonDays, busy,
         </div>
 
         <aside className="game-side">
-          <StatusCard game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onUnfollow={onUnfollow} openSession={openSession} />
+          <StatusCard game={game} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onRemove={onRemove} openSession={openSession} />
           <section className="card game-runs-card">
             <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
           </section>
@@ -187,7 +201,7 @@ function VersionHero({ client, game, now, covers }: { client: AdgClient; game: G
         <h2>{v?.title ?? game.name}</h2>
       </div>
       <div className="version-strip">
-        {v === undefined && <span className="small version-none">{game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}</span>}
+        {v === undefined && <span className="small version-none">{game.sources.length === 0 ? '还没有数据来源' : game.sources.some(s => s.auto) ? '还没有版本信息：点「活动日程」右上角刷新' : '这个游戏的数据站不提供版本信息'}</span>}
         {v !== undefined && through !== undefined && (
           <>
             <span className="version-end">{day(v.startsAt!)}</span>
@@ -237,7 +251,7 @@ function AddLink({ client, game, onAdded }: { client: AdgClient; game: GameInfo;
   )
 }
 
-function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onUnfollow, openSession }: {
+function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onRemove, openSession }: {
   game: GameInfo
   running: readonly Activity[]
   soon: readonly Activity[]
@@ -245,7 +259,7 @@ function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onUnfol
   busy: string | null
   onRead: () => void
   onReadWeb: (source?: string) => void
-  onUnfollow: () => void
+  onRemove: () => void
   openSession: (id: string) => void
 }) {
   const states = running.map(progressOf)
@@ -278,7 +292,9 @@ function StatusCard({ game, running, soon, now, busy, onRead, onReadWeb, onUnfol
         <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title="agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历" onClick={() => onReadWeb()}>
           <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : '让 agent 上网查活动'}
         </button>
-        {game.followed === true && <button className="small-button" disabled={busy !== null} title="不再显示这个游戏" onClick={onUnfollow}>取消关注</button>}
+        <button className="small-button" disabled={busy !== null}
+          title={game.own === true ? '删掉这个游戏和它的活动（你或 agent 加的）' : game.followed === true ? '不再关注，游戏页上不再显示' : '游戏页上不再显示；它的游戏包和脚本包不删'}
+          onClick={onRemove}>{game.own === true ? '删除这个游戏' : '不再显示'}</button>
       </div>
       {reading !== undefined && <ReadingLine what="进游戏" reading={reading} now={now} openSession={openSession} />}
       {game.webReading !== undefined && <ReadingLine what="上网查" reading={game.webReading} now={now} openSession={openSession} />}

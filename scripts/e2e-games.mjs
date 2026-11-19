@@ -177,15 +177,18 @@ try {
   if (after.report.lastResult !== '已发到飞书' || after.report.lastSentAt === undefined || after.report.lastText !== SUMMARY) fail(`report state: ${JSON.stringify(after.report)}`)
   step('the agent summarized the recent events; the summary went to Feishu as a card', `${card.to} · ${preview.title}`)
 
-  // 4. a game nobody set up
-  const { sessionId: discoverSession } = await rpc('games/discover', { name: 'E2E 新游戏' })
+  // 4. a game nobody set up: added by name (an empty page), then the agent finds its sources from that page
+  const { game: created } = await rpc('games/create', { name: 'E2E Added' })
+  const empty = (await rpc('games/list', {})).games.find(g => g.id === created)
+  if (created !== ADDED || empty?.own !== true || empty.sources.length !== 0) fail(`the game added by name: ${created} ${JSON.stringify(empty)}`)
+  const { sessionId: discoverSession } = await rpc('games/discover', { game: ADDED })
   await until('the added game and its events', async () => {
     const list = await rpc('games/list', {})
     return list.games.some(g => g.id === ADDED) && list.activities.some(a => a.game === ADDED && a.name === 'SideStory「E2E 活动甲」')
   }, 120_000)
   const added = (await rpc('games/list', {})).games.find(g => g.id === ADDED)
   if (!existsSync(join(dataDir, 'games', ADDED, 'game.yaml')) || !existsSync(join(dataDir, 'games', ADDED, 'GAME.md'))) fail('the added pack is not in the data folder')
-  step('「让 agent 去找」: game_add made a pack and its wiki was read at once', `${added.name} · ${discoverSession}`)
+  step('added by name, then 「让 agent 去找」: game_add filled its pack and its wiki was read at once', `${added.name} · ${discoverSession}`)
 
   // 5. a page added on the game page
   const page = `${wikiUrl}/news/2026`
