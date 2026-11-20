@@ -147,3 +147,31 @@ test('game_notice: the agent records announcements with their dates in the game\
   assert.equal(lasting.cover, undefined, 'not https')
   await assert.rejects(record.execute({ game: 'nope', notices: [{ title: 'x', kind: 'news' }] }, {} as never), /没有游戏「nope」/)
 })
+
+test('game_add: what the sources the plugin reads itself gave is told to the agent, so it does not record them again', async () => {
+  const added: unknown[] = []
+  const info = (sources: Array<{ name: string; auto: boolean }>) => ({ id: 'sts', name: '杀戮尖塔', aliases: [], timezone: 'Asia/Shanghai', sources: sources.map((s, i) => ({ id: `s${i}`, ...s })) })
+  let read: { count: number; notices?: number; detail?: string } | undefined = { count: 0, notices: 20 }
+  const tools = gameTools({
+    games: () => [],
+    now: () => NOW,
+    add: async (manifest: unknown) => { added.push(manifest); return { game: info([{ name: 'Steam 官方公告', auto: true }, { name: '官网', auto: false }]), ...(read === undefined ? {} : { read }) } },
+  } as unknown as GameToolDeps)
+  const add = tools.find(t => t.name === 'game_add')!
+  assert.ok(add.timeoutMs! >= 120_000, 'it waits for the first read')
+  const args = { id: 'sts', name: '杀戮尖塔', single: true, sources: [{ id: 'steam', name: 'Steam 官方公告', steam_appid: 646570 }, { id: 'site', name: '官网', homepage: 'https://www.megacrit.com/news/' }] }
+  const out = await add.execute(args, {} as never) as unknown as { read_now?: { notices: number; failed?: string }; note: string }
+  assert.deepEqual((added[0] as { sources: unknown[] }).sources[0], { id: 'steam', name: 'Steam 官方公告', steam: { appid: 646570 } })
+  assert.equal(out.read_now?.notices, 20)
+  assert.match(out.note, /20 条公告/)
+  assert.match(out.note, /不用再用 game_record \/ game_notice 记/)
+
+  read = { count: 0, detail: 'Steam 上没有 app 1 的新闻（HTTP 404）' }
+  const failed = await add.execute(args, {} as never) as unknown as { read_now?: { notices: number; failed?: string } }
+  assert.deepEqual(failed.read_now, { activities: 0, notices: 0, failed: 'Steam 上没有 app 1 的新闻（HTTP 404）' })
+
+  read = undefined
+  const none = await add.execute({ ...args, sources: [args.sources[1]] }, {} as never) as unknown as { read_now?: unknown; note: string }
+  assert.equal(none.read_now, undefined)
+  assert.match(none.note, /agent 读/)
+})

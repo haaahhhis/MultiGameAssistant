@@ -13,6 +13,7 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
 
 - **先找源头，别先读网页**：游戏数据站、Steam 接口、RSS、Wiki 的 `api.php`。
 - **正文不要截短**：要看全文时不加 `maxlength` 这类截短参数（截短后是去掉图片的纯文本）。先用短的列表挑出要看的那几篇，再只读那几篇的全文。
+- **列表上的都记，全文只读几篇**：记公告时，列表上最近的每一篇都记下（标题、日期、网址、缩略图，列表上就有）；只读全文的那几篇才写正文要点。不要因为只点开了两三篇就只记两三篇。
 - **图片地址照原样取，补成完整地址**：占位符换成真地址（Steam 公告里的 `{STEAM_CLAN_IMAGE}` 换成 `https://clan.akamai.steamstatic.com/images`）；`/images/a.png` 这样的相对地址前面补上网页的域名（`https://站点域名/images/a.png`），`//` 开头的补 `https:`。
 
 ## 你的工具能拿到什么
@@ -31,13 +32,13 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
      游戏标识：`sr` 崩坏：星穹铁道、`ys` 原神、`zzz` 绝区零、`ww` 鸣潮、`nte` 异环、`ak` 明日方舟、`end` 明日方舟：终末地、`xtlr` 星塔旅人、`ba-cn` / `ba-jp` / `ba-global` 蔚蓝档案。英文数据加语言后缀：`{game}-en-US.json`。说明页：https://starrailassistant.top/reference/public-api/
      游戏包里已经写了 `sra` 来源的游戏，插件每天自己读，不用你再读；别的游戏直接用 `web_fetch` 读这个 JSON。
    - **Steam**（Steam 上的游戏，单机游戏首选；免费、不用 key）。`appid` 是商店页 `store.steampowered.com/app/<数字>` 里的数字。
-     - 公告列表（很短，用来挑）：`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=10&maxlength=1&feeds=steam_community_announcements&format=json`
+     - 公告列表（很短，用来挑）：`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=20&maxlength=1&feeds=steam_community_announcements&format=json`
        `appnews.newsitems[]`：`title`、`url`、`date`（Unix 秒）、`tags`（含 `patchnotes` 的是补丁说明）。`feeds=steam_community_announcements` 只要官方公告。
      - 某一篇的全文：`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=1&enddate={那一篇的 date}&feeds=steam_community_announcements&format=json`（不加 `maxlength`）。`contents` 是完整的 BBCode：`[h2]`/`[b]` 是小标题，`[list][*]` 是条目；图片是 `[img]{STEAM_CLAN_IMAGE}/…[/img]`（把占位符换成 `https://clan.akamai.steamstatic.com/images`）或 `[img src="https://…"]`，视频是 `[previewyoutube=…]`。
      - 官方中文版：`https://store.steampowered.com/feeds/news/app/{appid}/?l=schinese`（RSS，最近 10 篇的全文，常有十万字，要中文或在 `run_code` 程序里处理时再用）。开发者写了中文的公告这里是中文：`<item>` 里 `title`、`link`（商店新闻页的正式网址）、`pubDate`、`description`（完整正文 HTML，`<img src="https://clan.fastly.steamstatic.com/images/…">` 是真地址），`<enclosure url="…">` 是这篇的封面图。
      - 游戏本身的资料和图：`https://store.steampowered.com/api/appdetails?appids={appid}&l=schinese&cc=cn&filters=basic` → 中文名 `name`、简介 `short_description`、横幅图 `header_image`、官网 `website`；`filters=screenshots` 是截图（`path_full`），`filters=release_date` 是发售日期。
      - 公告网址用接口给的 `url` 或 RSS 的 `link`。不要用 `gid` 自己拼 `store.steampowered.com/news/app/{appid}/view/…`：商店新闻页的编号和 `gid` 不一样，拼出来的页面一直显示 LOADING。
-     游戏包里写了 `steam: { appid: … }` 来源的，插件每天自己读公告，不用你再读列表。
+     游戏包里写了 `steam: { appid: … }` 来源的，插件每天自己读最近 20 篇公告（`game_add` 时马上读一次），不用你再读列表、也不用再记。
 3. **Wiki 的查询接口**：PRTS、B 站游戏 WIKI 都是 MediaWiki，用 `api.php` 拿结构化结果，比读页面省得多：
    - 按属性查（Semantic MediaWiki）：`https://prts.wiki/api.php?action=ask&format=json&query=[[分类:有活动信息的页面]]|?活动开始时间|?活动结束时间|limit=50`
    - 读一个页面的正文：`api.php?action=parse&page=页面名&prop=wikitext&format=json`
@@ -70,5 +71,6 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
 
 - 查到的活动用 `game_record`（`source: site`，带上 `url`，有配图写进 `cover`）写进日历，以后看板、日报都能用，不用再查一遍。
 - 版本更新、补丁说明、长期有效的公告这些没有起止时间的，用 `game_notice` 记到游戏的「公告」里（kind=update / notice / news，长期的 lasting=true；`summary` 写一两句中文要点，配图写进 `cover`）。单机游戏主要记这个。
+  列表上最近的每一篇都记（单机游戏最近三个月、网游最近一个月，最多 20 篇，一次 `game_notice` 可以记 30 篇）；没点开的那些不写 `summary`，标题、日期、网址照列表写。综合新闻站（一个厂商的多款游戏）只记这个游戏的。
 - 回答用户时把要点讲全，附上网址；用户要看图就给图片地址。
 - 某个游戏有好用的固定接口，但游戏包里还没有：告诉用户可以在游戏包的 `game.yaml` 里加一个来源（`sra: { game: … }`、`smw: …` 或 `steam: { appid: … }`），以后插件每天自己读，不花模型。

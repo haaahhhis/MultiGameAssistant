@@ -30,6 +30,9 @@ import { matchScripts } from './script-match.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
 import { gameTools } from './tools.ts'
 
+/** A source the plugin reads itself (no model): an SMW query, the SRA API, Steam's news. */
+const readsItself = (s: GameManifest['sources'][number]): boolean => s.smw !== undefined || s.sra !== undefined || s.steam !== undefined
+
 export { Calendar, DEFAULT_SETTINGS, OWN_FIELDS, type OwnFields, type OwnPatch, type ReadEvent } from './calendar.ts'
 export { DailyReport, localDay, realClock, type Clock, type DailyDeps } from './daily.ts'
 export { buildReport, recentDigest, type ReportGame } from './report.ts'
@@ -709,7 +712,7 @@ export class AdgGameIntel extends Service {
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: scripts.get(m.id) ?? m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
-        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined || s.steam !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
+        sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: readsItself(s), ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
         builtin,
         ...(m.art === undefined ? {} : { art: m.art }),
         ...(banner === undefined ? {} : { banner }),
@@ -733,7 +736,7 @@ export class AdgGameIntel extends Service {
     const games = gameId === undefined ? this.games : [this.game(gameId)]
     const results: Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }> = []
     for (const { manifest } of games) {
-      const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined || s.steam !== undefined)
+      const sources = manifest.sources.filter(readsItself)
       if (sources.length === 0) {
         const where = manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'
         results.push({ game: manifest.id, ok: false, count: 0, detail: manifest.single === true
@@ -854,7 +857,12 @@ export class AdgGameIntel extends Service {
    * sources. A built-in pack of the same id is not replaced.
    * @returns the game as the board shows it. @throws Error with what is wrong in the manifest.
    */
-  async addGame(input: unknown, guide?: string): Promise<GameInfo> {
+  /**
+   * Write a game pack of the user's own (game_add). The sources the plugin
+   * reads itself are read before this returns, so the agent sees what they
+   * gave (Steam's announcements, a site's events) and does not read them again.
+   */
+  async addGame(input: unknown, guide?: string): Promise<{ game: GameInfo; read?: { count: number; notices?: number; detail?: string } }> {
     const parsed = GameManifest.safeParse(input)
     if (!parsed.success) throw new Error(`游戏包写得不对：${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('；')}`)
     const manifest = parsed.data
@@ -869,8 +877,9 @@ export class AdgGameIntel extends Service {
     if (this.calendar.settings.hidden?.includes(manifest.id) === true) await this.calendar.hide(manifest.id, false)
     await this.loadGames(this.log)
     this.changed(manifest.id)
-    if (manifest.sources.some(s => s.smw !== undefined || s.sra !== undefined)) void this.refresh(manifest.id).catch(() => [])
-    return this.infos().find(g => g.id === manifest.id)!
+    const read = manifest.sources.some(readsItself) ? (await this.refresh(manifest.id).catch(() => []))[0] : undefined
+    const game = this.infos().find(g => g.id === manifest.id)!
+    return read === undefined ? { game } : { game, read: { count: read.count, ...(read.notices === undefined ? {} : { notices: read.notices }), ...(read.detail === undefined ? {} : { detail: read.detail }) } }
   }
 
   // ── which games are on the page (apart from the 技能库's packs) ──
@@ -995,7 +1004,7 @@ export class AdgGameIntel extends Service {
       '3. 官网的新闻 / 公告列表页：写成只有 homepage 的来源（agent 读）。',
       '   单机游戏（买断制、没有限时活动的）：在 Steam 上有的，再写一个 Steam 来源（steam_appid 是商店页 store.steampowered.com/app/<数字> 里的数字），插件每天自动读它在 Steam 的官方公告（版本更新、补丁说明）；game_add 时写 single=true。',
       `4. 用 game_add 写它的游戏包：id 一定用 ${manifest.id}（换了 id 游戏页上就成了另一个游戏），name 用它的中文正式名（用户写的名字是「${manifest.name}」），aliases 写常见简称，timezone 写服务器时区，sources 写找到的（原来有的保留）；guide 写几行：哪些来源看什么、公告页怎么找活动。`,
-      '5. 写好后 game_activities 看读到了什么；只有网页来源的，就按技能读一次公告页，用 game_record（source=site）记下活动。单机游戏读一次官方的更新日志，用 game_notice 记下最近的版本更新和长期公告。',
+      '5. game_add 的结果里 read_now 是能自动读的来源刚读到的（Steam 公告、数据站活动），这些不用再记。只有网页来源的（或只有网页才有的消息）：按技能读一次公告列表，有起止时间的活动用 game_record（source=site）记下；公告用 game_notice 记下——列表上最近三个月的每一篇都记（最多 20 篇，标题、日期、网址、列表上的缩略图，列表上就有，不用每篇点开），只点开最新的两三篇（最近的版本更新、长期公告）读全文写 summary。',
       '6. 找不到这个游戏（名字不对、没有公开的活动信息）就不要 game_add，直接说明找了哪里、为什么没找到。',
       '不要向用户提问；最后告诉用户加了什么来源、哪些能自动读、现在有几个活动。',
     ].join('\n')
@@ -1010,7 +1019,7 @@ export class AdgGameIntel extends Service {
     const { manifest } = this.game(gameId)
     const sessions = this.ctx.get('sessionController')
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
+    const chosen = sourceId === undefined ? manifest.sources.filter(s => !readsItself(s)) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
     const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
@@ -1022,14 +1031,14 @@ export class AdgGameIntel extends Service {
     const prompt = (manifest.single === true ? [
       `上网查单机游戏「${manifest.name}」最近的官方公告（游戏 id：${manifest.id}），按技能 web-reading 和 game-intel：`,
       `1. 先 game_activities（game=${manifest.id}）看已经记了哪些公告，不用重复记。`,
-      `2. ${where}看官方的更新日志或公告列表（Steam 新闻、官网博客、公告页），只打开最近的几篇。`,
-      '3. 版本更新、补丁说明用 game_notice 记下（kind=update，写上版本号、发布日期、一两句改了什么和网址；有配图就写进 cover）；长期有效的公告 kind=notice、lasting=true；其他资讯 kind=news。单机游戏一般没有限时活动，真有（限时折扣、联动、节日活动）才用 game_record。',
+      `2. ${where}看官方的更新日志或公告列表（Steam 新闻、官网博客、公告页）。`,
+      '3. 列表上最近三个月的公告每一篇都用 game_notice 记下（最多 20 篇；标题、发布日期、网址、列表上的缩略图写进 cover——列表上就有，不用每篇点开）：版本更新、补丁说明 kind=update（标题里有版本号就写上），长期有效的公告 kind=notice、lasting=true，其他资讯 kind=news。只点开最新的两三篇（最近的版本更新、长期公告）读全文，写一两句 summary。单机游戏一般没有限时活动，真有（限时折扣、联动、节日活动）才用 game_record。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：最新版本是什么、改了什么、有没有要注意的公告。',
     ] : [
       `上网查「${manifest.name}」现在的活动和最新消息（游戏 id：${manifest.id}），按技能 web-reading 和 game-intel：`,
       `1. 先 game_activities（game=${manifest.id}）看日历里已经有什么，不用重复查。`,
-      `2. ${where}先读列表页，只打开最近的活动、版本和维护公告。`,
-      '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。版本更新公告和长期有效的公告（没有结束时间的）用 game_notice 记下（kind=update 或 notice，长期的写 lasting=true）。',
+      `2. ${where}先读列表页；要起止时间、要细节的才点开（最近的活动、版本和维护公告）。`,
+      '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。没有起止时间的公告用 game_notice 记下：列表上最近一个月的每一篇都记（最多 20 篇；标题、日期、网址、列表上的缩略图，不用每篇点开），版本更新 kind=update，长期有效的 kind=notice、lasting=true，其他 kind=news；点开读过的写一两句 summary。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：现在有哪些活动、哪些快结束、有什么新消息（新版本、维护、福利）。',
     ]).join('\n')
     void conversations.ask(sessionId, taskMessage('你', `游戏资讯：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(

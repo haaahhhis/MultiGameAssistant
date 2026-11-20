@@ -20,7 +20,7 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 
 - 用户问「XX 最近更新了什么」「最新版本是多少」：先看 `notices`；没有或太旧，先 `game_sites_refresh`（有 Steam 来源的游戏，插件每天自己读它在 Steam 的官方公告），再按技能 web-reading 上网查。
 - `notices` 里只有一两句摘要。用户要细节（具体改了哪些卡、平衡调整、修复了什么）：按技能 web-reading 读那一篇的全文（Steam 用 `enddate` 取单篇，或读中文 RSS），按小标题把要点讲全，附上网址。
-- 自己读到的公告用 `game_notice` 记下：版本更新 kind=update（写上版本号、发布日期、一两句改了什么、网址、配图地址 `cover`），长期有效的 kind=notice 加 lasting=true（会一直排在最前面，过时了用 lasting=false 收回），其他 kind=news。同一个网址再记就是更新原来那条。
+- 自己读到的公告用 `game_notice` 记下，公告列表上最近的每一篇都记（最多 20 篇，没点开的照列表写标题、日期、网址），不是只记点开读过的那几篇：版本更新 kind=update（写上版本号、发布日期、一两句改了什么、网址、配图地址 `cover`），长期有效的 kind=notice 加 lasting=true（会一直排在最前面，过时了用 lasting=false 收回），其他 kind=news。同一个网址再记就是更新原来那条。
 - 单机游戏（买断制、没有限时活动）一般不用 `game_record`；真有限时的事（限时折扣、联动、节日活动）才记成活动。
 
 ## 进游戏读进度

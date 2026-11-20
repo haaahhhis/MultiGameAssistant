@@ -24,7 +24,8 @@ export interface GameToolDeps {
   readonly sendReport: () => Promise<{ channels: string[] }>
   readonly now: () => number
   /** Write a game pack of the user's own. */
-  readonly add: (manifest: unknown, guide: string | undefined) => Promise<GameInfo>
+  /** @returns `read`: what the sources the plugin reads itself gave, read before this returns. */
+  readonly add: (manifest: unknown, guide: string | undefined) => Promise<{ game: GameInfo; read?: { count: number; notices?: number | undefined; detail?: string | undefined } | undefined }>
   /** Add an event of the user's own, or write their word on one (`id`); `image`: as the agent named it (https, a file, `screenshot`). */
   readonly saveActivity: (game: string, id: string | undefined, patch: OwnPatch, image: string | undefined, sessionId: string | undefined) => Promise<Activity>
   /** Which source an event's picture and dates come from; `null`: the default order. */
@@ -135,6 +136,8 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
         guide: { type: 'string', description: 'GAME.md 正文（可选）：哪些来源看什么、公告页怎么找活动。' },
       },
       required: ['id', 'name', 'sources'],
+      // The sources the plugin reads itself are read before it returns.
+      timeoutMs: 120_000,
       kind: 'other',
       title: a => `添加游戏：${String(a['name'] ?? a['id'] ?? '')}`,
       execute: async args => {
@@ -158,8 +161,16 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
             ...(s.steam_appid == null ? {} : { steam: { appid: s.steam_appid } }),
           })),
         }
-        const game = await deps.add(manifest, a.guide ?? undefined)
-        return { added: game.id, name: game.name, sources: game.sources.map(s => `${s.name}（${s.auto ? '自动读' : 'agent 读'}）`), note: '已加到游戏页；能自动读的来源正在读取' }
+        const { game, read } = await deps.add(manifest, a.guide ?? undefined)
+        return {
+          added: game.id, name: game.name, sources: game.sources.map(s => `${s.name}（${s.auto ? '自动读' : 'agent 读'}）`),
+          ...(read === undefined
+            ? { note: '已加到游戏页；没有能自动读的来源，公告和活动要 agent 读' }
+            : {
+                read_now: { activities: read.count, notices: read.notices ?? 0, ...(read.detail === undefined ? {} : { failed: read.detail }) },
+                note: `已加到游戏页，能自动读的来源已经读了一次：${read.count} 个活动、${read.notices ?? 0} 条公告（以后每天自动读）。这些不用再用 game_record / game_notice 记；只读 agent 读的来源。`,
+              }),
+        }
       },
     }),
     tool({
@@ -295,7 +306,8 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       description: [
         '把读到的公告记到游戏页的「公告」里，它们不是有起止时间的限时活动（限时活动用 game_record）：',
         'kind=update 版本更新、补丁说明（写上版本号）；kind=notice 公告，长期有效的（常驻规则、长期活动说明、停服 / 维护安排）写 lasting=true，会一直留在最前面；kind=news 其他资讯。',
-        '单机游戏主要记这个。同一个网址（没有网址时同一个标题）再记就是更新原来那条；lasting=false 可以把长期公告收回。只记有出处的内容，summary 用一两句中文写清楚改了什么。',
+        '单机游戏主要记这个。公告列表上最近的每一篇都记（标题、日期、网址照列表写），不是只记点开读过的；读过全文的写 summary，用一两句中文写清楚改了什么。',
+        '同一个网址（没有网址时同一个标题）再记就是更新原来那条；lasting=false 可以把长期公告收回。只记有出处的内容。',
       ].join(''),
       properties: {
         game: GAME,
