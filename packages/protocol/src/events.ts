@@ -80,6 +80,33 @@ export const TurnEndReason = z.object({
 })
 export type TurnEndReason = z.infer<typeof TurnEndReason>
 
+/** One model of a fallback switch: its service (渠道) and model, by id and as the model catalog names them. */
+export const FallbackRoute = z.object({
+  provider: z.string(),
+  providerName: z.string(),
+  model: z.string(),
+  modelName: z.string(),
+})
+export type FallbackRoute = z.infer<typeof FallbackRoute>
+
+/** What the fallback card says: which model failed and why, and which one the agent goes on with. */
+export const ModelFallbackNotice = z.object({
+  from: FallbackRoute,
+  to: FallbackRoute,
+  /** Why it was switched, in a few words (余额不足, Key 无效, …). */
+  reason: z.string(),
+  /** The model service's own error message. */
+  error: z.string(),
+  /** dsh's failure code (QUOTA, AUTH, HTTP_402, …). */
+  code: z.string(),
+  /** A sub-agent's model (the sub-agent list), else an agent's own conversation (the agent list). */
+  sub: z.boolean().optional(),
+})
+export type ModelFallbackNotice = z.infer<typeof ModelFallbackNotice>
+
+/** The source kind of the fallback card's message (ModelFallbackNotice). */
+export const MODEL_FALLBACK_SOURCE = 'adg-model-fallback'
+
 /** Where a user-role message came from. */
 export const MessageOrigin = z.object({
   /** Upstream source kind: `user`, `user-rpc`, injected-context producers, goal rounds, ... */
@@ -88,6 +115,8 @@ export const MessageOrigin = z.object({
   human: z.boolean(),
   /** One-line account for `notice`-form injected context. */
   summary: z.string().optional(),
+  /** A model failed and the agent went on with the next of its fallback list (kind MODEL_FALLBACK_SOURCE). */
+  fallback: ModelFallbackNotice.optional(),
 })
 export type MessageOrigin = z.infer<typeof MessageOrigin>
 

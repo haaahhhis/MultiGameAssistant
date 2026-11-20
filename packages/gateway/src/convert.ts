@@ -6,7 +6,13 @@
  * reshapes an event, only these functions change. Anything not recognized
  * passes through as an `unknown` DTO so UIs can still list it.
  */
-import type { ContentPart, Failure, LiveAttempt, LiveFrame, SessionEvent, StreamTiming, TokenUsage } from '@adg/protocol'
+import { MODEL_FALLBACK_SOURCE, ModelFallbackNotice, type ContentPart, type Failure, type LiveAttempt, type LiveFrame, type SessionEvent, type StreamTiming, type TokenUsage } from '@adg/protocol'
+
+/** The fallback card's facts (model-fallback.ts), when they are whole. */
+function fallbackOf(value: unknown): ModelFallbackNotice | undefined {
+  const parsed = ModelFallbackNotice.safeParse(value)
+  return parsed.success ? parsed.data : undefined
+}
 
 /** The subset of upstream `SessionWireEvent` the converter reads. */
 export interface WireEvent {
@@ -186,6 +192,7 @@ export function convertEvent(event: WireEvent): SessionEvent {
           kind,
           human: HUMAN_SOURCES.has(kind),
           ...opt('summary', source.form === 'notice' ? str(source.summary) : undefined),
+          ...opt('fallback', kind === MODEL_FALLBACK_SOURCE ? fallbackOf(source.fallback) : undefined),
         },
         ...opt('requestId', str(source.rpcId)),
         ...(replaces ? { replacesHistory: true } : {}),

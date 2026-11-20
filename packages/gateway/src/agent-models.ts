@@ -9,13 +9,17 @@
  *   sub-agents' model, else the one for every sub-agent, else whatever the
  *   agent that opened them is using at the time (dsh's own rule).
  *
+ * 备用模型 (`fallbacks`): two lists, one for every agent's own conversations
+ * and one for every sub-agent, tried in order when a model fails in a way
+ * another would not (model-fallback.ts).
+ *
  * Before this, one model served every role agent (`role-model.json`, 「角色
  * agent 的模型」): it carries over to the role agents there were then.
  */
 import { readFile } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { ModelSelection } from '@adg/protocol'
+import type { ModelFallbacks, ModelSelection } from '@adg/protocol'
 import { writeFileAtomic } from '@adg/protocol/node'
 
 export interface AgentModelsState {
@@ -25,6 +29,8 @@ export interface AgentModelsState {
   readonly subAgents: ModelSelection | null
   /** One agent's sub-agents, by agent id: before `subAgents`. */
   readonly subAgentsOf: Readonly<Record<string, ModelSelection>>
+  /** The fallback lists: every agent's own conversations, every sub-agent. */
+  readonly fallbacks: ModelFallbacks
 }
 
 /** Whose model is set: an agent's own (`agentId`), its sub-agents' (`agentId` and `sub`), or every sub-agent's (`sub` alone). */
@@ -36,7 +42,7 @@ export interface AgentModelTarget {
 /** The role agents `role-model.json` served. */
 const LEGACY_ROLES = ['intervene', 'games', 'scripts', 'pipelines']
 
-const EMPTY: AgentModelsState = { agents: {}, subAgents: null, subAgentsOf: {} }
+const EMPTY: AgentModelsState = { agents: {}, subAgents: null, subAgentsOf: {}, fallbacks: { agents: [], subAgents: [] } }
 
 export class AgentModels {
   readonly #file: string | undefined
@@ -65,6 +71,19 @@ export class AgentModels {
     return this.#state.subAgentsOf[agentId] ?? this.#state.subAgents ?? undefined
   }
 
+  /** The fallback list for the agents' own conversations (`sub` false) or for sub-agents. */
+  fallbacksOf(sub: boolean): readonly ModelSelection[] {
+    return sub ? this.#state.fallbacks.subAgents : this.#state.fallbacks.agents
+  }
+
+  /** Replace one fallback list; a model listed twice is kept once (the first). */
+  async setFallbacks(sub: boolean, models: readonly ModelSelection[]): Promise<void> {
+    await this.loaded
+    const list = distinct(models.map(clean))
+    this.#state = { ...this.#state, fallbacks: { ...this.#state.fallbacks, [sub ? 'subAgents' : 'agents']: list } }
+    await this.#save()
+  }
+
   /** @param selection - null: follow the layer above again. */
   async set(target: AgentModelTarget, selection: ModelSelection | null): Promise<void> {
     await this.loaded
@@ -78,6 +97,10 @@ export class AgentModels {
       : target.agentId === undefined
         ? { ...state, subAgents: value ?? null }
         : { ...state, subAgentsOf: put(state.subAgentsOf, target.agentId) }
+    await this.#save()
+  }
+
+  async #save(): Promise<void> {
     if (this.#file === undefined) return
     mkdirSync(dirname(this.#file), { recursive: true })
     await writeFileAtomic(this.#file, `${JSON.stringify(this.#state)}\n`)
@@ -91,8 +114,13 @@ export class AgentModels {
         const selection = selectionOf(s)
         return selection === undefined ? [] : [[id, selection]]
       }))
+      const list = (value: unknown) => distinct(Array.isArray(value) ? value.flatMap(s => selectionOf(s) ?? []) : [])
       const state = isObject(saved) ? saved : {}
-      this.#state = { agents: record(state['agents']), subAgents: selectionOf(state['subAgents']) ?? null, subAgentsOf: record(state['subAgentsOf']) }
+      const fallbacks = isObject(state['fallbacks']) ? state['fallbacks'] : {}
+      this.#state = {
+        agents: record(state['agents']), subAgents: selectionOf(state['subAgents']) ?? null, subAgentsOf: record(state['subAgentsOf']),
+        fallbacks: { agents: list(fallbacks['agents']), subAgents: list(fallbacks['subAgents']) },
+      }
       return
     }
     const legacy = this.#legacyFile === undefined ? undefined : selectionOf(await readJson(this.#legacyFile))
@@ -119,4 +147,15 @@ function selectionOf(value: unknown): ModelSelection | undefined {
 
 function clean(selection: ModelSelection): ModelSelection {
   return { provider: selection.provider, model: selection.model, ...(typeof selection.reasoningEffort === 'string' ? { reasoningEffort: selection.reasoningEffort } : {}) }
+}
+
+/** Each model once (by service and model; the first one's thinking level), in order. */
+function distinct(list: readonly ModelSelection[]): ModelSelection[] {
+  const seen = new Set<string>()
+  return list.filter(s => {
+    const key = `${s.provider}/${s.model}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }

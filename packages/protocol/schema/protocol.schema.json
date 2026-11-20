@@ -90,6 +90,9 @@
     "models/setAgentModel": {
       "capability": "agent-models"
     },
+    "models/setFallbacks": {
+      "capability": "agent-models"
+    },
     "models/catalog": {
       "capability": "models"
     },
@@ -199,6 +202,9 @@
       "capability": "scripts"
     },
     "scripts/remove": {
+      "capability": "scripts"
+    },
+    "scripts/packs/remove": {
       "capability": "scripts"
     },
     "scripts/mcp": {
@@ -471,6 +477,12 @@
     "games/icon": {
       "capability": "games"
     },
+    "games/create": {
+      "capability": "games"
+    },
+    "games/remove": {
+      "capability": "games"
+    },
     "games/discover": {
       "capability": "games"
     },
@@ -528,16 +540,28 @@
     "skills/save": {
       "capability": "skills"
     },
+    "skills/focus": {
+      "capability": "skills"
+    },
     "skills/remove": {
       "capability": "skills"
     },
     "skillhub/list": {
       "capability": "skillhub"
     },
+    "skillhub/preview": {
+      "capability": "skillhub"
+    },
+    "skillhub/save": {
+      "capability": "skillhub"
+    },
     "skillhub/install": {
       "capability": "skillhub"
     },
     "skillhub/update": {
+      "capability": "skillhub"
+    },
+    "skillhub/version": {
       "capability": "skillhub"
     },
     "skillhub/rollback": {
@@ -606,6 +630,7 @@
     "scripts/job",
     "skillhub/changed",
     "skills/changed",
+    "skills/focused",
     "runs/state",
     "configs/profiles/changed",
     "runs/log",
@@ -620,6 +645,7 @@
     "pipelines/run",
     "schedule/changed",
     "tasks/changed",
+    "schedule/agentSet",
     "schedule/power",
     "intervene/changed",
     "games/changed",
@@ -920,6 +946,79 @@
                 },
                 "summary": {
                   "type": "string"
+                },
+                "fallback": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "providerName": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "modelName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "providerName",
+                        "model",
+                        "modelName"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "to": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "providerName": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "modelName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "providerName",
+                        "model",
+                        "modelName"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "sub": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "reason",
+                    "error",
+                    "code"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -3124,6 +3223,79 @@
                       },
                       "summary": {
                         "type": "string"
+                      },
+                      "fallback": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "providerName": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "modelName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "provider",
+                              "providerName",
+                              "model",
+                              "modelName"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "to": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "providerName": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "modelName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "provider",
+                              "providerName",
+                              "model",
+                              "modelName"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "string"
+                          },
+                          "sub": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to",
+                          "reason",
+                          "error",
+                          "code"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
@@ -4531,6 +4703,79 @@
                       },
                       "summary": {
                         "type": "string"
+                      },
+                      "fallback": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "providerName": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "modelName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "provider",
+                              "providerName",
+                              "model",
+                              "modelName"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "to": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "providerName": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "modelName": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "provider",
+                              "providerName",
+                              "model",
+                              "modelName"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "string"
+                          },
+                          "sub": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to",
+                          "reason",
+                          "error",
+                          "code"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
@@ -5913,6 +6158,60 @@
             ],
             "additionalProperties": false
           }
+        },
+        "fallbacks": {
+          "type": "object",
+          "properties": {
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "subAgents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "agents",
+            "subAgents"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -5972,6 +6271,48 @@
           "type": "string"
         }
       },
+      "additionalProperties": false
+    },
+    "models/setFallbacks.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sub": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "sub",
+        "models"
+      ],
+      "additionalProperties": false
+    },
+    "models/setFallbacks.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
       "additionalProperties": false
     },
     "models/catalog.params": {
@@ -7388,6 +7729,9 @@
                 "type": "boolean"
               },
               "installed": {
+                "type": "boolean"
+              },
+              "own": {
                 "type": "boolean"
               },
               "error": {
@@ -10816,6 +11160,26 @@
       "additionalProperties": false
     },
     "scripts/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "scripts/packs/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scripts/packs/remove.result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
@@ -20501,6 +20865,18 @@
               "followed": {
                 "type": "boolean"
               },
+              "sra": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "own": {
+                "type": "boolean"
+              },
+              "single": {
+                "type": "boolean"
+              },
               "version": {
                 "type": "object",
                 "properties": {
@@ -20876,6 +21252,78 @@
             "additionalProperties": false
           }
         },
+        "notices": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "game": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "update",
+                  "notice",
+                  "news"
+                ]
+              },
+              "publishedAt": {
+                "type": "number"
+              },
+              "version": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "lasting": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "game",
+              "title",
+              "kind",
+              "source",
+              "at"
+            ],
+            "additionalProperties": false
+          }
+        },
         "settings": {
           "type": "object",
           "properties": {
@@ -20918,6 +21366,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            "hidden": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -20951,6 +21405,7 @@
       "required": [
         "games",
         "activities",
+        "notices",
         "settings",
         "report"
       ],
@@ -20982,6 +21437,9 @@
                 "type": "boolean"
               },
               "count": {
+                "type": "number"
+              },
+              "notices": {
                 "type": "number"
               },
               "detail": {
@@ -21164,6 +21622,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "hidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -21269,7 +21733,7 @@
       },
       "additionalProperties": false
     },
-    "games/discover.params": {
+    "games/create.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
@@ -21281,6 +21745,51 @@
       },
       "required": [
         "name"
+      ],
+      "additionalProperties": false
+    },
+    "games/create.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "game"
+      ],
+      "additionalProperties": false
+    },
+    "games/remove.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "game"
+      ],
+      "additionalProperties": false
+    },
+    "games/remove.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "games/discover.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "game"
       ],
       "additionalProperties": false
     },
@@ -22963,6 +23472,19 @@
               },
               "removable": {
                 "type": "boolean"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "script-pack",
+                  "game-pack"
+                ]
+              },
+              "pack": {
+                "type": "string"
+              },
+              "ownPack": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -23042,6 +23564,19 @@
           "additionalProperties": false
         },
         "removable": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "script-pack",
+            "game-pack"
+          ]
+        },
+        "pack": {
+          "type": "string"
+        },
+        "ownPack": {
           "type": "boolean"
         },
         "content": {
@@ -23124,6 +23659,42 @@
       ],
       "additionalProperties": false
     },
+    "skills/focus.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "skills/focus.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "games": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "scripts",
+        "games"
+      ],
+      "additionalProperties": false
+    },
     "skills/remove.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -23179,6 +23750,25 @@
                   "general"
                 ]
               },
+              "pack": {
+                "type": "string",
+                "enum": [
+                  "script",
+                  "game"
+                ]
+              },
+              "game": {
+                "type": "string"
+              },
+              "sra": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "default": {
+                "type": "boolean"
+              },
               "games": {
                 "type": "array",
                 "items": {
@@ -23192,6 +23782,9 @@
                 }
               },
               "repo": {
+                "type": "string"
+              },
+              "author": {
                 "type": "string"
               },
               "path": {
@@ -23208,6 +23801,24 @@
               },
               "requires": {
                 "type": "string"
+              },
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "changes": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "version"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "installed": {
                 "type": "object",
@@ -23306,6 +23917,65 @@
       ],
       "additionalProperties": false
     },
+    "skillhub/preview.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/preview.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/save.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "content": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/save.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
     "skillhub/install.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -23345,6 +24015,25 @@
             "general"
           ]
         },
+        "pack": {
+          "type": "string",
+          "enum": [
+            "script",
+            "game"
+          ]
+        },
+        "game": {
+          "type": "string"
+        },
+        "sra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default": {
+          "type": "boolean"
+        },
         "games": {
           "type": "array",
           "items": {
@@ -23358,6 +24047,9 @@
           }
         },
         "repo": {
+          "type": "string"
+        },
+        "author": {
           "type": "string"
         },
         "path": {
@@ -23374,6 +24066,24 @@
         },
         "requires": {
           "type": "string"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "changes": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "additionalProperties": false
+          }
         },
         "installed": {
           "type": "object",
@@ -23476,6 +24186,25 @@
                 "general"
               ]
             },
+            "pack": {
+              "type": "string",
+              "enum": [
+                "script",
+                "game"
+              ]
+            },
+            "game": {
+              "type": "string"
+            },
+            "sra": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "default": {
+              "type": "boolean"
+            },
             "games": {
               "type": "array",
               "items": {
@@ -23489,6 +24218,9 @@
               }
             },
             "repo": {
+              "type": "string"
+            },
+            "author": {
               "type": "string"
             },
             "path": {
@@ -23505,6 +24237,24 @@
             },
             "requires": {
               "type": "string"
+            },
+            "history": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string"
+                  },
+                  "changes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "version"
+                ],
+                "additionalProperties": false
+              }
             },
             "installed": {
               "type": "object",
@@ -23569,6 +24319,173 @@
       ],
       "additionalProperties": false
     },
+    "skillhub/version.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "skillhub/version.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "game",
+            "script",
+            "general"
+          ]
+        },
+        "pack": {
+          "type": "string",
+          "enum": [
+            "script",
+            "game"
+          ]
+        },
+        "game": {
+          "type": "string"
+        },
+        "sra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "games": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "string"
+        },
+        "requires": {
+          "type": "string"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "changes": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "installed": {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "number"
+            },
+            "update": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": "string"
+            },
+            "previous": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "held": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "at",
+            "update"
+          ],
+          "additionalProperties": false
+        },
+        "incompatible": {
+          "type": "string"
+        },
+        "blocked": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "kind",
+        "games",
+        "scripts",
+        "repo",
+        "path",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
     "skillhub/rollback.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -23604,6 +24521,25 @@
             "general"
           ]
         },
+        "pack": {
+          "type": "string",
+          "enum": [
+            "script",
+            "game"
+          ]
+        },
+        "game": {
+          "type": "string"
+        },
+        "sra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default": {
+          "type": "boolean"
+        },
         "games": {
           "type": "array",
           "items": {
@@ -23617,6 +24553,9 @@
           }
         },
         "repo": {
+          "type": "string"
+        },
+        "author": {
           "type": "string"
         },
         "path": {
@@ -23633,6 +24572,24 @@
         },
         "requires": {
           "type": "string"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "changes": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "additionalProperties": false
+          }
         },
         "installed": {
           "type": "object",
@@ -24156,6 +25113,39 @@
             "ptcSubagents": {
               "default": true,
               "type": "boolean"
+            },
+            "summarizer": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24163,7 +25153,8 @@
             "threshold",
             "lowContext",
             "archiveDays",
-            "ptcSubagents"
+            "ptcSubagents",
+            "summarizer"
           ],
           "additionalProperties": false
         },
@@ -24197,6 +25188,39 @@
             "ptcSubagents": {
               "default": true,
               "type": "boolean"
+            },
+            "summarizer": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24204,7 +25228,8 @@
             "threshold",
             "lowContext",
             "archiveDays",
-            "ptcSubagents"
+            "ptcSubagents",
+            "summarizer"
           ],
           "additionalProperties": false
         }
@@ -24249,6 +25274,39 @@
             "ptcSubagents": {
               "default": true,
               "type": "boolean"
+            },
+            "summarizer": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24256,7 +25314,8 @@
             "threshold",
             "lowContext",
             "archiveDays",
-            "ptcSubagents"
+            "ptcSubagents",
+            "summarizer"
           ],
           "additionalProperties": false
         }
@@ -24300,6 +25359,39 @@
             "ptcSubagents": {
               "default": true,
               "type": "boolean"
+            },
+            "summarizer": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24307,7 +25399,8 @@
             "threshold",
             "lowContext",
             "archiveDays",
-            "ptcSubagents"
+            "ptcSubagents",
+            "summarizer"
           ],
           "additionalProperties": false
         },
@@ -24341,6 +25434,39 @@
             "ptcSubagents": {
               "default": true,
               "type": "boolean"
+            },
+            "summarizer": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -24348,7 +25474,8 @@
             "threshold",
             "lowContext",
             "archiveDays",
-            "ptcSubagents"
+            "ptcSubagents",
+            "summarizer"
           ],
           "additionalProperties": false
         }
@@ -25191,6 +26318,79 @@
                     },
                     "summary": {
                       "type": "string"
+                    },
+                    "fallback": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "providerName": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "modelName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "providerName",
+                            "model",
+                            "modelName"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "to": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "providerName": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "modelName": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "providerName",
+                            "model",
+                            "modelName"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "sub": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to",
+                        "reason",
+                        "error",
+                        "code"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -26696,6 +27896,60 @@
             ],
             "additionalProperties": false
           }
+        },
+        "fallbacks": {
+          "type": "object",
+          "properties": {
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "subAgents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "agents",
+            "subAgents"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -26880,6 +28134,33 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "skills/focused.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "games": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "sessionId",
+        "scripts",
+        "games"
+      ],
       "additionalProperties": false
     },
     "runs/state.notification": {
@@ -27540,6 +28821,46 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "schedule/agentSet.notification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task",
+            "reminder"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "by": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "changed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "by",
+        "agent",
+        "title",
+        "when",
+        "changed"
+      ],
       "additionalProperties": false
     },
     "schedule/power.notification": {

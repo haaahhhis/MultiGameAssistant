@@ -10,10 +10,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-/** `delayMs`: wait this long before answering (a model that takes its time). */
+/**
+ * `delayMs`: wait this long before answering (a model that takes its time).
+ * `error`: answer with this HTTP status and an OpenAI-style error body instead (a 402 for no balance).
+ */
 export type FakeReply = (
   | { readonly text: string }
   | { readonly toolCalls: readonly { readonly name: string; readonly arguments: Readonly<Record<string, unknown>> }[] }
+  | { readonly error: { readonly status: number; readonly message: string; readonly code?: string } }
 ) & { readonly delayMs?: number }
 
 export interface FakeLlmOptions {
@@ -74,6 +78,11 @@ export async function startFakeLlm(options: FakeLlmOptions = {}): Promise<FakeLl
     requests.push(body)
     const reply = options.respond?.(body) ?? ((options.scripted?.(body) ?? true) ? queue.shift() ?? fallback : fallback)
     if (reply.delayMs !== undefined) await new Promise(resolve => setTimeout(resolve, reply.delayMs))
+    if ('error' in reply) {
+      res.writeHead(reply.error.status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: reply.error.message, type: 'invalid_request_error', code: reply.error.code ?? null } }))
+      return
+    }
     const id = `chatcmpl-fake-${++sequence}`
     const model = typeof body['model'] === 'string' ? body['model'] : models[0]!
     const toolCalls = 'toolCalls' in reply

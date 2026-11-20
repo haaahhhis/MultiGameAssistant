@@ -5,6 +5,7 @@ import { useStore } from '../../hooks.ts'
 import { ProvidersSection } from '../providers/ProvidersPage.tsx'
 import { confirm } from '../../components/Dialog.tsx'
 import { AgentModelsCard } from './AgentModels.tsx'
+import { FallbackModelsCard } from './FallbackModels.tsx'
 
 const SOURCE_LABEL: Record<string, string> = {
   file: 'dsh 凭据文件',
@@ -34,6 +35,7 @@ export function ApiKeysPage({ client }: { client: AdgClient }) {
         agent 用哪个模型、接哪些模型服务都在这里。改了立即生效：agent 的对话从下一句起换过去，子 agent 在新开时用上。只想换一个对话的模型，在它输入框旁边换就行，不会改这里的设置。
       </p>
       <AgentModelsCard client={client} />
+      {capabilities.has('agent-models') && <FallbackModelsCard client={client} />}
       {capabilities.has('providers') && <ProvidersSection client={client} />}
     </div>
   )

@@ -35,6 +35,7 @@
     "e2e:permissions": "node scripts/e2e-permissions.mjs",
     "e2e:questions": "node scripts/e2e-questions.mjs",
     "e2e:steer": "node scripts/e2e-steer.mjs",
+    "e2e:fallback": "node scripts/e2e-fallback.mjs",
     "e2e:agents": "node scripts/e2e-agents.mjs",
     "e2e:browser": "node scripts/e2e-browser.mjs",
     "package:desktop": "node scripts/package-desktop.mjs",

@@ -150,6 +150,19 @@ export const ModelSelection = z.object({
 export type ModelSelection = z.infer<typeof ModelSelection>
 
 /**
+ * 备用模型: when a model fails with an error another model would not have
+ * (余额不足, Key 无效, the model gone, the service down after its retries), the
+ * agent goes on with the next model of its list, and its conversation shows a
+ * card saying so. `agents`: every agent's own conversations (助手 and the role
+ * agents); `subAgents`: every sub-agent. Tried in order, after the one that failed.
+ */
+export const ModelFallbacks = z.object({
+  agents: z.array(ModelSelection),
+  subAgents: z.array(ModelSelection),
+})
+export type ModelFallbacks = z.infer<typeof ModelFallbacks>
+
+/**
  * Which model each agent works with (设置 → 模型). Each layer follows the one
  * above until it is set: an agent's own conversations the default model (助手's
  * own); its sub-agents `subAgentsOf`, then `subAgents`, then whatever the
@@ -162,6 +175,8 @@ export const AgentModels = z.object({
   subAgents: ModelSelection.nullable(),
   /** One agent's sub-agents, by agent id (`main`: 助手's). */
   subAgentsOf: z.record(z.string(), ModelSelection),
+  /** The fallback lists; absent from a gateway that has none. */
+  fallbacks: ModelFallbacks.optional(),
 })
 export type AgentModels = z.infer<typeof AgentModels>
 
@@ -574,6 +589,12 @@ export const Requests = {
     capability: 'agent-models',
     params: z.object({ agentId: z.string().optional(), sub: z.boolean().optional(), model: ModelSelection.nullable() }),
     result: z.object({ warning: z.string().optional() }),
+  },
+  /** Set one fallback list (ModelFallbacks): the agents' (`sub` false) or the sub-agents'. Empty: no fallback. */
+  'models/setFallbacks': {
+    capability: 'agent-models',
+    params: z.object({ sub: z.boolean(), models: z.array(ModelSelection) }),
+    result: Empty,
   },
   'models/catalog': {
     capability: 'models',

@@ -61,6 +61,7 @@ import { remindersOf, type ScheduleService } from './reminders.ts'
 import { LastReplies } from './last-reply.ts'
 import { handsOn, HANDS_ON_REFUSAL, hiddenTools, SessionRoles, subAgentSpec, teamPrompt, type RoleSpec } from './roles.ts'
 import { AgentModels, type AgentModelTarget } from './agent-models.ts'
+import { ModelFallback, type FallbackAgent } from './model-fallback.ts'
 import { Peer } from './peer.ts'
 import { pickPath } from './pick.ts'
 import { Permissions, PRESET } from './permissions.ts'
@@ -332,6 +333,10 @@ export class AdgGateway extends Service {
   readonly roles: SessionRoles
   /** Which model each agent and its sub-agents use (agent-models.ts). */
   readonly agentModels: AgentModels
+  /** For 备用模型 (model-fallback.ts), the model catalog as last read: services and their models by id, with their names; undefined: not read yet. */
+  private catalogNames: Map<string, { readonly name: string; readonly models: ReadonlyMap<string, string> }> | undefined
+  private catalogReadAt = 0
+  private catalogReading = false
   /** Choosing a session's model runs one at a time: each puts the default back as it found it (selectSessionModel). */
   private modelChoices: Promise<unknown> = Promise.resolve()
   /** Each agent's one conversation, and the work they hand each other (homes.ts). */
@@ -683,6 +688,13 @@ export class AdgGateway extends Service {
           if (sub !== true && agentId !== undefined) void this.refreshHomes([agentId])
           return model === null ? {} : await this.visionWarning(model, target)
         },
+        'models/setFallbacks': async params => {
+          const { sub, models } = params as RequestParams<'models/setFallbacks'>
+          await this.agentModels.setFallbacks(sub, models)
+          this.broadcast('models/agentModelsChanged', this.agentModels.state())
+          this.readCatalog(true)
+          return {}
+        },
       },
     }), 'adg-gateway capability agent-models')
 
@@ -933,6 +945,34 @@ export class AdgGateway extends Service {
       ]
       return () => { for (const off of offs) off() }
     })
+
+    // 备用模型 (model-fallback.ts): a model that fails for want of balance, a Key, the model itself, goes on with the next of its list.
+    const fallback = new ModelFallback({
+      list: sub => this.agentModels.fallbacksOf(sub),
+      route: selection => this.routeNames(selection),
+      lost: sessionId => this.taken.lost(sessionId),
+      isOwn: sessionId => this.isOwn(sessionId),
+      log,
+    })
+    this.agentPart('adg-gateway model fallback', scope => {
+      const offs = [
+        scope.on('agent/request' as never, ((payload: { agent?: FallbackAgent }, next: () => unknown) => {
+          if (payload.agent !== undefined) {
+            fallback.requested(payload.agent.session.id)
+            this.readCatalog(false)
+          }
+          return next()
+        }) as never, true),
+        scope.on('session/event' as never, ((session: { id: string }, event: { type?: unknown; data?: unknown }) => { fallback.logged(session.id, event) }) as never),
+        scope.on('agent/error' as never, (({ agent, error }: { agent: FallbackAgent; error: unknown }) => { fallback.failed(agent, error) }) as never),
+        scope.on('agent/status' as never, (({ agent, status }: { agent: FallbackAgent; status: unknown }) => { if (status === 'idle') fallback.idle(agent) }) as never),
+        scope.on('agent/disposed' as never, (({ agent }: { agent: FallbackAgent }) => { fallback.forget(agent.session.id) }) as never),
+      ]
+      return () => { for (const off of offs) off() }
+    })
+    // The services' and models' names the card shows, and which models can be used now.
+    ctx.on('llm/adapters-updated' as never, (() => this.readCatalog(true)) as never)
+    void this.agentModels.loaded.then(() => this.readCatalog(true))
 
     // The reply style (persona@1): one system-prompt section, read at every assembly, so a change applies from the next turn.
     if (config.dataDir !== undefined) {
@@ -1517,6 +1557,30 @@ Content-Length: 0
   agentModel(agentId: string): ModelSelection | undefined {
     if (agentId === MAIN_AGENT.id || this.roles.spec(agentId) === undefined) return undefined
     return this.agentModels.of(agentId)
+  }
+
+  /**
+   * Read the model catalog again for the fallback card's names and which
+   * fallback models can be used; `force` false: at most once a minute. Never throws.
+   */
+  private readCatalog(force: boolean): void {
+    if (this.catalogReading || (!force && Date.now() - this.catalogReadAt < 60_000)) return
+    this.catalogReading = true
+    this.catalogReadAt = Date.now()
+    void this.ctx.sessionController.modelCatalog()
+      .then(catalog => {
+        this.catalogNames = new Map(catalog.groups.map(g => [g.id, { name: g.name, models: new Map(g.models.map(m => [m.id, m.name])) }]))
+      })
+      .catch(error => this.log.warn(`reading the model catalog for the fallback models: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => { this.catalogReading = false })
+  }
+
+  /** A model's service and model names; undefined: the catalog was read and has no such model now. */
+  private routeNames(selection: { provider: string; model: string }): { providerName: string; modelName: string } | undefined {
+    if (this.catalogNames === undefined) return { providerName: selection.provider, modelName: selection.model }
+    const group = this.catalogNames.get(selection.provider)
+    const model = group?.models.get(selection.model)
+    return group === undefined || model === undefined ? undefined : { providerName: group.name, modelName: model }
   }
 
   /** The model an agent's sub-agents are given: theirs, else every sub-agent's; undefined: whatever the agent is using. */

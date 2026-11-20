@@ -158,3 +158,21 @@ test('chat: a screenshot a tool took inside a program shows on that run_code ste
   assert.ok(tool?.kind === 'tool')
   assert.deepEqual(tool.images?.map(i => i.attachmentId), ['sha256:aa'])
 })
+
+test('a fallback switch shows as one card: it takes the place of the failed turn\'s error and dsh\'s own switch line', () => {
+  const notice = {
+    from: { provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-chat', modelName: 'DeepSeek V4' },
+    to: { provider: 'kimi', providerName: 'Kimi', model: 'kimi-k2', modelName: 'Kimi K2' },
+    reason: '余额或额度不足', error: 'Insufficient Balance', code: 'QUOTA',
+  }
+  const items = buildChat([
+    { type: 'user/message', seq: 1, time: 1, messageId: 'u1', content: [{ type: 'text', text: '查一下' }], origin: human },
+    { type: 'turn/end', seq: 2, time: 2, turn: 1, reason: { kind: 'error', message: 'Insufficient Balance' } },
+    { type: 'user/message', seq: 3, time: 3, messageId: 'u2', content: [{ type: 'text', text: '（软件通知：…）' }], origin: { kind: 'adg-model-fallback', human: false, summary: '换了', fallback: notice } },
+    { type: 'user/message', seq: 4, time: 3, messageId: 'u3', content: [{ type: 'text', text: '[model changed]' }], origin: { kind: 'model-selection', human: false, summary: 'deepseek/deepseek-chat → kimi/kimi-k2' } },
+    { type: 'assistant/message', seq: 5, time: 4, turn: 2, step: 1, messageId: 'a1', content: [{ type: 'text', text: '查完了' }], timing: { tokenChunks: 0 } },
+  ], null)
+  assert.deepEqual(items.map(i => i.kind), ['user', 'fallback', 'assistant'])
+  const card = items[1]
+  assert.ok(card?.kind === 'fallback' && card.notice.to.modelName === 'Kimi K2')
+})

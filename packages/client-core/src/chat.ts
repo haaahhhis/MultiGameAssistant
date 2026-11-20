@@ -2,7 +2,7 @@
  * Chat view model: the transcript a conversation UI renders, derived purely
  * from protocol events, the streaming attempt, and local prompt echoes.
  */
-import { reminderLine, reminderPrompts, type ContentPart, type QueuedPrompt, type SessionEvent } from '@adg/protocol'
+import { MODEL_FALLBACK_SOURCE, reminderLine, reminderPrompts, type ContentPart, type ModelFallbackNotice, type QueuedPrompt, type SessionEvent } from '@adg/protocol'
 import type { LiveAttemptView } from '@adg/trajectory'
 import type { PendingPrompt } from './session.ts'
 
@@ -65,6 +65,8 @@ export type ChatItem =
     readonly time: number
   }
   | { readonly kind: 'notice'; readonly id: string; readonly tone: 'error' | 'info'; readonly text: string }
+  /** The model failed and the agent went on with a fallback model (备用模型): which, and why. */
+  | { readonly kind: 'fallback'; readonly id: string; readonly notice: ModelFallbackNotice; readonly time: number }
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 type ToolItem = Mutable<Extract<ChatItem, { kind: 'tool' }>>
@@ -80,10 +82,18 @@ const imagesOf = (content: readonly ContentPart[]): ChatImage[] =>
 const resultText = (content: readonly ContentPart[]): string =>
   content.map(p => (p.type === 'text' ? p.text : p.type === 'image' ? '[image]' : p.type === 'file' ? `[file ${p.name ?? ''}]` : '')).join('')
 
+/** dsh's own line when a session's model changes ("a → b"): the fallback card already says so. */
+const MODEL_SWITCH = 'model-selection'
+
 /** dsh's tool that runs a program calling tools (the ptc preset sub-agents start under). */
 const PROGRAM_TOOL = 'run_code'
 /** The source of the message dsh adds after a program run with the images its tools returned. */
 const PROGRAM_IMAGES = 'ptc-mode'
+
+/** dsh's own model-switch line, as a context item. */
+function isSwitchLine(item: ChatItem | undefined): boolean {
+  return item?.kind === 'context' && item.title === MODEL_SWITCH
+}
 
 /**
  * Build the transcript.
@@ -118,6 +128,14 @@ export function buildChat(
             imageRefs: imagesOf(event.content),
             files: event.content.filter(p => p.type === 'file').length,
           })
+        } else if (event.origin.kind === MODEL_FALLBACK_SOURCE && event.origin.fallback !== undefined) {
+          // The failed turn's error is told on the card: it replaces the error line, and dsh's own switch line next to it.
+          if (isSwitchLine(items.at(-1))) items.pop()
+          const last = items.at(-1)
+          if (last?.kind === 'notice' && last.tone === 'error') items.pop()
+          items.push({ kind: 'fallback', id: `f:${event.seq}`, notice: event.origin.fallback, time: event.time })
+        } else if (event.origin.kind === MODEL_SWITCH && items.at(-1)?.kind === 'fallback') {
+          // dsh's own line for the same switch.
         } else if (reminderPrompts(text) !== undefined) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: '定时提醒', summary: reminderLine(reminderPrompts(text)!), text, startsTurn: true })
         } else if (event.replacesHistory === true) {

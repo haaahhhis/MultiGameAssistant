@@ -225,7 +225,7 @@ function atDetail(rows: readonly Row[], level: ChatDetail): readonly Row[] {
     else if (row.kind === 'item' && row.item.kind === 'user') {
       carried = null
       shown.push(row)
-    } else if (carried !== null && row.header === null && !(row.kind === 'item' && (row.item.kind === 'notice' || row.item.kind === 'context'))) {
+    } else if (carried !== null && row.header === null && !(row.kind === 'item' && (row.item.kind === 'notice' || row.item.kind === 'context' || row.item.kind === 'fallback'))) {
       shown.push({ ...row, header: carried })
       carried = null
     } else shown.push(row)
@@ -290,7 +290,7 @@ function turnRows(turn: readonly ChatItem[], rows: Row[]): void {
   }
   for (let i = 0; i < reply; i++) {
     const item = turn[i]!
-    if (item.kind === 'notice' || item.kind === 'context' || (item.kind === 'tool' && (item.approval === 'asked' || item.name === DELEGATE_TOOL || item.name === SUBAGENT_TOOL))) {
+    if (item.kind === 'notice' || item.kind === 'context' || item.kind === 'fallback' || (item.kind === 'tool' && (item.approval === 'asked' || item.name === DELEGATE_TOOL || item.name === SUBAGENT_TOOL))) {
       fold()
       plain(item)
     } else steps.push(item)
@@ -410,8 +410,40 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       )
     case 'notice':
       return <div className={`notice ${item.tone}`}>{item.tone === 'error' && <Icon name="alert" />}{item.text}</div>
+    case 'fallback':
+      return <FallbackCard item={item} />
   }
 })
+
+/**
+ * The model failed and the agent went on with a fallback model (备用模型,
+ * 设置 → 模型): from which service's model to which, and why. The agent reads
+ * the same in its conversation.
+ */
+function FallbackCard({ item }: { item: Extract<ChatItem, { kind: 'fallback' }> }) {
+  const { from, to, reason, error, code, sub } = item.notice
+  const route = (r: typeof from) => <><span className="fallback-provider">{r.providerName}</span><span className="fallback-model">{r.modelName}</span></>
+  return (
+    <div className="fallback-card" role="status">
+      <div className="fallback-head">
+        <Icon name="swap" />
+        <strong>{sub === true ? '子 agent 已切换到备用模型' : '已切换到备用模型'}</strong>
+        <span className="fallback-reason">{reason}</span>
+      </div>
+      <div className="fallback-routes">
+        <span className="fallback-route from">{route(from)}</span>
+        <Icon name="arrow" className="fallback-arrow" />
+        <span className="fallback-route to">{route(to)}</span>
+      </div>
+      <details className="fallback-error">
+        <summary>报错原文</summary>
+        <pre>{error.trim() === '' ? code : `${error}
+（${code}）`}</pre>
+      </details>
+      <div className="fallback-foot muted small">这个对话接下来用 {to.modelName}，可以在输入框旁的模型选择里换回来；备用顺序在 设置 → 模型 里改。</div>
+    </div>
+  )
+}
 
 /**
  * The steps a turn took before its reply, folded to one line: how many, how

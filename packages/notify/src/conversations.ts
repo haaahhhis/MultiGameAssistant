@@ -241,7 +241,8 @@ export class TurnReply {
  * the end of its turn, or, when that turn opened sub-agents, the end of the
  * turns they wake once the agent is done (`settled`). The reply is all of it,
  * so its last words are what the agent concluded. A message from someone else
- * taking a turn in between is that turn's, not this work's.
+ * taking a turn in between is that turn's, not this work's. A turn whose
+ * model failed and was switched to a fallback model goes on in the next turn.
  */
 export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }, settled: (() => Promise<void>) | undefined): Promise<Reply> {
   let mine = false
@@ -250,10 +251,14 @@ export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, req
   let cut = false
   const turns: Reply[] = []
   let reply = new TurnReply()
+  /** The event before was a model switch: the gateway's 备用模型 records it just before the failed turn's end (model-fallback.ts). */
+  let switched = false
   const take = (frame: SessionFollowFrame): boolean => {
     if (frame.type !== 'event') return false
     const event = convertRecord(frame)
     if (event === null) return false
+    const afterSwitch = switched
+    switched = event.type === 'unknown' && event.upstreamType === 'model/selection'
     if (event.type === 'user/message') {
       const body = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
       if (event.requestId === requestId || (event.requestId === undefined && !mine && body.trim() === text.trim())) mine = turn.started = true
@@ -265,6 +270,12 @@ export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, req
       return false
     }
     if (event.type === 'tool/call' && SUB_AGENT_TOOLS.has(event.name)) opened = true
+    if (event.type === 'turn/end' && event.reason.kind === 'error' && afterSwitch) {
+      // The model failed and the agent goes on with a fallback model: the turn the card opens is this work's too.
+      turns.push(reply.reply)
+      reply = new TurnReply()
+      return false
+    }
     if (event.type === 'turn/end' && event.reason.kind !== 'completed' && event.reason.kind !== 'stop') cut = true
     if (!reply.add(event)) return false
     turns.push(reply.reply)

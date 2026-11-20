@@ -730,6 +730,20 @@ a.task-card.pipeline-line .muted { flex: 1; min-width: 0; overflow: hidden; text
 .notice .ui-icon { width: 16px; height: 16px; margin-top: 2px; }
 .notice.error { background: color-mix(in srgb, var(--error) 8%, transparent); border: 1px solid color-mix(in srgb, var(--error) 24%, transparent); color: var(--error); }
 .notice.info { color: var(--muted); justify-content: center; text-align: center; }
+/* the model failed and the agent went on with a fallback model (FallbackCard) */
+.fallback-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warn) 34%, var(--border)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--warn) 7%, var(--raised)); font-size: 13px; animation: rise .2s var(--ease) both; }
+.fallback-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fallback-head > .ui-icon { width: 16px; height: 16px; color: var(--warn); flex: none; }
+.fallback-reason { font-size: 11.5px; line-height: 20px; padding: 0 8px; border-radius: 999px; color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.fallback-routes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.fallback-route { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; padding: 3px 9px; border-radius: var(--r-md); background: var(--hover); overflow-wrap: anywhere; }
+.fallback-route.from .fallback-model { text-decoration: line-through; color: var(--muted); }
+.fallback-route.to .fallback-model { font-weight: 600; }
+.fallback-provider { font-size: 11.5px; color: var(--text-2); }
+.fallback-arrow { width: 14px; height: 14px; color: var(--muted); flex: none; transform: rotate(90deg); }
+.fallback-error { font-size: 12px; color: var(--muted); }
+.fallback-error summary { cursor: pointer; width: fit-content; }
+.fallback-error pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .thinking { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 10px; }
 /* after a new multi-step job: offer to keep the way as a skill (SkillOffer) */
 .skill-offer { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--accent) 6%, var(--raised)); animation: rise .2s var(--ease) both; }
@@ -1909,6 +1923,22 @@ button.attach-button:hover:not(:disabled) { color: var(--text); background: var(
 .area-choice button.active.deny { color: var(--error); }
 /* 设置 → 模型: each agent's model and its sub-agents' (plugins/settings/AgentModels.tsx); stacked as the card narrows. */
 .agent-models { display: flex; flex-direction: column; container-type: inline-size; }
+/* 设置 → 模型 → 备用模型 (FallbackModels.tsx) */
+.fallback-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+.fallback-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fallback-list > * { flex: none; }
+.fallback-list-head { display: flex; flex-direction: column; gap: 2px; }
+.fallback-list-head strong { font-size: 13.5px; }
+.fallback-list ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fallback-list li { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 10px; border: 1px solid var(--border); border-radius: var(--r-md); min-width: 0; }
+.fallback-list li.missing .fallback-name > span:first-child { color: var(--muted); text-decoration: line-through; }
+.fallback-order { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; width: 14px; text-align: center; }
+.fallback-name { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.fallback-actions { display: flex; gap: 2px; flex: none; }
+.fallback-actions .icon-button { width: 28px; height: 28px; border-color: transparent; }
+.fallback-actions .icon-button.down .ui-icon { transform: rotate(180deg); }
+.fallback-list .select-trigger { margin: 0; }
+.fallback-empty { padding: 4px 0; }
 .agent-models-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 210px) minmax(0, 210px); gap: 8px 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--border); }
 .agent-models-row.head { border-top: none; padding: 0 0 6px; font-size: 12px; color: var(--muted); }
 .agent-models-row.all { border-top: none; padding-top: 4px; padding-bottom: 14px; }
