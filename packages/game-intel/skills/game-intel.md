@@ -12,14 +12,15 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 1. `game_activities` 看日历。某个游戏的 refreshed 超过半天，先 `game_sites_refresh` 再看。
 2. 照日历回答：活动名、还剩几天、商店开到什么时候、还没做完的事。有 `mismatch` 的说明以数据站为准。`todo` / `done` 可能是 agent 在游戏里读到的，也可能是用户自己在「游戏 → 全部活动」里勾的；`finished_by_user` 表示用户说这个活动做完了，不要再提醒它。
    用户想看更多游戏（原神、绝区零、鸣潮等没有游戏包的）：告诉他在「游戏 → 全部活动 → 更多游戏」里勾上，活动来自 SRA 公共 API，每天自动刷新。
-3. 游戏包里没有可直接读的数据站（`game_list` 里 auto 都是 false）：按技能 web-reading 的顺序查（先公开 API，如 SRA 公共 API，再 Wiki 接口，最后官网公告页），找到活动名和起止时间后 `game_record`（source=site，带上 `url`）。
+3. 游戏包里没有可直接读的数据站（`game_list` 里 auto 都是 false）：按技能 web-reading 的顺序查（先公开 API，如 SRA 公共 API，再 Wiki 接口，最后官网公告页），找到活动名和起止时间后 `game_record`（source=site，带上 `url`，有配图把图片地址写进 `cover`）。
 
 ## 公告和版本更新（单机游戏主要看这个）
 
 不是限时活动的消息记在游戏的「公告」里：版本更新、补丁说明、长期有效的公告、其他资讯。`game_activities` 每个游戏带着最近的 `notices`（`single_player` 为 true 的是单机游戏）。
 
 - 用户问「XX 最近更新了什么」「最新版本是多少」：先看 `notices`；没有或太旧，先 `game_sites_refresh`（有 Steam 来源的游戏，插件每天自己读它在 Steam 的官方公告），再按技能 web-reading 上网查。
-- 自己读到的公告用 `game_notice` 记下：版本更新 kind=update（写上版本号、发布日期、一两句改了什么、网址），长期有效的 kind=notice 加 lasting=true（会一直排在最前面，过时了用 lasting=false 收回），其他 kind=news。同一个网址再记就是更新原来那条。
+- `notices` 里只有一两句摘要。用户要细节（具体改了哪些卡、平衡调整、修复了什么）：按技能 web-reading 读那一篇的全文（Steam 用 `enddate` 取单篇，或读中文 RSS），按小标题把要点讲全，附上网址。
+- 自己读到的公告用 `game_notice` 记下：版本更新 kind=update（写上版本号、发布日期、一两句改了什么、网址、配图地址 `cover`），长期有效的 kind=notice 加 lasting=true（会一直排在最前面，过时了用 lasting=false 收回），其他 kind=news。同一个网址再记就是更新原来那条。
 - 单机游戏（买断制、没有限时活动）一般不用 `game_record`；真有限时的事（限时折扣、联动、节日活动）才记成活动。
 
 ## 进游戏读进度
@@ -40,7 +41,7 @@ description: 游戏活动信息：查有什么活动、还剩几天、商店换�
 用户说「帮我加一个活动」「把 XX 改成 …结束」「给这个活动换张图」时用 `game_activity_save`，不要用 `game_record`（那是记读到的）：
 
 - 新加：写 `game`、`name`，有时间就写 `starts_at` / `ends_at`（游戏服务器时间）。改已有的：先 `game_activities` 找到 `id`，只写要改的字段。
-- 图片 `image`：用户给的图片网址、本机图片文件路径，或 `screenshot`（这个对话最近一张截图，比如刚用 `screen_capture` 截的活动页）。
+- 图片 `image`：用户给的图片网址、本机图片文件路径，或 `screenshot`（这个对话最近一张截图，比如刚用 `screen_capture` 截的活动页；内置浏览器的截图不算）。用户让你「找张图」：按技能 web-reading 从公告、Wiki 或 Steam 取图片地址。
 - 活动图片分三级：用户设的 > 数据站和网页给的 > agent 的截图。`screenshot` 算 agent 的截图，有别的图时不显示；用户想让截图显示，用 `use_source`=screen。
 - 一个活动有多个来源时（`game_activities` 的 `sources`），用户说「用 PRTS 的时间」就写 `use_source`（来源 id、own、screen，或 default 恢复默认顺序）：图片和时间都跟着换。
 - 用户填的内容比数据站优先，刷新不会改掉。要恢复成来源的：`clear` 列出字段，或 `game_activity_remove`（what=mine）。用户要删掉才用 `game_activity_remove`（what=all）。
