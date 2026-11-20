@@ -33,9 +33,10 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
    - **Steam**（Steam 上的游戏，单机游戏首选；免费、不用 key）。`appid` 是商店页 `store.steampowered.com/app/<数字>` 里的数字。
      - 公告列表（很短，用来挑）：`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=10&maxlength=1&feeds=steam_community_announcements&format=json`
        `appnews.newsitems[]`：`title`、`url`、`date`（Unix 秒）、`tags`（含 `patchnotes` 的是补丁说明）。`feeds=steam_community_announcements` 只要官方公告。
-     - 某一篇的全文：同一个地址把 `count=1&maxlength=1` 换成 `count=1&enddate={那一篇的 date}`。`contents` 是完整的 BBCode：`[h2]`/`[b]` 是小标题，`[list][*]` 是条目；图片是 `[img]{STEAM_CLAN_IMAGE}/…[/img]`（把占位符换成 `https://clan.akamai.steamstatic.com/images`）或 `[img src="https://…"]`，视频是 `[previewyoutube=…]`。
+     - 某一篇的全文：`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=1&enddate={那一篇的 date}&feeds=steam_community_announcements&format=json`（不加 `maxlength`）。`contents` 是完整的 BBCode：`[h2]`/`[b]` 是小标题，`[list][*]` 是条目；图片是 `[img]{STEAM_CLAN_IMAGE}/…[/img]`（把占位符换成 `https://clan.akamai.steamstatic.com/images`）或 `[img src="https://…"]`，视频是 `[previewyoutube=…]`。
      - 官方中文版：`https://store.steampowered.com/feeds/news/app/{appid}/?l=schinese`（RSS，最近 10 篇的全文，常有十万字，要中文或在 `run_code` 程序里处理时再用）。开发者写了中文的公告这里是中文：`<item>` 里 `title`、`link`（商店新闻页的正式网址）、`pubDate`、`description`（完整正文 HTML，`<img src="https://clan.fastly.steamstatic.com/images/…">` 是真地址），`<enclosure url="…">` 是这篇的封面图。
      - 游戏本身的资料和图：`https://store.steampowered.com/api/appdetails?appids={appid}&l=schinese&cc=cn&filters=basic` → 中文名 `name`、简介 `short_description`、横幅图 `header_image`、官网 `website`；`filters=screenshots` 是截图（`path_full`），`filters=release_date` 是发售日期。
+     - 公告网址用接口给的 `url` 或 RSS 的 `link`。不要用 `gid` 自己拼 `store.steampowered.com/news/app/{appid}/view/…`：商店新闻页的编号和 `gid` 不一样，拼出来的页面一直显示 LOADING。
      游戏包里写了 `steam: { appid: … }` 来源的，插件每天自己读公告，不用你再读列表。
 3. **Wiki 的查询接口**：PRTS、B 站游戏 WIKI 都是 MediaWiki，用 `api.php` 拿结构化结果，比读页面省得多：
    - 按属性查（Semantic MediaWiki）：`https://prts.wiki/api.php?action=ask&format=json&query=[[分类:有活动信息的页面]]|?活动开始时间|?活动结束时间|limit=50`
@@ -53,7 +54,7 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
 
 ## 读全、读准
 
-- 每篇公告要的：标题原文、发布时间（哪个时区）、版本号、正文要点、网址、配图地址。
+- 每篇公告要的：标题原文、发布时间（哪个时区）、版本号、正文要点、网址、配图地址。网址和图片地址只写读到的，不要自己拼。
 - 补丁说明和版本公告很长：按它的小标题（新内容、平衡调整、修复、活动、奖励、兑换码、维护时间）归纳，每类写最要紧的几条，不要只看第一段。
 - 挑配图：优先公告的封面（RSS 的 `enclosure`、列表页缩略图、正文第一张大图），游戏本身用 `header_image`。不要图标、表情、头像、二维码、分享按钮、`.svg` 和 1×1 小图；地址必须是 `https://` 开头的完整地址。
 - 时间写清楚是哪个时区；网页上的「10月25日 03:59」按游戏服务器时间理解（`game_list` 里的 `timezone`），Steam 的 `date` 是 Unix 秒。
