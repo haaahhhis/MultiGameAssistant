@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type GameNotice, type MirrorSearchItem, type Pipeline, type PipelineSummary } from '@adg/protocol'
+import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type GameNotice, type MirrorSearchItem, type Pipeline, type PipelineSummary, type RequestParams } from '@adg/protocol'
 import { Icon } from '../../components/Icons.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
+import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
+import { pickPath } from '../../pickPath.ts'
 import { errorText } from '../scripts/data.ts'
+import { IMAGE_TYPES, readImage } from './ActivityEditor.tsx'
 import { useFirstImage, useRemoteImage } from './images.ts'
 import { ProgressPill, progressOf } from './Overview.tsx'
 
@@ -134,7 +137,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
       {/* A screenshot is an event's background, not the version's art. */}
       <VersionHero client={client} game={game} now={now} update={latestUpdate}
-        covers={[latestUpdate?.cover, ...running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)]} />
+        covers={[latestUpdate?.cover, ...running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)]} onChanged={onChanged} />
       <div className="game-columns">
         <div className="game-main">
           {game.sources.length === 0 && (
@@ -229,17 +232,18 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
  * at the foot of the picture, and under it the version's span as a track — how
  * far through it is, and the time left at its end.
  */
-function VersionHero({ client, game, now, update, covers }: { client: AdgClient; game: GameInfo; now: number; update: GameNotice | undefined; covers: readonly (string | undefined)[] }) {
+function VersionHero({ client, game, now, update, covers, onChanged }: { client: AdgClient; game: GameInfo; now: number; update: GameNotice | undefined; covers: readonly (string | undefined)[]; onChanged: () => void }) {
   const v = game.version
-  // The version's art when it loads; else the pack's own picture; else an event's cover.
-  const art = useFirstImage(client, [v?.cover, game.art, ...covers])
+  // The picture the user chose; else the version's art when it loads; else the pack's own picture; else an event's cover.
+  const art = useFirstImage(client, [game.banner, v?.cover, game.art, ...covers])
   const span = v?.startsAt !== undefined && v.endsAt !== undefined ? v.endsAt - v.startsAt : undefined
   const through = span === undefined || span <= 0 ? undefined : Math.min(1, Math.max(0, (now - v!.startsAt!) / span))
   const day = (at: number) => new Date(at).toLocaleDateString('zh-CN', { timeZone: game.timezone, month: 'numeric', day: 'numeric' })
   return (
-    <section className={`version-hero ${art === undefined ? 'no-art' : ''}`}>
-      {art !== undefined && <img className="version-art" src={art} alt="" />}
+    <section className={`version-hero ${art === undefined ? 'no-art' : ''} ${game.banner !== undefined ? 'custom' : ''}`}>
+      {art !== undefined && <img key={game.banner ?? 'default'} className="version-art" src={art} alt="" />}
       <div className="version-shade" />
+      <BannerPicker client={client} game={game} onChanged={onChanged} />
       <div className="version-caption">
         <span className="version-kicker">{game.name}{v !== undefined ? <> · <b>{v.name}</b> 版本</> : update?.version !== undefined ? <> · 最新 <b>{update.version}</b></> : ''}</span>
         <h2>{v?.title ?? game.name}</h2>
@@ -272,6 +276,47 @@ function VersionHero({ client, game, now, update, covers }: { client: AdgClient;
         )}
       </div>
     </section>
+  )
+}
+
+/**
+ * 「换背景」 in the banner's corner: a picture of the user's own for this game's
+ * banner (the desktop app's file dialog, else the page's), kept by the host;
+ * 「恢复默认」 shows the version's art again.
+ */
+function BannerPicker({ client, game, onChanged }: { client: AdgClient; game: GameInfo; onChanged: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const set = async (choice: () => Promise<Omit<RequestParams<'games/banner/set'>, 'game'> | null>) => {
+    setError(null)
+    try {
+      const params = await choice()
+      if (params === null) return
+      setBusy(true)
+      await client.connection.call('games/banner/set', { game: game.id, ...params })
+      onChanged()
+    } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  }
+  const choose = () => {
+    if (desktop() === undefined) { fileRef.current?.click(); return }
+    void set(async () => {
+      const path = await pickPath(client, { kind: 'file', title: '选择横幅背景图片', filterName: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] })
+      return path === null ? null : { path }
+    })
+  }
+  return (
+    <div className={`version-tools ${error !== null ? 'has-error' : ''}`}>
+      {error !== null && <span className="version-tools-error" role="alert" title={error}>{error}</span>}
+      {game.banner !== undefined && (
+        <button className="version-tool" disabled={busy} title="不用自己的图片，换回版本的图" onClick={() => void set(async () => ({}))}>恢复默认</button>
+      )}
+      <button className="version-tool" disabled={busy} title="选一张本地图片作为这个游戏横幅的背景" onClick={choose}>
+        <Icon name="image" />{busy ? '保存中…' : '换背景'}
+      </button>
+      <input ref={fileRef} type="file" accept={IMAGE_TYPES.join(',')} hidden
+        onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file !== undefined) void set(async () => ({ image: (await readImage(file)).image })) }} />
+    </div>
   )
 }
 

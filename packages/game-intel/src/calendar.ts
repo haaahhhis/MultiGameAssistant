@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
-import { GameNotice, GamesSettings, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
+import { GameNotice, GamesSettings, OWN_IMAGE, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
 import type { SitePool, SiteEvent, SiteVersion } from './sources.ts'
@@ -144,7 +144,9 @@ const StoredSchema = z.object({
     followed: z.array(z.string()).default([]),
     /** Game packs taken off the game page (the pack stays installed). */
     hidden: z.array(z.string()).default([]),
-  }).default({ report: {}, followed: [], hidden: [] }),
+    /** The picture the user chose for a game's banner (`own:<file>`), by game. */
+    banners: z.record(z.string(), z.string()).default({}),
+  }).default({ report: {}, followed: [], hidden: [], banners: {} }),
   /** Pages the user added to a game (games/source/add), by game. */
   links: z.record(z.string(), z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), at: z.number() }))).default({}),
   /** Announcements (version updates, long-term notices, news), by game. */
@@ -155,7 +157,7 @@ type Saved = z.infer<typeof StoredSchema>
 export class Calendar {
   readonly #dir: string
   #items: Stored[] = []
-  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [], hidden: [] }, versions: {}, pools: {}, links: {}, notices: {} }
+  #saved: Omit<Saved, 'activities'> = { refreshed: {}, readings: {}, report: {}, settings: { report: {}, followed: [], hidden: [], banners: {} }, versions: {}, pools: {}, links: {}, notices: {} }
 
   constructor(dir: string) {
     this.#dir = dir
@@ -277,6 +279,20 @@ export class Calendar {
     await this.save()
   }
 
+  /** The picture the user chose for a game's banner (`own:<file>`); undefined: the version's art. */
+  banner(gameId: string): string | undefined {
+    const image = this.#saved.settings.banners[gameId]
+    return image !== undefined && OWN_IMAGE.test(image) ? image : undefined
+  }
+
+  /** Show the user's picture on a game's banner (`own:<file>`), or the version's art again (undefined). */
+  async setBanner(gameId: string, image: string | undefined): Promise<void> {
+    if (image !== undefined && !OWN_IMAGE.test(image)) throw new Error(`不是用户添加的图片：${image}`)
+    const { [gameId]: _, ...rest } = this.#saved.settings.banners
+    this.#saved.settings.banners = image === undefined ? rest : { ...rest, [gameId]: image }
+    await this.save()
+  }
+
   /** Forget everything about a game (one made here that is deleted): its events, readings, version, pools and pages. */
   async forget(gameId: string): Promise<void> {
     this.#items = this.#items.filter(a => a.game !== gameId)
@@ -287,6 +303,7 @@ export class Calendar {
     delete this.#saved.links[gameId]
     delete this.#saved.notices[gameId]
     this.#saved.settings.hidden = this.#saved.settings.hidden.filter(id => id !== gameId)
+    delete this.#saved.settings.banners[gameId]
     await this.save()
   }
 
@@ -594,9 +611,9 @@ export class Calendar {
     await this.save()
   }
 
-  /** The pictures the user added that an event still shows (`own:<file>`). */
+  /** The pictures the user added that an event or a game's banner still shows (`own:<file>`). */
   ownImages(): Set<string> {
-    const out = new Set<string>()
+    const out = new Set<string>(Object.values(this.#saved.settings.banners).filter(b => OWN_IMAGE.test(b)))
     for (const a of this.#items) if (a.mine?.cover?.startsWith('own:') === true) out.add(a.mine.cover)
     return out
   }

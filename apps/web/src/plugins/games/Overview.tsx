@@ -207,7 +207,8 @@ function GameTile({ client, game, color, covers, now, running, soon, shown, onOp
   onToggle: () => void
 }) {
   const v = game.version
-  const art = useFirstImage(client, [v?.cover, game.art, ...covers])
+  // The picture the user chose for the game's banner leads here too.
+  const art = useFirstImage(client, [game.banner, v?.cover, game.art, ...covers])
   const ends = v?.endsAt !== undefined && v.endsAt > now ? ` · 还剩 ${leftText(v.endsAt, now)}` : ''
   return (
     <article className={`game-tile ${art === undefined ? 'no-art' : ''} ${shown ? '' : 'off'}`} style={{ '--game': color } as CSSProperties}>

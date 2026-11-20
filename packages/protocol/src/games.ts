@@ -151,6 +151,8 @@ export const GameInfo = z.object({
   builtin: z.boolean(),
   /** The game pack's own picture (https; fetch it with `games/image`). */
   art: z.string().optional(),
+  /** The picture the user chose for the banner across the game's page (`own:…`, fetch it with `games/image`); none: the version's art. */
+  banner: z.string().optional(),
   /** Followed from the SRA public API without a Game Pack (no scripts, no screen reading): can be unfollowed. */
   followed: z.boolean().optional(),
   /** The SRA public API's ids its sources read (to match it with the 技能库's packs for the game). */
@@ -378,6 +380,21 @@ export const GamesRequests = {
    * (kept by the host, it becomes `cover`). A new one needs a `name`; one
    * with the same name already in the calendar is that one.
    */
+  /**
+   * The picture across the top of a game's page: one the user picked (`image`,
+   * its bytes; or `path`, a file on the host's computer from a file dialog),
+   * kept under the host's data folder; neither: the version's art again.
+   */
+  'games/banner/set': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({
+      game: z.string().min(1),
+      image: ActivityImage.optional(),
+      path: z.string().trim().min(1).max(1000).optional(),
+    }).refine(p => p.image === undefined || p.path === undefined, '图片和路径只能给一个'),
+    /** No `banner`: back to the version's art. */
+    result: z.object({ banner: z.string().optional() }),
+  },
   'games/activity/save': {
     capability: GAMES_CAPABILITY,
     params: z.object({

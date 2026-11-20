@@ -504,6 +504,9 @@
     "games/activity/progress": {
       "capability": "games"
     },
+    "games/banner/set": {
+      "capability": "games"
+    },
     "games/activity/save": {
       "capability": "games"
     },
@@ -20862,6 +20865,9 @@
               "art": {
                 "type": "string"
               },
+              "banner": {
+                "type": "string"
+              },
               "followed": {
                 "type": "boolean"
               },
@@ -22249,6 +22255,61 @@
         "todo",
         "done"
       ],
+      "additionalProperties": false
+    },
+    "games/banner/set.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "mediaType": {
+              "type": "string",
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp",
+                "image/avif"
+              ]
+            },
+            "data": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 11200000,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "required": [
+            "mediaType",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "game"
+      ],
+      "additionalProperties": false
+    },
+    "games/banner/set.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "banner": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
     },
     "games/activity/save.params": {

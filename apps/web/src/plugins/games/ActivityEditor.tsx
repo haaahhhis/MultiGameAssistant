@@ -5,7 +5,7 @@ import { Icon } from '../../components/Icons.tsx'
 import { errorText } from '../scripts/data.ts'
 import { useRemoteImage } from './images.ts'
 
-const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const
+export const IMAGE_TYPES = ['image/png','image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 /** The zone's offset from UTC at `at`, in ms. */
@@ -34,7 +34,8 @@ function fromInput(value: string, timeZone: string): number | undefined {
   return guess - zoneOffset(guess - zoneOffset(guess, timeZone), timeZone)
 }
 
-function readImage(file: File): Promise<{ image: ActivityImage; src: string }> {
+/** A picked picture file as the host takes it (`ActivityImage`), and a data: URL to show it now. */
+export function readImage(file: File): Promise<{ image: ActivityImage; src: string }> {
   return new Promise((resolve, reject) => {
     if (!(IMAGE_TYPES as readonly string[]).includes(file.type)) { reject(new Error('只支持 png、jpg、gif、webp、avif 图片')); return }
     if (file.size > MAX_IMAGE_BYTES) { reject(new Error('图片太大（最多 8 MB）')); return }

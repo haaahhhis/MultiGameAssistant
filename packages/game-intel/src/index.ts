@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
@@ -266,6 +266,13 @@ export class AdgGameIntel extends Service {
             await this.ready
             return this.picture((params as RequestParams<'games/image'>).url)
           },
+          'games/banner/set': async params => {
+            await this.ready
+            const p = params as RequestParams<'games/banner/set'>
+            const image = p.image !== undefined ? Buffer.from(p.image.data, 'base64') : p.path !== undefined ? await this.imageFile(p.path) : undefined
+            const banner = await this.setBanner(p.game, image)
+            return banner === undefined ? {} : { banner }
+          },
           'games/source/add': async params => {
             await this.ready
             const p = params as RequestParams<'games/source/add'>
@@ -451,6 +458,30 @@ export class AdgGameIntel extends Service {
     this.changed(manifest.id)
     if (activity === undefined) throw new Error('什么都没留下：这个活动只有你填的内容，清空后就从日历去掉了')
     return activity
+  }
+
+  /**
+   * The picture the user picked for a game's banner, kept under
+   * `<data>/games/images/own/`; undefined: the version's art again (the old
+   * picture is let go). @returns its address (`own:<hash>.<ext>`).
+   */
+  async setBanner(gameId: string, image: Buffer | undefined): Promise<string | undefined> {
+    const { manifest } = this.game(gameId)
+    const banner = image === undefined ? undefined : await this.keepImage(image)
+    await this.calendar.setBanner(manifest.id, banner)
+    await this.sweepImages()
+    this.changed(manifest.id)
+    return banner
+  }
+
+  /** A picture file the user picked in a file dialog on this computer. @throws Error when it is not one, or too big. */
+  private async imageFile(path: string): Promise<Buffer> {
+    const full = path.replace(/^"|"$/g, '')
+    if (!isAbsolute(full)) throw new Error('图片路径要是完整路径')
+    const info = await stat(full).catch(() => undefined)
+    if (info === undefined || !info.isFile()) throw new Error(`找不到图片文件：${full}`)
+    if (info.size > MAX_IMAGE_BYTES) throw new Error('图片太大（最多 8 MB）')
+    return readFile(full)
   }
 
   private timezone(game: string): string {
@@ -674,12 +705,14 @@ export class AdgGameIntel extends Service {
       const webReading = this.calendar.reading(`${m.id}#web`)
       const version = this.calendar.version(m.id)
       const pools = this.calendar.pools(m.id, this.clock.now())
+      const banner = this.calendar.banner(m.id)
       return {
         id: m.id, name: m.name, aliases: m.aliases, scripts: scripts.get(m.id) ?? m.scripts, timezone: m.timezone,
         ...(m.screen === undefined ? {} : { screen: { target: m.screen.target, ...(m.screen.window === undefined ? {} : { window: m.screen.window }) } }),
         sources: m.sources.map(s => ({ id: s.id, name: s.name, ...(s.homepage === undefined ? {} : { homepage: s.homepage }), auto: s.smw !== undefined || s.sra !== undefined || s.steam !== undefined, ...(/^link-\d+$/.test(s.id) && this.calendar.links(m.id).some(l => l.id === s.id) ? { added: true } : {}) })),
         builtin,
         ...(m.art === undefined ? {} : { art: m.art }),
+        ...(banner === undefined ? {} : { banner }),
         ...(followed === true ? { followed: true } : {}),
         ...(sra.length === 0 ? {} : { sra }),
         ...(own === true ? { own: true } : {}),

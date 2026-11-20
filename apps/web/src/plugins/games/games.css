@@ -58,6 +58,20 @@
 .version-now { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--game) 70%, transparent); }
 .version-remaining { flex: none; color: rgb(255 255 255 / .85); }
 .version-remaining strong { margin-left: 2px; font-size: 16px; color: #fff; }
+/* 「换背景」: in the banner's top corner, shown on hover or keyboard focus (always on touch screens, and while there is an error). */
+.version-tools { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 24px); opacity: 0; transition: opacity .15s var(--ease); }
+.version-hero:hover .version-tools, .version-tools:focus-within, .version-tools.has-error { opacity: 1; }
+@media (hover: none) { .version-tools { opacity: 1; } }
+.version-tool { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px; border: 1px solid rgb(255 255 255 / .22); border-radius: 999px; background: rgb(8 8 12 / .55); color: #fff; font: inherit; font-size: 12.5px; cursor: pointer; backdrop-filter: blur(6px); }
+.version-tool:hover:not(:disabled) { background: rgb(8 8 12 / .75); border-color: rgb(255 255 255 / .4); }
+.version-tool:focus-visible { outline: 2px solid color-mix(in srgb, var(--game) 60%, #fff); outline-offset: 2px; }
+.version-tool:disabled { opacity: .6; cursor: default; }
+.version-tool svg { width: 14px; height: 14px; }
+.version-tools-error { min-width: 0; padding: 4px 10px; border-radius: 999px; background: rgb(120 20 20 / .8); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The user's own picture: centred, and a little more shade so the name and the track stay readable on any picture. */
+.version-hero.custom .version-art { object-position: 50% 50%; }
+.version-hero.custom .version-shade { background: linear-gradient(0deg, rgb(8 8 12 / .9), rgb(8 8 12 / .6) 38%, transparent 76%), linear-gradient(90deg, rgb(8 8 12 / .55), transparent 60%), linear-gradient(180deg, rgb(8 8 12 / .3), transparent 30%); }
+.version-hero.custom .version-kicker, .version-hero.custom .version-strip { text-shadow: 0 1px 6px rgb(0 0 0 / .6); }
 
 /* 我的状态: two headline figures, then one bar for how the running events stand */
 .status-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
