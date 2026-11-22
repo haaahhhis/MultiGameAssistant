@@ -1,21 +1,13 @@
 import type { ChatItem } from '@adg/client-core'
+import { Icon } from '../../components/Icons.tsx'
 import './ReportStatus.css'
 
-type Tone = 'running' | 'waiting' | 'ok' | 'failed' | 'neutral'
-
-/** A short, accessible counterpart to the step details in the full transcript. */
-export function ReportStatus({ label, status, tone = 'running', onOpen, href }: {
-  label: string
-  status?: string | undefined
-  tone?: Tone
-  onOpen?: (() => void) | undefined
-  href?: string | undefined
-}) {
-  const words = <><span className="report-action">{label}</span>{status && <small aria-live="polite">{status}</small>}</>
+/** The current activity in either view. Child tasks have their own openable control. */
+export function ReportStatus({ label, tone = 'running' }: { label: string; tone?: 'running' | 'waiting' }) {
   return (
-    <div className="report-status" data-tone={tone}>
-      <span className="report-agent-mark" aria-hidden="true" />
-      {href ? <a href={href}>{words}</a> : onOpen ? <button type="button" onClick={onOpen}>{words}</button> : <span>{words}</span>}
+    <div className={`thinking tone-${tone}`} role="status">
+      {tone === 'waiting' ? <Icon name="clock" /> : <span className="dot-pulse" aria-hidden><i /><i /><i /></span>}
+      {label}
     </div>
   )
 }

@@ -33,6 +33,7 @@ export type ChatItem =
   }
   | {
     readonly kind: 'context'
+    readonly childId?: string
     readonly id: string
     readonly title: string
     readonly summary: string
@@ -113,13 +114,33 @@ export function buildChat(
   /** The latest program run (run_code): images its tools took come after it. */
   let program: ToolItem | undefined
   const committed = new Set<string>()
+  const dispatched = new Set<string>()
+  const addDispatch = (childId: string, summary: string) => {
+    if (dispatched.has(childId)) return
+    dispatched.add(childId)
+    items.push({ kind: 'context', id: 'dispatch:' + childId, childId, title: 'adg-task-dispatched', summary, text: '' })
+  }
   /** callId → approval state ('asked' or the decided outcome). */
   const approvals = new Map<string, string>()
   const approvalCalls = new Map<string, string>()
 
   for (const event of events) {
     switch (event.type) {
+      case 'unknown': {
+        if (event.upstreamType !== 'agent/inbox/spliced') break
+        const splice = event.data as { inserted?: { source?: { kind?: string; summary?: string; childId?: string } }[] } | null
+        if (!Array.isArray(splice?.inserted)) break
+        for (const entry of splice.inserted) {
+          const source = entry?.source
+          if (source?.kind === 'adg-task-dispatched' && typeof source.childId === 'string' && source.childId && typeof source.summary === 'string') addDispatch(source.childId, source.summary)
+        }
+        break
+      }
       case 'user/message': {
+        if (event.origin.kind === 'adg-task-dispatched' && event.origin.childId && event.origin.summary !== undefined) {
+          addDispatch(event.origin.childId, event.origin.summary)
+          break
+        }
         const text = joinText(event.content, 'text')
         if (event.origin.human) {
           items.push({

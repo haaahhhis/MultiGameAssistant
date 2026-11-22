@@ -1025,6 +1025,9 @@
                     "code"
                   ],
                   "additionalProperties": false
+                },
+                "childId": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -3302,6 +3305,9 @@
                           "code"
                         ],
                         "additionalProperties": false
+                      },
+                      "childId": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -4782,6 +4788,9 @@
                           "code"
                         ],
                         "additionalProperties": false
+                      },
+                      "childId": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -26583,6 +26592,9 @@
                         "code"
                       ],
                       "additionalProperties": false
+                    },
+                    "childId": {
+                      "type": "string"
                     }
                   },
                   "required": [

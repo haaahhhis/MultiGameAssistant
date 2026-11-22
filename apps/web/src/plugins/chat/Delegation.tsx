@@ -6,7 +6,6 @@ import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
-import { ReportStatus } from './ReportStatus.tsx'
 import { OpenSubTask, SubAgentPane, SubTaskTracker, ThreadSubTasks, useThreadSubAgents, type OpenTask } from './SubTasks.tsx'
 
 /**
@@ -49,7 +48,7 @@ function useAgent(client: AdgClient, nameOrId: string): Agent | undefined {
 type State = { label: string; tone: string }
 const STATE: Readonly<Record<HandOff['state'], State>> = {
   running: { label: '进行中', tone: 'running' },
-  waiting: { label: '等回答', tone: 'running' },
+  waiting: { label: '等待答复', tone: 'waiting' },
   done: { label: '交回了', tone: 'ok' },
   failed: { label: '没做成', tone: 'failed' },
 }
@@ -71,19 +70,14 @@ function ExchangeLine({ from, to, avatar, title, state, href }: { from: string; 
 }
 
 /** Work this agent handed on (agent_delegate), in its conversation: one line; what was said is a click away. */
-export function DelegationCard({ client, item, handOffs, compact = false }: { compact?: boolean; client: AdgClient; item: Extract<ChatItem, { kind: 'tool' }>; handOffs: readonly HandOff[] }) {
+export function DelegationCard({ client, item, handOffs }: { client: AdgClient; item: Extract<ChatItem, { kind: 'tool' }>; handOffs: readonly HandOff[] }) {
   const { agent: name, task } = useMemo(() => argsOf(item.arguments), [item.arguments])
   const agent = useAgent(client, name)
   const self = useContext(ConversationAgent)
   const handOff = handOffs.find(h => h.callId === item.callId)
   const refused = item.status === 'error' || item.status === 'interrupted'
-  const state = refused ? STATE.failed : handOff === undefined ? (item.status === 'running' ? STATE.running : undefined) : STATE[handOff.state]
-  if (compact) {
-    const waiting = handOff?.state === 'waiting' && !refused
-    const status = waiting ? '等待答复' : !handOff && item.status === 'running' ? '正在派发' : state?.label ?? '已派发'
-    const tone = waiting ? 'waiting' : state?.tone === 'failed' ? 'failed' : state?.tone === 'running' ? 'running' : 'neutral'
-    return <ReportStatus label={handOff?.title || task.split('\n')[0] || '委派任务'} status={`${agent?.name ?? name} · ${status}`} tone={tone} href={handOff && exchangeHref(handOff)} />
-  }
+  const dispatch = item.status === 'running' ? { label: '正在派发', tone: 'running' } : { label: '已派发', tone: 'ok' }
+  const state = refused ? STATE.failed : handOff ? STATE[handOff.state] : dispatch
   return (
     <div className="delegation">
       <ExchangeLine from={self} to={agent?.name ?? name} avatar={agent} title={handOff?.title ?? task.split('\n')[0] ?? ''} state={state}

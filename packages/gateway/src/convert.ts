@@ -192,6 +192,7 @@ export function convertEvent(event: WireEvent): SessionEvent {
           kind,
           human: HUMAN_SOURCES.has(kind),
           ...opt('summary', source.form === 'notice' ? str(source.summary) : undefined),
+          ...opt('childId', kind === 'adg-task-dispatched' ? str(source.childId) : undefined),
           ...opt('fallback', kind === MODEL_FALLBACK_SOURCE ? fallbackOf(source.fallback) : undefined),
         },
         ...opt('requestId', str(source.rpcId)),
