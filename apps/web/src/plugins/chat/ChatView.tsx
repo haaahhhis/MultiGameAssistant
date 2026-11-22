@@ -13,6 +13,8 @@ import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
+import { ReportStatus, reportToolActivity } from './ReportStatus.tsx'
+import { ReportSubTask } from './SubTasks.tsx'
 import { SkillOffer } from './SkillOffer.tsx'
 import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
 import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentIds, subAgentIds, SubAgentOf, SubAgentPane, SubTaskCard, SubTaskTracker, SUBAGENT_TOOL, taskLabels, taskWords, useChatDetail, useSubAgents, type ChatDetail, type OpenTask } from './SubTasks.tsx'
@@ -51,7 +53,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
   // Since dsh 0.2.2 the conversation names its sub-agents (agent-1); their ids are in dsh's catalog of them.
   const childIds = useMemo(() => subAgentIds(state.events), [state.events])
-  const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
+  const settled = useMemo(() => settledTasks(built, childIds, state.events), [built, childIds, state.events])
   const labels = useMemo(() => taskLabels(built, childIds), [built, childIds])
   const subAgents = useSubAgents(client, session.id)
   const roles = useRoles(client)
@@ -90,10 +92,26 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // A conversation with a sidebar lists its sub-tasks there and opens them there (SidePanels.tsx).
   const side = useContext(SideBar)
   const tracker = ready && subAgentOf === null && side === null ? <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} /> : null
-  const showDetail = ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1)
+  const showDetail = ready && subAgentOf === null && (state.running || subAgents.length > 0 || allRows.some(row => layerOf(row) > 1) || items.some(i => i.kind === 'assistant' && i.reasoning.trim() !== ''))
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
   const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && (h.state === 'running' || h.state === 'waiting'))
+  const report = level === 1
+  const lastStart = state.events.findLast(e => e.type === 'turn/start')
+  const activeTool = report && state.running ? items.findLast((i): i is ToolItem =>
+    i.kind === 'tool' && i.status === 'running' && i.time >= (lastStart?.time ?? 0)) : undefined
+  const haveTask = subAgents.some(s => s.running) || handOffs.some(h => h.state === 'running' || h.state === 'waiting')
+  const replying = items.at(-1)
+  const received = report && state.running && state.events.some(e =>
+    e.type === 'user/message' && e.origin.kind === 'subagent-settled' && e.seq > (lastStart?.seq ?? 0))
+  let progress: string | undefined
+  if (report && state.running) {
+    if (activeTool) {
+      if (activeTool.name !== SUBAGENT_TOOL && activeTool.name !== DELEGATE_TOOL) progress = reportToolActivity(activeTool)
+    } else if (!haveTask && !(replying?.kind === 'assistant' && replying.live && replying.text.trim())) {
+      progress = received ? '正在汇总子任务结果' : '正在处理请求'
+    }
+  }
   const scroller = useRef<HTMLDivElement>(null)
   const tail = useFollowTail(STICK_THRESHOLD)
   const stick = tail.following
@@ -154,14 +172,18 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
           : row.kind === 'tools'
           ? <Turn key={row.id} name={agentName} header={row.header}><ToolGroup tools={row.tools} /></Turn>
           : row.kind === 'delegation'
-            ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} compact={report} /></Turn>
           : row.kind === 'subtask'
-            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} /></Turn>
+            ? <Turn key={row.item.id} name={agentName} header={row.header}>{report ? <ReportSubTask client={client} work={row.item} /> : <SubTaskCard client={client} item={row.item} />}</Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
-            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
+            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} showReasoning={!report} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
         {ready && appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
-        {ready && state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
+        {ready && report && activeTool?.name !== SUBAGENT_TOOL && subAgents.filter(s => s.running && !labels.has(s.id)).map(s =>
+          <ReportSubTask key={s.id} client={client} work={{ id: s.id, label: s.title || '子任务' }} />)}
+        {ready && report && !state.running && state.queue.length > 0 && <ReportStatus label={`${state.queue.length} 条消息排队中`} tone="waiting" />}
+        {ready && progress && <div role="status"><ReportStatus label={progress} tone={activeTool?.approval === 'asked' || activeTool?.name === 'ask_user_question' ? 'waiting' : 'running'} /></div>}
+        {ready && !report && state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
         {ready && readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
@@ -221,7 +243,8 @@ function atDetail(rows: readonly Row[], level: ChatDetail): readonly Row[] {
   let carried: TurnHeader | null = null
   for (const row of rows) {
     if (row.kind === 'sent') shown.push(row)
-    else if (layerOf(row) > 1) carried = row.header ?? carried
+    else if ((layerOf(row) > 1 && row.kind !== 'subtask' && row.kind !== 'delegation') ||
+      (row.kind === 'item' && row.item.kind === 'assistant' && !row.item.text.trim() && !row.item.interrupted)) carried = row.header ?? carried
     else if (row.kind === 'item' && row.item.kind === 'user') {
       carried = null
       shown.push(row)
@@ -335,7 +358,7 @@ function personText(text: string): { text: string; channel?: string } {
   return channel === null ? { text: rest } : { text: rest, channel: channel[1]! }
 }
 
-const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
+const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }: { item: ChatItem; showReasoning?: boolean; onDismiss: (requestId: string) => void }) {
   const client = useContext(ImageClient)
   const handOffs = useContext(HandOffsOf)
   const subAgentOf = useContext(SubAgentOf)
@@ -387,7 +410,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       if (!item.live && isQuiet(item.text)) return <div className="quiet-reply"><Icon name="check" />看过了，没有要告诉你的</div>
       return (
         <div className={`msg assistant ${item.live ? 'live' : ''}`}>
-          {item.reasoning.trim() !== '' && (
+          {showReasoning && item.reasoning.trim() !== '' && (
             <details className="reasoning" open={item.live && item.text === ''}>
               <summary><Icon name="chevron" />{item.live && item.text === '' ? <span className="shimmer">正在思考…</span> : '思考过程'}</summary>
               <Markdown text={item.reasoning} />
@@ -402,6 +425,7 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
     case 'tool':
       return <ToolGroup tools={[item]} />
     case 'context':
+      if (!showReasoning && client && 'childId' in item && typeof item.childId === 'string') return <ReportSubTask client={client} work={{ id: item.childId, label: item.summary }} />
       return (
         <details className="context-row">
           <summary><Icon name="info" />{item.summary !== '' ? item.summary : item.title}</summary>

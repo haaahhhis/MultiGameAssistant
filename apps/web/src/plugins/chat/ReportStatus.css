@@ -1,0 +1,48 @@
+.report-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 6px 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.report-status > :last-child {
+  display: inline;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.report-status button, .report-status a {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+.report-status :is(button, a):hover .report-action { text-decoration: underline; }
+.report-status small { margin-inline-start: 7px; color: var(--muted); font-size: 12px; }
+.report-agent-mark {
+  display: inline-flex;
+  flex: 0 0 19px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 55% 55% 48% 48%;
+  background: #139e64;
+}
+.report-agent-mark::before, .report-agent-mark::after {
+  content: '';
+  width: 3px;
+  height: 6px;
+  border-radius: 3px;
+  background: white;
+  transform: rotate(9deg);
+}
+.report-status[data-tone="waiting"] .report-agent-mark { background: var(--warn); }
+.report-status[data-tone="failed"] .report-agent-mark { background: var(--error); }
+.report-status:is([data-tone="ok"], [data-tone="neutral"]) .report-agent-mark { background: var(--muted); }

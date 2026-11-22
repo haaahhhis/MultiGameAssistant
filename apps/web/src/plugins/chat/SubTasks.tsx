@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { summarizeToolArgs, type SessionEvent, type SessionItem } from '@adg/protocol'
 import { useLastReplies } from '../../agents.ts'
+import { ReportStatus, reportToolActivity } from './ReportStatus.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -61,13 +62,24 @@ export function taskWords(text: string): string {
 const SETTLED = /^Background subagent (\S+) (finished|was stopped)?/
 
 /** How the sub-agents of a conversation ended, from the notices it was sent; those are not drawn, the card says it. */
-export function settledTasks(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, TaskState> {
+export function settledTasks(items: readonly ChatItem[], ids: ReadonlyMap<string, string>, events: readonly SessionEvent[] = []): ReadonlyMap<string, TaskState> {
   const ended = new Map<string, TaskState>()
   for (const item of items) {
     if (!isSettlement(item)) continue
     const match = SETTLED.exec(item.summary)
     if (match === null) continue
     ended.set(childId(match[1], ids)!, match[2] === 'finished' ? DONE : match[2] === 'was stopped' ? STOPPED : FAILED)
+  }
+  // Native settlements can already be in the inbox while the parent's next turn is queued.
+  for (const event of events) {
+    if (event.type !== 'unknown' || event.upstreamType !== 'agent/inbox/spliced') continue
+    const data = event.data as { inserted?: { source?: { kind?: string; senderSessionId?: string; stopReason?: string } }[] } | null
+    for (const entry of data?.inserted ?? []) {
+      const source = entry.source
+      if (source?.kind !== 'subagent-settled' || !source.senderSessionId || !source.stopReason) continue
+      const state = source.stopReason === 'completed' ? DONE : ['aborted', 'interrupted'].includes(source.stopReason) ? STOPPED : FAILED
+      ended.set(source.senderSessionId, { ...state, at: event.time })
+    }
   }
   return ended
 }
@@ -89,6 +101,31 @@ export interface OpenTask {
   readonly label: string
 }
 
+/** Compact lifecycle of a native child in the report, including while its parent is idle. */
+export function ReportSubTask({ client, work }: { client: AdgClient; work: ToolItem | OpenTask }) {
+  const ids = useContext(SubAgentIds)
+  const settled = useContext(SettledTasks)
+  const open = useContext(OpenSubTask)
+  const call = 'kind' in work ? work : undefined
+  const named = call && STARTED.exec(call.result ?? '')?.[1]
+  const id = 'kind' in work ? childId(named, ids) : work.id
+  const args = call && argsOf(call.arguments)
+  const label = 'label' in work ? work.label : args?.description || args?.prompt.split('\n')[0] || '子任务'
+  const child = useChild(client, id)
+  const approval = useStore(client.approvals).some(r => r.sessionId === id)
+  const question = useStore(client.questions).some(r => r.sessionId === id)
+  const end = id && settled.get(id)
+  const show = id ? () => open({ id, label }) : undefined
+  if (call?.status === 'error') return <ReportStatus label={label} status="派发失败" tone="failed" onOpen={show} />
+  if (call?.status === 'interrupted') return <ReportStatus label={label} status="派发已中断" tone="neutral" onOpen={show} />
+  if (end && (!child?.running || (end.at !== undefined && child.updatedAt <= end.at))) {
+    return <ReportStatus label={label} status={end.tone === 'ok' ? '子任务已完成' : end.label} tone={end.label === FAILED.label ? 'failed' : 'neutral'} onOpen={show} />
+  }
+  if (approval || question) return <ReportStatus label={label} status={approval ? '等待你批准操作' : '等待你回答问题'} tone="waiting" onOpen={show} />
+  if (child?.running) return <Steps client={client} id={child.id} running report={{ label, open: () => open({ id: child.id, label }) }} />
+  return <ReportStatus label={label} status={id || call?.status === 'ok' ? '已派发' : '正在派发子任务'} onOpen={show} />
+}
+
 function argsOf(json: string): { description: string; prompt: string } {
   try {
     const a = JSON.parse(json) as { description?: unknown; prompt?: unknown }
@@ -102,21 +139,30 @@ function useChild(client: AdgClient, id: string | undefined): SessionItem | unde
   return useStore(client.sessions).items.find(i => i.id === id) as SessionItem | undefined
 }
 
-export type TaskState = { label: string; tone: string }
+export type TaskState = { label: string; tone: string; at?: number }
 const RUNNING: TaskState = { label: '进行中', tone: 'running' }
 const DONE: TaskState = { label: '完成', tone: 'ok' }
 const STOPPED: TaskState = { label: '已停止', tone: 'failed' }
 const FAILED: TaskState = { label: '没做成', tone: 'failed' }
 
 /** A sub-task's steps, read from its own conversation, only while on screen. */
-function Steps({ client, id, running }: { client: AdgClient; id: string; running: boolean }) {
+interface StepReport { label: string; open: () => void }
+
+function Steps({ client, id, running, report }: { client: AdgClient; id: string; running: boolean; report?: StepReport }) {
   const handle = useSessionHandle(client, id)
-  return handle === null ? <div className="subtask-steps muted small">正在打开…</div> : <OpenSteps handle={handle} running={running} />
+  if (handle) return <OpenSteps handle={handle} running={running} report={report} />
+  return report ? <ReportStatus label={report.label} status="子任务执行中" onOpen={report.open} /> : <div className="subtask-steps muted small">正在打开…</div>
 }
 
-function OpenSteps({ handle, running }: { handle: NonNullable<ReturnType<typeof useSessionHandle>>; running: boolean }) {
+function OpenSteps({ handle, running, report }: { handle: NonNullable<ReturnType<typeof useSessionHandle>>; running: boolean; report?: StepReport | undefined }) {
   const state = useStore(handle.state)
   const tools = useMemo(() => buildChat(state.events, state.live, state.pending).filter((i): i is ToolItem => i.kind === 'tool'), [state.events, state.live, state.pending, state.version])
+  if (report) {
+    const start = state.events.findLast(e => e.type === 'turn/start')
+    const active = tools.findLast(t => t.status === 'running' && t.time >= (start?.time ?? 0))
+    const action = active && reportToolActivity(active)
+    return <ReportStatus label={report.label} status={action && action !== report.label ? action : '子任务执行中'} onOpen={report.open} />
+  }
   if (tools.length === 0) return <div className="subtask-steps muted small">{running ? '正在开始…' : '没有用工具'}</div>
   // While it works, where it has got to; the rest is in the whole conversation.
   const shown = running ? tools.slice(-4) : tools
@@ -253,6 +299,7 @@ export function DetailSwitch({ detail, onChange }: { detail: ChatDetail; onChang
 export function taskLabels(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, string> {
   const labels = new Map<string, string>()
   for (const item of items) {
+    if (item.kind === 'context' && 'childId' in item && typeof item.childId === 'string') labels.set(item.childId, item.summary)
     if (item.kind !== 'tool' || item.name !== SUBAGENT_TOOL) continue
     const id = childId(STARTED.exec(item.result ?? '')?.[1], ids)
     if (id === undefined) continue
