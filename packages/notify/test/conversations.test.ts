@@ -1,47 +1,23 @@
-import { strict as assert } from 'node:assert'
+import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sessionConversations } from '../src/conversations.ts'
 
-/** A session controller that only creates sessions: what it was asked, in order. */
-function fakeSessions(lastUsed: { provider: string; model: string } | undefined) {
-  const calls: string[] = []
-  let n = 0
-  const sessions = {
-    list: async () => ({ items: lastUsed === undefined ? [] : [{ sessionId: 'old', updatedAt: 1, projections: { values: { title: '今天跑什么', modelSelection: { lastUsed } } } }] }),
-    create: async () => { calls.push('create'); return { sessionId: `s${++n}` } },
-    rename: async ({ title }: { title: string }) => { calls.push(`rename ${title}`); return { title } },
-    selectModel: async (p: { model: string }) => { calls.push(`model ${p.model}`); return {} },
-    follow: () => { throw new Error('not used') },
-    prompt: async () => { throw new Error('not used') },
-    projections: async () => null,
+test('each app instruction runs in a native child of the stable role home with its own focus', async () => {
+  const calls: string[][] = []
+  const gateway = {
+    home: async (role: string) => role + '-home',
+    handOffs: { put: async () => {}, all: () => [] },
+    runChild: async (owner: string, id: string, title: string, instruction: string) => {
+      calls.push([owner, id, title, instruction])
+      return '完成'
+    },
   }
-  return { sessions: sessions as never, calls }
-}
-
-const gateway = (agentModel: { provider: string; model: string } | undefined, tagged: string[]) => () => ({
-  sessionPreset: () => ({}),
-  adopt: async () => {},
-  tagSession: async (sessionId: string, role: string, by?: string) => { tagged.push(by === undefined ? `${sessionId}:${role}` : `${sessionId}:${role}:${by}`) },
-  agentModel: (agentId: string) => agentId === 'intervene' ? agentModel : undefined,
-  home: async () => 'unused',
-  handOffs: { put: async () => {} },
-})
-
-test("a role agent's session is put under its role and gets that agent's model", async () => {
-  const { sessions, calls } = fakeSessions({ provider: 'deepseek', model: 'deepseek-pro' })
-  const tagged: string[] = []
-  const conversations = sessionConversations(sessions, () => undefined, undefined, gateway({ provider: 'deepseek', model: 'deepseek-flash' }, tagged))
-  await conversations.create('干预：MAA 出错', { defaultModel: true, role: 'intervene', by: '监控' })
-  assert.deepEqual(tagged, ['s1:intervene:监控'], 'with who asked for it')
-  assert.deepEqual(calls, ['create', 'rename 干预：MAA 出错', 'model deepseek-flash'])
-})
-
-test('with no model set for the agent, sessions keep the model they always got', async () => {
-  const { sessions, calls } = fakeSessions({ provider: 'deepseek', model: 'deepseek-pro' })
-  const conversations = sessionConversations(sessions, () => undefined, undefined, gateway(undefined, []))
-  await conversations.create('干预：MAA 出错', { defaultModel: true, role: 'intervene' })
-  assert.deepEqual(calls, ['create', 'rename 干预：MAA 出错'], 'an intervention: the default model, as before')
-  calls.length = 0
-  await conversations.create('飞书：张三')
-  assert.deepEqual(calls, ['create', 'rename 飞书：张三', 'model deepseek-pro'], 'the main agent: the model last used in the app')
+  const focused: string[] = []
+  const conversations = sessionConversations({} as never, undefined, async id => focused.push(id), () => gateway)
+  const a = await conversations.prepareTask('games', '查活动', { games: ['a'] })
+  const b = await conversations.prepareTask('games', '查公告', { games: ['b'] })
+  assert.deepEqual(focused, [a.id, b.id])
+  assert.notEqual(a.id, b.id)
+  await b.run('读官网', new AbortController().signal)
+  assert.deepEqual(calls, [['games-home', b.id, '查公告', '读官网']])
 })

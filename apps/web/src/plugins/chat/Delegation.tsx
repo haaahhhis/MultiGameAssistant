@@ -48,7 +48,7 @@ function useAgent(client: AdgClient, nameOrId: string): Agent | undefined {
 type State = { label: string; tone: string }
 const STATE: Readonly<Record<HandOff['state'], State>> = {
   running: { label: '进行中', tone: 'running' },
-  waiting: { label: '等回答', tone: 'running' },
+  waiting: { label: '等待答复', tone: 'waiting' },
   done: { label: '交回了', tone: 'ok' },
   failed: { label: '没做成', tone: 'failed' },
 }
@@ -70,13 +70,23 @@ function ExchangeLine({ from, to, avatar, title, state, href }: { from: string; 
 }
 
 /** Work this agent handed on (agent_delegate), in its conversation: one line; what was said is a click away. */
+function handOffState(handOff: HandOff): State {
+  if (handOff.state === 'failed' && handOff.endedAt !== undefined) {
+    const late = handOff.messages?.filter(m => m.at > handOff.endedAt!)
+    if (late?.some(m => m.kind === 'done')) return { label: '已补交结论', tone: 'ok' }
+    if (late?.length) return { label: '结束后有新消息', tone: 'asked' }
+  }
+  return STATE[handOff.state]
+}
+
 export function DelegationCard({ client, item, handOffs }: { client: AdgClient; item: Extract<ChatItem, { kind: 'tool' }>; handOffs: readonly HandOff[] }) {
   const { agent: name, task } = useMemo(() => argsOf(item.arguments), [item.arguments])
   const agent = useAgent(client, name)
   const self = useContext(ConversationAgent)
   const handOff = handOffs.find(h => h.callId === item.callId)
   const refused = item.status === 'error' || item.status === 'interrupted'
-  const state = refused ? STATE.failed : handOff === undefined ? (item.status === 'running' ? STATE.running : undefined) : STATE[handOff.state]
+  const dispatch = item.status === 'running' ? { label: '正在派发', tone: 'running' } : { label: '已派发', tone: 'ok' }
+  const state = refused ? STATE.failed : handOff ? handOffState(handOff) : dispatch
   return (
     <div className="delegation">
       <ExchangeLine from={self} to={agent?.name ?? name} avatar={agent} title={handOff?.title ?? task.split('\n')[0] ?? ''} state={state}
@@ -91,7 +101,7 @@ export function HandOffStrip({ client, handOff }: { client: AdgClient; handOff: 
   const agent = useAgent(client, handOff.to)
   return (
     <div className="delegation app-handoff">
-      <ExchangeLine from={handOff.by} to={agent?.name ?? handOff.to} avatar={agent} title={handOff.title} state={STATE[handOff.state]} href={exchangeHref(handOff)} />
+      <ExchangeLine from={handOff.by} to={agent?.name ?? handOff.to} avatar={agent} title={handOff.title} state={handOffState(handOff)} href={exchangeHref(handOff)} />
     </div>
   )
 }
@@ -143,7 +153,7 @@ export function TaskMessage({ client, note, handOffs }: { client: AdgClient; not
   if (handOff !== undefined) {
     return (
       <div className="delegation task-line">
-        <ExchangeLine from={note.by} to={to?.name ?? handOff.to} avatar={from} title={note.title} state={STATE[handOff.state]} href={exchangeHref(handOff)} />
+        <ExchangeLine from={note.by} to={to?.name ?? handOff.to} avatar={from} title={note.title} state={handOffState(handOff)} href={exchangeHref(handOff)} />
       </div>
     )
   }
@@ -243,14 +253,15 @@ function chatOf(client: AdgClient, threads: readonly HandOff[], nameOf: (nameOrI
     said.push({ kind: 'aside', key: `${thread.id}:subtasks`, thread: thread.id, at: thread.startedAt + 1, body: <ThreadSubTasks client={client} session={thread.toSession} from={thread.startedAt} to={thread.endedAt} onOpen={onOpen} /> })
     ;(thread.messages ?? []).forEach((m, i) => {
       // `done` is the conclusion, drawn once below.
-      if (m.kind === 'done') return
-      said.push({ kind: 'said', key: `${thread.id}:${i}`, thread: thread.id, at: m.at, who: nameOf(m.from), kindOf: m.kind, body: <Markdown text={m.text} /> })
+      const late = thread.endedAt !== undefined && m.at > thread.endedAt
+      if (m.kind === 'done' && !late) return
+      said.push({ kind: 'said', key: `${thread.id}:${i}`, thread: thread.id, at: m.at, who: nameOf(m.from), kindOf: m.kind, body: <>{late && <div className="muted small">{m.kind === 'done' ? '任务结束后补交的结论' : '任务结束后收到的消息'}</div>}<Markdown text={m.text} /></> })
     })
     const closed = thread.state !== 'running' && thread.state !== 'waiting'
     if (closed) {
       said.push({
         kind: 'said', key: `${thread.id}:reply`, thread: thread.id, at: thread.endedAt ?? thread.startedAt, who: to, failed: thread.state === 'failed',
-        body: <><Markdown text={thread.reply ?? (thread.state === 'failed' ? '没有做完' : '它没有留下回复')} />{thread.state === 'failed' && thread.reply !== undefined && <div className="muted small">（没有做完）</div>}</>,
+        body: <><Markdown text={thread.reply ?? (thread.state === 'failed' ? '没有做完' : '它没有留下回复')} />{thread.state === 'failed' && thread.reply !== undefined && <div className="muted small">（该轮未完成）</div>}</>,
       })
     } else {
       said.push({

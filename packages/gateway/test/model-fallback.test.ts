@@ -24,7 +24,8 @@ test('only failures another model would not have are fallen back from', () => {
   assert.equal(reason('UNKNOWN_MODEL'), '模型不可用')
   assert.equal(reason('RATE_LIMIT'), '请求太频繁，重试后仍被限流')
   assert.equal(reason('HTTP_503'), '模型服务出错，重试后仍然失败')
-  for (const code of ['TRANSPORT', 'TIMEOUT', 'CONTEXT_WINDOW_EXCEEDED', 'ABORTED', 'INVALID_REQUEST', 'UNKNOWN']) assert.equal(reason(code, 'something'), undefined, code)
+  assert.equal(reason('TIMEOUT', 'Request timed out.'), '模型请求超时，重试后仍无响应')
+  for (const code of ['TRANSPORT', 'CONTEXT_WINDOW_EXCEEDED', 'ABORTED', 'INVALID_REQUEST', 'UNKNOWN']) assert.equal(reason(code, 'something'), undefined, code)
   assert.deepEqual(failureOf(llmError('QUOTA', 'no money', 402)), { code: 'QUOTA', message: 'no money', status: 402 })
   assert.equal(failureOf(new Error('plain')), undefined)
 })
@@ -113,6 +114,17 @@ test('a sub-agent takes the sub-agent list; the thinking level of the listed mod
   const notice = fb.failed(agent as FallbackAgent, llmError('AUTH', 'invalid api key'))
   assert.equal(notice?.sub, true)
   assert.deepEqual(agent.selected, [C])
+})
+
+test('an exhausted TIMEOUT on a child selects its configured backup and continues', async () => {
+  const fb = fallback({ agents: [], subAgents: [C] })
+  const child = fakeAgent(A, true)
+  fb.requested(child.session.id)
+  assert.equal(fb.failed(child as FallbackAgent, { code: 'TIMEOUT', message: 'Request timed out.' })?.to.model, C.model)
+  child.status = 'idle'
+  assert.equal(fb.idle(child as FallbackAgent), true)
+  await Promise.resolve()
+  assert.equal(child.queued.length, 1)
 })
 
 test('no switch: an error after the model answered, a failure another model would have, no list, all tried', () => {

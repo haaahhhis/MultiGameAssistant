@@ -131,6 +131,8 @@ interface Watched {
   lastScriptLineAt: number
   /** How long the run had been held paused (InterventionPort.heldPaused) at its last script line. */
   heldAtLine: number
+  unknownScreen?: { since: number; text: string } | undefined
+  unknownIncident?: string | undefined
   sawScriptLine: boolean
   stalled?: string | undefined
   overtime: boolean
@@ -364,6 +366,10 @@ export class Monitor {
     for (const watched of this.#watched.values()) {
       const { run } = watched
       if (run.endedAt !== undefined || run.state !== 'running') continue
+      if (watched.unknownScreen && now - watched.unknownScreen.since >= 10_000 && !watched.unknownIncident) {
+        watched.unknownIncident = this.#raise(run, 'warning', 'screen-unknown', watched.unknownScreen.text).id
+        watched.unknownScreen = undefined
+      }
       const manifest = this.#deps.packOf(run.scriptId)?.manifest
       const stall = this.stallFor(run.scriptId)
       // Held paused by an intervention: its silence and its time are the pause's (and the agent is on it already).
@@ -419,11 +425,22 @@ export class Monitor {
         watched.stalled = undefined
       }
     }
+    const screen = line.source === 'adg' ? undefined : /当前界面[：:]\s*(\S+)/.exec(line.text)?.[1]
+    if (screen && screen !== '未知') {
+      watched.unknownScreen = undefined
+      const incident = watched.unknownIncident && this.#incidents.find(i => i.id === watched.unknownIncident)
+      if (incident && incident.status === 'open') this.#resolve(incident, `已识别到界面：${screen}`)
+      watched.unknownIncident = undefined
+    }
     if (line.level !== 'error' && line.level !== 'warning') return
     // What a run prints while it is being stopped (or after it was stopped on purpose) is the stop, not a problem.
     if (run.halted === true || run.state === 'stopping') return
     // Read after the run already went through (its log flushed at the end): nothing to handle.
     if (run.state === 'succeeded') return
+    if (screen === '未知' && line.level === 'warning') {
+      if (!watched.unknownIncident) watched.unknownScreen ??= { since: this.#now(), text: line.text }
+      return
+    }
     const tag = line.tag ?? line.level
     if (this.#incidents.some(i => i.runId === run.id && i.tag === tag && i.status === 'open')) return
     this.#raise(run, line.level, tag, line.text)

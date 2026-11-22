@@ -453,10 +453,16 @@
     "games/list": {
       "capability": "games"
     },
+    "games/notice/detail": {
+      "capability": "games"
+    },
     "games/refresh": {
       "capability": "games"
     },
     "games/read": {
+      "capability": "games"
+    },
+    "games/read/cancel": {
       "capability": "games"
     },
     "games/report/preview": {
@@ -1022,6 +1028,9 @@
                     "code"
                   ],
                   "additionalProperties": false
+                },
+                "childId": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -1321,6 +1330,34 @@
             "type": {
               "type": "string",
               "const": "assistant/attempt"
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "totalTokens": {
+                  "type": "number"
+                },
+                "cacheReadTokens": {
+                  "type": "number"
+                },
+                "cacheWriteTokens": {
+                  "type": "number"
+                },
+                "reasoningTokens": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "inputTokens",
+                "outputTokens"
+              ],
+              "additionalProperties": false
             },
             "turn": {
               "type": "number"
@@ -2442,6 +2479,12 @@
               "toSession": {
                 "type": "string"
               },
+              "isolated": {
+                "type": "boolean"
+              },
+              "ownerSession": {
+                "type": "string"
+              },
               "title": {
                 "type": "string"
               },
@@ -2603,6 +2646,12 @@
               "toSession": {
                 "type": "string"
               },
+              "isolated": {
+                "type": "boolean"
+              },
+              "ownerSession": {
+                "type": "string"
+              },
               "title": {
                 "type": "string"
               },
@@ -2726,6 +2775,12 @@
           "type": "string"
         },
         "toSession": {
+          "type": "string"
+        },
+        "isolated": {
+          "type": "boolean"
+        },
+        "ownerSession": {
           "type": "string"
         },
         "title": {
@@ -3299,6 +3354,9 @@
                           "code"
                         ],
                         "additionalProperties": false
+                      },
+                      "childId": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -3598,6 +3656,34 @@
                   "type": {
                     "type": "string",
                     "const": "assistant/attempt"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens"
+                    ],
+                    "additionalProperties": false
                   },
                   "turn": {
                     "type": "number"
@@ -4779,6 +4865,9 @@
                           "code"
                         ],
                         "additionalProperties": false
+                      },
+                      "childId": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -5078,6 +5167,34 @@
                   "type": {
                     "type": "string",
                     "const": "assistant/attempt"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens"
+                    ],
+                    "additionalProperties": false
                   },
                   "turn": {
                     "type": "number"
@@ -7815,6 +7932,9 @@
                 "type": "object",
                 "properties": {
                   "sessionId": {
+                    "type": "string"
+                  },
+                  "taskId": {
                     "type": "string"
                   },
                   "state": {
@@ -19207,6 +19327,31 @@
               "detail": {
                 "type": "string"
               },
+              "repair": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "runId",
+                  "state",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
               "runIds": {
                 "type": "array",
                 "items": {
@@ -19367,6 +19512,31 @@
                     },
                     "detail": {
                       "type": "string"
+                    },
+                    "repair": {
+                      "type": "object",
+                      "properties": {
+                        "runId": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "succeeded",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "at": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "runId",
+                        "state",
+                        "at"
+                      ],
+                      "additionalProperties": false
                     },
                     "runIds": {
                       "type": "array",
@@ -20979,9 +21149,12 @@
                   "state": {
                     "type": "string",
                     "enum": [
+                      "queued",
                       "running",
                       "done",
-                      "failed"
+                      "partial",
+                      "failed",
+                      "cancelled"
                     ]
                   },
                   "at": {
@@ -20989,6 +21162,18 @@
                   },
                   "sessionId": {
                     "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "remainingUrls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "summary": {
                     "type": "string"
@@ -21006,9 +21191,12 @@
                   "state": {
                     "type": "string",
                     "enum": [
+                      "queued",
                       "running",
                       "done",
-                      "failed"
+                      "partial",
+                      "failed",
+                      "cancelled"
                     ]
                   },
                   "at": {
@@ -21016,6 +21204,18 @@
                   },
                   "sessionId": {
                     "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "remainingUrls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "summary": {
                     "type": "string"
@@ -21111,6 +21311,9 @@
                     },
                     "web": {
                       "type": "boolean"
+                    },
+                    "url": {
+                      "type": "string"
                     },
                     "startsAt": {
                       "type": "number"
@@ -21417,6 +21620,134 @@
       ],
       "additionalProperties": false
     },
+    "games/notice/detail.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        },
+        "noticeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "game",
+        "noticeId"
+      ],
+      "additionalProperties": false
+    },
+    "games/notice/detail.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "game": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "update",
+            "notice",
+            "news"
+          ]
+        },
+        "publishedAt": {
+          "type": "number"
+        },
+        "version": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "lasting": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "at": {
+          "type": "number"
+        },
+        "article": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "image"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "id",
+        "game",
+        "title",
+        "kind",
+        "source",
+        "at"
+      ],
+      "additionalProperties": false
+    },
     "games/refresh.params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21499,6 +21830,32 @@
       },
       "required": [
         "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "games/read/cancel.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    },
+    "games/read/cancel.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cancelled"
       ],
       "additionalProperties": false
     },
@@ -22112,6 +22469,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -22501,6 +22861,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -22741,6 +23104,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -22972,6 +23338,9 @@
                   },
                   "web": {
                     "type": "boolean"
+                  },
+                  "url": {
+                    "type": "string"
                   },
                   "startsAt": {
                     "type": "number"
@@ -26452,6 +26821,9 @@
                         "code"
                       ],
                       "additionalProperties": false
+                    },
+                    "childId": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -26751,6 +27123,34 @@
                 "type": {
                   "type": "string",
                   "const": "assistant/attempt"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cacheReadTokens": {
+                      "type": "number"
+                    },
+                    "cacheWriteTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens"
+                  ],
+                  "additionalProperties": false
                 },
                 "turn": {
                   "type": "number"
@@ -27819,6 +28219,12 @@
             "toSession": {
               "type": "string"
             },
+            "isolated": {
+              "type": "boolean"
+            },
+            "ownerSession": {
+              "type": "string"
+            },
             "title": {
               "type": "string"
             },
@@ -28824,6 +29230,31 @@
               },
               "detail": {
                 "type": "string"
+              },
+              "repair": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "runId",
+                  "state",
+                  "at"
+                ],
+                "additionalProperties": false
               },
               "runIds": {
                 "type": "array",

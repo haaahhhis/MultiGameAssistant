@@ -7,12 +7,13 @@ import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNot
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
-import { CopyButton } from '../../components/CopyButton.tsx'
+import { MessageActions, QuotePreview, readQuote, ReplyDraft } from '../../components/MessageReply.tsx'
 import { needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
 import { ImageClient, StoredImage } from '../../components/StoredImage.tsx'
 import type { SessionViewProps } from '../../plugins.ts'
+import { ReportStatus, reportToolActivity } from './ReportStatus.tsx'
 import { SkillOffer } from './SkillOffer.tsx'
 import { SentNotice, useSentNotices, withNotices, type SentItem } from './SentNotices.tsx'
 import { DetailSwitch, isSettlement, OpenSubTask, settledTasks, SettledTasks, SubAgentIds, subAgentIds, SubAgentOf, SubAgentPane, SubTaskCard, SubTaskTracker, SUBAGENT_TOOL, taskLabels, taskWords, useChatDetail, useSubAgents, type ChatDetail, type OpenTask } from './SubTasks.tsx'
@@ -51,7 +52,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   const items = useMemo(() => built.filter(i => !isSettlement(i)), [built])
   // Since dsh 0.2.2 the conversation names its sub-agents (agent-1); their ids are in dsh's catalog of them.
   const childIds = useMemo(() => subAgentIds(state.events), [state.events])
-  const settled = useMemo(() => settledTasks(built, childIds), [built, childIds])
+  const settled = useMemo(() => settledTasks(built, childIds, state.events), [built, childIds, state.events])
   const labels = useMemo(() => taskLabels(built, childIds), [built, childIds])
   const subAgents = useSubAgents(client, session.id)
   const roles = useRoles(client)
@@ -71,6 +72,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // A sub-agent's conversation, beside its parent's, is named for it and shown whole.
   const subAgentOf = useContext(SubAgentOf)
   const paneName = useContext(ConversationAgent)
+  const replyDraft = useContext(ReplyDraft)
   const agentName = subAgentOf !== null ? paneName : roles.find(r => r.id === agentId)?.name ?? MAIN.name
   // By the session's own role, not the roles list (it comes later): the level is right in the first frame.
   const [detail, setDetail] = useChatDetail(item?.role ?? MAIN_AGENT)
@@ -90,10 +92,26 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // A conversation with a sidebar lists its sub-tasks there and opens them there (SidePanels.tsx).
   const side = useContext(SideBar)
   const tracker = ready && subAgentOf === null && side === null ? <SubTaskTracker tasks={subAgents} labels={labels} current={pane?.id} onOpen={setPane} /> : null
-  const showDetail = ready && subAgentOf === null && allRows.some(row => layerOf(row) > 1)
+  const showDetail = ready && subAgentOf === null && (state.running || subAgents.length > 0 || allRows.some(row => layerOf(row) > 1) || items.some(i => i.kind === 'assistant' && i.reasoning.trim() !== ''))
   // Work handed on from here, and to here (Delegation.tsx); the app's own still going shows at the end.
   const handOffs = useHandOffs(client, session.id)
   const appWork = handOffs.filter(h => h.fromSession === session.id && h.callId === undefined && (h.state === 'running' || h.state === 'waiting'))
+  const report = level === 1
+  const lastStart = state.events.findLast(e => e.type === 'turn/start')
+  const activeTool = state.running ? items.findLast((i): i is ToolItem =>
+    i.kind === 'tool' && i.status === 'running' && i.time >= (lastStart?.time ?? 0)) : undefined
+  const haveTask = subAgents.some(s => s.running) || handOffs.some(h => h.state === 'running' || h.state === 'waiting')
+  const replying = items.at(-1)
+  const received = state.running && state.events.some(e =>
+    e.type === 'user/message' && e.origin.kind === 'subagent-settled' && e.seq > (lastStart?.seq ?? 0))
+  let progress: string | undefined
+  if (state.running) {
+    if (activeTool) {
+      if (activeTool.name !== SUBAGENT_TOOL && activeTool.name !== DELEGATE_TOOL) progress = reportToolActivity(activeTool)
+    } else if (!haveTask && !(replying?.kind === 'assistant' && replying.live && replying.text.trim())) {
+      progress = received ? '正在汇总子任务结果' : '正在处理请求'
+    }
+  }
   const scroller = useRef<HTMLDivElement>(null)
   const tail = useFollowTail(STICK_THRESHOLD)
   const stick = tail.following
@@ -121,6 +139,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   }, [firstSeq])
 
   return (
+    <ReplyDraft.Provider value={readOnly ? null : replyDraft}>
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
     <ConversationAgent.Provider value={agentName}>
@@ -156,12 +175,15 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
           : row.kind === 'delegation'
             ? <Turn key={row.item.id} name={agentName} header={row.header}><DelegationCard client={client} item={row.item} handOffs={handOffs} /></Turn>
           : row.kind === 'subtask'
-            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} item={row.item} /></Turn>
+            ? <Turn key={row.item.id} name={agentName} header={row.header}><SubTaskCard client={client} work={row.item} detailed={!report} /></Turn>
           : row.kind === 'process'
             ? <Turn key={row.id} name={agentName} header={row.header}><ProcessGroup items={row.items} active={state.running && index === rows.length - 1} onDismiss={id => session.dismissPending(id)} /></Turn>
-            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
+            : <Turn key={row.item.id} name={agentName} header={row.header}><ChatRow item={row.item} showReasoning={!report} onDismiss={id => session.dismissPending(id)} /></Turn>}</TimedRow>)}
         {ready && appWork.map(h => <HandOffStrip key={h.id} client={client} handOff={h} />)}
-        {ready && state.running && state.live === null && <div className="thinking"><span className="dot-pulse"><i /><i /><i /></span>正在处理…</div>}
+        {ready && activeTool?.name !== SUBAGENT_TOOL && subAgents.filter(s => s.running && !labels.has(s.id)).map(s =>
+          <SubTaskCard key={s.id} client={client} work={{ id: s.id, label: taskWords(s.title ?? '') || '子任务' }} detailed={!report} />)}
+        {ready && !state.running && state.queue.length > 0 && <ReportStatus label={`${state.queue.length} 条消息排队中`} tone="waiting" />}
+        {ready && progress && <ReportStatus label={progress} tone={activeTool?.approval === 'asked' || activeTool?.name === 'ask_user_question' ? 'waiting' : 'running'} />}
         {ready && readOnly !== true && !state.running && state.queue.length === 0 && <SkillOffer session={session} title={state.title} items={items} />}
       </div>
     </div>
@@ -173,6 +195,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     </ConversationAgent.Provider>
     </HandOffsOf.Provider>
     </ImageClient.Provider>
+    </ReplyDraft.Provider>
   )
 }
 
@@ -221,7 +244,8 @@ function atDetail(rows: readonly Row[], level: ChatDetail): readonly Row[] {
   let carried: TurnHeader | null = null
   for (const row of rows) {
     if (row.kind === 'sent') shown.push(row)
-    else if (layerOf(row) > 1) carried = row.header ?? carried
+    else if ((layerOf(row) > 1 && row.kind !== 'subtask' && row.kind !== 'delegation') ||
+      (row.kind === 'item' && row.item.kind === 'assistant' && !row.item.text.trim() && !row.item.interrupted)) carried = row.header ?? carried
     else if (row.kind === 'item' && row.item.kind === 'user') {
       carried = null
       shown.push(row)
@@ -335,7 +359,7 @@ function personText(text: string): { text: string; channel?: string } {
   return channel === null ? { text: rest } : { text: rest, channel: channel[1]! }
 }
 
-const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onDismiss: (requestId: string) => void }) {
+const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }: { item: ChatItem; showReasoning?: boolean; onDismiss: (requestId: string) => void }) {
   const client = useContext(ImageClient)
   const handOffs = useContext(HandOffsOf)
   const subAgentOf = useContext(SubAgentOf)
@@ -346,8 +370,10 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
         return (
           <div className="msg user delegated">
             <div className="msg-from">{subAgentOf}交给的事</div>
-            <div className="bubble"><Markdown text={taskWords(item.text)} /></div>
-            <div className="msg-actions"><CopyButton text={taskWords(item.text)} /></div>
+            <div className="message-line">
+              <div className="bubble"><Markdown text={taskWords(item.text)} /></div>
+              <MessageActions author="助手" id={item.id} text={taskWords(item.text)} canReply={false} />
+            </div>
           </div>
         )
       }
@@ -359,18 +385,23 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       const task = item.pending === undefined ? parseTask(item.text) : undefined
       if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
+      const { body, quote } = readQuote(said.text)
       return (
         <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
           {said.channel !== undefined && <div className="msg-from">来自{said.channel}</div>}
-          <div className="bubble">
-            <UserText text={said.text} />
-            {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
-            {(item.images > item.imageRefs.length || item.files > 0) && (
-              <div className="attachments">
-                {item.images > item.imageRefs.length && <span><Icon name="image" />{item.images - item.imageRefs.length} 张图片</span>}
-                {item.files > 0 && <span><Icon name="paperclip" />{item.files} 个文件</span>}
-              </div>
-            )}
+          <div className="message-line">
+            <div className="bubble">
+              {quote && <QuotePreview quote={quote} />}
+              <div data-reply-text><UserText text={body} /></div>
+              {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
+              {(item.images > item.imageRefs.length || item.files > 0) && (
+                <div className="attachments">
+                  {item.images > item.imageRefs.length && <span><Icon name="image" />{item.images - item.imageRefs.length} 张图片</span>}
+                  {item.files > 0 && <span><Icon name="paperclip" />{item.files} 个文件</span>}
+                </div>
+              )}
+            </div>
+            {body.trim() && <MessageActions author="用户" id={item.id} text={body} canReply={item.pending === undefined} />}
           </div>
           {item.pending?.failed !== undefined && (
             <div className="send-failed">
@@ -378,7 +409,6 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
               <button className="link-button" onClick={() => onDismiss(item.pending!.requestId)}>移除</button>
             </div>
           )}
-          {said.text.trim() !== '' && <div className="msg-actions"><CopyButton text={said.text} /></div>}
         </div>
       )
     }
@@ -387,21 +417,24 @@ const ChatRow = memo(function ChatRow({ item, onDismiss }: { item: ChatItem; onD
       if (!item.live && isQuiet(item.text)) return <div className="quiet-reply"><Icon name="check" />看过了，没有要告诉你的</div>
       return (
         <div className={`msg assistant ${item.live ? 'live' : ''}`}>
-          {item.reasoning.trim() !== '' && (
+          {showReasoning && item.reasoning.trim() !== '' && (
             <details className="reasoning" open={item.live && item.text === ''}>
               <summary><Icon name="chevron" />{item.live && item.text === '' ? <span className="shimmer">正在思考…</span> : '思考过程'}</summary>
               <Markdown text={item.reasoning} />
             </details>
           )}
-          {item.text !== '' && <Markdown text={item.text} />}
+          {item.text !== '' && <div className="message-line">
+            <div data-reply-text><Markdown text={item.text} /></div>
+            {!item.live && item.text.trim() && <MessageActions author="助手" id={item.id} text={item.text} />}
+          </div>}
           {item.live && <span className="cursor" />}
           {item.interrupted && <div className="muted small">（已中断）</div>}
-          {!item.live && item.text.trim() !== '' && <div className="msg-actions"><CopyButton text={item.text} /></div>}
         </div>
       )
     case 'tool':
       return <ToolGroup tools={[item]} />
     case 'context':
+      if (client && 'childId' in item && typeof item.childId === 'string') return <SubTaskCard client={client} work={{ id: item.childId, label: item.summary }} detailed={showReasoning} />
       return (
         <details className="context-row">
           <summary><Icon name="info" />{item.summary !== '' ? item.summary : item.title}</summary>

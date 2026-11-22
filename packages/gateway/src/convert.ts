@@ -192,6 +192,7 @@ export function convertEvent(event: WireEvent): SessionEvent {
           kind,
           human: HUMAN_SOURCES.has(kind),
           ...opt('summary', source.form === 'notice' ? str(source.summary) : undefined),
+          ...opt('childId', kind === 'adg-task-dispatched' ? str(source.childId) : undefined),
           ...opt('fallback', kind === MODEL_FALLBACK_SOURCE ? fallbackOf(source.fallback) : undefined),
         },
         ...opt('requestId', str(source.rpcId)),
@@ -223,7 +224,7 @@ export function convertEvent(event: WireEvent): SessionEvent {
     case 'assistant/attempt': {
       if (turn === undefined || step === undefined) return unknown()
       const facts = streamFacts(d.stream)
-      return { type: 'assistant/attempt', seq, time, turn, step, timing: facts.timing, ...opt('error', facts.failure) }
+      return { type: 'assistant/attempt', seq, time, turn, step, timing: facts.timing, ...opt('usage', convertUsage(d.usage)), ...opt('error', facts.failure) }
     }
     case 'tool/call':
       if (turn === undefined || step === undefined) return unknown()

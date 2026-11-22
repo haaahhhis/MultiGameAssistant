@@ -60,6 +60,7 @@ export interface Active {
   readonly runId: string | undefined
   readonly mode: 'diagnose' | 'act'
   /** Locks of the paused run the agent may act on (`desktop`, `adb:…`). */
+  workerId?: string
   readonly allowedKeys: ReadonlySet<string>
   readonly controller: AbortController
   done?: { result: 'resolved' | 'retry' | 'give-up'; summary: string }
@@ -168,10 +169,11 @@ export class Interventions {
 
   /** The intervention a session is doing, for the screen tools' permissions: the first still going (its turn is the one running). */
   forSession(sessionId: string | undefined): Active | undefined {
-    const ids = sessionId === undefined ? undefined : this.#bySession.get(this.#deps.parentOf?.(sessionId) ?? sessionId)
-    for (const id of ids ?? []) {
+    const ids = sessionId === undefined ? undefined : this.#bySession.get(sessionId) ?? this.#bySession.get(this.#deps.parentOf?.(sessionId) ?? sessionId)
+    if (ids?.length !== 1) return undefined
+    for (const id of ids) {
       const active = this.#active.get(id)
-      if (active !== undefined) return active
+      if (active && (!active.workerId || active.workerId === sessionId || active.workerId === this.#deps.parentOf?.(sessionId!))) return active
     }
     return undefined
   }
@@ -293,16 +295,18 @@ export class Interventions {
 
     let answer = ''
     const limitMs = this.#deps.timeoutMs ?? 15 * 60_000
+    let worker: string | undefined
     const timeout = AbortSignal.timeout(limitMs)
     try {
       // Into 干预's conversation, as the monitor's; its reply goes on to 助手. It sees that script's skills (and its game's), not other scripts'.
       const focus = { scripts: [incident.scriptId] }
-      const sessionId = await conversations.home(INTERVENE_ROLE.id, { focus })
+      const sessionId = await conversations.home(INTERVENE_ROLE.id)
       item.sessionId = sessionId
       this.#bySession.set(sessionId, [...(this.#bySession.get(sessionId) ?? []), item.id])
       this.#changed(item)
       const reply = await conversations.handOff({
         to: { id: INTERVENE_ROLE.id, name: INTERVENE_ROLE.name }, by: '监控', title: incident.title, focus, relay: true,
+        onWorker: id => { worker = active.workerId = id; this.#bySession.set(id, [item.id]) },
         task: this.#prompt(incident, mode, item.paused, alive, run?.resources ?? [], windows, related),
         signal: AbortSignal.any([active.controller.signal, timeout]),
         ...(screenshot === undefined ? {} : { images: [screenshot] }),
@@ -314,6 +318,7 @@ export class Interventions {
       if (active.done === undefined) return finish('gave-up', `agent 处理时出错：${error instanceof Error ? error.message : String(error)}`, imageOf(active, screenshot))
     } finally {
       this.#active.delete(item.id)
+      if (worker && worker !== item.sessionId) this.#bySession.delete(worker)
       if (item.sessionId !== undefined) {
         const left = (this.#bySession.get(item.sessionId) ?? []).filter(id => id !== item.id)
         if (left.length > 0) this.#bySession.set(item.sessionId, left)
@@ -359,7 +364,7 @@ export class Interventions {
     const item = this.#items.find(i => i.incidentId === incidentId && i.state === 'running')
     if (item === undefined) return
     // Settled while the agent is on it (most likely by its own rerun): it finishes in its own words.
-    if (summary !== undefined && item.sessionId !== undefined && this.#bySession.get(item.sessionId)?.[0] === item.id) return
+    if (summary !== undefined && (this.#active.get(item.id)?.workerId || (item.sessionId !== undefined && this.#bySession.get(item.sessionId)?.[0] === item.id))) return
     Object.assign(item, { state: 'taken-over', summary: summary ?? `你已经点了「${why}」，agent 已停止`, endedAt: this.#now() })
     this.#active.get(item.id)?.controller.abort(new Error(`用户点了「${why}」`))
     this.#changed(item)
@@ -430,6 +435,7 @@ export class Interventions {
         : '这次只做诊断：可以用 screen_capture 截图查看，但不要点击或输入。说明原因和建议。',
       '不要修改脚本的文件；不要付费、不要输入密码或验证码（需要的话交给用户）。旁边可能没有人：不要用 ask_user_question 提问，需要用户做的写进 summary。',
       '',
+      `需要自行补偿已失败的这次运行时，script_run 传 repair_of=${incident.runId}，让流水线关联补偿结果。已经成功补偿后用 resolved 交付。`,
       '最后必须调用 intervention_done：resolved（已经恢复，脚本可以继续）、retry（需要重新运行这个任务）或 give-up（处理不了）。summary 用一两句话写清楚原因、你做了什么、需要用户做什么。',
     ].join('\n')
   }

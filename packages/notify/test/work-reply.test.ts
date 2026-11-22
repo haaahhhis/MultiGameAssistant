@@ -87,6 +87,22 @@ test('a turn whose model failed and was switched to a fallback model goes on in 
   assert.equal(reply.ended, undefined, 'the work ended as the fallback turn did')
 })
 
+test('a queued request removed before its turn returns immediately with its own cancellation', async () => {
+  const splice = (removedCount: number, inserted: unknown[], outcome?: string) =>
+    event('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount, inserted, outcome })
+  const turn = { started: false }
+  const reply = await workReply(follow([splice(0, [{ source: { rpcId: R } }]), splice(1, [], 'canceled'), user('别人', 'another'), says('别人完成了'), ends()]), R, '排队', turn, undefined)
+  assert.equal(turn.started, false)
+  assert.equal(reply.outcome, 'cancelled')
+})
+
+test('an input stream that closes after a progress message has no successful outcome', async () => {
+  async function* stream() { yield user('调查', R); yield says('我会调查') }
+  const reply = await workReply(stream() as never, R, '调查', { started: false }, undefined)
+  assert.equal(reply.outcome, 'failed')
+  assert.match(reply.ended ?? '', /断开/)
+})
+
 test('a failed turn with no switch before its end still ends the work', async () => {
   const reply = await workReply(follow([
     user('查一下', R), says('开始查'), event('turn/end', { reason: { kind: 'error', error: { message: 'boom', code: 'TRANSPORT' } } }),

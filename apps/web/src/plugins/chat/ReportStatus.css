@@ -1,0 +1,11 @@
+.subtask-line .delegation-state {
+  max-width: 45%;
+}
+.subtask-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exchange-line.tone-waiting, .thinking.tone-waiting {
+  color: var(--warn);
+}

@@ -20,6 +20,7 @@ export type ReplyBlock =
   | { readonly kind: 'steps'; readonly steps: readonly ReplyStep[] }
 
 export interface Reply {
+  readonly outcome?: 'completed' | 'failed' | 'cancelled'
   readonly blocks: readonly ReplyBlock[]
   /** Said before the summary (e.g. that the conversation had to start again). */
   readonly note?: string
@@ -52,7 +53,7 @@ export function replyPlain(reply: Reply): string {
 
 function render(reply: Reply): string {
   const summary = finalText(reply).trim() || '（agent 没有回复文字）'
-  return [reply.note, summary, reply.ended, tally(reply)].filter(p => p !== undefined && p !== '').join('\n\n')
+  return [reply.note, summary, reply.ended === summary ? undefined : reply.ended, tally(reply)].filter(p => p !== undefined && p !== '').join('\n\n')
 }
 
 /** 「（执行了 12 个步骤，1 个失败）」, or nothing for a turn without steps. */

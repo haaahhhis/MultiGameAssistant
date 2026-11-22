@@ -199,6 +199,8 @@ export const NodeRun = z.object({
   state: NodeRunState,
   /** For people: what it waits for, how it ended. */
   detail: z.string().optional(),
+  /** The outcome of an explicitly linked repair after the pipeline ended. */
+  repair: z.object({ runId: z.string(), state: z.enum(['succeeded', 'failed', 'cancelled']), at: z.number() }).optional(),
   /** Script runs started for this node (retries add more). */
   runIds: z.array(z.string()),
   attempts: z.number().int().min(0),

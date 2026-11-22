@@ -47,8 +47,8 @@ function matches(patterns: readonly string[], name: string): boolean {
   return patterns.some(pattern => pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern)
 }
 
-/** No agent has it: a fork copies the whole conversation, and an agent's one conversation is long. */
-const NOBODY = ['subagent_fork']
+/** MGA uses fresh child context and native settlement delivery for every role. */
+const NOBODY = ['subagent_fork', 'wait_agent']
 
 /** What agents work together with: every lead has it, so a role need not name it. */
 const TOGETHER: readonly string[] = ['agent_delegate', 'agent_message', 'agent_threads']
@@ -159,7 +159,7 @@ export function teamPrompt(self: TeamMember & { readonly tools?: readonly string
       ? `你是「${self.name}」（${self.id}），是最上级的 agent：和用户对话，把事分给下面的主 agent，汇总结果并做决定。`
       : `你是「${self.name}」（${self.id}），是一个主 agent：负责自己这块事，做决定、汇总结果。上级是${who(main)}：它和用户对话、分发任务、做决定。`,
     colleagues.length === 0 ? (isMain ? '现在没有其他主 agent。' : '现在没有其他同事。') : `${isMain ? '下面的主 agent' : '同事'}：\n${colleagues.map(line).join('\n')}`,
-    '具体的活都由子 agent 做（subagent）：运行命令、改文件、截图点击、运行和安装脚本、启动游戏，这些工具不在你的对话里，只有子 agent 有；别处提到这些工具，也是让子 agent 去用。你的对话留给判断和汇总：要做什么就开一个子 agent，把任务写完整（它看不到你的对话），结果交回后由你判断、汇总。查状态、读一下文件这种看一眼的事可以自己来。几件互不相关的事可以同时开。开了以后只剩等结果时，用 wait_agent 等（timeout_ms 按它大概要多久填），或者结束这一轮，结果会作为新消息发来；要等一次脚本运行结束，用 script_runs 带上 run_id 和 wait_seconds，它等到结束（重新运行的话跟到最后那次）才返回。不要用 glob、list_agents、script_runs、window_list 一遍遍查做到哪了：你对话里的每一步都要把整个对话重新发给模型一次，这样等最费。子 agent 只对你负责，只把结果交回给你；它要用户批准的操作，会在你的对话里请用户批准。',
+    '具体的活都由子 agent 做（subagent）：运行命令、改文件、截图点击、运行和安装脚本、启动游戏，这些工具不在你的对话里，只有子 agent 有；别处提到这些工具，也是让子 agent 去用。你的对话留给判断和汇总：要做什么就开一个子 agent，把任务写完整（它看不到你的对话），结果交回后由你判断、汇总。查状态、读一下文件这种看一眼的事可以自己来。几件互不相关的事可以同时开。派发后可以继续其他工作；只剩子任务未交付时就结束当前轮次。子任务完成、失败或被停止时，系统会自动把带有子任务身份的终态和结果送到你的对话。收到回执就直接用它继续工作；多个子任务分别交付，按各自的回执处理。要等一次脚本运行结束，用 script_runs 带上 run_id 和 wait_seconds，它等到结束（重新运行的话跟到最后那次）才返回。不要用 glob、list_agents、script_runs、window_list 一遍遍查做到哪了：你对话里的每一步都要把整个对话重新发给模型一次，这样等最费。子 agent 只对你负责，只把结果交回给你；它要用户批准的操作，会在你的对话里请用户批准。',
     options.browser === true && keeps(self.tools, 'browser_navigate')
       ? '网页也一样：web_fetch 只拿到空壳（前端渲染的官网、公告页常这样）或要点开、翻页才看得到时，开子 agent 用内置浏览器去读，任务里写明「用内置浏览器（browser_navigate 打开，browser_text 读渲染后的文字）」。它打开的页面用户在浏览器面板里看得到。'
       : '',

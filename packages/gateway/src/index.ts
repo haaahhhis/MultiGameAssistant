@@ -11,7 +11,7 @@
  * removes its capability and methods.
  */
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
@@ -223,6 +223,10 @@ interface LiveAgent {
 
 /** The slice of dsh's subagent service a hand-off needs. */
 interface SubagentService {
+  startActivation(spec: {
+    parent: unknown; provider: 'spawn'; childId: string; label: string; agentPreset?: string
+    prompt: readonly unknown[]; delivery: 'parent'; signal: AbortSignal
+  }): Promise<{ name: string; result: Promise<{ stopReason: string; diagnostic?: string; output: readonly { type: string; text?: string }[] }>; dispose(): Promise<void> }>
   /** Joins the work still going on in the tree under `root`; true: some was joined (look at the root again). */
   waitForTreeWork(root: LiveAgent): Promise<boolean>
   interrupt(targetSessionId: string, authority: { kind: 'user' }): void
@@ -230,6 +234,7 @@ interface SubagentService {
 
 /** Said to every role agent: its last words close the turn, and go back to whoever handed it the work. */
 const ROLE_CLOSING = [
+  '软件派发的任务由你的原生子 agent 执行。只收到派发通知时可以结束本轮，收到子任务的交付通知后直接处理结果并汇报。自行安排本角色工作时用 subagent；agent_delegate 用于不同角色之间的协作。',
   '这是你唯一的对话：用户直接找你说的话、别的 agent 和软件交给你的事（消息开头写着「（…交给你的事：…）」）都在这里，一件接一件。',
   '能用工具、命令行、读文件（配置、日志、版本号）或脚本自己的命令和设置做到、确认到的，就这样做；截图、看画面、点屏幕是最后的办法——只有画面上才看得到、别的办法都确认不了时才用，用之前先说为什么。',
   '你每一轮最后一段回复就是这件事的结论：写清楚结果，以及需要用户做的事（没有就不写）。别人交给你的事，这段回复会作为结论交回给它；在那之前、在那之后要让它知道的，用 agent_message 发到那条线索。',
@@ -353,6 +358,8 @@ export class AdgGateway extends Service {
   /** Live agents by session, and what narrows each to its role (`narrow`). */
   private readonly agents = new Map<string, LiveAgent>()
   private readonly narrowed = new Map<LiveAgent, { readonly spec: RoleSpec; readonly home: boolean; readonly dispose: () => void }>()
+  private readonly appChildren = new Set<string>()
+  private readonly assignedSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private readonly subAgentSpecs = new WeakMap<RoleSpec, RoleSpec>()
   private persona: PersonaStore | undefined
   /**
@@ -547,7 +554,18 @@ export class AdgGateway extends Service {
       await this.routeSubAgent(payload.agent)
     }) as never)
     // A reminder set while working on a thread says where its words go: by the time it comes, the agent may not remember.
-    ctx.on('tools/execute' as never, ((exec: { name: string; agent?: { session: { id: string } }; arguments: { prompt?: unknown } }, next: () => unknown) => {
+    ctx.on('tools/execute' as never, ((exec: { name: string; agent?: { session: { id: string } }; arguments: Record<string, unknown> }, next: () => unknown) => {
+      if ((exec.name === 'subagent' || exec.name === 'list_subagent_models') && exec.agent !== undefined) {
+        const parent = this.specOf(exec.agent.session.id)
+        if (parent !== undefined) {
+          const pinned = exec.name === 'subagent' && this.subAgentModel(memoryOwnerOf(parent)) !== undefined
+          const args = { ...exec.arguments }
+          for (const field of ['provider', 'model', 'reasoning_effort']) {
+            if (pinned || args[field] === '') delete args[field]
+          }
+          exec.arguments = args
+        }
+      }
       if (exec.name === 'schedule_create' && exec.agent !== undefined && typeof exec.arguments.prompt === 'string') {
         const desk = this.handOffDesk as { reminderNote?(sessionId: string, prompt: string): string | undefined } | undefined
         const noted = desk?.reminderNote?.(exec.agent.session.id, exec.arguments.prompt)
@@ -1333,7 +1351,11 @@ Content-Length: 0
       for (const name of hiddenTools(spec, this.parts.tools, tools.schemas(agent).map(schema => schema.name), home)) {
         try { disposers.push(tools.restrict({ deny: [name] })) } catch { refused.add(name) }
       }
-      if (refused.size > 0) disposers.push(tools.guard(exec => (!refused.has(exec.name) ? undefined : home && handsOn(exec.name) ? HANDS_ON_REFUSAL(exec.name) : `${spec.name}不能用 ${exec.name}`)))
+      disposers.push(tools.guard(exec => {
+        if (exec.name === 'wait_agent') return '子任务的终态会自动送达。已收到交付通知就直接处理结果；只剩未交付的任务时结束本轮。'
+        if (refused.has(exec.name)) return home && handsOn(exec.name) ? HANDS_ON_REFUSAL(exec.name) : `${spec.name}不能用 ${exec.name}`
+        return undefined
+      }))
       // Handed work by another agent, it asks that agent: a question put to the person from here is one 助手 never hears of.
       if (spec.subAgentOf === undefined) {
         disposers.push(tools.guard(exec => (exec.name === 'ask_user_question' ? (this.handOffDesk as { askRefusal?(sessionId: string): string | undefined } | undefined)?.askRefusal?.(agent.session.id) : undefined)))
@@ -1448,7 +1470,8 @@ Content-Length: 0
 
   /** The agent working in a session, as other agents address it. A sub-agent is nobody to them. */
   agentOfSession(sessionId: string): { id: string; name: string } | undefined {
-    const spec = this.specOf(sessionId)
+    const owner = this.appChildren.has(sessionId) ? this.parentSession(sessionId) : undefined
+    const spec = this.specOf(owner ?? sessionId)
     return spec === undefined || spec.subAgentOf !== undefined ? undefined : { id: spec.id, name: spec.name }
   }
 
@@ -1493,6 +1516,17 @@ Content-Length: 0
       const parent = this.specOf(header.parentSession)
       if (parent === undefined) return undefined
       if (parent.subAgentOf !== undefined) return parent
+      if (this.appChildren.has(sessionId)) {
+        let assigned = this.assignedSpecs.get(parent)
+        if (!assigned) {
+          const child = subAgentSpec(parent)
+          const tools = new Set(['agent_message', 'ask_user_question', ...(parent.id === 'intervene' ? ['intervention_done'] : [])])
+          assigned = { ...child, hide: (child.hide ?? []).filter(name => !tools.has(name)),
+            duty: child.duty?.replace('你问不了用户，也不能交给别的 agent：缺什么就写进回复，由「' + parent.name + '」去问。', '需要补充信息时通过当前委派线索联系发起方；直接由软件发起的任务可以询问用户。') ?? '' }
+          this.assignedSpecs.set(parent, assigned)
+        }
+        return assigned
+      }
       let child = this.subAgentSpecs.get(parent)
       if (child === undefined) this.subAgentSpecs.set(parent, child = subAgentSpec(parent))
       return child
@@ -1527,7 +1561,57 @@ Content-Length: 0
     }
   }
 
-  /** Stop one sub-agent, on behalf of the agent that opened it. */
+  /** App actions are addressed to an agent's home. dsh owns child membership, model selection, settlement and parent delivery. */
+  async runChild(owner: string, childId: string, title: string, instruction: string, signal: AbortSignal, images: readonly Buffer[] = []): Promise<string> {
+    if (!this.homes.agentOf(owner)) throw new Error('任务必须从助手的主对话派发')
+    const service = (this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined
+    if (!service) throw new Error('原生子代理服务未加载')
+    const resolved = await this.ctx.sessionController.resolveAgent(owner as never)
+    if (!('agent' in resolved)) throw new Error('无法恢复负责这项任务的主助手')
+    const parent = resolved.agent
+    signal.throwIfAborted()
+    const ptc = this.compaction?.state().settings.ptcSubagents ?? true
+    this.appChildren.add(childId)
+    try {
+      const activation = await service.startActivation({
+        provider: 'spawn', parent, childId, label: title,
+        ...(ptc ? { agentPreset: this.shared ? 'mga-ptc' : 'ptc' } : {}),
+        prompt: [{ type: 'text', text: instruction }, ...images.map(png => ({ type: 'image', mediaType: 'image/png', data: png.toString('base64') }))],
+        delivery: 'parent', signal,
+      })
+      let stopping: Promise<void> | undefined
+      const cancel = () => { stopping ??= activation.dispose(); void stopping.catch(() => {}) }
+      signal.addEventListener('abort', cancel, { once: true })
+      try {
+        if (signal.aborted) { cancel(); signal.throwIfAborted() }
+        // A waking turn consumes all next-step context but only one next-turn message.
+        // Leave that turn for the native settlement, which carries the child's result.
+        await parent.send({
+          id: randomUUID(), role: 'user',
+          content: [{ type: 'text', text: `（你负责的子任务：${title}）\n已将下列指令派给你的子 agent「${activation.name}」。它会直接向你交付结果。结论会自动送达，收到后向用户汇报。等待期间可以处理其他消息，无需轮询或重复派发。\n\n${instruction}` }],
+          source: { kind: 'adg-task-dispatched', form: 'notice', summary: title, childId },
+        } as never, 'next-step', false)
+        const result = await activation.result
+        signal.throwIfAborted()
+        if (result.stopReason === 'aborted' || result.stopReason === 'interrupted') throw new DOMException(result.diagnostic || '子任务已停止', 'AbortError')
+        if (result.stopReason !== 'completed') throw new Error(result.diagnostic || `子任务中断（${result.stopReason}）`)
+        const answer = result.output.filter(p => p.type === 'text').map(p => p.text ?? '').join('\n').trim()
+        if (!answer) throw new Error('子代理结束时没有交回结论')
+        return answer
+      } catch (error) {
+        cancel()
+        throw error
+      } finally {
+        signal.removeEventListener('abort', cancel)
+        await stopping
+      }
+    } finally {
+      this.appChildren.delete(childId)
+      const child = this.agents.get(childId)
+      if (child) this.narrow(child)
+    }
+  }
+
   stopSubAgent(sessionId: string): void {
     const parent = this.agents.get(sessionId)?.session.header?.parentSession
     if (parent === undefined) return
@@ -1537,7 +1621,7 @@ Content-Length: 0
   /** Stop the sub-agents working under this session's agent (a hand-off called off stops them with it). */
   stopSubAgents(sessionId: string): void {
     for (const agent of this.agents.values()) {
-      if (agent.session.header?.parentSession !== sessionId || agent.session.header.origin !== 'subagent') continue
+      if (this.appChildren.has(agent.session.id) || agent.session.header?.parentSession !== sessionId || agent.session.header.origin !== 'subagent') continue
       try { this.stopSubAgent(agent.session.id) } catch (error) { this.log.warn(`stopping sub-agent ${agent.session.id}: ${error instanceof Error ? error.message : String(error)}`) }
     }
   }
@@ -1638,24 +1722,30 @@ Content-Length: 0
    * (agent-models.ts); else dsh gives it its parent's. The choice is made as
    * the sub-agent is created (agent.model, as dsh's own model choice is), so its
    * steps use that model from the first and its system prompt names it. A model
-   * that cannot be used now (its service gone) leaves it on its parent's rather
-   * than failing the work. Never throws: a throw would fail the sub-agent.
+   * that cannot be resolved is tried against the configured child fallback list.
    */
   private async routeSubAgent(agent: LiveAgent): Promise<void> {
     if (agent.session.header?.origin !== 'subagent' || !this.isOwn(agent.session.id)) return
     const spec = this.specOf(agent.session.id)
     if (spec?.subAgentOf === undefined) return
     const model = this.subAgentModel(memoryOwnerOf(spec))
-    if (model === undefined || agent.model === undefined) return
-    const route = { provider: model.provider, model: model.model, ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) }
+    if (model === undefined) return
     const llm = this.ctx.get('llm')
-    if (llm === undefined) return
-    try {
-      await llm.resolveCallConfig(route as never, AbortSignal.timeout(10_000))
-      agent.model.select(route)
-    } catch (error) {
-      this.log.warn(`the sub-agent model ${model.provider}/${model.model} cannot be used now, ${agent.session.id} keeps its parent's: ${error instanceof Error ? error.message : String(error)}`)
+    if (llm === undefined || agent.model === undefined) throw new Error('子代理模型服务尚未就绪')
+    const tried = new Set<string>()
+    for (const route of [model, ...this.agentModels.fallbacksOf(true)]) {
+      const key = `${route.provider}/${route.model}`
+      if (tried.has(key)) continue
+      tried.add(key)
+      try {
+        await llm.resolveCallConfig(route as never, AbortSignal.timeout(10_000))
+        agent.model.select({ provider: route.provider, model: route.model, ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }) })
+        return
+      } catch (error) {
+        this.log.warn(`子代理模型 ${key} 无法使用：${String(error)}`)
+      }
     }
+    throw new Error(`子代理模型均不可用：${[...tried].join('、')}`)
   }
 
   /** Why a model chosen for this layer will not do: it cannot see images and the work there looks at screenshots. */

@@ -46,7 +46,8 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const gateway = ctx.get('adgGateway')
     const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (sessionId, focus) => gateway?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => gateway)
-    const sessionId = await conversations.home(SCRIPT_ROLE.id, { focus: { scripts: [id] } })
+    const work = await conversations.prepareTask(SCRIPT_ROLE.id, `检查脚本包：${script.name}`, { scripts: [id] })
+    const sessionId = work.owner
     const from = script.packReview?.from ?? '旧版本'
     const to = script.packReview?.to ?? script.localVersion?.version ?? script.current ?? '新版本'
     const prompt = [
@@ -57,8 +58,11 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
       '3. 要改就用原来的脚本包 id 调用 pack_propose 保存（直接生效；summary 写明依据更新日志改了什么）；不用改就调用 pack_reviewed 说明理由；',
       '4. 最后用两三句话告诉用户结论。',
     ].join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `检查脚本包：${script.name}`, prompt), AbortSignal.timeout(REVIEW_TIMEOUT_MS)).catch(error => log.warn(`pack review for ${id}: ${error instanceof Error ? error.message : String(error)}`))
-    close('已交给「脚本」检查，要改的它会直接改好，结果会告诉你')
+    close('脚本 agent 正在检查')
+    void work.run(taskMessage('你', `检查脚本包：${script.name}`, prompt), AbortSignal.timeout(REVIEW_TIMEOUT_MS)).then(
+      answer => close(`检查结果：${answer.slice(0, 400)}`),
+      error => { close(`检查未完成：${String(error)}`); log.warn(`pack review for ${id}: ${String(error)}`) },
+    )
     return { sessionId }
   }
 
@@ -66,6 +70,7 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
     scoped.effect(() => scoped.adgNotify.onAction(PACK_REVIEW_SCOPE, async (noticeId, actionId) => {
       const id = noticeId.split(':')[1]
       if (id === undefined || (actionId !== 'check' && actionId !== 'keep')) throw new Error(`未知操作 ${actionId}`)
+      if (noticeId !== noticeIdOf(id, library().get(id).packReview?.to ?? '')) throw new Error('该版本的检查已结束，请查看最新版本')
       const { sessionId } = await decide(id, actionId)
       return sessionId === undefined ? '好的，脚本包保持不变' : '好的，agent 先读更新日志，再检查脚本包；要改的它会直接改好，结果会告诉你'
     }), 'adg-scripts pack review actions')
@@ -77,6 +82,11 @@ export function packReview(ctx: Context, library: () => ScriptLibrary, log: { wa
       if (review === undefined) return
       const notify = ctx.get('adgNotify')
       if (notify === undefined) return
+      for (const old of notify.notify.notices()) {
+        if (old.id.startsWith(`${PACK_REVIEW_SCOPE}:${script.id}:`) && old.id !== noticeIdOf(script.id, review.to) && !old.done) {
+          void notify.update(old.id, { done: `已有更新的待检查版本 ${review.to}` }).catch(error => log.warn(String(error)))
+        }
+      }
       void notify.send({
         id: noticeIdOf(script.id, review.to),
         scope: PACK_REVIEW_SCOPE,

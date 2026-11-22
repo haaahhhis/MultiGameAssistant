@@ -476,6 +476,7 @@ function NodeInspector({ client, node, pipeline, run, scripts, onChange, onRemov
           <div className="sidebar-label">这次运行</div>
           <div>{NODE_STATE[state.state]}{state.attempts > 1 ? ` · 第 ${state.attempts} 次` : ''}</div>
           {state.detail !== undefined && <div className="muted small">{state.detail}</div>}
+          {state.repair && <div className="small">后续补偿{state.repair.state === 'succeeded' ? '成功' : '未成功'} · {state.repair.runId}</div>}
           {state.runIds.length > 0 && <div className="muted small">脚本运行：{state.runIds.join('、')}（在「运行」页看日志）</div>}
           {node.kind === 'gate' && state.state === 'running' && run !== undefined && (
             <div className="key-actions">

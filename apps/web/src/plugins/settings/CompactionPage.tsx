@@ -17,7 +17,6 @@ import { Icon } from '../../components/Icons.tsx'
 import { Select } from '../../components/Select.tsx'
 import { desktop } from '../../desktop.ts'
 import { useModelCatalog, useStore } from '../../hooks.ts'
-import { setShowEarlier, useShowEarlier } from '../../preferences.ts'
 import { errorText } from '../scripts/data.ts'
 
 type State = { settings: CompactionSettings; applied: CompactionSettings }
@@ -45,7 +44,6 @@ export function CompactionPage({ client }: { client: AdgClient }) {
     const model = group?.models.find(m => m.id === s.model)
     return model === undefined ? `${s.provider} / ${s.model}` : `${group!.name} · ${model.name}`
   }
-  const showEarlier = useShowEarlier()
 
   useEffect(() => {
     if (threshold === null || state === null) return
@@ -183,13 +181,6 @@ export function CompactionPage({ client }: { client: AdgClient }) {
       <section className="card">
         <h3>手动压缩</h3>
         <p className="muted small">在对话框里输入 <kbd>/压缩</kbd>，会先说明代价再确认。对话框旁边的小圆圈显示上下文用了多少，点开能看到各部分占多少。对话变慢、或报上下文超长时用；agent 正在工作时不能压缩。</p>
-      </section>
-      <section className="card">
-        <label className="check-label">
-          <input type="checkbox" checked={showEarlier} onChange={e => setShowEarlier(e.target.checked)} />
-          显示「以前的对话」
-        </label>
-        <p className="muted small">在各个 agent 的顶部多一个「以前的对话」按钮，能翻看开新对话之前的聊天。默认不显示；关着时对话记录也不会删除。打开后，没有以前的对话的 agent 也不显示这个按钮。</p>
       </section>
       {state === null && error !== null && <div className="notice error left"><Icon name="alert" /><span>{error}</span></div>}
     </div>

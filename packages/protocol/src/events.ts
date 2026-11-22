@@ -117,6 +117,7 @@ export const MessageOrigin = z.object({
   summary: z.string().optional(),
   /** A model failed and the agent went on with the next of its fallback list (kind MODEL_FALLBACK_SOURCE). */
   fallback: ModelFallbackNotice.optional(),
+  childId: z.string().optional(),
 })
 export type MessageOrigin = z.infer<typeof MessageOrigin>
 
@@ -161,6 +162,7 @@ export const SessionEvent = z.discriminatedUnion('type', [
   z.object({
     ...base,
     type: z.literal('assistant/attempt'),
+    usage: TokenUsage.optional(),
     turn: z.number(),
     step: z.number(),
     timing: StreamTiming,

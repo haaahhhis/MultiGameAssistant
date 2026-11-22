@@ -8,15 +8,13 @@ import { NavRail, RAIL_WIDE, useRailWidth, type RailTarget } from './components/
 import { RailSlot, RailWide } from './components/railSlot.ts'
 import { SessionView } from './components/SessionView.tsx'
 import { SettingsView } from './components/SettingsView.tsx'
-import { AgentHistory, useHasEarlier } from './components/SessionList.tsx'
-import { useShowEarlier } from './preferences.ts'
 import { ScheduleNotices, ScheduleOverview } from './components/Schedule.tsx'
 import { HandOffPage } from './plugins/chat/Delegation.tsx'
-import { MAIN, MAIN_AGENT, agentIdOf, agentOf, useHome, useRoles } from './agents.ts'
+import { MAIN, MAIN_AGENT, sessionRoot, agentOf, useHome, useRoles } from './agents.ts'
 import type { PageContribution } from './plugins.ts'
 import { UiSwitch } from './components/UiSwitch.tsx'
 import { Icon, AdgMark } from './components/Icons.tsx'
-import { readRoute, writeRoute, type AgentTab, type Route } from './config.ts'
+import { readRoute, writeRoute, type Route } from './config.ts'
 import { useCredentials, useModelCatalog, usePages, useStore } from './hooks.ts'
 
 /** The page the app opens on. */
@@ -25,8 +23,7 @@ const START_PAGE = 'games'
 /**
  * Two-column shell: the navigation rail (游戏, then each agent), then the
  * open agent's tabs — its one conversation, the pages it
- * owns (脚本, 运行, 编排…), its earlier conversations (docs/design/
- * agent-roles.md §10–§12) — or a plugin page, or settings.
+ * owns (脚本, 运行, 编排…) — or a plugin page, or settings.
  */
 export function App({ client }: { client: AdgClient }) {
   const [route, setRoute] = useState<Route>(() => readRoute())
@@ -70,14 +67,15 @@ export function App({ client }: { client: AdgClient }) {
     return () => clearTimeout(timer)
   }, [route, sessions])
 
-  // An agent's one conversation opens as its 对话 tab, not as one of 以前的对话 (分析脚本, 优化脚本, 进游戏读取… all go there).
+  // Resolve saved session links and approval links into the owning agent's chat.
   useEffect(() => {
     if (route.kind !== 'session') return
-    const home = sessions.items.find(i => i.id === route.id)?.home
-    if (home === undefined || (home !== MAIN_AGENT && !roles.some(r => r.id === home))) return
+    const item = sessions.items.find(i => i.id === route.id)
+    if (!item) return
+    const root = sessionRoot(item, new Map(sessions.items.map(s => [s.id, s])))
     replacing.current = true
-    setRoute({ kind: 'agent', id: home })
-  }, [route, sessions, roles])
+    setRoute({ kind: 'agent', id: root.home ?? root.role ?? MAIN_AGENT, ...(item.origin === 'subagent' ? { child: item.id } : {}) })
+  }, [route, sessions])
 
   // Just opened: the games page is the main one; chat when this connection has no games.
   useEffect(() => {
@@ -86,14 +84,10 @@ export function App({ client }: { client: AdgClient }) {
     setRoute(pages.some(p => p.id === START_PAGE) ? { kind: 'page', id: START_PAGE } : { kind: 'home' })
   }, [route, status.state, pages])
 
-  // The switch is off while the address still says 以前的对话: the agent's conversation instead.
-  const showEarlier = useShowEarlier()
-  const agentRouteTab = view.kind === 'agent' && (view.tab !== 'history' || showEarlier) ? view.tab : undefined
   const openSession = (id: string) => setRoute({ kind: 'session', id })
   const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
   const selected = view.kind === 'session' ? view.id : null
-  const selectedItem = selected === null ? undefined : sessions.items.find(i => i.id === selected)
   const shown: Route = view.kind === 'start' ? { kind: 'page', id: START_PAGE } : view
   const page = shown.kind === 'page' ? pages.find(p => p.id === shown.id) : undefined
   // A page an agent owns is one of its tabs; under 助手 while that agent is gone.
@@ -102,10 +96,10 @@ export function App({ client }: { client: AdgClient }) {
   const openAgent = (id: string) => setRoute({ kind: 'agent', id })
   const goHome = () => openAgent(MAIN_AGENT)
   const reminder = <><ApiKeyReminder client={client} onSettings={() => openSettings('api-keys')} /><ScriptUpdateNotes client={client} /></>
-  // The agent in front, whose tabs show: its conversation or tab, an earlier conversation of its, a page it owns.
+  // The active agent owns the conversation and its plugin tabs.
   const tabAgent = view.kind === 'home' ? MAIN_AGENT : view.kind === 'agent' ? view.id
-    : view.kind === 'session' ? (selectedItem === undefined ? undefined : agentIdOf(selectedItem, roles)) : pageOwner
-  const agentTab = (id: string, tab: string) => setRoute(tab === 'chat' ? { kind: 'agent', id } : tab === 'history' ? { kind: 'agent', id, tab } : { kind: 'page', id: tab })
+    : pageOwner
+  const agentTab = (id: string, tab: string) => setRoute(tab === 'chat' ? { kind: 'agent', id } : { kind: 'page', id: tab })
 
   const rail: RailTarget = view.kind === 'settings' ? { kind: 'settings' } : view.kind === 'schedule' ? { kind: 'schedule' }
     : tabAgent !== undefined ? { kind: 'agent', id: tabAgent }
@@ -114,7 +108,7 @@ export function App({ client }: { client: AdgClient }) {
     : <page.component key={page.id} client={client} openSession={openSession} openSettings={openSettings} openPage={openPage} arg={shown.kind === 'page' ? shown.arg : undefined} />
   const agentTabs = tabAgent === undefined ? null : (
     <AgentTabs client={client} agentId={tabAgent} pages={pages.filter(p => ownerOf(p) === tabAgent)}
-      current={agentRouteTab !== undefined ? agentRouteTab : view.kind === 'session' ? 'history' : shown.kind === 'page' ? shown.id : 'chat'}
+      current={shown.kind === 'page' ? shown.id : 'chat'}
       onTab={tab => agentTab(tabAgent, tab)} />
   )
 
@@ -134,15 +128,11 @@ export function App({ client }: { client: AdgClient }) {
             <div className="agent-area">
               {agentTabs}
               {pageOwner !== undefined ? pageView
-                : view.kind === 'agent' && agentRouteTab === 'history' ? <AgentHistory key={view.id} client={client} agentId={view.id} onSelect={openSession} />
-                : view.kind === 'session' ? <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
-                : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} onAgent={openAgent} reminder={reminder} />}
+                : <AgentConversation key={tabAgent} client={client} agentId={tabAgent} onMain={goHome} child={view.kind === 'agent' ? view.child : undefined} reminder={reminder} />}
             </div>
           )}
           {view.kind === 'schedule' && <ScheduleOverview client={client} focus={view.focus} agent={view.agent} />}
-          {view.kind === 'session' && tabAgent === undefined && (
-            <SessionView key={view.id} client={client} sessionId={view.id} onAgent={openAgent} reminder={reminder} />
-          )}
+          {view.kind === 'session' && <section className="main empty">正在打开助手对话…</section>}
           {exchange !== null && <HandOffPage key={exchange.id} client={client} id={exchange.id} onClose={() => setRoute(view)} />}
         </div>
       )}
@@ -166,12 +156,9 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
   const roles = useRoles(client)
   const role = roles.find(r => r.id === agentId)
   const agent = role === undefined ? MAIN : agentOf(role)
-  const hasEarlier = useHasEarlier(client, agentId)
-  const earlier = useShowEarlier() && (hasEarlier || current === 'history')
   const tabs = [
     { id: 'chat', title: '对话', icon: 'chat' as const },
     ...[...pages].sort((a, b) => a.order - b.order).map(p => ({ id: p.id, title: p.title, icon: p.icon })),
-    ...(earlier ? [{ id: 'history' satisfies AgentTab, title: '以前的对话', icon: 'archive' as const }] : []),
   ]
   if (tabs.length === 1) return null
   // Up in the window's title bar, in its middle (elsewhere, the page's strip in its place, from the main column's edge).
@@ -188,11 +175,11 @@ function AgentTabs({ client, agentId, pages, current, onTab }: {
 }
 
 /** An agent's one conversation (`agents/home`): made the first time it is opened. */
-function AgentConversation({ client, agentId, onMain, onAgent, reminder }: {
+function AgentConversation({ client, agentId, onMain, child, reminder }: {
   client: AdgClient
   agentId: string
   onMain: () => void
-  onAgent: (agentId: string) => void
+  child?: string | undefined
   reminder: ReactNode
 }) {
   const { sessionId, error } = useHome(client, agentId)
@@ -200,7 +187,7 @@ function AgentConversation({ client, agentId, onMain, onAgent, reminder }: {
     return <section className="main empty"><span>{error}<button className="link-button" onClick={onMain}>回到助手</button></span></section>
   }
   if (sessionId === null) return <section className="main empty">正在打开…</section>
-  return <SessionView key={sessionId} client={client} sessionId={sessionId} onAgent={onAgent} reminder={reminder} />
+  return <SessionView key={sessionId} client={client} sessionId={sessionId} child={child} reminder={reminder} />
 }
 
 /**

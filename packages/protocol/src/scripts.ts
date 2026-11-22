@@ -290,7 +290,7 @@ export const ScriptJobPhase = z.enum(['queued', 'resolving', 'downloading', 'ver
 export type ScriptJobPhase = z.infer<typeof ScriptJobPhase>
 
 /** How the agent is doing with a waiting setup program: `failed` (no model set up, stopped…) says why. */
-export const SetupAgent = z.object({ sessionId: z.string(), state: z.enum(['running', 'failed']), reason: z.string().optional() })
+export const SetupAgent = z.object({ sessionId: z.string(), taskId: z.string().optional(), state: z.enum(['running', 'failed']), reason: z.string().optional() })
 export type SetupAgent = z.infer<typeof SetupAgent>
 
 /**

@@ -223,7 +223,8 @@ function Usage({ record, totals }: { record: AssistantRecord; totals: Trajectory
         )}
       <h4 className="usage-heading">已加载窗口累计</h4>
       <Facts rows={[
-        ['请求数', String(totals.requests)],
+        ['模型回复', String(totals.requests)],
+        ['用量记录（含重试及压缩）', `${totals.reportedUsage} 条已报告，${totals.missingUsage} 条未知`],
         ['输入（未缓存）', `${formatTokens(totals.inputTokens)} tok`],
         ['缓存读取', `${formatTokens(totals.cacheReadTokens)} tok`],
         ['输出', `${formatTokens(totals.outputTokens)} tok`],

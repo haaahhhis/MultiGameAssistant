@@ -19,12 +19,15 @@ test('the service works when called through ctx.get, as the runner does', async 
   await ctx.plugin(NoMuMu, { dataDir: dir, sharedDir: dir })
   const service = ctx.get('adgEmulators')
   assert.ok(service !== undefined)
+  // Pin the fake backend to the fixture even on a workstation with a real MuMu installation.
+  const emulators = ctx.get('adgEmulators') as unknown as AdgEmulators
+  const missingManager = join(dir, 'MuMuManager.exe')
+  await emulators.configure({ mumuManager: missingManager })
   await service.prepare({ signal: AbortSignal.timeout(5000), onStatus: () => {} }).then(
     () => assert.fail('no emulator to prepare'),
-    (error: Error) => assert.match(error.message, /没有找到 MuMu 模拟器/),
+    (error: Error) => assert.equal(error.message, `找不到 MuMuManager：${missingManager}`),
   )
 
-  const emulators = ctx.get('adgEmulators') as unknown as AdgEmulators
   assert.equal((await emulators.configure({ manualAddress: '127.0.0.1:5555' })).manualAddress, '127.0.0.1:5555')
   assert.deepEqual(await service.prepare({ signal: AbortSignal.timeout(5000), onStatus: () => {} }), { address: '127.0.0.1:5555', label: '手动配置的 ADB 地址', managed: false })
   assert.equal((await emulators.status()).selection.address, '127.0.0.1:5555')

@@ -166,6 +166,27 @@ test('the asker can add to the work while it goes on, and it reaches the agent d
   assert.equal(parseThreadNote(o.said.filter(s => s.sessionId === 's-scripts').at(-1)!.text)?.text, '只看今天的')
 })
 
+test('simultaneous delegations to one role deliver to separate workers and return to their own callers', async () => {
+  const replies = new Map<string, string>()
+  const desk = createHandOffDesk({
+    home: async () => assert.fail('these tasks already have an owner and a worker'),
+    prepareWorker: async input => ({ owner: 'scripts', id: 'worker-' + input.title, run: async () => 'worker-' + input.title }),
+    converse: async (session, message) => {
+      if (session.startsWith('worker-')) return text(session)
+      replies.set(session, message)
+      return text('已收到')
+    },
+    record: async () => {},
+  })
+  await Promise.all(['A', 'B'].map(title => desk.handOff({
+    ...handed(), title, relay: true,
+    from: { sessionId: 'caller-' + title, callId: title, agent: 'main' },
+  })))
+  await tick()
+  assert.match(replies.get('caller-A') ?? '', /worker-A/)
+  assert.match(replies.get('caller-B') ?? '', /worker-B/)
+})
+
 test('after the work is handed back the two can still talk on the thread', async () => {
   const kept: HandOff[] = []
   const said: { sessionId: string; text: string }[] = []

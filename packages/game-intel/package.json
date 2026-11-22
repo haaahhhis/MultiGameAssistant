@@ -26,6 +26,7 @@
     "@adg/notify": "workspace:*",
     "@adg/pack-schema": "workspace:*",
     "@adg/protocol": "workspace:*",
+    "htmlparser2": "10.0.0",
     "zod": "4.4.3"
   },
   "peerDependencies": {

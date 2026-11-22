@@ -30,7 +30,7 @@ export interface EngineDeps {
   readonly runner: Pick<Runner, 'start' | 'check' | 'stop' | 'finished' | 'watch' | 'successor'> & Partial<Pick<Runner, 'held' | 'get' | 'closeGame'>>
   readonly library: CheckLibrary
   readonly notices: () => { send(notice: EngineNotice): Promise<readonly string[]>; update(id: string, patch: { done?: string }): Promise<void> } | undefined
-  readonly conversations: () => Conversations | undefined
+  readonly conversations: () => (Conversations & Required<Pick<Conversations, 'prepareTask'>>) | undefined
   /** The skills an agent step can call with `/name` (none: only the app's commands expand). */
   readonly skills?: () => Promise<readonly SlashSkill[]>
   readonly emulators: () => { stop(index?: number): Promise<void> } | undefined
@@ -50,7 +50,6 @@ interface Active {
   controller: AbortController
   executing: Set<string>
   gates: Map<string, (decision: 'continue' | 'stop') => void>
-  agentSession?: string
   usedEmulator: boolean
   cancelReason?: string
   /** `user`: cancelled; `failure`: stopped because a node failed (the run counts as failed). */
@@ -331,11 +330,11 @@ export class Engine {
       case 'agent': {
         const conversations = this.#deps.conversations()
         if (conversations === undefined) return { ok: false, detail: 'agent 现在不可用（会话服务没有加载）' }
-        // 编排's one conversation; each step is a message from the pipeline.
-        active.agentSession ??= await conversations.home(PIPELINE_ROLE.id)
+        const title = node.title ?? active.pipeline.name
+        const work = await conversations.prepareTask(PIPELINE_ROLE.id, title)
         // `/command` or `/skill` heads the step's instruction as in the chat box (protocol commands.ts).
         const prompt = node.prompt.trimStart().startsWith('/') ? expandSlash(node.prompt, await this.#deps.skills?.().catch(() => []) ?? []) : node.prompt
-        const answer = await conversations.ask(active.agentSession, taskMessage(`流水线「${active.pipeline.name}」`, node.title ?? active.pipeline.name, `${prompt}\n\n${NO_QUESTIONS}`), signal)
+        const answer = await work.run(taskMessage(`流水线「${active.pipeline.name}」`, node.title ?? active.pipeline.name, `${prompt}\n\n${NO_QUESTIONS}`), signal)
         const clipped = answer.length > 300 ? `${answer.slice(0, 300)}…` : answer
         return answer.startsWith('（这一轮没有完成') ? { ok: false, detail: clipped } : { ok: true, detail: clipped }
       }
@@ -347,7 +346,9 @@ export class Engine {
       }
       case 'notify': {
         const sink = this.#deps.notices()
-        const reached = sink === undefined ? [] : await sink.send({ id: `pipeline:${active.run.id}:${node.id}`, scope: 'pipeline', title: active.pipeline.name, text: node.text, severity: 'info' })
+        const legacyDaily = node.text === '四游戏日常跑完：方舟/终末地 → 星铁 → 鸣潮（星铁与鸣潮已改成串行，不再互相抢屏幕）'
+        const text = legacyDaily ? this.#taskResults(active).join('\n') : node.text.replaceAll('{运行结果}', () => this.#taskResults(active).join('\n'))
+        const reached = sink === undefined ? [] : await sink.send({ id: `pipeline:${active.run.id}:${node.id}`, scope: 'pipeline', title: active.pipeline.name, text, severity: 'info' })
         return { ok: true, detail: reached.length > 0 ? `已发送（${reached.join('、')}）` : '没有可用的消息渠道，未发送' }
       }
       case 'start':
@@ -402,6 +403,14 @@ export class Engine {
     return going.length === 0 ? '正在收尾…' : `正在结束${going.join('、')}的进程…`
   }
 
+  #taskResults(active: Active): string[] {
+    return active.pipeline.nodes.filter(node => node.kind === 'script-task' && !active.passed.has(node.id)).map(node => {
+      const result = active.run.nodes[node.id]!
+      const attempts = result.runIds.length > 1 ? `（共 ${result.runIds.length} 次运行）` : ''
+      return `${nodeLabel(node, this.#deps.library)}：${STATE_WORD[result.state]}${attempts}`
+    })
+  }
+
   async #finish(active: Active): Promise<void> {
     const { run, pipeline } = active
     if (run.state !== 'running' || active.finishing === true) return
@@ -445,7 +454,7 @@ export class Engine {
       void this.#deps.notices()?.send({
         id: `pipeline:${run.id}:summary`, scope: 'pipeline', severity: run.state === 'succeeded' ? 'success' : 'warning',
         title: `${pipeline.name}：${run.state === 'succeeded' ? '已完成' : run.state === 'failed' ? '有失败' : '已取消'}`,
-        text: [`${TRIGGER[run.trigger.kind]}运行，${run.outcome}`, `用时 ${Math.max(1, Math.round((run.endedAt - run.startedAt) / 60_000))} 分钟`, ...failed].join('\n'),
+        text: [`${TRIGGER[run.trigger.kind]}运行，${run.outcome}`, `用时 ${Math.max(1, Math.round((run.endedAt - run.startedAt) / 60_000))} 分钟`, ...this.#taskResults(active), ...failed].join('\n'),
       }).catch(() => {})
     }
     const snapshot = structuredClone(run)

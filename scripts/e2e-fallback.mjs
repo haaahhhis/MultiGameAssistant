@@ -30,12 +30,12 @@ const backup = await startFakeLlm({
   respond: body => {
     if (!Array.isArray(body.tools) || body.tools.length === 0) return undefined
     const last = body.messages?.at(-1)
-    if (said(body, 'E2E-SUB-CHILD')) return { text: 'CHILD-ANSWER-42' }
     if (said(body, 'E2E-SUB-LEAD')) {
       if (said(body, 'CHILD-ANSWER-42')) return { text: '子任务交回了：CHILD-ANSWER-42' }
       if (last?.role === 'tool' && lastTool(body) === 'subagent') return { text: '开了一个子任务，等它回来。' }
-      return call('subagent', { description: '数一个数', prompt: 'E2E-SUB-CHILD 回答一个数' })
+      return call('subagent', { description: '数一个数', prompt: 'E2E-SUB-CHILD 回答一个数', provider: 'guessed-parent-provider', model: 'guessed-parent-model' })
     }
+    if (said(body, 'E2E-SUB-CHILD')) return { text: 'CHILD-ANSWER-42' }
     if (said(body, 'E2E-FALLBACK')) return { text: '备用模型答好了。' }
     return undefined
   },
@@ -116,7 +116,18 @@ try {
   const back = await until('the lead to get the sub-agent\'s answer', () => backup.requests.find(r => said(r, 'E2E-SUB-LEAD') && said(r, 'CHILD-ANSWER-42')))
   const handed = JSON.stringify(back.messages)
   if (/failed before it finished|stopReason[^,]*error/i.test(handed)) fail('the lead was told the sub-agent failed')
-  step('the lead got the sub-agent\'s answer, not a failure')
+  if (back.tools?.some(tool => (tool.function?.name ?? tool.name) === 'wait_agent')) fail('the host offered a blocking inbox wait to the lead')
+  await until('the settlement to resume and finish the lead turn', async () => {
+    const opened = await rpc('session/open', { sessionId: lead })
+    await rpc('session/close', { subscriptionId: opened.subscriptionId })
+    const events = opened.events
+    if (events.some(e => e.type === 'tool/call' && e.name === 'wait_agent')) fail('the lead polled for its child')
+    const receipt = events.find(e => e.type === 'user/message' && e.origin.kind === 'subagent-settled')
+    if (!receipt) return false
+    const answer = events.find(e => e.seq > receipt.seq && e.type === 'assistant/message' && JSON.stringify(e.content).includes('子任务交回了：CHILD-ANSWER-42'))
+    return answer && events.some(e => e.seq > answer.seq && e.type === 'turn/end' && e.reason.kind === 'completed')
+  })
+  step('the native settlement resumed the lead and it completed without wait_agent')
   console.log(`\nfallback end-to-end OK (${steps.length} steps); 没钱 served ${broke.requests.length} requests, 备用 ${backup.requests.length}`)
 } catch (error) {
   console.error(`\n✘ failed after: ${steps.join(' → ') || 'nothing'}\n  ${error.message}`)

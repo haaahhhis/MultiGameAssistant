@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildChat, type AdgClient, type ChatItem } from '@adg/client-core'
 import { summarizeToolArgs, type SessionEvent, type SessionItem } from '@adg/protocol'
 import { useLastReplies } from '../../agents.ts'
+import { reportToolActivity } from './ReportStatus.tsx'
 import { Icon } from '../../components/Icons.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
 import { relativeTime } from '../../components/SessionList.tsx'
@@ -43,7 +44,11 @@ export function subAgentIds(events: readonly SessionEvent[]): ReadonlyMap<string
 export const SubAgentIds = createContext<ReadonlyMap<string, string>>(new Map())
 
 /** The session id of the sub-agent a start result or notice names. */
-const childId = (named: string | undefined, ids: ReadonlyMap<string, string>) => (named === undefined ? undefined : ids.get(named) ?? named)
+function childId(named: string | undefined, ids: ReadonlyMap<string, string>): string | undefined {
+  if (named === undefined) return undefined
+  // A modern agent-N name can arrive before its catalog entry. Only the resolved id opens a session.
+  return ids.get(named) ?? (/^agent-\d+$/.test(named) ? undefined : named)
+}
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 
@@ -61,13 +66,25 @@ export function taskWords(text: string): string {
 const SETTLED = /^Background subagent (\S+) (finished|was stopped)?/
 
 /** How the sub-agents of a conversation ended, from the notices it was sent; those are not drawn, the card says it. */
-export function settledTasks(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, TaskState> {
+export function settledTasks(items: readonly ChatItem[], ids: ReadonlyMap<string, string>, events: readonly SessionEvent[] = []): ReadonlyMap<string, TaskState> {
   const ended = new Map<string, TaskState>()
   for (const item of items) {
     if (!isSettlement(item)) continue
     const match = SETTLED.exec(item.summary)
     if (match === null) continue
-    ended.set(childId(match[1], ids)!, match[2] === 'finished' ? DONE : match[2] === 'was stopped' ? STOPPED : FAILED)
+    const id = childId(match[1], ids)
+    if (id !== undefined) ended.set(id, match[2] === 'finished' ? DONE : match[2] === 'was stopped' ? STOPPED : FAILED)
+  }
+  // Native settlements can already be in the inbox while the parent's next turn is queued.
+  for (const event of events) {
+    if (event.type !== 'unknown' || event.upstreamType !== 'agent/inbox/spliced') continue
+    const data = event.data as { inserted?: { source?: { kind?: string; senderSessionId?: string; stopReason?: string } }[] } | null
+    for (const entry of data?.inserted ?? []) {
+      const source = entry.source
+      if (source?.kind !== 'subagent-settled' || !source.senderSessionId || !source.stopReason) continue
+      const state = source.stopReason === 'completed' ? DONE : ['aborted', 'interrupted'].includes(source.stopReason) ? STOPPED : FAILED
+      ended.set(source.senderSessionId, { ...state, at: event.time })
+    }
   }
   return ended
 }
@@ -102,21 +119,39 @@ function useChild(client: AdgClient, id: string | undefined): SessionItem | unde
   return useStore(client.sessions).items.find(i => i.id === id) as SessionItem | undefined
 }
 
-export type TaskState = { label: string; tone: string }
+export type TaskState = { label: string; tone: string; at?: number }
 const RUNNING: TaskState = { label: '进行中', tone: 'running' }
 const DONE: TaskState = { label: '完成', tone: 'ok' }
 const STOPPED: TaskState = { label: '已停止', tone: 'failed' }
 const FAILED: TaskState = { label: '没做成', tone: 'failed' }
 
-/** A sub-task's steps, read from its own conversation, only while on screen. */
+/** Listen to the child only while its current action or its steps are visible. */
+function useTaskTools(handle: NonNullable<ReturnType<typeof useSessionHandle>>) {
+  const state = useStore(handle.state)
+  const tools = useMemo(() => buildChat(state.events, state.live, state.pending).filter((i): i is ToolItem => i.kind === 'tool'), [state.events, state.live, state.pending, state.version])
+  return { tools, events: state.events }
+}
+
+function LiveAction({ handle, label }: { handle: NonNullable<ReturnType<typeof useSessionHandle>>; label: string }) {
+  const { tools, events } = useTaskTools(handle)
+  const start = events.findLast(e => e.type === 'turn/start')
+  const active = tools.findLast(t => t.status === 'running' && t.time >= (start?.time ?? 0))
+  const action = active && reportToolActivity(active)
+  return action && action !== label ? <span title={action}>{action}</span> : RUNNING.label
+}
+
+function TaskActivity({ client, id, label }: { client: AdgClient; id: string; label: string }) {
+  const handle = useSessionHandle(client, id)
+  return handle ? <LiveAction handle={handle} label={label} /> : RUNNING.label
+}
+
 function Steps({ client, id, running }: { client: AdgClient; id: string; running: boolean }) {
   const handle = useSessionHandle(client, id)
-  return handle === null ? <div className="subtask-steps muted small">正在打开…</div> : <OpenSteps handle={handle} running={running} />
+  return handle ? <OpenSteps handle={handle} running={running} /> : <div className="subtask-steps muted small">正在打开…</div>
 }
 
 function OpenSteps({ handle, running }: { handle: NonNullable<ReturnType<typeof useSessionHandle>>; running: boolean }) {
-  const state = useStore(handle.state)
-  const tools = useMemo(() => buildChat(state.events, state.live, state.pending).filter((i): i is ToolItem => i.kind === 'tool'), [state.events, state.live, state.pending, state.version])
+  const { tools } = useTaskTools(handle)
   if (tools.length === 0) return <div className="subtask-steps muted small">{running ? '正在开始…' : '没有用工具'}</div>
   // While it works, where it has got to; the rest is in the whole conversation.
   const shown = running ? tools.slice(-4) : tools
@@ -133,35 +168,62 @@ function OpenSteps({ handle, running }: { handle: NonNullable<ReturnType<typeof 
   )
 }
 
-/** A sub-agent an agent opened, in that agent's turn: with its steps and answer. */
-export function SubTaskCard({ client, item }: { client: AdgClient; item: ToolItem }) {
-  const open = useContext(OpenSubTask)
-  const { description, prompt } = useMemo(() => argsOf(item.arguments), [item.arguments])
-  const id = childId(STARTED.exec(item.result ?? '')?.[1], useContext(SubAgentIds))
-  const child = useChild(client, id)
-  const refused = item.status === 'error' || item.status === 'interrupted'
-  const running = !refused && (child?.running ?? item.status === 'running')
-  const ended = useContext(SettledTasks)
-  const state = refused ? FAILED : running ? RUNNING : (id === undefined ? undefined : ended.get(id)) ?? DONE
-  const replies = useLastReplies(client, child === undefined ? [] : [{ id: child.id, updatedAt: child.updatedAt, running: child.running }])
-  const answer = id === undefined ? undefined : replies.get(id)
-  const [expanded, setExpanded] = useState(false)
-  const label = description !== '' ? description : (prompt.split('\n')[0] ?? '子任务')
-  const badge = <span className={`delegation-state tone-${state.tone}`}>{state.tone === 'running' && <span className="tool-spinner" aria-hidden />}{state.label}</span>
-
-  const showSteps = id !== undefined && (running || expanded)
+/** The same compact control opens the child from a dispatch, tool call or exchange. */
+function SubTaskButton({ label, title, state, action, onOpen }: {
+  label: string
+  title: string
+  state: TaskState
+  action?: ReactNode
+  onOpen: (() => void) | undefined
+}) {
   return (
-    <div className={`subtask tone-${state.tone}`}>
-      <div className="subtask-head">
-        <Icon name="flow" />
-        <strong className="subtask-label" title={prompt}>{label}</strong>
-        {badge}
-        {id !== undefined && <button className="link-button subtask-open" onClick={() => open({ id, label })}>看完整过程</button>}
-      </div>
-      {refused && <div className="delegation-failed"><Icon name="alert" />{item.result ?? item.error ?? '没有开起来'}</div>}
-      {showSteps && <Steps client={client} id={id} running={running} />}
-      {!running && answer != null && answer !== '' && <div className="subtask-answer"><Markdown text={answer} /></div>}
-      {!running && id !== undefined && (
+    <button type="button" className={`exchange-line subtask-line tone-${state.tone}`} disabled={!onOpen} title={title} onClick={onOpen}>
+      <Icon name="flow" />
+      <span className="exchange-who">子任务</span>
+      <span className="exchange-title">{label}</span>
+      <span className={`delegation-state tone-${state.tone}`} aria-live="polite">
+        {state.tone === 'running' && <span className="tool-spinner" aria-hidden />}
+        <span className="subtask-activity">{action ?? state.label}</span>
+      </span>
+      {onOpen && <Icon name="chevron" className="exchange-open" />}
+    </button>
+  )
+}
+
+export function SubTaskCard({ client, work, detailed = false }: { client: AdgClient; work: ToolItem | OpenTask; detailed?: boolean }) {
+  const ids = useContext(SubAgentIds)
+  const settled = useContext(SettledTasks)
+  const open = useContext(OpenSubTask)
+  const call = 'kind' in work ? work : undefined
+  const args = call && argsOf(call.arguments)
+  const id = 'kind' in work ? childId(STARTED.exec(work.result ?? '')?.[1], ids) : work.id
+  const label = ('label' in work ? work.label : args?.description || args?.prompt.split('\n')[0]) || '子任务'
+  const child = useChild(client, id)
+  const approval = useStore(client.approvals).some(r => r.sessionId === id)
+  const question = useStore(client.questions).some(r => r.sessionId === id)
+  const end = id ? settled.get(id) : undefined
+  const refused = call?.status === 'error' || call?.status === 'interrupted'
+  const finished = end && (!child?.running || (end.at !== undefined && child.updatedAt <= end.at))
+  let state: TaskState
+  if (refused) state = { label: call.status === 'error' ? '派发失败' : '派发已中断', tone: 'failed' }
+  else if (finished) state = end
+  else if (approval || question) state = { label: approval ? '等待你批准操作' : '等待你回答问题', tone: 'waiting' }
+  else if (child?.running) state = RUNNING
+  else if (child && !child.blank) state = DONE
+  else state = { label: id ? '已派发' : '正在派发子任务', tone: 'running' }
+
+  const running = !!child?.running && !finished && !refused
+  const replies = useLastReplies(client, detailed && child && !running && !refused ? [child] : [])
+  const answer = id && replies.get(id)
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="delegation task-line">
+      <SubTaskButton label={label} title={args?.prompt || label} state={state} onOpen={id ? () => open({ id, label }) : undefined}
+        action={child && state === RUNNING ? <TaskActivity client={client} id={child.id} label={label} /> : undefined} />
+      {refused && <div className="delegation-failed"><Icon name="alert" />{call.result || call.error || state.label}</div>}
+      {detailed && id && (running || expanded) && <Steps client={client} id={id} running={running} />}
+      {detailed && answer && <div className="subtask-answer"><Markdown text={answer} /></div>}
+      {detailed && !running && !refused && id && (
         <button className="link-button subtask-fold" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>
           <Icon name={expanded ? 'chevron-down' : 'chevron'} />{expanded ? '收起步骤' : '看步骤'}
         </button>
@@ -253,12 +315,13 @@ export function DetailSwitch({ detail, onChange }: { detail: ChatDetail; onChang
 export function taskLabels(items: readonly ChatItem[], ids: ReadonlyMap<string, string>): ReadonlyMap<string, string> {
   const labels = new Map<string, string>()
   for (const item of items) {
+    if (item.kind === 'context' && 'childId' in item && typeof item.childId === 'string') labels.set(item.childId, item.summary)
     if (item.kind !== 'tool' || item.name !== SUBAGENT_TOOL) continue
     const id = childId(STARTED.exec(item.result ?? '')?.[1], ids)
     if (id === undefined) continue
     const { description, prompt } = argsOf(item.arguments)
     const label = description !== '' ? description : (prompt.split('\n')[0] ?? '')
-    if (label !== '') labels.set(id, label)
+    labels.set(id, label || '子任务')
   }
   return labels
 }
@@ -366,13 +429,8 @@ export function ThreadSubTasks({ client, session, from, to, onOpen }: { client: 
         const label = taskWords(child.title ?? '') || '子任务'
         const state = child.running ? RUNNING : DONE
         return (
-          <button key={child.id} className={`exchange-line subtask-line tone-${state.tone}`} onClick={() => onOpen({ id: child.id, label })}>
-            <Icon name="flow" />
-            <span className="exchange-who">子任务</span>
-            <span className="exchange-title">{label}</span>
-            <span className={`delegation-state tone-${state.tone}`}>{state.tone === 'running' && <span className="tool-spinner" aria-hidden />}{state.label}</span>
-            <Icon name="chevron" className="exchange-open" />
-          </button>
+          <SubTaskButton key={child.id} label={label} title={label} state={state} onOpen={() => onOpen({ id: child.id, label })}
+            action={child.running ? <TaskActivity client={client} id={child.id} label={label} /> : undefined} />
         )
       })}
     </div>

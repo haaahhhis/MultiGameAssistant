@@ -117,12 +117,18 @@ export interface QuestionProgress {
 }
 
 /** The slice of dsh's session controller a conversation needs. */
+export interface PreparedTask {
+  readonly owner: string
+  readonly id: string
+  run(instruction: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
+}
+
 export interface Conversations {
   /** Send `text` (and PNG images) as a message in `sessionId` and resolve with the agent's final answer. */
   ask(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
   /** The same, resolving with the whole turn (what the agent said and did). Absent: the final answer only. */
   /** @param options.insert - into the turn going on, if one is, rather than after it. */
-  converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean }): Promise<Reply>
+  converse?(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean; isolated?: boolean; onWorkerReport?: (text: string) => void }): Promise<Reply>
   /**
    * The agent's one conversation (the gateway's `home`; `main`: 助手's), made when it has none;
    * `focus`: what its next work is about, whose skills it sees (the gateway's skill scope).
@@ -142,17 +148,13 @@ export interface Conversations {
   askRefusal?(sessionId: string): string | undefined
   /** The hand-offs under way, for saying something in one. */
   readonly desk?: HandOffDesk
-  /**
-   * A one-off session; `defaultModel`: use the default model (else the one last used in the UI);
-   * `focus`: the scripts and games it is about; `role`: the role agent it belongs to, created with the
-   * role agents' model when one is chosen (over `defaultModel`); absent: the main agent's. `by`: who asked.
-   */
-  create(title: string, options?: { defaultModel?: boolean; focus?: { scripts?: string[]; games?: string[] }; role?: string; by?: string }): Promise<string>
+  prepareTask?(role: string, title: string, focus?: { scripts?: string[]; games?: string[] }): Promise<PreparedTask>
   /** When the session last changed (epoch ms). */
   lastActive?(sessionId: string): Promise<number | undefined>
 }
 
 export interface HandOffInput {
+  readonly onWorker?: (sessionId: string) => void
   /** The agent it goes to. */
   readonly to: { readonly id: string; readonly name: string }
   /** Who asks, in words: 助手, 监控. */

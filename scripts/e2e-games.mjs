@@ -98,11 +98,13 @@ const llm = await startFakeLlm({
     { text: '加好了 E2E 新游戏，假 WIKI 能自动读。' },
   ],
   fallback: { text: '好的。' },
-  scripted: body => Array.isArray(body.tools) && body.tools.length > 0,
+  scripted: body => Array.isArray(body.tools) && body.tools.length > 0 && !JSON.stringify(body.messages).includes('（你负责的子任务：'),
 })
 const feishu = await startFakeFeishu({ appId: APP_ID, appSecret: 'secret-ok', port: FEISHU_PORT })
 const gateway = await connectGateway({ name: 'adg-e2e-games' })
 const { call: rpc } = gateway
+const modelsBefore = await rpc('models/agentModels', {})
+const compactionBefore = await rpc('compaction/get', {})
 const steps = []
 const step = (name, detail = '') => { steps.push(name); console.log(`✔ ${name}${detail === '' ? '' : `: ${detail}`}`) }
 const fail = message => { throw new Error(message) }
@@ -135,19 +137,36 @@ try {
 
   // 2. the agent reads the game
   await saveFakeProvider(rpc, `${llm.url}/v1`)
-  const { sessionId: uiSession } = await rpc('sessions/create', {})
-  await until('the fake model route', () => rpc('session/selectModel', { sessionId: uiSession, provider: FAKE_PROVIDER, model: FAKE_MODEL }).then(() => true, () => false))
+  const fake = { provider: FAKE_PROVIDER, model: FAKE_MODEL }
+  await until('the fake model route', () => rpc('models/setAgentModel', { agentId: 'games', model: fake }).then(() => true, () => false))
+  await rpc('models/setAgentModel', { agentId: 'games', sub: true, model: fake })
+  await rpc('compaction/set', { settings: { ...compactionBefore.settings, ptcSubagents: false } })
+  const { sessionId: owner } = await rpc('agents/home', { agentId: 'games' })
   const { sessionId } = await rpc('games/read', { game: GAME })
   const reading = await until('the agent to finish reading', async () => {
     const g = (await rpc('games/list', {})).games.find(x => x.id === GAME)
-    return g?.reading?.state !== 'running' && g?.reading?.sessionId === sessionId ? g.reading : undefined
+    return g?.reading && !['running', 'queued'].includes(g.reading.state) && g.reading.sessionId === sessionId ? g.reading : undefined
   }, 120_000)
   if (reading.state !== 'done') fail(`reading ${reading.state}: ${reading.summary}`)
+  const child = (await rpc('sessions/list', { limit: 200 })).items.find(s => s.id === reading.taskId)
+  if (sessionId !== owner || child?.origin !== 'subagent' || child.parentId !== owner) fail('the reading was not a child of the games home')
+  await until('the settlement to wake the games home with both the instruction and the result', async () => {
+    const opened = await rpc('session/open', { sessionId: owner })
+    await rpc('session/close', { subscriptionId: opened.subscriptionId })
+    const events = opened.events
+    const dispatched = events.find(e => e.type === 'user/message' && e.origin.childId === reading.taskId)
+    if (!dispatched) return false
+    const settled = events.find(e => e.type === 'user/message' && e.origin.kind === 'subagent-settled' && e.seq > dispatched.seq)
+    if (!settled) return false
+    if (events.some(e => e.seq > dispatched.seq && e.seq < settled.seq && (e.type === 'turn/start' || e.type === 'assistant/message'))) {
+      fail('the idle lead ran on the dispatch notice before seeing the already delivered result')
+    }
+    return events.some(e => e.seq > settled.seq && e.type === 'turn/end' && e.reason.kind === 'completed')
+  })
   const asked = llm.requests.find(r => JSON.stringify(r.messages ?? []).includes('读取「E2E 游戏」现在的活动和进度'))
   if (asked === undefined) fail('the agent never got the reading prompt')
   const tools = (asked.tools ?? []).map(t => t.function?.name ?? t.name)
-  for (const name of ['game_sites_refresh', 'game_record', 'game_activities', 'subagent']) if (!tools.includes(name)) fail(`the agent has no ${name} tool`)
-  if (tools.includes('screen_capture')) fail('游戏 looks at the screen itself: that is its sub-agent\'s')
+  for (const name of ['game_sites_refresh', 'game_record', 'game_activities']) if (!tools.includes(name)) fail(`the agent has no ${name} tool`)
   const read = await mine()
   const first = read.find(a => a.name === 'SideStory「E2E 活动甲」')
   const second = read.find(a => a.name === '乙活动')
@@ -212,6 +231,9 @@ try {
   await rpc('feishu/users/remove', { openId: USER }).catch(() => {})
   await rpc('feishu/settings/set', { enabled: false, appId: null }).catch(() => {})
   await rpc('credentials/unset', { ref: SECRET_REF }).catch(() => {})
+  await rpc('models/setAgentModel', { agentId: 'games', model: modelsBefore.agents?.games ?? null }).catch(() => {})
+  await rpc('models/setAgentModel', { agentId: 'games', sub: true, model: modelsBefore.subAgentsOf?.games ?? null }).catch(() => {})
+  await rpc('compaction/set', { settings: compactionBefore.settings }).catch(() => {})
   await removeFakeProvider(rpc)
   rmSync(packDir, { recursive: true, force: true })
   for (const a of (await rpc('games/list', {}).catch(() => ({ activities: [] }))).activities.filter(x => x.game === ADDED)) await rpc('games/activity/remove', { activityId: a.id }).catch(() => {})

@@ -28,7 +28,6 @@ function fakeChannel(state: ChannelStatus['state'] = 'ready', options: { id?: st
 function conversationsWith(over: Partial<Conversations>): Conversations {
   return {
     home: async () => 's-main',
-    create: async () => 'unused',
     handOff: async () => { throw new Error('not used') },
     ask: async () => 'unused',
     ...over,

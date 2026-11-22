@@ -362,6 +362,7 @@ export function runnerTools(runner: Runner, config: {
         task: { type: 'string', description: '任务 id（script_tasks 可查）。' },
         params: { ...PARAMS_SCHEMA, description: '任务参数，例如 [{"name":"stage","value":"1-7"}]；省略的参数用默认值。' },
         wait: { type: 'boolean', description: '等运行结束再返回（最长 3 小时）。' },
+        repair_of: { type: 'string', description: '补偿某个已失败的运行时，传它的 run_id。沿用原参数和配置，重复请求返回同一补偿。' },
         profile: { ...profile, description: '用哪份配置运行（script_profiles 可查）；不填就是当前那份。用户说「用小号的配置」之类时填。' },
       },
       required: ['id', 'task'],
@@ -369,9 +370,12 @@ export function runnerTools(runner: Runner, config: {
       kind: 'execute',
       title: a => `运行：${String(a['id'] ?? '')} / ${String(a['task'] ?? '')}`,
       execute: async (args, exec) => {
-        const a = parse(z.object({ id: ScriptId, task: z.string().min(1).max(64), params: z.array(z.object({ name: z.string().min(1), value: z.string() })).max(40).nullish(), wait: z.boolean().nullish(), profile: Profile }), args)
+        const a = parse(z.object({ id: ScriptId, task: z.string().min(1).max(64), params: z.array(z.object({ name: z.string().min(1), value: z.string() })).max(40).nullish(), wait: z.boolean().nullish(), repair_of: z.string().min(1).nullish(), profile: Profile }), args)
         const spec = config.library.packOf(a.id)?.manifest.tasks.find(t => t.id === a.task)?.params ?? {}
-        const started = await runner.start(a.id, a.task, taskParams(a.params, spec), { profile: ref(a.profile) })
+        if (a.repair_of && (a.params?.length || a.profile)) throw new Error('补偿沿用原运行的参数和配置')
+        const started = a.repair_of
+          ? await runner.repair(a.repair_of, a.id, a.task)
+          : await runner.start(a.id, a.task, taskParams(a.params, spec), { profile: ref(a.profile) })
         if (a.wait !== true || started.endedAt !== undefined) return brief(runner, started.id)
         const onAbort = () => void runner.stop(started.id)
         exec.signal.addEventListener('abort', onAbort, { once: true })

@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { ReportedArticles } from '../src/web-delivery.ts'
 import { GameManifest } from '@adg/pack-schema'
 import { Calendar } from '../src/calendar.ts'
 import { parseSteam, readSteam, type Fetch } from '../src/sources.ts'
@@ -122,6 +123,29 @@ test('announcements are kept per game: the same one is brought up to date, long-
   assert.equal(reloaded.notices().length, 42)
   await reloaded.forget('sts2')
   assert.deepEqual(reloaded.notices().map(n => n.game), ['other'])
+})
+
+test('check the article column of a delivered worker report against saved URLs and explicit exclusions', () => {
+  const articles = new ReportedArticles()
+  const urls = Array.from({ length: 8 }, (_, i) => `https://news.example/post?id=${i}`)
+  articles.receive(['| 标题 | 日期 | 直链 | 配图 |', '|---|---|---|---|',
+    ...urls.map((url, i) => `| 文章 ${i} | 11/19 | [原文](${url}) | https://news.example/photo.jpg |`),
+    '', '参见 https://another.example',
+  ].join('\n'))
+  assert.equal(articles.count, 8)
+  assert.equal(articles.remaining(urls.slice(0, 3), '').length, 5)
+  assert.deepEqual(articles.remaining(urls.slice(0, 6), `跳过 ${urls[6]} | 属于另一个游戏`), [urls[7]])
+  assert.equal(articles.exclusions, 1)
+})
+
+test('eight article links on a query-based news site are retained; re-reading a tracked link enriches the existing cover', async () => {
+  const calendar = fresh()
+  await calendar.load()
+  const articles = Array.from({ length: 8 }, (_, i) => ({ title: '公告' + i, kind: 'news' as const, url: 'https://news.example/article?id=' + i }))
+  await calendar.applyNotices('game', STEAM, articles, NOW)
+  await calendar.applyNotices('game', STEAM, [{ ...articles[0]!, url: articles[0]!.url + '&utm_source=feed', cover: 'https://news.example/cover.jpg' }], NOW + 1)
+  assert.equal(calendar.notices('game').length, 8)
+  assert.equal(calendar.notices('game').find(n => n.title === articles[0]!.title)?.cover, 'https://news.example/cover.jpg')
 })
 
 test('game_notice: the agent records announcements with their dates in the game\'s time; only web addresses are kept', async () => {

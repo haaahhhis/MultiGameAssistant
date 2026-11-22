@@ -84,8 +84,14 @@ export class AdgOrchestrator extends Service {
         return list.filter(s => s.invocation.userInvocable).map(s => ({ name: s.name, description: s.description }))
       },
       emulators: () => {
-        const emulators = ctx.get('adgEmulators') as { stop?: (index?: number) => Promise<void> } | undefined
-        return emulators?.stop === undefined ? undefined : { stop: () => emulators.stop!() }
+        const emulators = ctx.get('adgEmulators') as { stop(): Promise<void>; expectedAddress?(): Promise<string | undefined> } | undefined
+        if (!emulators) return undefined
+        return { stop: async () => {
+          const address = await emulators.expectedAddress?.()
+          if (!address) { log.warn('流水线收尾时无法确认模拟器地址，已保留实例'); return }
+          const release = ctx.adgRunner.runner.locks.acquire([`adb:${address}`], { runId: 'pipeline-cleanup', label: '流水线收尾' })
+          try { await emulators.stop() } finally { release() }
+        } }
       },
       onRun: run => {
         pipelines.recordRun(run)
@@ -100,7 +106,7 @@ export class AdgOrchestrator extends Service {
       hand: async (task, signal) => {
         const talk = conversations()
         if (talk === undefined) throw new Error('对话功能还没准备好')
-        if (task.agent === MAIN) return talk.ask(await talk.home(MAIN), taskMessage(TASK_BY, task.title, task.prompt), signal)
+        if (task.agent === MAIN) return (await talk.prepareTask(MAIN, task.title)).run(taskMessage(TASK_BY, task.title, task.prompt), signal)
         const agent = ctx.get('adgGateway')?.roles.list().find(r => r.id === task.agent)
         if (agent === undefined) throw new Error(`没有「${task.agent}」这个 agent 了`)
         return finalText(await talk.handOff({ to: { id: agent.id, name: agent.name }, by: TASK_BY, title: task.title, task: task.prompt, relay: true, signal }))
@@ -111,6 +117,16 @@ export class AdgOrchestrator extends Service {
     this.engine = engine
     this.pipelines = pipelines
     this.tasks = tasks
+    ctx.effect(() => ctx.adgRunner.runner.watch({ state: run => {
+      if (!run.retryOf || run.endedAt === undefined) return
+      void this.ready.then(() => {
+        const history = pipelines.recordRepair(run)
+        if (history) {
+          ctx.get('adgGateway')?.broadcast('pipelines/run', history)
+          return ctx.get('adgNotify')?.update(`pipeline:${history.id}:summary`, { done: `${run.scriptName} 补偿${run.state === 'succeeded' ? '成功' : '未成功'}（${run.id}）` })
+        }
+      }).catch(error => log.warn(String(error)))
+    } }), 'adg-orchestrator repair results')
     this.ready = scripts.ready.then(() => Promise.all([pipelines.load({ warn: m => log.warn(m) }), tasks.load()])).then(() => {})
     ctx.effect(() => () => engine.dispose(), 'adg-orchestrator engine')
 
