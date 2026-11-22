@@ -2,7 +2,7 @@
  * The pipeline library and its runs, without Cordis: what the capability,
  * the agent tools and the scheduler all use.
  */
-import { isMarker, Pipeline, type PipelineCheck, type PipelineRun, type PipelineSummary, type PipelineTrigger } from '@adg/protocol'
+import { isMarker, Pipeline, type PipelineCheck, type PipelineRun, type PipelineSummary, type PipelineTrigger, type RunInfo } from '@adg/protocol'
 import { checkPipeline, type CheckLibrary } from './check.ts'
 import type { Engine } from './engine.ts'
 import type { PipelineStore } from './store.ts'
@@ -36,6 +36,22 @@ export class Pipelines {
     if (index === -1) this.#runs.push(run)
     else this.#runs[index] = run
     if (run.state !== 'running' || index === -1) void this.#store.saveRuns(this.#runs)
+  }
+
+  recordRepair(repair: RunInfo): PipelineRun | undefined {
+    if (!repair.retryOf || repair.endedAt === undefined || (repair.state !== 'succeeded' && repair.state !== 'cancelled' && repair.state !== 'failed')) return
+    for (const original of this.#runs) {
+      if (original.state === 'running') continue
+      const entry = Object.entries(original.nodes).find(([, node]) => node.state === 'failed' && node.runIds.at(-1) === repair.retryOf)
+      if (!entry) continue
+      const [key, node] = entry
+      const updated: PipelineRun = { ...original, nodes: { ...original.nodes, [key]: {
+        ...node, runIds: [...node.runIds, repair.id], repair: { runId: repair.id, state: repair.state, at: repair.endedAt },
+      } } }
+      this.recordRun(updated)
+      this.#changed()
+      return updated
+    }
   }
 
   list(): PipelineSummary[] {

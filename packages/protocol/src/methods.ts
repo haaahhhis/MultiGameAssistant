@@ -219,6 +219,8 @@ export const HandOff = z.object({
   /** The agent it went to (role id) and its conversation. */
   to: z.string(),
   toSession: z.string(),
+  isolated: z.boolean().optional(),
+  ownerSession: z.string().optional(),
   title: z.string(),
   task: z.string(),
   expecting: z.string().optional(),

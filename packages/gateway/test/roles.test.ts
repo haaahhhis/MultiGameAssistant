@@ -11,7 +11,17 @@ const GAMES = { id: 'games', name: '游戏', description: '读游戏活动和资
 test('an agent keeps what its role names of the app tools; dsh tools stay, but nobody forks', () => {
   const spec = { tools: ['script_*', 'agent_delegate'] }
   const app = new Set(['script_run', 'screen_click', 'agent_delegate'])
-  assert.deepEqual(hiddenTools(spec, app, ['script_run', 'screen_click', 'agent_delegate', 'read', 'subagent', 'subagent_fork']), ['screen_click', 'subagent_fork'])
+  assert.deepEqual(hiddenTools(spec, app, ['script_run', 'screen_click', 'agent_delegate', 'read', 'subagent', 'subagent_fork', 'wait_agent']), ['screen_click', 'subagent_fork', 'wait_agent'])
+})
+
+test('MGA leads and children use settlement delivery while other coordination tools retain their scope', () => {
+  const tools = ['wait_agent', 'list_agents', 'subagent', 'script_runs']
+  const app = new Set(['script_runs'])
+  assert.deepEqual(hiddenTools(GAMES, app, tools, true), ['wait_agent'])
+  assert.deepEqual(hiddenTools(subAgentSpec(GAMES), app, tools), ['wait_agent', 'list_agents', 'subagent'])
+  const prompt = teamPrompt(GAMES, { id: 'main', name: '助手', description: '' }, [])
+  assert.doesNotMatch(prompt, /wait_agent/)
+  assert.match(prompt, /结束当前轮次/)
 })
 
 test("the concrete work is not in an agent's one conversation; its sub-agents have it", () => {

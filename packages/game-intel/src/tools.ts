@@ -11,6 +11,8 @@ import { NoticeArticle } from '@adg/protocol'
 import type { OwnPatch, ReadEvent, ReadNotice } from './calendar.ts'
 import { leftText, parseDateText, shortDate } from './time.ts'
 
+import { gameOverview } from './web-delivery.ts'
+
 export interface GameToolDeps {
   readonly games: () => GameInfo[]
   readonly activities: (game?: string) => Activity[]
@@ -91,7 +93,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
       ends: a.endsAt === undefined ? '未知' : `${shortDate(a.endsAt, timeZone)}（${leftText(a.endsAt, now)}）`,
       ...(a.shopEndsAt === undefined ? {} : { shop_ends: shortDate(a.shopEndsAt, timeZone) }),
       dates_from: sourceName(a, a.shown?.endsAt ?? a.shown?.startsAt),
-      ...(a.sources === undefined ? {} : { sources: a.sources.map(s => ({ id: s.id, name: s.name, ...(s.endsAt === undefined ? {} : { ends: shortDate(s.endsAt, timeZone) }) })) }),
+      ...(a.sources === undefined ? {} : { sources: a.sources.map(s => ({ id: s.id, name: s.name, ...(s.url ? { url: s.url } : {}), ...(s.startsAt === undefined ? {} : { starts: shortDate(s.startsAt, timeZone) }), ...(s.endsAt === undefined ? {} : { ends: shortDate(s.endsAt, timeZone) }) })) }),
       ...(a.chosen === undefined ? {} : { chosen_by_user: sourceName(a, a.chosen) }),
       ...(a.own === undefined ? {} : { set_by_user: a.own.fields.map(f => Object.entries(OWN_KEYS).find(([, v]) => v === f)![0]), ...(a.sources === undefined && a.screen === undefined ? { added_by_user: true } : {}) }),
       ...(a.kind === undefined ? {} : { kind: a.kind }),
@@ -347,7 +349,12 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
           })).min(1).max(30),
         }), args)
         const game = known(a.game)
-        const notices: ReadNotice[] = a.notices.map(n => {
+        const skipped: { url: string; reason: string }[] = []
+        const notices: ReadNotice[] = a.notices.filter(n => {
+          if (!n.url || !gameOverview(n.url, [game.name, ...game.aliases])) return true
+          skipped.push({ url: n.url, reason: '游戏百科总览没有独立公告，请提供文章直链。' })
+          return false
+        }).map(n => {
           const at = n.published_at == null ? undefined : parseDateText(n.published_at, game.timezone, deps.now())
           const url = n.url != null && /^https?:\/\//.test(n.url) ? n.url : undefined
           const cover = n.cover != null && n.cover.startsWith('https://') ? n.cover : undefined
@@ -362,9 +369,15 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
             ...(n.lasting == null ? {} : { lasting: n.lasting }),
           }
         })
+        const existing = new Set(deps.notices(game.id).map(n => n.id))
         const kept = await deps.recordNotices(game.id, notices)
+        const unique = new Map(kept.map(n => [n.id, n]))
         return {
-          recorded: kept.map(n => ({ id: n.id, title: n.title, kind: NOTICE_KIND[n.kind], ...(n.publishedAt === undefined ? {} : { date: shortDate(n.publishedAt, game.timezone) }), ...(n.lasting === true ? { lasting: true } : {}) })),
+          added: [...unique.keys()].filter(id => !existing.has(id)).length,
+          existing: [...unique.keys()].filter(id => existing.has(id)).length,
+          ...(skipped.length ? { skipped } : {}),
+          with_cover: [...unique.values()].filter(n => n.cover).length,
+          recorded: kept.map(n => ({ id: n.id, title: n.title, ...(n.cover ? { cover: n.cover } : {}), kind: NOTICE_KIND[n.kind], ...(n.publishedAt === undefined ? {} : { date: shortDate(n.publishedAt, game.timezone) }), ...(n.lasting === true ? { lasting: true } : {}) })),
           next: '记下了，游戏页的「公告」里能看到。',
         }
       },

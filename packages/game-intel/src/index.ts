@@ -16,7 +16,7 @@ import type {} from '@adg/intervene'
 import type {} from '@adg/notify'
 import type {} from '@adg/runner'
 import type {} from '@adg/script-registry'
-import { sessionConversations } from '@adg/notify'
+import { finalText, sessionConversations } from '@adg/notify'
 import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } from '@adg/pack-schema'
 import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type GameNotice, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
@@ -26,9 +26,12 @@ import { ExeIcons } from '@adg/protocol/node'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
 import { wallClock } from './time.ts'
-import { readSmw, readSra, readSteam, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
+import { readSmw, readSra, readSteam, steamNewsSource, type Fetch, type SiteEvent, type SitePool, type SiteVersion } from './sources.ts'
 import { matchScripts } from './script-match.ts'
 import { followedId, followedManifest, SRA_GAMES } from './sra-games.ts'
+import { ReadingTasks } from './reading-tasks.ts'
+import { readPublisher } from './publisher-news.ts'
+import { ReportedArticles } from './web-delivery.ts'
 import { gameTools } from './tools.ts'
 
 export { Calendar, DEFAULT_SETTINGS, OWN_FIELDS, type OwnFields, type OwnPatch, type ReadEvent } from './calendar.ts'
@@ -81,8 +84,8 @@ const WEB_SKILL = new URL('../skills/web-reading.md', import.meta.url)
 /** Pictures kept for the board, by extension and media type. */
 const IMAGE_TYPES: ReadonlyArray<readonly [string, string]> = [['jpg', 'image/jpeg'], ['png', 'image/png'], ['webp', 'image/webp'], ['gif', 'image/gif'], ['avif', 'image/avif']]
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
-/** An agent reading of the game gives up after this long. */
-const READ_TIMEOUT_MS = 20 * 60_000
+/** Shared delivery instructions for source discovery and web probes, including retries. */
+const WEB_DELIVERY = '你是此次网页探查的执行者。按来源读取近期列表及后续页，直到日期边界或末页。网页只有少量结果或读不到正文时，核对其他独立的官方来源。将每篇已核实的公告用 game_notice 批量入库，有时间范围的活动用 game_record 入库。图片优先取正文首图、分享图或接口原图；已有条目可以补图。用 game_activities 核对写入结果。最后交回所有候选，表头为「标题 | 日期 | 直链 | 配图」，每行一篇。单列「跳过 完整网址 | 具体理由」。交代实际覆盖的来源、日期边界和读取失败处。'
 /** The agent's daily summary: longer than this, the plain list goes out instead. */
 const SUMMARY_TIMEOUT_MS = 3 * 60_000
 
@@ -107,6 +110,7 @@ export class AdgGameIntel extends Service {
   private games: LoadedGame[] = []
   /** Every game pack there is, the ones taken off the game page too (`games` is what the page shows). */
   private allGames: LoadedGame[] = []
+  private readonly readings: ReadingTasks
   private readonly daily: DailyReport
   private readonly dir: string
   /** Game programs' icons (exe-icon.ts). */
@@ -127,6 +131,12 @@ export class AdgGameIntel extends Service {
     this.icons = new ExeIcons(join(this.dir, 'icons'))
     const calendar = this.calendar
     const changed = (game?: string) => ctx.get('adgGateway')?.broadcast('games/changed', game === undefined ? {} : { game })
+
+    this.readings = new ReadingTasks(async (key, reading) => {
+      await calendar.setReading(key, reading)
+      changed(key.replace(/#web$/, ''))
+    }, () => this.clock.now(), message => log.warn(message))
+    ctx.effect(() => () => this.readings.stop(), 'adg-game-intel reading tasks')
 
     const daily = new DailyReport({
       clock: { now: () => this.clock.now(), setTimeout: (fn, ms) => this.clock.setTimeout(fn, ms) },
@@ -246,6 +256,9 @@ export class AdgGameIntel extends Service {
             const p = params as RequestParams<'games/read'>
             return { sessionId: p.how === 'web' ? await this.readWeb(p.game, p.source) : await this.read(p.game) }
           },
+          'games/read/cancel': async params => ({
+            cancelled: await this.readings.cancel((params as RequestParams<'games/read/cancel'>).taskId),
+          }),
           'games/report/preview': async () => { await this.ready; return this.preview() },
           'games/report/send': async () => {
             await this.ready
@@ -412,6 +425,9 @@ export class AdgGameIntel extends Service {
         try { text = await readFile(join(dir, GAME_MANIFEST_FILE), 'utf8') } catch { continue }
         try {
           const manifest = parseGameManifest(text, `${id}/${GAME_MANIFEST_FILE}`)
+          for (const source of manifest.sources) {
+            if (!source.steam && !source.sra && !source.smw) source.steam = steamNewsSource(source.homepage)
+          }
           const guide = await readFile(join(dir, GAME_GUIDE_FILE), 'utf8').catch(() => undefined)
           // The user's pack replaces an official one of the same id.
           found.set(manifest.id, { manifest, dir, builtin, ...(builtin ? {} : { own: true }), ...(guide === undefined ? {} : { guide }) })
@@ -739,11 +755,11 @@ export class AdgGameIntel extends Service {
   // ── data sites ──
 
   /** Read every readable data site (of one game, or all). */
-  async refresh(gameId?: string): Promise<Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }>> {
+  async refresh(gameId?: string, selected?: string[], signal?: AbortSignal): Promise<Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }>> {
     const games = gameId === undefined ? this.games : [this.game(gameId)]
     const results: Array<{ game: string; ok: boolean; count: number; notices?: number; detail?: string }> = []
     for (const { manifest } of games) {
-      const sources = manifest.sources.filter(s => s.smw !== undefined || s.sra !== undefined || s.steam !== undefined)
+      const sources = manifest.sources.filter(s => (!selected || selected.includes(s.id)) && (s.smw !== undefined || s.sra !== undefined || s.steam !== undefined))
       if (sources.length === 0) {
         const where = manifest.sources.map(s => s.homepage).filter(Boolean).join(' 或 ') || '官网公告'
         results.push({ game: manifest.id, ok: false, count: 0, detail: manifest.single === true
@@ -757,21 +773,22 @@ export class AdgGameIntel extends Service {
       let version: ({ source: string } & SiteVersion) | undefined
       let pools: SitePool[] | undefined
       for (const source of sources) {
+        signal?.throwIfAborted()
         const now = this.clock.now()
         try {
           // Announcements (Steam's news): kept beside the events, no dates to put on the calendar.
           if (source.steam !== undefined) {
-            notices += (await this.calendar.applyNotices(manifest.id, { id: source.id, name: source.name }, await readSteam(source.steam, this.fetch), now)).length
+            notices += (await this.calendar.applyNotices(manifest.id, { id: source.id, name: source.name }, await readSteam(source.steam, this.fetch, signal), now)).length
             continue
           }
           let events: SiteEvent[]
           if (source.sra !== undefined) {
-            const read = await readSra(source.sra, manifest, now, this.fetch)
+            const read = await readSra(source.sra, manifest, now, this.fetch, signal)
             events = read.events
             if (read.version !== undefined) version ??= { source: source.name, ...read.version }
             pools ??= read.pools
           } else {
-            events = await readSmw(source.smw!, manifest, now, this.fetch)
+            events = await readSmw(source.smw!, manifest, now, this.fetch, signal)
           }
           await this.calendar.applySite(manifest.id, { id: source.id, name: source.name }, events, now, manifest.timezone)
           count += events.length
@@ -960,6 +977,10 @@ export class AdgGameIntel extends Service {
   async removeGame(gameId: string): Promise<void> {
     await this.loadGames(this.log)
     const game = this.game(gameId)
+    for (const key of [gameId, `${gameId}#web`]) {
+      const reading = this.calendar.reading(key)
+      if (reading?.taskId && (reading.state === 'running' || reading.state === 'queued')) await this.readings.cancel(reading.taskId)
+    }
     const sras = game.manifest.sources.map(s => s.sra?.game).filter((s): s is string => s !== undefined)
     if (game.followed === true) {
       for (const sra of sras) await this.calendar.follow(sra, false, gameId)
@@ -986,16 +1007,97 @@ export class AdgGameIntel extends Service {
    * id), from the game's page, which shows it working (its web reading). An
    * official pack is not rewritten: the agent reads the web for it instead.
    */
+  private async readWebSources(manifest: GameManifest, selected: readonly string[], signal: AbortSignal): Promise<string> {
+    const game = manifest.id
+    const sources = manifest.sources.filter(s => selected.includes(s.id))
+    const reports: string[] = []
+    const structured = sources.filter(s => s.smw || s.sra || s.steam).map(s => s.id)
+    if (structured.length) reports.push(JSON.stringify(await this.refresh(game, structured, signal)))
+    await Promise.all(sources.filter(s => s.homepage && !structured.includes(s.id)).map(async source => {
+      try {
+        const read = await readPublisher(manifest, source.homepage!, signal, this.clock.now())
+        if (!read) return
+        signal.throwIfAborted()
+        await this.calendar.applyNotices(game, { id: source.id, name: source.name }, read.notices, this.clock.now())
+        this.changed(game)
+        reports.push(source.name + '：发现 ' + read.listed + ' 个文章链接，核对 ' + read.checked + ' 个，匹配本游戏 ' + read.notices.length + ' 条，读取失败 ' + read.failed.length + ' 个。')
+      } catch (error) {
+        signal.throwIfAborted()
+        reports.push(source.name + '：' + String(error))
+      }
+    }))
+    return reports.join('\n')
+  }
+
+  private startReading(game: string, key: string, title: string, prompt: string, webSources?: string[]): Promise<string> {
+    const sessions = this.ctx.get('sessionController')
+    if (!sessions) throw new Error('agent 现在不可用（会话服务没有加载）')
+    const gateway = this.ctx.get('adgGateway')
+    const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (id, focus) => gateway?.skillScope.setFocus(id, focus) ?? Promise.resolve(), () => gateway)
+    const scope = webSources && JSON.stringify([...webSources].sort())
+    const previous = this.calendar.reading(key)
+    const urls = scope !== undefined && scope === previous?.scope ? previous.remainingUrls ?? [] : []
+    const saved = () => this.calendar.articleUrls(game)
+    const pending = new ReportedArticles()
+    pending.expect(urls)
+    const resume = pending.remaining(saved(), '')
+    const continuing = urls.length > 0
+    const reconcile = (links: string[]) => '你负责游戏「' + game + '」上次探查剩下的 ' + links.length + ' 个文章链接。逐项核实这些地址，每核实一批立即用 game_notice 或 game_record 入库，已有条目只补缺项。不要重新搜索全站。无法核实或不属于游戏的每项单列「跳过 完整网址 | 具体理由」。最后列出处理结果。\n' + JSON.stringify(links)
+    const deadline = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(20 * 60_000)])
+    return this.readings.start({
+      key, screen: key === game, ...(scope === undefined ? {} : { scope, remainingUrls: resume }),
+      open: () => conversations.prepareTask(GAME_ROLE.id, (continuing ? '继续补查：' : '') + title, { games: [game] }),
+      run: async (work, signal, checkpoint) => {
+        const manifest = this.game(game).manifest
+        const instruction = continuing ? (resume.length ? reconcile(resume) : '上次待核对的 ' + urls.length + ' 个地址已经逐个匹配日历中保存的公告或活动来源。向主助手简短报告对账完成即可，无需再抓取或写入。\n' + urls.join('\n')) : taskMessage('你', title, prompt + (key === game ? '' : '\n' + WEB_DELIVERY + '\n软件会同步核对已登记的数据站、发行商新闻索引并写入日历，重点补充其他官方来源和缺项。游戏百科总览仅供核对背景，新闻必须有独立的文章直链。'))
+        const [report, worker] = await Promise.allSettled([continuing || !webSources ? Promise.resolve('') : this.readWebSources(manifest, webSources, signal), work.run(instruction, deadline(signal))])
+        signal.throwIfAborted()
+        if (report.status === 'rejected') throw report.reason
+        const counts = () => {
+          const notices = this.calendar.notices(game)
+          return '日历现有 ' + notices.length + ' 条公告（' + notices.filter(n => n.cover).length + ' 条有配图），' + this.calendar.list(game).length + ' 项活动（含已结束）。'
+        }
+        if (worker.status === 'rejected') {
+          const left = pending.remaining(saved(), '')
+          if (resume.length || (report.value && saved().length)) await checkpoint(left, counts() + (left.length ? '仍待核对 ' + left.length + ' 个链接。' : ''))
+          if (worker.reason instanceof Error && worker.reason.name === 'AbortError') throw worker.reason
+          throw new Error([String(worker.reason), report.value].filter(Boolean).join('\n'))
+        }
+        const result = worker.value
+        const reply = { outcome: 'completed' as const, blocks: [{ kind: 'text' as const, text: result }] }
+        if (key === game) return reply
+        const articles = new ReportedArticles()
+        articles.expect(resume)
+        articles.receive(result)
+        const remaining = (summary: string) => articles.remaining(saved(), summary)
+        let missing = remaining(finalText(reply))
+        if (missing.length) {
+          await checkpoint(missing, counts() + '仍待核对 ' + missing.length + ' 个链接。')
+          signal.throwIfAborted()
+          const followup = await conversations.prepareTask(GAME_ROLE.id, '补查：' + title, { games: [game] })
+          const answer = await followup.run(reconcile(missing), deadline(signal)).catch(async error => {
+            const left = remaining('')
+            await checkpoint(left, counts() + '仍待核对 ' + left.length + ' 个链接。')
+            throw error
+          })
+          articles.receive(answer)
+          reply.blocks.push({ kind: 'text', text: answer })
+          missing = remaining(finalText(reply))
+          if (missing.length) await checkpoint(missing, counts() + '仍待核对 ' + missing.length + ' 个链接。')
+          if (missing.length) return { ...reply, outcome: 'failed', ended: `探查未完成：${articles.count} 条候选中还有 ${missing.length} 条没有入库或说明取舍。查看任务对话可继续核对。` }
+        }
+        const answer = finalText(reply).trim()
+        if (!answer) return reply
+        const summary = (report.value ? report.value + '\n' : '') + counts()
+        return { ...reply, blocks: [...reply.blocks, { kind: 'text', text: summary + (articles.count ? `子代理交回 ${articles.count} 条候选，${articles.exclusions} 条说明了跳过原因。` : '') + '\n' + answer }] }
+      },
+    })
+  }
+
   async discover(gameId: string): Promise<string> {
     const game = this.game(gameId)
     if (game.builtin && game.followed !== true) return this.readWeb(gameId)
     const { manifest } = game
-    const sessions = this.ctx.get('sessionController')
-    if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
-    await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
-    this.changed(manifest.id)
     const known = SRA_GAMES.map(g => `${g.sra}（${g.name}）`).join('、')
     const has = manifest.sources.length === 0 ? '还没有任何来源' : `现在的来源：${manifest.sources.map(s => s.name).join('、')}`
     const prompt = [
@@ -1009,30 +1111,20 @@ export class AdgGameIntel extends Service {
       '6. 找不到这个游戏（名字不对、没有公开的活动信息）就不要 game_add，直接说明找了哪里、为什么没找到。',
       '不要向用户提问；最后告诉用户加了什么来源、哪些能自动读、现在有几个活动。',
     ].join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `找活动来源：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
-      answer => this.calendar.setReading(`${manifest.id}#web`, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
-      error => this.calendar.setReading(`${manifest.id}#web`, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
-    ).finally(() => this.changed(manifest.id))
-    return sessionId
+    return this.startReading(manifest.id, `${manifest.id}#web`, `找活动来源：${manifest.name}`, prompt)
   }
 
   async readWeb(gameId: string, sourceId?: string): Promise<string> {
     const { manifest } = this.game(gameId)
-    const sessions = this.ctx.get('sessionController')
-    if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const chosen = sourceId === undefined ? manifest.sources.filter(s => s.smw === undefined && s.sra === undefined) : manifest.sources.filter(s => s.id === sourceId)
     if (sourceId !== undefined && chosen.length === 0) throw new Error(`${manifest.name}没有来源「${sourceId}」`)
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
-    await this.calendar.setReading(`${manifest.id}#web`, { state: 'running', at: this.clock.now(), sessionId })
-    this.changed(manifest.id)
     const where = chosen.length === 0
       ? '游戏包里没有写网页来源：按技能 web-reading 的顺序自己找（先 SRA 公共 API 和 Wiki 接口，再官网公告，最后 web_search）。'
       : `要读的来源：${chosen.map(s => `${s.name}${s.homepage === undefined ? '' : `（${s.homepage}）`}`).join('；')}。`
     const prompt = (manifest.single === true ? [
       `上网查单机游戏「${manifest.name}」最近的官方公告（游戏 id：${manifest.id}），按技能 web-reading 和 game-intel：`,
       `1. 先 game_activities（game=${manifest.id}）看已经记了哪些公告，不用重复记。`,
-      `2. ${where}看官方的更新日志或公告列表（Steam 新闻、官网博客、公告页），只打开最近的几篇。`,
+      `2. ${where}看官方的更新日志或公告列表（Steam 新闻、官网博客、公告页），按日期翻页核对近期与该游戏相关的公告；到达已核对的日期范围或列表末尾即可停止。`,
       '3. 版本更新、补丁说明用 game_notice 记下（kind=update，写上版本号、发布日期、一两句改了什么和网址；有配图就写进 cover）；长期有效的公告 kind=notice、lasting=true；其他资讯 kind=news。单机游戏一般没有限时活动，真有（限时折扣、联动、节日活动）才用 game_record。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：最新版本是什么、改了什么、有没有要注意的公告。',
     ] : [
@@ -1042,21 +1134,11 @@ export class AdgGameIntel extends Service {
       '3. 每个找到起止时间的活动用 game_record（source=site，写上 url；公告里有这个活动的配图就把图片地址写进 cover）记下；只记有确切出处的时间。版本更新公告和长期有效的公告（没有结束时间的）用 game_notice 记下（kind=update 或 notice，长期的写 lasting=true）。',
       '4. 不打开游戏，不向用户提问。最后用两三句话总结：现在有哪些活动、哪些快结束、有什么新消息（新版本、维护、福利）。',
     ]).join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `游戏资讯：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
-      answer => this.calendar.setReading(`${manifest.id}#web`, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
-      error => this.calendar.setReading(`${manifest.id}#web`, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
-    ).finally(() => this.changed(manifest.id))
-    return sessionId
+    return this.startReading(manifest.id, `${manifest.id}#web`, `游戏资讯：${manifest.name}`, prompt, manifest.sources.filter(s => sourceId === undefined || s.id === sourceId).map(s => s.id))
   }
 
   async read(gameId: string): Promise<string> {
     const { manifest } = this.game(gameId)
-    const sessions = this.ctx.get('sessionController')
-    if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
-    const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), (id, f) => this.ctx.get('adgGateway')?.skillScope.setFocus(id, f) ?? Promise.resolve(), () => this.ctx.get('adgGateway'))
-    const sessionId = await conversations.home(GAME_ROLE.id, { focus: { games: [manifest.id] } })
-    await this.calendar.setReading(manifest.id, { state: 'running', at: this.clock.now(), sessionId })
-    this.changed(manifest.id)
     const screen = manifest.screen === undefined ? '游戏画面' : manifest.screen.target === 'emulator' ? '模拟器画面（screen_capture target=emulator）' : `游戏窗口（screen_capture target=window${manifest.screen.window === undefined ? '，先 window_list 找窗口' : `，window=${manifest.screen.window}`}）`
     const prompt = [
       `读取「${manifest.name}」现在的活动和进度（游戏 id：${manifest.id}）。按技能 game-intel 和 game-${manifest.id}（这个游戏的技能；没有的话先用 skill_hub_list 看技能库里有没有，有就告诉用户可以在「技能 → 技能库」下载，这次先按 game-intel 做）：`,
@@ -1066,11 +1148,7 @@ export class AdgGameIntel extends Service {
       '4. 读完回到主界面，用一两句话总结哪些活动快结束、还有什么没做。',
       `5. 有始有终：最后用 ask_user_question 问用户要不要把游戏关掉（选项「关掉游戏」「先开着」；游戏是你这次用 game_launch 打开的，就把「关掉游戏」放第一个并标上 (Recommended)）。用户选关掉就用 game_close（game=${manifest.id}），然后告诉用户已经关了。第 2 步因为有脚本在用而结束的，不要问、也不要关。`,
     ].join('\n')
-    void conversations.ask(sessionId, taskMessage('你', `游戏信息：${manifest.name}`, prompt), AbortSignal.timeout(READ_TIMEOUT_MS)).then(
-      answer => this.calendar.setReading(manifest.id, { state: 'done', at: this.clock.now(), sessionId, summary: answer.slice(0, 400) }),
-      error => this.calendar.setReading(manifest.id, { state: 'failed', at: this.clock.now(), sessionId, summary: error instanceof Error ? error.message : String(error) }),
-    ).finally(() => this.changed(manifest.id))
-    return sessionId
+    return this.startReading(manifest.id, manifest.id, `游戏信息：${manifest.name}`, prompt)
   }
 
   /**
@@ -1130,14 +1208,14 @@ export class AdgGameIntel extends Service {
     const local = wallClock(now, Intl.DateTimeFormat().resolvedOptions().timeZone)
     const conversations = sessionConversations(sessions, () => this.ctx.get('adgGateway')?.workspaceDir(), undefined, () => this.ctx.get('adgGateway'))
     try {
-      const sessionId = await conversations.home(GAME_ROLE.id)
+      const work = await conversations.prepareTask(GAME_ROLE.id, `日报：${local.month}月${local.day}日`)
       const prompt = [
         '把下面这些近期的游戏活动写成今天发到飞书的日报正文。只根据给出的内容写，不调用工具，不提问。',
         '要求：中文，按游戏分段（段首用【游戏名】），每个游戏一两句；先说快结束且没做完的（写清剩几天、还差什么），再说刚开始和即将开始的；用户已做完的不用提醒；不用 Markdown 标题、加粗或表格；整篇不超过 12 行。语气、称呼和自称按你的「回复风格」来（没有设定就平实地写）：可以用一句符合风格的话开头，内容照上面的要求，不要客套的结束语。',
         '',
         digest,
       ].join('\n')
-      const answer = (await conversations.ask(sessionId, taskMessage('定时', `日报：${local.month}月${local.day}日`, prompt), AbortSignal.timeout(SUMMARY_TIMEOUT_MS))).trim()
+      const answer = (await work.run(taskMessage('定时', `日报：${local.month}月${local.day}日`, prompt), AbortSignal.timeout(SUMMARY_TIMEOUT_MS))).trim()
       return answer.length === 0 ? undefined : answer
     } catch (error) {
       this.log.warn(`daily report: the agent summary failed, sending the plain list: ${error instanceof Error ? error.message : String(error)}`)

@@ -53,7 +53,7 @@ export function zoneLabel(timeZone: string, at: number): string {
  * stands (progress, the agent's last look), the pipelines that play it on a
  * timetable, and where its data comes from.
  */
-export function GameView({ client, game, activities, notices, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onDiscover, onRemove, onChanged, openSession, openScripts }: {
+export function GameView({ client, game, activities, notices, color, now, soonDays, busy, open, adding, onOpen, onAdd, onRefresh, onRead, onReadWeb, onCancelReading, onDiscover, onRemove, onChanged, openSession, openScripts }: {
   client: AdgClient
   game: GameInfo
   activities: readonly Activity[]
@@ -72,6 +72,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
   onRefresh: () => void
   onRead: () => void
   /** The agent reads the web: one source of the game pack, or all it cannot read itself. */
+  onCancelReading: (sessionId: string) => void
   onReadWeb: (source?: string) => void
   /** The agent finds where the game can be read and writes it into its game pack (one added by name has nothing yet). */
   onDiscover: () => void
@@ -109,6 +110,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
 
   const single = game.single === true
   const latestUpdate = notices.find(n => n.kind === 'update')
+  const latestNotice = latestUpdate ?? [...notices].sort((a, b) => (b.publishedAt ?? b.at) - (a.publishedAt ?? a.at))[0]
   const noticeSection = (notices.length > 0 || single) ? (
     <section className="game-section game-notices" aria-label="公告">
       <div className="game-section-head">
@@ -116,7 +118,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
         <span className="count">{notices.length}</span>
         <span className="spacer" />
         {single && <span className="muted small">{auto ? '每天自动读官方公告' : '让 agent 上网查'}</span>}
-        <button className="icon-button" title="让 agent 上网查最新的公告和更新" aria-label="让 agent 查公告" disabled={busy !== null || game.webReading?.state === 'running'} onClick={() => onReadWeb()}>
+        <button className="icon-button" title="让 agent 上网查最新的公告和更新" aria-label="让 agent 查公告" disabled={busy !== null || (game.webReading?.state === 'running' || game.webReading?.state === 'queued')} onClick={() => onReadWeb()}>
           <Icon name="search" />
         </button>
         {auto && (
@@ -139,8 +141,8 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
   return (
     <div className="game-view" style={{ '--game': color } as CSSProperties}>
       {/* A screenshot is an event's background, not the version's art. */}
-      <VersionHero client={client} game={game} now={now} update={latestUpdate}
-        covers={[latestUpdate?.cover, ...running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)]} onChanged={onChanged} />
+      <VersionHero client={client} game={game} now={now} update={latestNotice}
+        covers={[latestUpdate?.cover, ...notices.map(n => n.cover), ...running.map(a => a.cover).filter(c => c?.startsWith('shot:') !== true)]} onChanged={onChanged} />
       <div className="game-columns">
         <div className="game-main">
           {game.sources.length === 0 && (
@@ -149,8 +151,8 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
                 <h3>还不知道去哪里看「{game.name}」的活动</h3>
                 <p className="muted small">让 agent 去找它的 Wiki、官网公告等来源，写进这个游戏的游戏包；找到能自动读的，以后每天自动刷新。也可以在「数据来源」里自己添加网址，或点「活动日程」的「+」自己记。</p>
               </div>
-              <button className="small-button primary" disabled={busy !== null || game.webReading?.state === 'running'} onClick={onDiscover}>
-                <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在找…' : '让 agent 去找'}
+              <button className="small-button primary" disabled={busy !== null || (game.webReading?.state === 'running' || game.webReading?.state === 'queued')} onClick={onDiscover}>
+                <Icon name="search" />{(game.webReading?.state === 'running' || game.webReading?.state === 'queued') ? 'agent 正在找…' : '让 agent 去找'}
               </button>
             </section>
           )}
@@ -202,7 +204,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
         </div>
 
         <aside className="game-side">
-          <StatusCard game={game} single={single} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onRemove={onRemove} openSession={openSession} />
+          <StatusCard game={game} single={single} running={running} soon={soon} now={now} busy={busy} onRead={onRead} onReadWeb={onReadWeb} onCancelReading={onCancelReading} onRemove={onRemove} openSession={openSession} />
           <section className="card game-runs-card">
             <GameSchedule client={client} game={game} now={now} openScripts={openScripts} />
           </section>
@@ -214,7 +216,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
                   {/* Read by the plugin each day, or by the agent when asked: the name does that; the arrow opens the page. */}
                   {s.auto
                     ? <span className="source-name" title="每天自动读取（不用模型）"><span className="source-dot auto" />{s.name}</span>
-                    : <button className="source-name" disabled={busy !== null || game.webReading?.state === 'running'} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
+                    : <button className="source-name" disabled={busy !== null || (game.webReading?.state === 'running' || game.webReading?.state === 'queued')} title="让 agent 读这个来源，把活动记进日历" onClick={() => onReadWeb(s.id)}><span className="source-dot" />{s.name}<span className="source-action">agent 读</span></button>}
                   {s.homepage !== undefined && <a className="source-open" href={s.homepage} target="_blank" rel="noreferrer" title="在浏览器里打开" aria-label={`打开${s.name}`}><Icon name="popout" /></a>}
                   {s.added === true && <button className="source-open" title="不再读这个网址" aria-label={`删除${s.name}`} onClick={() => void client.connection.call('games/source/remove', { game: game.id, source: s.id }).then(onChanged, () => {})}><Icon name="close" /></button>}
                 </span>
@@ -254,7 +256,7 @@ function VersionHero({ client, game, now, update, covers, onChanged }: { client:
       <div className="version-strip">
         {v === undefined && update !== undefined && (
           <span className="small version-none version-update" title={update.title}>
-            最新更新：{update.title}{update.publishedAt === undefined ? '' : ` · ${relativeTime(update.publishedAt, now)}`}
+            {update.kind === 'update' ? '最新更新' : '近期公告'}：{update.title}{update.publishedAt === undefined ? '' : ` · ${relativeTime(update.publishedAt, now)}`}
           </span>
         )}
         {v === undefined && update === undefined && (
@@ -354,7 +356,7 @@ function AddLink({ client, game, onAdded }: { client: AdgClient; game: GameInfo;
   )
 }
 
-function StatusCard({ game, single, running, soon, now, busy, onRead, onReadWeb, onRemove, openSession }: {
+function StatusCard({ game, single, running, soon, now, busy, onRead, onReadWeb, onCancelReading, onRemove, openSession }: {
   game: GameInfo
   /** A single-player game: no events to be through, nothing to read in the game. */
   single: boolean
@@ -363,6 +365,7 @@ function StatusCard({ game, single, running, soon, now, busy, onRead, onReadWeb,
   now: number
   busy: string | null
   onRead: () => void
+  onCancelReading: (sessionId: string) => void
   onReadWeb: (source?: string) => void
   onRemove: () => void
   openSession: (id: string) => void
@@ -397,32 +400,34 @@ function StatusCard({ game, single, running, soon, now, busy, onRead, onReadWeb,
       <p className="muted small">进度来自你在活动卡片里勾的，和 agent 进游戏读到的。</p>
       </>)}
       <div className="game-actions">
-        {game.followed !== true && !single && <button className="small-button primary" disabled={busy !== null || reading?.state === 'running'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
-        <button className="small-button" disabled={busy !== null || game.webReading?.state === 'running'} title={single ? 'agent 读官方的更新日志、Steam 新闻和公告，记下版本更新和长期公告' : 'agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历'} onClick={() => onReadWeb()}>
-          <Icon name="search" />{game.webReading?.state === 'running' ? 'agent 正在查…' : single ? '让 agent 查最新公告' : '让 agent 上网查活动'}
+        {game.followed !== true && !single && <button className="small-button primary" disabled={busy !== null || reading?.state === 'running' || reading?.state === 'queued'} title="agent 会看游戏画面，进活动页读取剩余时间和没做完的事；只看不花东西" onClick={onRead}><Icon name="gamepad" />{reading?.state === 'running' ? 'agent 正在读…' : '让 agent 进游戏读取'}</button>}
+        <button className="small-button" disabled={busy !== null || (game.webReading?.state === 'running' || game.webReading?.state === 'queued')} title={single ? 'agent 读官方的更新日志、Steam 新闻和公告，记下版本更新和长期公告' : 'agent 读官网公告、Wiki 等插件不能自己读的来源，把活动记进日历'} onClick={() => onReadWeb()}>
+          <Icon name="search" />{(game.webReading?.state === 'running' || game.webReading?.state === 'queued') ? 'agent 正在查…' : single ? '让 agent 查最新公告' : '让 agent 上网查活动'}
         </button>
         <button className="small-button" disabled={busy !== null}
           title={game.own === true ? '删掉这个游戏和它的活动（你或 agent 加的）' : game.followed === true ? '不再关注，游戏页上不再显示' : '游戏页上不再显示；它的游戏包和脚本包不删'}
           onClick={onRemove}>{game.own === true ? '删除这个游戏' : '不再显示'}</button>
       </div>
-      {reading !== undefined && <ReadingLine what="进游戏" reading={reading} now={now} openSession={openSession} />}
-      {game.webReading !== undefined && <ReadingLine what="上网查" reading={game.webReading} now={now} openSession={openSession} />}
+      {reading !== undefined && <ReadingLine cancel={onCancelReading} what="进游戏" reading={reading} now={now} openSession={openSession} />}
+      {game.webReading !== undefined && <ReadingLine cancel={onCancelReading} what="上网查" reading={game.webReading} now={now} openSession={openSession} />}
     </section>
   )
 }
 
 /** What the agent did last (in the game, or on the web): when, how it went, its summary, and its conversation. */
-function ReadingLine({ what, reading, now, openSession }: { what: string; reading: NonNullable<GameInfo['reading']>; now: number; openSession: (id: string) => void }) {
+function ReadingLine({ what, reading, now, openSession, cancel }: { cancel: (id: string) => void; what: string; reading: NonNullable<GameInfo['reading']>; now: number; openSession: (id: string) => void }) {
   // The summary is the agent's last words, markdown and all: plain text here.
   const summary = reading.summary?.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim()
   return (
     <div className={`reading ${reading.state}`}>
       <div className="reading-head">
-        <span className={`badge ${reading.state === 'done' ? 'ok' : reading.state === 'failed' ? 'warn' : ''}`}>{reading.state === 'running' ? `正在${what}` : reading.state === 'done' ? `上次${what}` : `${what}没完成`}</span>
+        <span className={`badge ${reading.state === 'done' ? 'ok' : reading.state === 'failed' ? 'warn' : ''}`}>{reading.state === 'queued' ? '等待执行' : reading.state === 'partial' ? '部分完成' : reading.state === 'cancelled' ? '已取消' : reading.state === 'running' ? `正在${what}` : reading.state === 'done' ? `上次${what}` : `${what}没完成`}</span>
         <span className="muted small">{relativeTime(reading.at, now)}</span>
         <span className="spacer" />
+        {reading.taskId !== undefined && (reading.state === 'running' || reading.state === 'queued') && <button className="link-button small" onClick={() => cancel(reading.taskId!)}>取消探查</button>}
         {reading.sessionId !== undefined && <button className="link-button small reading-open" onClick={() => openSession(reading.sessionId!)}>查看对话<Icon name="chevron" /></button>}
       </div>
+      {!!reading.remainingUrls?.length && reading.state !== 'running' && reading.state !== 'queued' && <div className="muted small">剩余 {reading.remainingUrls.length} 个链接，再次按相同来源查活动将从这里继续。</div>}
       {summary !== undefined && summary !== '' && <p className="reading-summary" title={summary}>{summary}</p>}
     </div>
   )

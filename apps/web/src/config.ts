@@ -66,7 +66,7 @@ export type Route =
   | { readonly kind: 'home' }
   | { readonly kind: 'session'; readonly id: string }
   /** An agent: its one conversation, or its earlier conversations. Its other tabs are pages it owns (`page`). */
-  | { readonly kind: 'agent'; readonly id: string; readonly tab?: AgentTab | undefined }
+  | { readonly kind: 'agent'; readonly id: string; readonly child?: string | undefined }
   /** What two agents said to each other (Delegation.tsx HandOffPage). */
   | { readonly kind: 'handoff'; readonly id: string }
   /**
@@ -78,8 +78,6 @@ export type Route =
   | { readonly kind: 'settings'; readonly section?: string | undefined }
   | { readonly kind: 'page'; readonly id: string; readonly arg?: string | undefined }
 
-/** An agent's own tabs besides its conversation (App.tsx AgentTabs). */
-export type AgentTab = 'history'
 
 export function readRoute(): Route {
   if (location.hash === '#/settings') return { kind: 'settings' }
@@ -98,8 +96,10 @@ export function readRoute(): Route {
   if (ownSchedule !== null) return { kind: 'schedule', agent: decodeURIComponent(ownSchedule[1]!) }
   const handOff = /^#\/h\/(.+)$/.exec(location.hash)
   if (handOff !== null) return { kind: 'handoff', id: decodeURIComponent(handOff[1]!) }
+  const task = /^#\/a\/([^/]+)\/task\/([^/]+)$/.exec(location.hash)
+  if (task) return { kind: 'agent', id: decodeURIComponent(task[1]!), child: decodeURIComponent(task[2]!) }
   const tab = /^#\/a\/(.+)\/(history)$/.exec(location.hash)
-  if (tab !== null) return { kind: 'agent', id: decodeURIComponent(tab[1]!), tab: tab[2] as AgentTab }
+  if (tab !== null) return { kind: 'agent', id: decodeURIComponent(tab[1]!) }
   const agent = /^#\/a\/(.+)$/.exec(location.hash)
   if (agent !== null) return { kind: 'agent', id: decodeURIComponent(agent[1]!) }
   const match = /^#\/s\/(.+)$/.exec(location.hash)
@@ -113,7 +113,7 @@ export function readRoute(): Route {
  */
 export function writeRoute(route: Route, mode: 'push' | 'replace' = 'push'): void {
   const hash = route.kind === 'session' ? `#/s/${encodeURIComponent(route.id)}`
-    : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.tab === undefined ? '' : `/${route.tab}`}`
+    : route.kind === 'agent' ? `#/a/${encodeURIComponent(route.id)}${route.child === undefined ? '' : `/task/${encodeURIComponent(route.child)}`}`
     : route.kind === 'handoff' ? `#/h/${encodeURIComponent(route.id)}`
     : route.kind === 'schedule' ? (route.focus === undefined ? '#/schedule' : `#/schedule/${encodeURIComponent(route.focus)}`)
     : route.kind === 'page' ? `#/p/${encodeURIComponent(route.id)}${route.arg === undefined ? '' : `/${encodeURIComponent(route.arg)}`}`

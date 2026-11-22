@@ -57,10 +57,11 @@ export const MAX_HOPS = 3
 export const MAX_CHAIN_MESSAGES = 30
 
 export interface HandOffDeps {
+  prepareWorker?(input: HandOffInput): Promise<import('./notify.ts').PreparedTask>
   /** The agent's one conversation (the gateway's \`home\`), its focus set. */
   home(agent: string, options?: { focus?: { scripts?: string[]; games?: string[] } }): Promise<string>
   /** A message in a conversation, resolving with the turn it starts (see conversations.ts). */
-  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean }): Promise<Reply>
+  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean; isolated?: boolean }): Promise<Reply>
   /** Keep it (the gateway's \`handOffs\`), as it starts and as it ends. */
   record(item: HandOff): Promise<void>
   /** All that are kept, oldest first: what agents said to each other before survives their conversations. */
@@ -150,15 +151,17 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
     if (item === undefined) throw new Error(`没有线索 ${id}（可能太久以前，已经清掉了）。还有事就重新交一次`)
     if ((item.messages ?? []).length >= MAX_THREAD_MESSAGES) throw new Error(`这条线索的来回已经够多了（${MAX_THREAD_MESSAGES} 条）：还有事就重新交一次`)
     const askerAgent = item.chain?.at(-2)
-    const askerNow = askerAgent === undefined ? item.fromSession : await deps.home(askerAgent)
-    const workerNow = await deps.home(item.to)
+    const keepAsker = workingOn(item.fromSession) !== undefined || (item.isolated && !item.ownerSession)
+    const askerNow = keepAsker || askerAgent === undefined ? item.fromSession : await deps.home(askerAgent)
+    const workerNow = item.ownerSession ?? (item.isolated ? item.toSession : await deps.home(item.to))
     const worker = fromSession === item.toSession || fromSession === workerNow
     if (!worker && fromSession !== item.fromSession && fromSession !== askerNow) throw new Error(`线索 ${id} 不是你和对方之间的`)
     if (worker && askerNow === '') throw new Error(`这件事是${item.by}交的，没有人在等消息：要告诉谁就重新交给它`)
-    const said = kind === 'done' ? 'update' : kind
+    const said = kind === 'done' && (!worker || item.state !== 'failed') ? 'update' : kind
     await deps.record({ ...item, messages: [...(item.messages ?? []), { from, kind: said, text, at: now() }] })
-    const message = threadMessage({ from, kind: said, thread: id, title: item.title, text, reader: worker ? askerKind(askerAgent) : 'worker', closed: true })
-    void deps.converse(worker ? askerNow : workerNow, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), [], { insert: true }).catch(() => {})
+    const message = threadMessage({ from, kind: said === 'done' ? 'update' : said, thread: id, title: item.title, text: said === 'done' ? `补交结论：${text}` : text, reader: worker ? askerKind(askerAgent) : 'worker', closed: true })
+    const recipient = worker ? askerNow : workerNow
+    void deps.converse(recipient, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), [], { insert: true }).catch(() => {})
     return '已经送到对方那里了。'
   }
 
@@ -268,14 +271,25 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
         parent.open++
         parent.consulted.add(input.to.name)
       }
-      const toSession = await deps.home(input.to.id, input.focus === undefined ? {} : { focus: input.focus })
       const relay = input.relay === true
-      const fromSession = input.from?.sessionId ?? (relay ? await deps.home(MAIN) : '')
+      let work: import('./notify.ts').PreparedTask | undefined
+      let toSession: string
+      let fromSession: string
+      try {
+        work = await deps.prepareWorker?.(input)
+        toSession = work?.id ?? await deps.home(input.to.id, input.focus === undefined ? {} : { focus: input.focus })
+        input.onWorker?.(toSession)
+        fromSession = input.from?.sessionId ?? (relay ? await deps.home(MAIN) : '')
+      } catch (error) {
+        if (parent) { parent.open--; parent.wake() }
+        throw error
+      }
       const id = input.from?.callId ?? `h-${randomUUID().slice(0, 8)}`
       const chain = [...(parent?.item.chain ?? (input.from?.agent === undefined ? [] : [input.from.agent])), input.to.id]
       const item: HandOff = {
         id, fromSession,
         ...(input.from?.callId === undefined ? {} : { callId: input.from.callId }),
+        ...(work ? { isolated: true, ownerSession: work.owner } : {}),
         by: input.by, to: input.to.id, toSession, title: input.title, task: input.task,
         ...(input.expecting === undefined ? {} : { expecting: input.expecting }),
         chain,
@@ -298,55 +312,61 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
         else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
       })
       stopped.catch(() => {})
-      await deps.record(item)
-      const asker = input.from?.agent
-      const past = asker === undefined || deps.threads === undefined ? [] : pastBetween(deps.threads(), asker, input.to.id, agent => (agent === input.to.id ? input.to.name : input.by))
-      thread.turns.push(deps.converse(toSession, taskMessage(input.by, input.title, body, relay, id, { who: `「${input.by}」`, lines: past }), signal, input.images))
-
-      let reply: Reply | undefined
-      let failure: string | undefined
-      let thrown: unknown
       try {
-        for (;;) {
-          while (thread.turns.length > 0) {
-            const turn = await thread.turns.shift()!
-            // A turn with nothing to say does not take away what was concluded before it.
-            if (reply === undefined || finalText(turn) !== '' || turn.ended !== undefined) reply = turn
+        await deps.record(item)
+        const asker = input.from?.agent
+        const past = asker === undefined || deps.threads === undefined ? [] : pastBetween(deps.threads(), asker, input.to.id, agent => (agent === input.to.id ? input.to.name : input.by))
+        const instruction = taskMessage(input.by, input.title, body, relay, id, { who: `「${input.by}」`, lines: past })
+        thread.turns.push(work ? work.run(instruction, signal, input.images).then(text => ({ blocks: [{ kind: 'text', text }], outcome: 'completed' }))
+          : deps.converse(toSession, instruction, signal, input.images))
+
+        let reply: Reply | undefined
+        let failure: string | undefined
+        let thrown: unknown
+        try {
+          for (;;) {
+            while (thread.turns.length > 0) {
+              const turn = await thread.turns.shift()!
+              // A turn with nothing to say does not take away what was concluded before it.
+              if (reply === undefined || finalText(turn) !== '' || turn.ended !== undefined) reply = turn
+            }
+            if (thread.conclusion !== undefined && thread.open === 0) break
+            if (!thread.awaiting && thread.open === 0) break
+            await Promise.race([new Promise<void>(resolve => { wake = resolve }), stopped])
           }
-          if (thread.conclusion !== undefined && thread.open === 0) break
-          if (!thread.awaiting && thread.open === 0) break
-          await Promise.race([new Promise<void>(resolve => { wake = resolve }), stopped])
+          const said = finalText(reply!)
+          if (thread.conclusion === undefined) {
+            if (reply!.ended !== undefined) failure = `${reply!.ended.replace(/^（|）$/g, '')}${said === '' ? '' : `。它最后说：${said}`}`
+            else if (said === '') failure = '它没有留下回复'
+          }
+        } catch (error) {
+          thrown = error
+          failure = error instanceof Error ? error.message : String(error)
         }
-        const said = finalText(reply!)
-        if (thread.conclusion === undefined) {
-          if (reply!.ended !== undefined) failure = `${reply!.ended.replace(/^（|）$/g, '')}${said === '' ? '' : `。它最后说：${said}`}`
-          else if (said === '') failure = '它没有留下回复'
+        live.delete(id)
+        const text = failure ?? thread.conclusion ?? finalText(reply!)
+        await save(thread, { state: failure === undefined ? 'done' : 'failed', reply: text, endedAt: now() })
+        if (relay && fromSession !== '') {
+          const message = relayMessage({
+            agent: input.to.name, asker: input.by === input.from?.asker ? '你' : input.by, title: input.title, ok: failure === undefined, reply: text,
+            ...(thread.consulted.size === 0 ? {} : { consulted: [...thread.consulted] }),
+            ...(input.from?.agent === undefined || input.from.agent === MAIN ? {} : { toLead: true }),
+          })
+          // Not waited for: the asking conversation may be busy, and whoever handed the work on is done with it.
+          // Unless the asker is itself working on something: this goes into that.
+          const back = deps.converse(fromSession, message, AbortSignal.timeout(RELAY_TIMEOUT_MS))
+          if (parent !== undefined && live.has(parent.item.id)) parent.turns.push(back.catch(() => ({ blocks: [] })))
+          void back.then(answer => input.relayed?.(answer), () => {})
         }
-      } catch (error) {
-        thrown = error
-        failure = error instanceof Error ? error.message : String(error)
+        if (thrown !== undefined) throw thrown
+        return reply!
+      } finally {
+        live.delete(id)
+        if (parent !== undefined) {
+          parent.open--
+          parent.wake()
+        }
       }
-      live.delete(id)
-      const text = failure ?? thread.conclusion ?? finalText(reply!)
-      await save(thread, { state: failure === undefined ? 'done' : 'failed', reply: text, endedAt: now() })
-      if (relay && fromSession !== '') {
-        const message = relayMessage({
-          agent: input.to.name, asker: input.by === input.from?.asker ? '你' : input.by, title: input.title, ok: failure === undefined, reply: text,
-          ...(thread.consulted.size === 0 ? {} : { consulted: [...thread.consulted] }),
-          ...(input.from?.agent === undefined || input.from.agent === MAIN ? {} : { toLead: true }),
-        })
-        // Not waited for: the asking conversation may be busy, and whoever handed the work on is done with it.
-        // Unless the asker is itself working on something: this goes into that.
-        const back = deps.converse(fromSession, message, AbortSignal.timeout(RELAY_TIMEOUT_MS))
-        if (parent !== undefined && live.has(parent.item.id)) parent.turns.push(back.catch(() => ({ blocks: [] })))
-        void back.then(answer => input.relayed?.(answer), () => {})
-      }
-      if (parent !== undefined) {
-        parent.open--
-        parent.wake()
-      }
-      if (thrown !== undefined) throw thrown
-      return reply!
     },
   }
 }

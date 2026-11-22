@@ -438,10 +438,25 @@ export class AgentBrowser extends EventEmitter {
   /** The page's text, for reading an article without its markup. */
   async text(p) {
     const tab = this.#tabFor(p.session, p.tab)
-    const { result } = await this.#cdp(tab, 'Runtime.evaluate', { expression: 'document.body ? document.body.innerText : ""', returnByValue: true })
-    const all = String(result?.value ?? '')
+    const { result } = await this.#cdp(tab, 'Runtime.evaluate', { expression: `(() => {
+      const urls = new Set()
+      const add = raw => {
+        if (!raw || urls.size >= 8) return
+        try {
+          const u = new URL(raw, document.baseURI)
+          if (u.protocol === 'https:' && !u.username && !u.password && u.href.length <= 2048) urls.add(u.href)
+        } catch {}
+      }
+      for (const meta of document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"]')) add(meta.content)
+      for (const img of document.querySelectorAll('article img, main img')) {
+        if (img.naturalWidth >= 200 && img.naturalHeight >= 100) add(img.currentSrc || img.src)
+        if (urls.size >= 8) break
+      }
+      return { text: document.body?.innerText ?? '', images: [...urls] }
+    })()`, returnByValue: true })
+    const all = String(result?.value?.text ?? '')
     const max = Math.min(Math.max(p.maxChars ?? 20_000, 1_000), 100_000)
-    return { tab: tab.id, url: tab.contents.getURL(), title: tab.contents.getTitle(), text: all.slice(0, max), ...(all.length > max ? { truncated: all.length - max } : {}) }
+    return { tab: tab.id, url: tab.contents.getURL(), title: tab.contents.getTitle(), text: all.slice(0, max), images: result?.value?.images ?? [], ...(all.length > max ? { truncated: all.length - max } : {}) }
   }
 
   /** @param {{ session?: string, action: 'list' | 'select' | 'close', tab?: string }} p */

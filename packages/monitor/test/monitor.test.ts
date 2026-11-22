@@ -140,6 +140,24 @@ test('MAA drops the emulator: L0 reconnects ADB, restarts the task, the restart 
   monitor.stop()
 })
 
+test('an unknown screen followed by a recognized screen stays in the run log without a warning incident', async () => {
+  const pack = MAA.replace("match: '截图失败'", "match: '当前界面：未知'")
+  const scenario = { steps: [
+    { logFile: 'debug/gui.log', line: '当前界面：未知' },
+    { sleepMs: 100 },
+    { logFile: 'debug/gui.log', line: '当前界面：月卡' },
+    { logFile: 'debug/gui.log', line: '任务已全部完成' },
+  ] }
+  const { runner, monitor } = setup(pack, { 'daily.json': scenario })
+  await monitor.start(0)
+  try {
+    const run = await runner.finished((await runner.start('maa', 'daily')).id)
+    await monitor.idle()
+    assert.ok(runner.logs(run.id, 100).some(l => l.text.includes('当前界面：未知')))
+    assert.equal(monitor.incidents().filter(i => i.kind === 'warning').length, 0)
+  } finally { monitor.stop() }
+})
+
 test('an unknown failure is pushed with a screenshot and retry / ignore; retry runs the task again', async () => {
   const pack = MAA.replace(/recovery:[\s\S]*$/, '').replace("resources: { input: adb }", 'resources: { input: none }').replace('success: done-log', 'success: exit-code')
   const { runner, monitor, notices, shots } = setup(pack, { 'daily.json': { steps: [{ logFile: 'debug/gui.log', line: '开始任务' }, { sleepMs: 100 }, { exit: 3 }] } })

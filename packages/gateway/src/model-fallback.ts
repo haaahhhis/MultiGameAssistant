@@ -56,6 +56,7 @@ export function fallbackReason(failure: FailureFacts): string | undefined {
   if (AUTH_CODES.has(code)) return 'Key 无效或没有权限'
   if (GONE_CODES.has(code)) return '模型不可用'
   if (LIMIT_CODES.has(code)) return '请求太频繁，重试后仍被限流'
+  if (code === 'TIMEOUT') return '模型请求超时，重试后仍无响应'
   if (code === 'SERVER' || /^HTTP_5\d\d$/.test(code)) return '模型服务出错，重试后仍然失败'
   return undefined
 }

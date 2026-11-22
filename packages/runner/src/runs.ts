@@ -773,6 +773,19 @@ export class Runner {
    * not restarted unless a person asks for it (`byUser`).
    * @throws Error when the task cannot start again (e.g. its resources are busy).
    */
+  async repair(runId: string, scriptId: string, taskId: string): Promise<RunInfo> {
+    const original = this.#run(runId)
+    if (original.info.scriptId !== scriptId || original.info.taskId !== taskId) throw new Error('补偿目标与原运行的脚本或任务不一致')
+    if (original.info.endedAt === undefined || original.info.state === 'succeeded') throw new Error('只能补偿已结束且未成功的运行')
+    const pending = this.#successors.get(runId)
+    if (pending) {
+      const successor = await pending
+      if (successor) return successor
+      throw new Error('先前的补偿未能启动，请检查运行记录后重试')
+    }
+    return this.restart(runId, '针对原运行的补偿')
+  }
+
   async restart(runId: string, reason: string, options: { byUser?: boolean } = {}): Promise<RunInfo> {
     const run = this.#run(runId)
     if (run.mode !== 'task') throw new Error('设置会话不能重启')
@@ -789,7 +802,11 @@ export class Runner {
       if (abort.signal.aborted || (run.halted === true && options.byUser !== true)) throw new Error('这次运行已经被停止了，不再重新运行')
       return this.start(run.info.scriptId, run.info.taskId, run.info.params, { retryOf: runId, profile: run.info.profile, signal: abort.signal })
     })()
-    this.#successors.set(runId, next.catch(() => undefined))
+    const successor = next.catch(() => {
+      if (this.#successors.get(runId) === successor) this.#successors.delete(runId)
+      return undefined
+    })
+    this.#successors.set(runId, successor)
     return next
   }
 

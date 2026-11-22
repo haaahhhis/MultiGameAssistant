@@ -230,6 +230,7 @@ export function buildTrajectory(
         step.retries += 1
         if (event.error !== undefined) step.lastRetryError = event.error
         const record: AttemptRecord = {
+          ...(event.usage === undefined ? {} : { usage: event.usage }),
           kind: 'attempt', id: `attempt:${event.seq}`, seq: event.seq, turn: event.turn, step: event.step,
           start: event.timing.firstChunkAt ?? step.start, end: event.timing.lastChunkAt ?? event.time,
           status: 'error', title: 'Failed attempt', preview: event.error?.message ?? 'attempt ended without output',
@@ -470,15 +471,19 @@ function liveContent(deltas: readonly Delta[]): ContentPart[] {
 
 function totalsOf(records: readonly TrajectoryRecord[]): TrajectoryTotals {
   const totals = {
-    requests: 0, toolCalls: 0, errors: 0, inputTokens: 0, outputTokens: 0,
+    requests: 0, reportedUsage: 0, missingUsage: 0, toolCalls: 0, errors: 0, inputTokens: 0, outputTokens: 0,
     cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
   }
   for (const record of records) {
     if (record.status === 'error') totals.errors += 1
     if (record.kind === 'tool') totals.toolCalls += 1
-    const usage = record.kind === 'assistant' ? record.request.usage : record.kind === 'compaction' ? record.usage : undefined
+    const usage = record.kind === 'assistant' ? record.request.usage : record.kind === 'compaction' || record.kind === 'attempt' ? record.usage : undefined
     if (record.kind === 'assistant') totals.requests += 1
-    if (usage === undefined) continue
+    if (usage === undefined) {
+      if (record.kind === 'assistant' || record.kind === 'attempt' || (record.kind === 'compaction' && record.shadowedTokenCount !== undefined)) totals.missingUsage++
+      continue
+    }
+    totals.reportedUsage++
     totals.inputTokens += usage.inputTokens
     totals.outputTokens += usage.outputTokens
     totals.cacheReadTokens += usage.cacheReadTokens ?? 0

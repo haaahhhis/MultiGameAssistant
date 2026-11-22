@@ -66,6 +66,7 @@ export interface AssistantRecord extends RecordBase {
 
 export interface AttemptRecord extends RecordBase {
   readonly kind: 'attempt'
+  readonly usage?: TokenUsage
   readonly error?: Failure
 }
 
@@ -122,6 +123,8 @@ export interface TrajectoryGroup {
 
 export interface TrajectoryTotals {
   readonly requests: number
+  readonly reportedUsage: number
+  readonly missingUsage: number
   readonly toolCalls: number
   readonly errors: number
   readonly inputTokens: number

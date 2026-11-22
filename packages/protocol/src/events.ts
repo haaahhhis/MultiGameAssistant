@@ -162,6 +162,7 @@ export const SessionEvent = z.discriminatedUnion('type', [
   z.object({
     ...base,
     type: z.literal('assistant/attempt'),
+    usage: TokenUsage.optional(),
     turn: z.number(),
     step: z.number(),
     timing: StreamTiming,

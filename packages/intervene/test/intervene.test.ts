@@ -86,7 +86,6 @@ test('screens: the emulator through ADB, a window through the helper, in screens
 function interventions(over: { ask?: (sessionId: string, text: string, images: readonly Buffer[]) => Promise<string>; vision?: string; run?: Partial<RunInfo>; windows?: RunWindow[]; now?: () => number } = {}) {
   const suspended: string[] = []
   const restarted: string[] = []
-  let made = 0
   const handedOff: { by: string; title: string; relay: boolean }[] = []
   const run = { id: 'run-1', state: 'running', resources: ['adb:127.0.0.1:16384'], ...over.run } as RunInfo
   let iv!: Interventions
@@ -98,7 +97,6 @@ function interventions(over: { ask?: (sessionId: string, text: string, images: r
     suspend: async (pid, resume) => { suspended.push(`${resume ? 'resume' : 'suspend'} ${pid}`); return 2 },
     // 干预's one conversation: every incident goes into it.
     conversations: () => ({
-      create: async () => `s-${++made}`,
       home: async () => 's-iv',
       ask: async (sessionId, text, _signal, images = []) => (over.ask ?? (async () => '好的'))(sessionId, text, images),
       handOff: async input => {

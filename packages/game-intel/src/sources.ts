@@ -87,6 +87,17 @@ export function parseSteam(body: unknown): ReadNotice[] {
   return out
 }
 
+export function steamNewsSource(homepage: string | undefined): SteamSource | undefined {
+  if (!homepage) return
+  try {
+    const url = new URL(homepage)
+    if (url.protocol !== 'https:' || url.hostname !== 'store.steampowered.com') return
+    const match = /^\/(?:news\/)?app\/(\d+)(?:\/|$)/.exec(url.pathname)
+    const appid = Number(match?.[1])
+    if (Number.isSafeInteger(appid) && appid > 0) return { appid }
+  } catch { return }
+}
+
 /** A game's official announcements on Steam (its news feed): version updates, patch notes, notices. */
 export async function readSteam(steam: SteamSource, fetchImpl: Fetch, signal?: AbortSignal, endDate?: number): Promise<ReadNotice[]> {
   // The whole text (no maxlength): Steam flattens a shortened one, running paragraphs together and dropping its pictures.

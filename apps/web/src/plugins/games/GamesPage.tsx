@@ -195,6 +195,10 @@ export function GamesPage({ client, openSession, openPage, arg }: PageProps) {
               const { sessionId } = await client.connection.call('games/read', { game: current.id, how: 'web', ...(source === undefined ? {} : { source }) })
               openSession(sessionId)
             })}
+            onCancelReading={taskId => void act(`cancel:${taskId}`, async () => {
+              await client.connection.call('games/read/cancel', { taskId })
+              setRevision(r => r + 1)
+            })}
             onDiscover={() => void act(`discover:${current.id}`, async () => {
               // The agent works from here: the page shows it looking, and its conversation is a click away.
               await client.connection.call('games/discover', { game: current.id })

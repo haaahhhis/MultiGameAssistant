@@ -117,6 +117,19 @@ test('a CLI task succeeds on exit code 0, fails on an error rule or a crash', as
   await assert.rejects(runner.start('tool', 'nope'), /没有任务 nope/)
 })
 
+test('an independent repair names its predecessor and concurrent requests share the same run', async () => {
+  const dir = scriptDir()
+  const { runner } = setup({ tool: dir })
+  const failed = await runner.finished((await runner.start('tool', 'cli', { scenario: 'crash.json' })).id)
+  await assert.rejects(runner.repair(failed.id, 'tool', 'another-task'), /不一致/)
+  writeFileSync(join(dir, 'crash.json'), JSON.stringify({ steps: [{ exit: 0 }] }))
+  const [one, two] = await Promise.all([runner.repair(failed.id, 'tool', 'cli'), runner.repair(failed.id, 'tool', 'cli')])
+  assert.equal(one.id, two.id)
+  assert.equal((await runner.finished(one.id)).state, 'succeeded')
+  assert.equal(one.retryOf, failed.id)
+  assert.equal((await runner.successor(failed.id))?.id, one.id)
+})
+
 test('a task updates the script first; a failed update is reported and the run goes on with what it has', async () => {
   const old = scriptDir()
   const updated = scriptDir()

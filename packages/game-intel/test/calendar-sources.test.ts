@@ -245,3 +245,15 @@ test('a calendar saved before sources were kept is read with what it had', async
   assert.deepEqual(calendar.list('sr').map(a => a.name), ['A'], 'the agent\'s survived; the API\'s went')
   assert.match(readFileSync(calendar.file, 'utf8'), /"facts"/)
 })
+
+test('probe reconciliation includes a verified article on a non-preferred source', async () => {
+  const calendar = fresh()
+  const wiki = 'https://wiki.example/event'
+  const official = 'https://sr.mihoyo.com/news/167297'
+  await calendar.applySite('sr', SRA, [{ name: '欢闹厨房', aliases: [], url: wiki, endsAt: NOW + 8 * MS.DAY }], NOW, TZ)
+  await calendar.applyRead('sr', 'site', [{ name: '欢闹厨房', url: official, endsAt: '2026-10-28 12:00' }], { now: NOW, timeZone: TZ })
+  const [activity] = calendar.list('sr')
+  assert.equal(activity!.url, wiki)
+  assert.ok(activity!.sources?.some(s => s.url === official))
+  assert.deepEqual(new Set(calendar.articleUrls('sr')), new Set([wiki, official]))
+})

@@ -69,7 +69,7 @@ export function FallbackModelsCard({ client }: { client: AdgClient }) {
       <div className="card-head"><div>
         <h3>备用模型</h3>
         <p className="muted small">
-          模型报错用不了时（余额不足、Key 失效、模型下线、服务重试后还是出错），agent 自动换成下面的下一个模型接着做，对话里会出现一张卡片，写明换到了哪个服务的哪个模型、因为什么；agent 自己也看得到这张卡片。
+          模型报错用不了时（余额不足、Key 失效、模型下线、请求重试后仍超时或服务出错），agent 自动换成下面的下一个模型接着做，对话里会出现一张卡片，写明换到了哪个服务的哪个模型、因为什么；agent 自己也看得到这张卡片。
           按顺序从出错的那个往下试，试过的不再试；网络断了、对话太长这类换模型也没用的错误不会切换。
         </p>
       </div></div>

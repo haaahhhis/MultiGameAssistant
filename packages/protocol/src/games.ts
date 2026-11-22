@@ -71,7 +71,7 @@ export const Activity = z.object({
   site: z.object({ source: z.string(), name: z.string(), at: z.number() }).optional(),
   /** Every source that lists it (data sites, web pages the agent read), with what each says. */
   sources: z.array(z.object({
-    id: z.string(), name: z.string(), at: z.number(), web: z.boolean(),
+    id: z.string(), name: z.string(), at: z.number(), web: z.boolean(), url: z.string().optional(),
     startsAt: z.number().optional(), endsAt: z.number().optional(), shopEndsAt: z.number().optional(), cover: z.string().optional(),
   })).optional(),
   /**
@@ -148,6 +148,17 @@ export const GameSourceInfo = z.object({
   added: z.boolean().optional(),
 })
 
+export const GameReading = z.object({
+  state: z.enum(['queued', 'running', 'done', 'partial', 'failed', 'cancelled']),
+  at: z.number(),
+  sessionId: z.string().optional(),
+  taskId: z.string().optional(),
+  scope: z.string().optional(),
+  remainingUrls: z.array(z.string()).optional(),
+  summary: z.string().optional(),
+})
+export type GameReading = z.infer<typeof GameReading>
+
 export const GameInfo = z.object({
   id: z.string(),
   name: z.string(),
@@ -193,19 +204,9 @@ export const GameInfo = z.object({
   /** The last data-site refresh. */
   refreshed: z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() }).optional(),
   /** The last time the agent read the game screen. */
-  reading: z.object({
-    state: z.enum(['running', 'done', 'failed']),
-    at: z.number(),
-    sessionId: z.string().optional(),
-    summary: z.string().optional(),
-  }).optional(),
+  reading: GameReading.optional(),
   /** The last time the agent read the web for it (official news, wikis — the sources the plugin cannot read itself). */
-  webReading: z.object({
-    state: z.enum(['running', 'done', 'failed']),
-    at: z.number(),
-    sessionId: z.string().optional(),
-    summary: z.string().optional(),
-  }).optional(),
+  webReading: GameReading.optional(),
 })
 export type GameInfo = z.infer<typeof GameInfo>
 
@@ -268,6 +269,11 @@ export const GamesRequests = {
     capability: GAMES_CAPABILITY,
     params: z.object({ game: z.string(), how: z.enum(['screen', 'web']).optional(), source: z.string().optional() }),
     result: z.object({ sessionId: z.string() }),
+  },
+  'games/read/cancel': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ taskId: z.string() }),
+    result: z.object({ cancelled: z.boolean() }),
   },
   'games/report/preview': {
     capability: GAMES_CAPABILITY,

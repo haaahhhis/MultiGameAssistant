@@ -1,12 +1,4 @@
-/**
- * Conversations with the agents, over dsh's session controller: a message is
- * a prompt, the reply is that turn as the app shows it (what the agent said
- * and the steps between, see reply.ts). Each agent has one conversation (the
- * gateway's `home`): work handed to it is a message there, and a message sent
- * while it is busy waits its turn (docs/design/agent-roles.md §10). A new
- * one-off session takes the model of the session the user used last in the UI
- * (dsh's default model may be one they never set up).
- */
+/** Messages address a role's home. App tasks execute in native children of that home. */
 import type { SessionController, SessionFollowFrame, SessionRequestId, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
 import { convertRecord } from '@adg/gateway'
 import { summarizeToolArgs, type HandOff } from '@adg/protocol'
@@ -14,17 +6,11 @@ import { createHandOffDesk, type HandOffDesk } from './handoff.ts'
 import type { Conversations } from './notify.ts'
 import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
-type Sessions = Pick<SessionController, 'list' | 'create' | 'rename' | 'selectModel' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel' | 'updateQueue'>>
+type Sessions = Pick<SessionController, 'list' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel' | 'updateQueue'>>
 type SessionId = SessionSummary['sessionId']
 /** The gateway's part: a new conversation's preset, role and model; each agent's own one; the hand-offs it keeps. */
 interface AppSessions {
-  sessionPreset(): { agentPreset?: string }
-  adopt(sessionId: string): Promise<void>
-  tagSession(sessionId: string, role: string, by?: string): Promise<void>
-  /** The model set for an agent's own conversations; undefined: the default. */
-  agentModel(agentId: string): { provider: string; model: string; reasoningEffort?: string | undefined } | undefined
-  /** Choose a session's model for it alone (dsh's own choice also makes it the default for every new session). */
-  selectSessionModel?(sessionId: string, selection: Selection): Promise<unknown>
+  runChild(owner: string, childId: string, title: string, instruction: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
   home(agentId: string): Promise<string>
   readonly handOffs: { put(item: HandOff): Promise<void>; all(): readonly HandOff[] }
   /** Resolves once the agent there is done, its sub-agents back and its reply to them given. */
@@ -40,13 +26,10 @@ const SUB_AGENT_TOOLS: ReadonlySet<string> = new Set(['subagent', 'subagent_fork
 /** How long the events of a settled agent get to arrive after it is known to be done. */
 const QUIET_MS = 250
 
-/**
- * @param cwd - the working folder new conversations get (the agent's own, see the gateway's workspaceDir).
- * @param focus - set what a new conversation is about (the gateway's skill scope), for `create`'s `focus`.
- * @param app - the gateway, for a new conversation's agent preset, to count it as the app's (a dsh shared with other work), and to put it under its role agent with that role's model.
- */
-export function sessionConversations(sessions: Sessions, cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations {
-  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = [], options: { insert?: boolean } = {}): Promise<Reply> => {
+/** Role tasks reserve a child ID before admission, so skill focus and cancellation belong to that task. */
+export function sessionConversations(sessions: Sessions, _cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations & Required<Pick<Conversations, 'converse' | 'prepareTask'>> {
+  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = [], options: { insert?: boolean; isolated?: boolean; onWorkerReport?: (text: string) => void } = {}): Promise<Reply> => {
+    signal.throwIfAborted()
     const controller = new AbortController()
     const requestId = `notify-${crypto.randomUUID()}`
     const turn = { started: false }
@@ -54,12 +37,14 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     // an agent left running would go on acting (e.g. launch the game again). Still waiting behind
     // other work in the agent's one conversation, the message is taken back instead: the turn
     // running then is someone else's.
+    let stopping: Promise<void> | undefined
     const abort = () => {
       controller.abort(signal.reason)
-      void Promise.resolve().then(async () => {
-        if (turn.started) {
-          sessions.cancel?.({ sessionId: sessionId as SessionId })
-          app?.()?.stopSubAgents?.(sessionId)
+      stopping = Promise.resolve().then(async () => {
+        if (turn.started || options.isolated) {
+          try { await sessions.cancel?.({ sessionId: sessionId as SessionId }) }
+          finally { app?.()?.stopSubAgents?.(sessionId) }
+          if (!turn.started) await unqueue(sessions, sessionId, requestId)
         } else await unqueue(sessions, sessionId, requestId)
       }).catch(() => {})
     }
@@ -76,10 +61,11 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }, controller.signal)
       const settled = app?.()?.settled
-      return await workReply(iterator, requestId, text, turn, settled === undefined ? undefined : () => settled.call(app!(), sessionId, controller.signal))
+      return await workReply(iterator, requestId, text, turn, settled === undefined ? undefined : () => settled.call(app!(), sessionId, controller.signal), options.onWorkerReport)
     } finally {
       signal.removeEventListener('abort', abort)
       controller.abort()
+      await stopping
     }
   }
   const gateway = (): AppSessions => {
@@ -92,11 +78,19 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     if (options.focus !== undefined) await focus?.(sessionId, options.focus)
     return sessionId
   }
-  // One desk for all the app's plugins, each with conversations of its own: a thread is between agents, not between plugins.
+  const prepareTask = async (role: string, title: string, scope?: { scripts?: string[]; games?: string[] }) => {
+    const owner = await gateway().home(role)
+    const id = crypto.randomUUID()
+    if (scope) await focus?.(id, scope)
+    return { owner, id, run: (instruction: string, signal: AbortSignal, images?: readonly Buffer[]) =>
+      gateway().runChild(owner, id, title, instruction, signal, images) }
+  }
   let own: HandOffDesk | undefined
   const desk = (): HandOffDesk => {
     const found = app?.()
-    const make = () => createHandOffDesk({ home, converse, record: item => gateway().handOffs.put(item), threads: () => gateway().handOffs.all() })
+    const make = () => createHandOffDesk({ home, converse,
+      prepareWorker: input => prepareTask(input.to.id, input.title, input.focus),
+      record: item => gateway().handOffs.put(item), threads: () => gateway().handOffs.all() })
     if (found === undefined) return own ??= make()
     return (found.handOffDesk ??= make()) as HandOffDesk
   }
@@ -106,29 +100,18 @@ export function sessionConversations(sessions: Sessions, cwd: () => string | und
     handOff: input => desk().handOff(input),
     handOffRefusal: (fromSession, to, fromAgent, toName) => desk().refusal(fromSession, to, fromAgent, toName),
     askRefusal: sessionId => desk().askRefusal(sessionId),
-    async create(title, options = {}) {
-      // A role agent's session: that agent's model, when one is set (设置 → 模型).
-      const chosen = options.role === undefined ? undefined : app?.()?.agentModel(options.role)
-      const agentModel: Selection | undefined = chosen === undefined ? undefined : { provider: chosen.provider, model: chosen.model, ...(chosen.reasoningEffort === undefined ? {} : { reasoningEffort: chosen.reasoningEffort }) }
-      const model = agentModel ?? (options.defaultModel === true ? undefined : await recentModel(sessions).catch(() => undefined))
-      const dir = cwd()
-      const created = await sessions.create({ ...(dir === undefined ? {} : { cwd: dir }), ...app?.()?.sessionPreset() })
-      await app?.()?.adopt(created.sessionId)
-      if (options.role !== undefined) await app?.()?.tagSession(created.sessionId, options.role, options.by)
-      await sessions.rename({ sessionId: created.sessionId, title }).catch(() => {})
-      if (model !== undefined) {
-        const gateway = app?.()
-        await (gateway?.selectSessionModel !== undefined ? gateway.selectSessionModel(created.sessionId, model) : sessions.selectModel({ sessionId: created.sessionId, ...model })).catch(() => {})
-      }
-      if (options.focus !== undefined) await focus?.(created.sessionId, options.focus)
-      return created.sessionId
-    },
+    prepareTask,
     async lastActive(sessionId) {
       const { items } = await sessions.list({}, AbortSignal.timeout(10_000))
       return items.find(s => s.sessionId === sessionId)?.updatedAt
     },
     async ask(sessionId, text, signal, images) {
-      return finalText(await converse(sessionId, text, signal, images)) || '（agent 没有回复文字）'
+      const reply = await converse(sessionId, text, signal, images)
+      signal.throwIfAborted()
+      if (reply.ended !== undefined) throw new Error(reply.ended)
+      const answer = finalText(reply)
+      if (!answer.trim()) throw new Error('任务结束时没有返回结论')
+      return answer
     },
     converse,
   }
@@ -151,9 +134,6 @@ async function unqueue(sessions: Sessions, sessionId: string, requestId: string)
   }
 }
 
-type Selection = { provider: string; model: string; reasoningEffort?: string }
-
-/** The model of the most recently active session that is not itself a chat-channel session. */
 /** Why a turn ended early, for people (dsh gives a kind, and for interruptions who caused it). */
 export function endReason(reason: { kind: string; message?: string | undefined }): string {
   const BY: Readonly<Record<string, string>> = {
@@ -168,28 +148,6 @@ export function endReason(reason: { kind: string; message?: string | undefined }
   return KIND[reason.kind] ?? reason.kind
 }
 
-async function recentModel(sessions: Sessions): Promise<Selection | undefined> {
-  const { items } = await sessions.list({}, AbortSignal.timeout(10_000))
-  const recent = [...items].sort((a, b) => b.updatedAt - a.updatedAt).filter(s => !/^(飞书|feishu)：/.test(String(s.projections?.values?.['title'] ?? ''))).slice(0, 5)
-  for (const summary of recent) {
-    const values = summary.projections?.values ?? (await sessions.projections({ sessionId: summary.sessionId }, AbortSignal.timeout(10_000)))?.values
-    const selection = pick((values as Record<string, unknown> | undefined)?.['modelSelection'])
-    if (selection !== undefined) return selection
-  }
-  return undefined
-}
-
-function pick(value: unknown): Selection | undefined {
-  const v = (value ?? {}) as { next?: unknown; lastUsed?: unknown }
-  for (const candidate of [v.next, v.lastUsed]) {
-    const c = candidate as { provider?: unknown; model?: unknown; reasoningEffort?: unknown } | undefined
-    if (typeof c?.provider === 'string' && typeof c.model === 'string') {
-      return { provider: c.provider, model: c.model, ...(typeof c.reasoningEffort === 'string' ? { reasoningEffort: c.reasoningEffort } : {}) }
-    }
-  }
-  return undefined
-}
-
 /** One event of a conversation, as the gateway reads dsh's records. */
 export type ConversationEvent = NonNullable<ReturnType<typeof convertRecord>>
 
@@ -202,6 +160,7 @@ export class TurnReply {
   readonly #blocks: ReplyBlock[] = []
   /** Where each call's step is: its group in `blocks` and its place there. */
   readonly #where = new Map<string, { block: number; index: number }>()
+  #outcome: Reply['outcome']
   #ended: string | undefined
 
   /** @returns true once the turn has ended. */
@@ -221,18 +180,19 @@ export class TurnReply {
       if (at !== undefined) steps(at.block)[at.index] = { ...steps(at.block)[at.index]!, status: event.isError ? 'error' : 'ok' }
     } else if (event.type === 'turn/end') {
       if (event.reason.kind !== 'completed' && event.reason.kind !== 'stop') {
+        this.#outcome = ['aborted', 'interrupted'].includes(event.reason.kind) ? 'cancelled' : 'failed'
         // Its last words are then not a summary: say so after them (or instead of them, for whoever only takes the words).
         const why = `（这一轮没有完成：${endReason(event.reason)}）`
         if (finalText({ blocks }) === '') blocks.push({ kind: 'text', text: why })
-        else this.#ended = why
-      }
+        this.#ended = why
+      } else this.#outcome = 'completed'
       return true
     }
     return false
   }
 
   get reply(): Reply {
-    return this.#ended === undefined ? { blocks: [...this.#blocks] } : { blocks: [...this.#blocks], ended: this.#ended }
+    return { blocks: [...this.#blocks], ...(this.#outcome === undefined ? {} : { outcome: this.#outcome }), ...(this.#ended === undefined ? {} : { ended: this.#ended }) }
   }
 }
 
@@ -244,7 +204,9 @@ export class TurnReply {
  * taking a turn in between is that turn's, not this work's. A turn whose
  * model failed and was switched to a fallback model goes on in the next turn.
  */
-export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }, settled: (() => Promise<void>) | undefined): Promise<Reply> {
+export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, requestId: string, text: string, turn: { started: boolean }, settled: (() => Promise<void>) | undefined, onWorkerReport?: (text: string) => void): Promise<Reply> {
+  const inbox: Record<string, (string | undefined)[]> = {}
+  let cancelled = false
   let mine = false
   let other = false
   let opened = false
@@ -255,11 +217,28 @@ export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, req
   let switched = false
   const take = (frame: SessionFollowFrame): boolean => {
     if (frame.type !== 'event') return false
+    if (!mine) {
+      const record = frame.event as { type?: string; data?: { target?: string; start?: number; removedCount?: number; inserted?: { source?: { rpcId?: string } }[]; outcome?: string } }
+      const splice = record.data
+      if (record.type === 'agent/inbox/spliced' && splice?.target && typeof splice.start === 'number') {
+        const items = inbox[splice.target] ??= []
+        if (items.length < splice.start) items.length = splice.start
+        const removed = items.splice(splice.start, splice.removedCount ?? 0, ...(splice.inserted ?? []).map(m => m.source?.rpcId))
+        if (splice.outcome === 'canceled' && removed.includes(requestId)) { cancelled = true; return true }
+      }
+    }
     const event = convertRecord(frame)
     if (event === null) return false
     const afterSwitch = switched
     switched = event.type === 'unknown' && event.upstreamType === 'model/selection'
     if (event.type === 'user/message') {
+      if (mine && !other && onWorkerReport) {
+        const raw = frame.event as { data?: { source?: { kind?: string; stopReason?: string } } }
+        const source = raw.data?.source
+        if (source?.kind === 'subagent-settled' && source.stopReason === 'completed') {
+          onWorkerReport(event.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n'))
+        }
+      }
       const body = event.content.map(p => (p.type === 'text' ? p.text : '')).join('')
       if (event.requestId === requestId || (event.requestId === undefined && !mine && body.trim() === text.trim())) mine = turn.started = true
       else if (mine && turns.length > 0) other = event.requestId !== undefined
@@ -285,9 +264,10 @@ export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, req
   // Until our turn ends.
   for (;;) {
     const next = await iterator.next()
-    if (next.done === true) return joined(turns, reply)
+    if (next.done === true) return { ...joined(turns, reply), outcome: 'failed', ended: mine ? '会话在任务结束前断开' : '请求尚未运行，会话已结束' }
     if (take(next.value)) break
   }
+  if (cancelled) return { blocks: [], outcome: 'cancelled', ended: '排队请求已取消' }
   if (!opened || settled === undefined || cut) return joined(turns, reply)
   // Then whatever its sub-agents wake, until the agent is done. Events may trail that a little.
   let done = false
@@ -311,6 +291,7 @@ export async function workReply(iterator: AsyncIterator<SessionFollowFrame>, req
 function joined(turns: readonly Reply[], unfinished: TurnReply): Reply {
   const open = unfinished.reply
   const all = open.blocks.length > 0 ? [...turns, open] : turns
+  const outcome = all.at(-1)?.outcome
   const ended = all.at(-1)?.ended
-  return { blocks: all.flatMap(r => r.blocks), ...(ended === undefined ? {} : { ended }) }
+  return { blocks: all.flatMap(r => r.blocks), ...(outcome === undefined ? {} : { outcome }), ...(ended === undefined ? {} : { ended }) }
 }

@@ -81,7 +81,7 @@ export class HandOffs {
 
   /** Those from or to this conversation, oldest first. */
   of(sessionId: string): HandOff[] {
-    return [...this.#items.values()].filter(h => h.fromSession === sessionId || h.toSession === sessionId)
+    return [...this.#items.values()].filter(h => h.fromSession === sessionId || h.toSession === sessionId || h.ownerSession === sessionId)
   }
 
   get(id: string): HandOff | undefined {

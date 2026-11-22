@@ -13,10 +13,11 @@
  */
 import { GameNoticeDetail, type NoticeArticle } from '@adg/protocol'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { articleKey } from './web-delivery.ts'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@adg/protocol/node'
-import { GameNotice, GamesSettings, OWN_IMAGE, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
+import { GameNotice, GameReading, GamesSettings, OWN_IMAGE, OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo } from '@adg/protocol'
 import { z } from 'zod'
 import { idKey, sameEvent } from './names.ts'
 import type { SitePool, SiteEvent, SiteVersion } from './sources.ts'
@@ -131,13 +132,15 @@ const MAX_NOTICES = 40
 
 /** The same announcement: the same address, else the same title. */
 function noticeKey(url: string | undefined, title: string): string {
-  return url !== undefined && url !== '' ? `u:${url.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()}` : `t:${title.trim().replace(/\s+/g, ' ').toLowerCase()}`
+  const key = url && articleKey(url)
+  if (key) return `u:${key}`
+  return `t:${title.trim().replace(/\s+/g, ' ').toLowerCase()}`
 }
 
 const StoredSchema = z.object({
   activities: z.array(z.looseObject({ id: z.string(), game: z.string(), name: z.string() })).default([]),
   refreshed: z.record(z.string(), z.object({ at: z.number(), ok: z.boolean(), count: z.number(), detail: z.string().optional() })).default({}),
-  readings: z.record(z.string(), z.object({ state: z.enum(['running', 'done', 'failed']), at: z.number(), sessionId: z.string().optional(), summary: z.string().optional() })).default({}),
+  readings: z.record(z.string(), GameReading).default({}),
   report: z.object({ lastSentAt: z.number().optional(), lastDay: z.string().optional(), lastResult: z.string().optional(), lastText: z.string().optional() }).default({}),
   versions: z.record(z.string(), z.object({ name: z.string(), title: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number().optional(), cover: z.string().optional(), source: z.string(), at: z.number() })).default({}),
   pools: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string().optional(), startsAt: z.number().optional(), endsAt: z.number(), cover: z.string().optional(), up: z.array(z.string()) }))).default({}),
@@ -170,17 +173,26 @@ export class Calendar {
   }
 
   async load(): Promise<void> {
+    let interrupted = false
     try {
       const saved = StoredSchema.parse(JSON.parse(await readFile(this.file, 'utf8')))
+      for (const reading of Object.values(saved.readings)) {
+        if (reading.state === 'running' || reading.state === 'queued') {
+          interrupted = true
+          const left = reading.remainingUrls?.length ?? 0
+          reading.state = left ? 'partial' : 'failed'
+          reading.summary = left ? '上次探查中断，已有记录已保存，剩余 ' + left + ' 个链接可继续核对。' : '上次探查被中断，请重新发起'
+        }
+      }
       this.#items = saved.activities.map(a => migrate({ todo: [], done: [], ...a, names: Array.isArray(a['names']) ? (a['names'] as string[]) : [a.name] } as unknown as Stored))
       this.#saved = { refreshed: saved.refreshed, readings: saved.readings, report: saved.report, settings: saved.settings, versions: saved.versions, pools: saved.pools, links: saved.links, notices: saved.notices }
     } catch {
       // first start, or unreadable: start empty
     }
+    if (interrupted) await this.save()
   }
 
   async save(): Promise<void> {
-    await mkdir(this.#dir, { recursive: true })
     await writeFileAtomic(this.file, `${JSON.stringify({ activities: this.#items, ...this.#saved }, null, 1)}\n`)
   }
 
@@ -210,6 +222,15 @@ export class Calendar {
 
   refreshed(game: string): GameInfo['refreshed'] {
     return this.#saved.refreshed[game]
+  }
+
+  /** All stored article addresses, including sources that the activity card is not currently showing. */
+  articleUrls(game: string): string[] {
+    const urls = this.notices(game).map(n => n.url)
+    for (const item of this.#items) {
+      if (item.game === game) urls.push(item.url, ...Object.values(item.facts).map(fact => fact.url))
+    }
+    return urls.filter((url): url is string => !!url)
   }
 
   reading(game: string): GameInfo['reading'] {
@@ -800,6 +821,7 @@ export class Calendar {
     const { names: _names, facts, mine, baseName: _baseName, chosen, ...activity } = item
     const sources = Object.entries(facts).map(([id, f]) => ({
       id, name: f.name, at: f.at, web: f.web,
+      ...(f.url === undefined ? {} : { url: f.url }),
       ...(f.startsAt === undefined ? {} : { startsAt: f.startsAt }),
       ...(f.endsAt === undefined ? {} : { endsAt: f.endsAt }),
       ...(f.shopEndsAt === undefined ? {} : { shopEndsAt: f.shopEndsAt }),

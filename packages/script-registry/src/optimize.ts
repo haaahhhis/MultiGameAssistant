@@ -38,7 +38,7 @@ export function optimizer(ctx: Context, library: () => ScriptLibrary, log: { war
     void ctx.get('adgNotify')?.update(noticeId, { done }).catch(() => {})
   }
   const why = (script: ScriptInfo) => script.optimize?.due === 'updated'
-    ? `更新到 ${script.current ?? script.localVersion?.version ?? '新版本'} 后已经跑通了，先读更新日志`
+    ? `更新到 ${(script.current === 'local' ? script.localVersion?.version : script.current ?? script.localVersion?.version) ?? '未知版本'} 后已经跑通了，先读更新日志`
     : script.optimize === undefined ? undefined : `${script.optimize.at === undefined ? '装好以来' : '上次优化以来'}已经跑成功 ${script.optimize.runs} 次`
 
   const decide: Optimizer['decide'] = async (id, decision, by) => {
@@ -53,10 +53,11 @@ export function optimizer(ctx: Context, library: () => ScriptLibrary, log: { war
     if (sessions === undefined) throw new Error('agent 现在不可用（会话服务没有加载）')
     const gateway = ctx.get('adgGateway')
     const conversations = sessionConversations(sessions, () => gateway?.workspaceDir(), (sessionId, focus) => gateway?.skillScope.setFocus(sessionId, focus) ?? Promise.resolve(), () => gateway)
-    const sessionId = await conversations.home(SCRIPT_ROLE.id, { focus: { scripts: [id] } })
+    const work = await conversations.prepareTask(SCRIPT_ROLE.id, `优化脚本：${script.name}`, { scripts: [id] })
+    const sessionId = work.owner
     const prompt = optimizeScriptPrompt(script.name, why(script), id)
     await lib.optimizeDone(id, 'run')
-    void conversations.ask(sessionId, taskMessage(by, `优化脚本：${script.name}`, prompt), AbortSignal.timeout(OPTIMIZE_TIMEOUT_MS)).catch(error => log.warn(`optimizing ${id}: ${error instanceof Error ? error.message : String(error)}`))
+    void work.run(taskMessage(by, `优化脚本：${script.name}`, prompt), AbortSignal.timeout(OPTIMIZE_TIMEOUT_MS)).catch(error => log.warn(`optimizing ${id}: ${error instanceof Error ? error.message : String(error)}`))
     close(id, '已交给「脚本」优化，脚本包的改动会在「脚本」页等你确认')
     return { sessionId }
   }

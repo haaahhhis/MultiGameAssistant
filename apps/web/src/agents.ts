@@ -6,12 +6,24 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { AdgClient } from '@adg/client-core'
-import type { HandOff, Role } from '@adg/protocol'
+import type { HandOff, Role, SessionItem } from '@adg/protocol'
 import type { IconName } from './components/Icons.tsx'
 import { useStore } from './hooks.ts'
 
 /** The main agent's id in the roster and the route; sessions have no role for it. */
 export const MAIN_AGENT = 'main'
+
+export function sessionRoot(item: SessionItem, sessions: ReadonlyMap<string, SessionItem>): SessionItem {
+  const seen = new Set<string>()
+  let root = item
+  while (root.parentId && !seen.has(root.id)) {
+    seen.add(root.id)
+    const parent = sessions.get(root.parentId)
+    if (!parent) break
+    root = parent
+  }
+  return root
+}
 
 export interface Agent {
   readonly id: string

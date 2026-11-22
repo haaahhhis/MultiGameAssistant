@@ -184,8 +184,9 @@ export function browserTools(deps: BrowserToolDeps): ToolDefinition[] {
         return call(exec, 'text', given({ maxChars: a.max_chars }))
       },
       render: (_args, value): ContentBlock[] => {
-        const v = value as { tab: string; url: string; title: string; text: string; truncated?: number }
-        return [{ type: 'text', text: `标签页 ${v.tab}：${v.title}\n${v.url}\n\n${v.text}${v.truncated === undefined ? '' : `\n…（还有 ${v.truncated} 字，加大 max_chars 看更多）`}` }]
+        const v = value as { tab: string; url: string; title: string; text: string; images?: string[]; truncated?: number }
+        const media = v.images?.length ? `\n\n页面配图候选（依次为分享图、正文图）：\n${v.images.join('\n')}` : ''
+        return [{ type: 'text', text: `标签页 ${v.tab}：${v.title}\n${v.url}\n\n${v.text}${v.truncated === undefined ? '' : `\n…（还有 ${v.truncated} 字，加大 max_chars 看更多）`}${media}` }]
       },
     }),
     tool({

@@ -462,6 +462,9 @@
     "games/read": {
       "capability": "games"
     },
+    "games/read/cancel": {
+      "capability": "games"
+    },
     "games/report/preview": {
       "capability": "games"
     },
@@ -1327,6 +1330,34 @@
             "type": {
               "type": "string",
               "const": "assistant/attempt"
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "totalTokens": {
+                  "type": "number"
+                },
+                "cacheReadTokens": {
+                  "type": "number"
+                },
+                "cacheWriteTokens": {
+                  "type": "number"
+                },
+                "reasoningTokens": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "inputTokens",
+                "outputTokens"
+              ],
+              "additionalProperties": false
             },
             "turn": {
               "type": "number"
@@ -2448,6 +2479,12 @@
               "toSession": {
                 "type": "string"
               },
+              "isolated": {
+                "type": "boolean"
+              },
+              "ownerSession": {
+                "type": "string"
+              },
               "title": {
                 "type": "string"
               },
@@ -2609,6 +2646,12 @@
               "toSession": {
                 "type": "string"
               },
+              "isolated": {
+                "type": "boolean"
+              },
+              "ownerSession": {
+                "type": "string"
+              },
               "title": {
                 "type": "string"
               },
@@ -2732,6 +2775,12 @@
           "type": "string"
         },
         "toSession": {
+          "type": "string"
+        },
+        "isolated": {
+          "type": "boolean"
+        },
+        "ownerSession": {
           "type": "string"
         },
         "title": {
@@ -3607,6 +3656,34 @@
                   "type": {
                     "type": "string",
                     "const": "assistant/attempt"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens"
+                    ],
+                    "additionalProperties": false
                   },
                   "turn": {
                     "type": "number"
@@ -5090,6 +5167,34 @@
                   "type": {
                     "type": "string",
                     "const": "assistant/attempt"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens"
+                    ],
+                    "additionalProperties": false
                   },
                   "turn": {
                     "type": "number"
@@ -7827,6 +7932,9 @@
                 "type": "object",
                 "properties": {
                   "sessionId": {
+                    "type": "string"
+                  },
+                  "taskId": {
                     "type": "string"
                   },
                   "state": {
@@ -19219,6 +19327,31 @@
               "detail": {
                 "type": "string"
               },
+              "repair": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "runId",
+                  "state",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
               "runIds": {
                 "type": "array",
                 "items": {
@@ -19379,6 +19512,31 @@
                     },
                     "detail": {
                       "type": "string"
+                    },
+                    "repair": {
+                      "type": "object",
+                      "properties": {
+                        "runId": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "succeeded",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "at": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "runId",
+                        "state",
+                        "at"
+                      ],
+                      "additionalProperties": false
                     },
                     "runIds": {
                       "type": "array",
@@ -20991,9 +21149,12 @@
                   "state": {
                     "type": "string",
                     "enum": [
+                      "queued",
                       "running",
                       "done",
-                      "failed"
+                      "partial",
+                      "failed",
+                      "cancelled"
                     ]
                   },
                   "at": {
@@ -21001,6 +21162,18 @@
                   },
                   "sessionId": {
                     "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "remainingUrls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "summary": {
                     "type": "string"
@@ -21018,9 +21191,12 @@
                   "state": {
                     "type": "string",
                     "enum": [
+                      "queued",
                       "running",
                       "done",
-                      "failed"
+                      "partial",
+                      "failed",
+                      "cancelled"
                     ]
                   },
                   "at": {
@@ -21028,6 +21204,18 @@
                   },
                   "sessionId": {
                     "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "remainingUrls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "summary": {
                     "type": "string"
@@ -21123,6 +21311,9 @@
                     },
                     "web": {
                       "type": "boolean"
+                    },
+                    "url": {
+                      "type": "string"
                     },
                     "startsAt": {
                       "type": "number"
@@ -21639,6 +21830,32 @@
       },
       "required": [
         "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "games/read/cancel.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    },
+    "games/read/cancel.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cancelled"
       ],
       "additionalProperties": false
     },
@@ -22252,6 +22469,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -22641,6 +22861,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -22881,6 +23104,9 @@
               "web": {
                 "type": "boolean"
               },
+              "url": {
+                "type": "string"
+              },
               "startsAt": {
                 "type": "number"
               },
@@ -23112,6 +23338,9 @@
                   },
                   "web": {
                     "type": "boolean"
+                  },
+                  "url": {
+                    "type": "string"
                   },
                   "startsAt": {
                     "type": "number"
@@ -26895,6 +27124,34 @@
                   "type": "string",
                   "const": "assistant/attempt"
                 },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cacheReadTokens": {
+                      "type": "number"
+                    },
+                    "cacheWriteTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens"
+                  ],
+                  "additionalProperties": false
+                },
                 "turn": {
                   "type": "number"
                 },
@@ -27962,6 +28219,12 @@
             "toSession": {
               "type": "string"
             },
+            "isolated": {
+              "type": "boolean"
+            },
+            "ownerSession": {
+              "type": "string"
+            },
             "title": {
               "type": "string"
             },
@@ -28967,6 +29230,31 @@
               },
               "detail": {
                 "type": "string"
+              },
+              "repair": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "runId",
+                  "state",
+                  "at"
+                ],
+                "additionalProperties": false
               },
               "runIds": {
                 "type": "array",
