@@ -73,10 +73,13 @@ export class HandOffs {
   readonly #listeners = new Set<(item: HandOff) => void>()
   readonly loaded: Promise<void>
 
-  constructor(file: string | undefined, changed: (item: HandOff) => void = () => {}) {
+  constructor(file: string | undefined, changed: (item: HandOff) => void = () => {}, log: Pick<Console, 'warn'> = console) {
     this.#file = file
     this.#changed = changed
-    this.loaded = this.#load()
+    this.loaded = this.#load().catch((error: unknown) => {
+      // Recovery already updated the in-memory state. The next put retries the full snapshot.
+      log.warn(`写回中断任务状态失败：${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 
   /** Those from or to this conversation, oldest first. */
@@ -119,15 +122,20 @@ export class HandOffs {
 
   async #load(): Promise<void> {
     if (this.#file === undefined) return
+    let recovered = false
     try {
       const saved = JSON.parse(await readFile(this.#file, 'utf8')) as unknown
       if (!Array.isArray(saved)) return
       for (const item of saved as HandOff[]) {
         if (typeof item?.id !== 'string') continue
-        this.#items.set(item.id, item.state === 'running' || item.state === 'waiting' ? { ...item, state: 'failed', reply: '软件关闭时它还没做完，这一轮中断了', endedAt: item.startedAt } : item)
+        if (item.state === 'running' || item.state === 'waiting') {
+          this.#items.set(item.id, { ...item, state: 'failed', reply: '软件关闭时它还没做完，这一轮中断了', endedAt: Date.now() })
+          recovered = true
+        } else this.#items.set(item.id, item)
       }
     } catch {
-      // none yet
+      return
     }
+    if (recovered) await this.#save()
   }
 }

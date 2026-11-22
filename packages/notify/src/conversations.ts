@@ -1,15 +1,15 @@
 /** Messages address a role's home. App tasks execute in native children of that home. */
 import type { SessionController, SessionFollowFrame, SessionRequestId, SessionSummary } from '@deepseek-ai/dsh-api-session-controller'
-import { convertRecord } from '@adg/gateway'
+import { convertRecord, type AdgGateway } from '@adg/gateway'
 import { summarizeToolArgs, type HandOff } from '@adg/protocol'
-import { createHandOffDesk, type HandOffDesk } from './handoff.ts'
+import { createHandOffDesk, type DeliveryOptions, type HandOffDesk } from './handoff.ts'
 import type { Conversations } from './notify.ts'
 import { finalText, type Reply, type ReplyBlock, type ReplyStep } from './reply.ts'
 
 type Sessions = Pick<SessionController, 'list' | 'follow' | 'prompt' | 'projections'> & Partial<Pick<SessionController, 'cancel' | 'updateQueue'>>
 type SessionId = SessionSummary['sessionId']
 /** The gateway's part: a new conversation's preset, role and model; each agent's own one; the hand-offs it keeps. */
-interface AppSessions {
+interface AppSessions extends Pick<AdgGateway, 'promptChild' | 'stopSubAgent'> {
   runChild(owner: string, childId: string, title: string, instruction: string, signal: AbortSignal, images?: readonly Buffer[]): Promise<string>
   home(agentId: string): Promise<string>
   readonly handOffs: { put(item: HandOff): Promise<void>; all(): readonly HandOff[] }
@@ -28,44 +28,64 @@ const QUIET_MS = 250
 
 /** Role tasks reserve a child ID before admission, so skill focus and cancellation belong to that task. */
 export function sessionConversations(sessions: Sessions, _cwd: () => string | undefined = () => undefined, focus?: (sessionId: string, focus: { scripts?: string[]; games?: string[] }) => Promise<unknown>, app?: () => AppSessions | undefined): Conversations & Required<Pick<Conversations, 'converse' | 'prepareTask'>> {
-  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = [], options: { insert?: boolean; isolated?: boolean; onWorkerReport?: (text: string) => void } = {}): Promise<Reply> => {
+  const converse = async (sessionId: string, text: string, signal: AbortSignal, images: readonly Buffer[] = [], options: DeliveryOptions & { onWorkerReport?: (text: string) => void } = {}): Promise<Reply> => {
     signal.throwIfAborted()
     const controller = new AbortController()
+    const observing = AbortSignal.any([signal, controller.signal])
     const requestId = `notify-${crypto.randomUUID()}`
     const turn = { started: false }
     // Called off (a stopped run, a timeout): the agent's turn stops too, not only our following it —
     // an agent left running would go on acting (e.g. launch the game again). Still waiting behind
     // other work in the agent's one conversation, the message is taken back instead: the turn
     // running then is someone else's.
-    let stopping: Promise<void> | undefined
-    const abort = () => {
-      controller.abort(signal.reason)
-      stopping = Promise.resolve().then(async () => {
-        if (turn.started || options.isolated) {
-          try { await sessions.cancel?.({ sessionId: sessionId as SessionId }) }
-          finally { app?.()?.stopSubAgents?.(sessionId) }
-          if (!turn.started) await unqueue(sessions, sessionId, requestId)
-        } else await unqueue(sessions, sessionId, requestId)
-      }).catch(() => {})
+    let parent = options.parentSessionId
+    let childMessageId: string | undefined
+    let iterator: AsyncIterator<SessionFollowFrame> | undefined
+    const cancel = async () => {
+      if (parent !== undefined) {
+        if (turn.started || options.isolated) app?.()?.stopSubAgent(sessionId)
+        else if (childMessageId !== undefined) {
+          await sessions.updateQueue?.({ sessionId: sessionId as SessionId, itemId: childMessageId as never, action: { kind: 'remove' } })
+        }
+        return
+      }
+      if (turn.started || options.isolated) {
+        try { await sessions.cancel?.({ sessionId: sessionId as SessionId }) }
+        finally { app?.()?.stopSubAgents?.(sessionId) }
+      }
+      if (!turn.started) await unqueue(sessions, sessionId, requestId)
     }
-    signal.addEventListener('abort', abort, { once: true })
     try {
-      const iterator = sessions.follow({ address: { kind: 'session', sessionId: sessionId as SessionId }, assistantStream: true, maxMessages: 1 }, controller.signal)[Symbol.asyncIterator]()
+      const summary = parent === undefined ? (await sessions.list({}, observing)).items.find(s => s.sessionId === sessionId) : undefined
+      if (summary?.origin === 'subagent') {
+        parent = summary.parentSessionId
+        if (parent === undefined) throw new Error('子任务缺少所属会话，无法投递消息')
+      }
+      const id = sessionId as SessionId
+      const address = parent === undefined ? { kind: 'session' as const, sessionId: id }
+        : { kind: 'subagent' as const, parentSessionId: parent as SessionId, childSessionId: id, mode: 'unknown' as const }
+      iterator = sessions.follow({ address, assistantStream: true, maxMessages: 1 }, observing)[Symbol.asyncIterator]()
       const first = await iterator.next()
       if (first.done === true) throw new Error('会话没有打开')
-      await sessions.prompt({
+      const prompt = {
         requestId: requestId as SessionRequestId,
-        sessionId: sessionId as SessionId,
-        mode: options.insert === true && await running(sessions, sessionId, controller.signal) ? 'steer' : 'queue',
-        content: [{ type: 'text', text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
+        content: [{ type: 'text' as const, text }, ...images.map(png => ({ type: 'image' as const, mediaType: 'image/png' as const, data: png.toString('base64') }))],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }, controller.signal)
+      }
+      if (parent !== undefined) {
+        const receipt = await gateway().promptChild({ ...prompt, childSessionId: id, delivery: options.insert ? 'steer' : 'queue' }, observing)
+        childMessageId = receipt.messageId
+      } else {
+        await sessions.prompt({ ...prompt, sessionId: id, mode: options.insert && summary?.running ? 'steer' : 'queue' }, observing)
+      }
+      signal.throwIfAborted()
+      options.onAccepted?.()
       const settled = app?.()?.settled
-      return await workReply(iterator, requestId, text, turn, settled === undefined ? undefined : () => settled.call(app!(), sessionId, controller.signal), options.onWorkerReport)
+      return await workReply(iterator, requestId, text, turn, settled === undefined ? undefined : () => settled.call(app!(), sessionId, observing), options.onWorkerReport)
     } finally {
-      signal.removeEventListener('abort', abort)
       controller.abort()
-      await stopping
+      if (signal.aborted && iterator !== undefined) await cancel().catch(() => {})
+      await iterator?.return?.()
     }
   }
   const gateway = (): AppSessions => {
@@ -115,12 +135,6 @@ export function sessionConversations(sessions: Sessions, _cwd: () => string | un
     },
     converse,
   }
-}
-
-/** Whether the conversation has a turn going for a message to go into. */
-async function running(sessions: Sessions, sessionId: string, signal: AbortSignal): Promise<boolean> {
-  const { items } = await sessions.list({}, signal)
-  return items.find(s => s.sessionId === sessionId)?.running === true
 }
 
 /** Take a message that has not been started yet back out of the conversation's queue. */

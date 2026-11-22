@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -47,9 +47,16 @@ test('hand-offs are listed for both conversations, told as they change, and kept
 
 test('a hand-off still running when the app stopped is kept as failed: its turn is lost', async () => {
   const file = join(dir(), 'handoffs.json')
-  writeFileSync(file, JSON.stringify([item({})]))
+  const done = item({ id: 'h3', state: 'done', reply: '完成', endedAt: 5 })
+  writeFileSync(file, JSON.stringify([item({}), item({ id: 'h2', state: 'waiting' }), done]))
   const handOffs = new HandOffs(file)
   await handOffs.loaded
   assert.equal(handOffs.get('h1')?.state, 'failed')
   assert.match(handOffs.get('h1')?.reply ?? '', /软件关闭时/)
+  assert.equal(handOffs.get('h2')?.state, 'failed')
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), handOffs.all())
+  const reopened = new HandOffs(file)
+  await reopened.loaded
+  assert.deepEqual(reopened.all(), handOffs.all())
+  assert.deepEqual(reopened.get('h3'), done)
 })

@@ -56,12 +56,23 @@ export const MAX_HOPS = 3
 /** What may be said in all along one chain: each costs a turn. */
 export const MAX_CHAIN_MESSAGES = 30
 
+function failedReply(error: unknown): Reply {
+  return { blocks: [], outcome: 'failed', ended: error instanceof Error ? error.message : String(error) }
+}
+
+export interface DeliveryOptions {
+  insert?: boolean
+  isolated?: boolean
+  parentSessionId?: string | undefined
+  onAccepted?: () => void
+}
+
 export interface HandOffDeps {
   prepareWorker?(input: HandOffInput): Promise<import('./notify.ts').PreparedTask>
   /** The agent's one conversation (the gateway's \`home\`), its focus set. */
   home(agent: string, options?: { focus?: { scripts?: string[]; games?: string[] } }): Promise<string>
   /** A message in a conversation, resolving with the turn it starts (see conversations.ts). */
-  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: { insert?: boolean; isolated?: boolean }): Promise<Reply>
+  converse(sessionId: string, text: string, signal: AbortSignal, images?: readonly Buffer[], options?: DeliveryOptions): Promise<Reply>
   /** Keep it (the gateway's \`handOffs\`), as it starts and as it ends. */
   record(item: HandOff): Promise<void>
   /** All that are kept, oldest first: what agents said to each other before survives their conversations. */
@@ -133,10 +144,21 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
     await save(thread, { ...patch, messages: [...(thread.item.messages ?? []), { from, kind, text, at: now() }] })
   }
 
-  /** Hand the agent doing the work something to go on with: its turn belongs to the thread. */
-  const toWorker = (thread: Live, message: string): void => {
-    thread.turns.push(deps.converse(thread.item.toSession, message, thread.signal, [], { insert: true }))
+  // A tool call needs the admission receipt now. The recipient's reply may come many turns later.
+  const deliver = (session: string, message: string, signal: AbortSignal, parentSessionId?: string) => {
+    const receipt = Promise.withResolvers<void>()
+    const reply = deps.converse(session, message, signal, [], { insert: true, parentSessionId, onAccepted: receipt.resolve })
+    void reply.then(() => receipt.resolve(), receipt.reject)
+    return { accepted: receipt.promise, reply }
+  }
+
+  /** Register the turn before waking the worker. A refused message leaves its original work running. */
+  const toWorker = (thread: Live, message: string, record: () => Promise<void>): Promise<void> => {
+    const { accepted, reply } = deliver(thread.item.toSession, message, thread.signal, thread.item.ownerSession)
+    const recorded = accepted.then(record)
+    thread.turns.push(recorded.then(() => reply, () => ({ blocks: [] })).catch(failedReply))
     thread.wake()
+    return recorded
   }
 
   /** Who reads what the agent doing the work says: 助手 tells the person, a lead goes on with its own. */
@@ -158,30 +180,40 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
     if (!worker && fromSession !== item.fromSession && fromSession !== askerNow) throw new Error(`线索 ${id} 不是你和对方之间的`)
     if (worker && askerNow === '') throw new Error(`这件事是${item.by}交的，没有人在等消息：要告诉谁就重新交给它`)
     const said = kind === 'done' && (!worker || item.state !== 'failed') ? 'update' : kind
-    await deps.record({ ...item, messages: [...(item.messages ?? []), { from, kind: said, text, at: now() }] })
     const message = threadMessage({ from, kind: said === 'done' ? 'update' : said, thread: id, title: item.title, text: said === 'done' ? `补交结论：${text}` : text, reader: worker ? askerKind(askerAgent) : 'worker', closed: true })
     const recipient = worker ? askerNow : workerNow
-    void deps.converse(recipient, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), [], { insert: true }).catch(() => {})
+    await deliver(recipient, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), workingOn(recipient)?.item.ownerSession).accepted
+    const latest = deps.threads?.().find(h => h.id === id) ?? item
+    await deps.record({ ...latest, messages: [...(latest.messages ?? []), { from, kind: said, text, at: now() }] })
     return '已经送到对方那里了。'
   }
 
   /** The asking side's turn on a question: into what it is doing, since someone waits. Its words are the answer unless it answered or said it needs time. */
-  const toAsker = (thread: Live, message: string, asked: boolean): void => {
-    void deps.converse(thread.item.fromSession, message, AbortSignal.any([thread.signal, AbortSignal.timeout(RELAY_TIMEOUT_MS)]), [], { insert: true }).then(answer => {
+  const toAsker = (thread: Live, message: string, asked: boolean): Promise<void> => {
+    const session = thread.item.fromSession
+    const { reply, accepted } = deliver(session, message, AbortSignal.any([thread.signal, AbortSignal.timeout(RELAY_TIMEOUT_MS)]), workingOn(session)?.item.ownerSession)
+    void reply.then(answer => {
       if (!asked || !thread.awaiting || thread.deferred || !live.has(thread.item.id)) return
       const said = finalText(answer).trim()
-      void answered(thread, thread.item.by, said === '' || isQuiet(said) ? '（它没有回答：按你自己的判断接着做。）' : said)
+      return answered(thread, thread.item.by, said === '' || isQuiet(said) ? '（它没有回答：按你自己的判断接着做。）' : said)
     }, () => {
-      if (asked && thread.awaiting && live.has(thread.item.id)) void answered(thread, thread.item.by, '（没有等到回答：按你自己的判断接着做。）')
+      if (asked && thread.awaiting && live.has(thread.item.id)) return answered(thread, thread.item.by, '（没有等到回答：按你自己的判断接着做。）')
+    }).catch((error: unknown) => {
+      // A refused automatic answer has no tool caller to retry it.
+      if (!thread.awaiting || !live.has(thread.item.id)) return
+      thread.awaiting = false
+      thread.turns.push(Promise.resolve(failedReply(error)))
+      thread.wake()
     })
+    return accepted
   }
 
   const answered = async (thread: Live, from: string, text: string): Promise<void> => {
-    // In one go: with nothing owed and no turn in hand, the thread would close.
-    thread.awaiting = false
-    thread.deferred = false
-    toWorker(thread, threadMessage({ from, kind: 'answer', thread: thread.item.id, title: thread.item.title, text }))
-    await say(thread, from, 'answer', text, { state: 'running' })
+    await toWorker(thread, threadMessage({ from, kind: 'answer', thread: thread.item.id, title: thread.item.title, text }), () => {
+      thread.awaiting = false
+      thread.deferred = false
+      return say(thread, from, 'answer', text, { state: 'running' })
+    })
   }
 
   return {
@@ -232,26 +264,26 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
           return '结论已经交回去了。这一轮可以结束了。'
         case 'update':
           if (!worker) {
-            thread.deferred = true
-            await say(thread, from, 'update', text)
-            toWorker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }))
+            await toWorker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }), () => {
+              thread.deferred = true
+              return say(thread, from, 'update', text)
+            })
             return '已经告诉它了。有结果要回答它的话，用 kind: answer。'
           }
           await say(thread, from, 'update', text)
           // Work the app handed on has nobody waiting to be told.
           if (thread.item.fromSession === '') return '记下了。接着做。'
-          toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
+          await toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
           return '已经送到对方那里了。接着做。'
         case 'question':
           if (worker) {
             if (thread.item.fromSession === '') throw new Error(`这件事是${asker}交的，没有人等着回答：按你自己的判断做，把要问的写进结论`)
             thread.awaiting = true
             await say(thread, from, 'question', text, { state: 'waiting' })
-            toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }), true)
+            await toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }), true)
             return `已经问了${asker}。它回答后会作为一条新消息发到这里：现在结束这一轮，不要替它回答。`
           }
-          toWorker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }))
-          await say(thread, from, 'question', text)
+          await toWorker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text }), () => say(thread, from, 'question', text))
           return `已经问了「${thread.item.to}」。它回答后会作为一条新消息发到这里：现在结束这一轮。`
         case 'answer':
           if (!worker) {
@@ -259,7 +291,7 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
             return '已经回答了。现在结束这一轮。'
           }
           await say(thread, from, 'answer', text)
-          toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
+          await toAsker(thread, threadMessage({ from, kind, thread: id, title: thread.item.title, text, reader: askerKind(thread.input.from?.agent) }), false)
           return '已经回答了。接着做。'
       }
     },
@@ -354,7 +386,7 @@ export function createHandOffDesk(deps: HandOffDeps): HandOffDesk {
           })
           // Not waited for: the asking conversation may be busy, and whoever handed the work on is done with it.
           // Unless the asker is itself working on something: this goes into that.
-          const back = deps.converse(fromSession, message, AbortSignal.timeout(RELAY_TIMEOUT_MS))
+          const back = deps.converse(fromSession, message, AbortSignal.timeout(RELAY_TIMEOUT_MS), [], { parentSessionId: parent?.item.ownerSession })
           if (parent !== undefined && live.has(parent.item.id)) parent.turns.push(back.catch(() => ({ blocks: [] })))
           void back.then(answer => input.relayed?.(answer), () => {})
         }

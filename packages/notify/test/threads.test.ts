@@ -166,6 +166,34 @@ test('the asker can add to the work while it goes on, and it reaches the agent d
   assert.equal(parseThreadNote(o.said.filter(s => s.sessionId === 's-scripts').at(-1)!.text)?.text, '只看今天的')
 })
 
+test('a refused answer leaves the question open for a successful retry', { timeout: 3000 }, async () => {
+  let refuse = true
+  const o = office(async (_session, message, desk) => {
+    if (parseTask(message)) {
+      await desk.message({ thread: 'h1', fromSession: 's-scripts', from: '脚本', kind: 'question', text: '何时执行？' })
+      return text('等待回答')
+    }
+    const kind = parseThreadNote(message)?.kind
+    if (kind === 'question') {
+      await desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'update', text: '正在确认' })
+    }
+    if (kind === 'answer' && refuse) throw new Error('拒收')
+    return text('已完成')
+  })
+  const job = o.desk.handOff(handed({ relay: false }))
+  await tick()
+  const answer = () => o.desk.message({ thread: 'h1', fromSession: 's-main', from: '助手', kind: 'answer', text: '今晚' })
+  await assert.rejects(answer(), /拒收/)
+  await tick()
+  assert.equal(o.last('h1').state, 'waiting')
+  assert.ok(!o.last('h1').messages?.some(m => m.kind === 'answer'))
+  refuse = false
+  await answer()
+  await job
+  assert.equal(o.last('h1').state, 'done')
+  assert.equal(o.last('h1').reply, '已完成')
+})
+
 test('simultaneous delegations to one role deliver to separate workers and return to their own callers', async () => {
   const replies = new Map<string, string>()
   const desk = createHandOffDesk({

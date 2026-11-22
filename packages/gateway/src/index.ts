@@ -19,7 +19,7 @@ import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { WebSocket } from 'ws'
-import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-user-approval/types'
 import type {} from '@deepseek-ai/dsh-api-settings-controller'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
@@ -221,8 +221,14 @@ interface LiveAgent {
   whenIdle?(): Promise<void>
 }
 
+type ChildPrompt = Pick<Parameters<SessionController['prompt']>[0], 'requestId' | 'content' | 'clientTimeZone'> & {
+  childSessionId: string
+  delivery: 'steer' | 'queue'
+}
+
 /** The slice of dsh's subagent service a hand-off needs. */
 interface SubagentService {
+  prompt(request: ChildPrompt, signal: AbortSignal): Promise<{ messageId: string }>
   startActivation(spec: {
     parent: unknown; provider: 'spawn'; childId: string; label: string; agentPreset?: string
     prompt: readonly unknown[]; delivery: 'parent'; signal: AbortSignal
@@ -386,7 +392,7 @@ export class AdgGateway extends Service {
     this.agentModels = new AgentModels(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-models.json'), config.dataDir === undefined ? undefined : join(config.dataDir, 'role-model.json'))
     this.roles = new SessionRoles(config.dataDir === undefined ? undefined : join(config.dataDir, 'session-roles.json'), () => this.broadcast('roles/changed', { items: this.roles.list() }))
     this.homes = new AgentHomes(config.dataDir === undefined ? undefined : join(config.dataDir, 'agent-homes.json'))
-    this.handOffs = new HandOffs(config.dataDir === undefined ? undefined : join(config.dataDir, 'handoffs.json'), item => this.broadcast('handoffs/changed', { item }))
+    this.handOffs = new HandOffs(config.dataDir === undefined ? undefined : join(config.dataDir, 'handoffs.json'), item => this.broadcast('handoffs/changed', { item }), log)
     // A dsh of its own: every agent gets the app's parts (agentPart), registered from here.
     if (!this.shared) ctx.inject(['tools', 'systemPrompt'], scoped => { scoped.effect(() => this.parts.attach(scoped), 'adg-gateway agent parts') })
     this.skillScope = new SkillScope(config.dataDir, log)
@@ -1559,6 +1565,12 @@ Content-Length: 0
       await Promise.race([agent.whenIdle?.(), stopped])
       if (!joined && agent.session.seq === before) return
     }
+  }
+
+  promptChild(request: ChildPrompt, signal: AbortSignal): Promise<{ messageId: string }> {
+    const service = (this.ctx.get as (name: string) => unknown)('subagents') as SubagentService | undefined
+    if (!service) throw new Error('原生子代理服务未加载')
+    return service.prompt(request, signal)
   }
 
   /** App actions are addressed to an agent's home. dsh owns child membership, model selection, settlement and parent delivery. */
