@@ -453,6 +453,9 @@
     "games/list": {
       "capability": "games"
     },
+    "games/notice/detail": {
+      "capability": "games"
+    },
     "games/refresh": {
       "capability": "games"
     },
@@ -21414,6 +21417,134 @@
         "notices",
         "settings",
         "report"
+      ],
+      "additionalProperties": false
+    },
+    "games/notice/detail.params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": "string"
+        },
+        "noticeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "game",
+        "noticeId"
+      ],
+      "additionalProperties": false
+    },
+    "games/notice/detail.result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "game": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "update",
+            "notice",
+            "news"
+          ]
+        },
+        "publishedAt": {
+          "type": "number"
+        },
+        "version": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "lasting": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "at": {
+          "type": "number"
+        },
+        "article": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "image"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "id",
+        "game",
+        "title",
+        "kind",
+        "source",
+        "at"
       ],
       "additionalProperties": false
     },

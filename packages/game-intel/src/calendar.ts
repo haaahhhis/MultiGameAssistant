@@ -11,6 +11,7 @@
  * goes when no source lists it any more (and the game screen never showed
  * it), or when it has ended.
  */
+import { GameNoticeDetail, type NoticeArticle } from '@adg/protocol'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -115,6 +116,7 @@ function saidBy(item: Stored, source: string): Said | undefined {
 export interface ReadNotice {
   readonly title: string
   readonly kind: GameNotice['kind']
+  readonly article?: NoticeArticle | undefined
   readonly publishedAt?: number | undefined
   readonly version?: string | undefined
   readonly summary?: string | undefined
@@ -150,7 +152,7 @@ const StoredSchema = z.object({
   /** Pages the user added to a game (games/source/add), by game. */
   links: z.record(z.string(), z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), at: z.number() }))).default({}),
   /** Announcements (version updates, long-term notices, news), by game. */
-  notices: z.record(z.string(), z.array(GameNotice)).default({}),
+  notices: z.record(z.string(), z.array(GameNoticeDetail)).default({}),
 })
 type Saved = z.infer<typeof StoredSchema>
 
@@ -228,7 +230,10 @@ export class Calendar {
     }
     for (const v of Object.values(this.#saved.versions)) if (v.cover !== undefined) out.add(v.cover)
     for (const list of Object.values(this.#saved.pools)) for (const p of list) if (p.cover !== undefined) out.add(p.cover)
-    for (const list of Object.values(this.#saved.notices)) for (const n of list) if (n.cover !== undefined) out.add(n.cover)
+    for (const list of Object.values(this.#saved.notices)) for (const n of list) {
+      if (n.cover !== undefined) out.add(n.cover)
+      for (const block of n.article ?? []) if (block.type === 'image') out.add(block.url)
+    }
     return out
   }
 
@@ -310,7 +315,22 @@ export class Calendar {
   /** Announcements (of one game, or all): the long-term ones first, then the newest. */
   notices(game?: string): GameNotice[] {
     const all = game === undefined ? Object.values(this.#saved.notices).flat() : this.#saved.notices[game] ?? []
-    return [...all].sort((a, b) => Number(b.lasting === true) - Number(a.lasting === true) || (b.publishedAt ?? b.at) - (a.publishedAt ?? a.at))
+    return all.map(({ article: _article, ...notice }) => notice).sort((a, b) => Number(b.lasting === true) - Number(a.lasting === true) || (b.publishedAt ?? b.at) - (a.publishedAt ?? a.at))
+  }
+
+  noticeDetail(game: string, id: string): GameNoticeDetail {
+    const notice = this.#saved.notices[game]?.find(n => n.id === id)
+    if (!notice) throw new Error('找不到这条公告')
+    return notice
+  }
+
+  async saveArticle(game: string, id: string, article: NoticeArticle): Promise<GameNoticeDetail> {
+    const notice = this.noticeDetail(game, id)
+    if (!notice.article?.length && article.length) {
+      notice.article = article
+      await this.save()
+    }
+    return notice
   }
 
   /**
@@ -335,7 +355,9 @@ export class Calendar {
       const summary = keep(n.summary?.trim() || undefined, before?.summary)
       const cover = keep(n.cover?.trim() || undefined, before?.cover)
       const lasting = n.lasting ?? before?.lasting
-      const next: GameNotice = {
+      const article = n.article?.length ? n.article : before?.article
+      const next: GameNoticeDetail = {
+        ...(article === undefined ? {} : { article }),
         id: before?.id ?? `${game}/${createHash('sha1').update(key).digest('hex').slice(0, 12)}`,
         game, title, kind: n.kind, source, at: now,
         ...(publishedAt === undefined ? {} : { publishedAt }),

@@ -7,6 +7,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonSchemaNode, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { OWN_SOURCE, SCREEN_SOURCE, type Activity, type GameInfo, type GameNotice } from '@adg/protocol'
 import { z } from 'zod'
+import { NoticeArticle } from '@adg/protocol'
 import type { OwnPatch, ReadEvent, ReadNotice } from './calendar.ts'
 import { leftText, parseDateText, shortDate } from './time.ts'
 
@@ -310,6 +311,14 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
               published_at: { type: 'string', description: '发布日期，写成 2026/11/19 或 2026/11/19 10:00（游戏服务器时间）。' },
               version: { type: 'string', description: 'kind=update：版本号，例如 v1.0.3。' },
               summary: { type: 'string', description: '一两句话：改了什么、要注意什么。' },
+              article: {
+                type: 'array', description: '已读到原文时，按原顺序提交完整正文段落和这篇文章的配图；只读到摘要时省略。',
+                items: { type: 'object', properties: {
+                  type: { type: 'string', enum: ['text', 'image'] },
+                  text: { type: 'string', description: 'text 段落的完整原文。' },
+                  url: { type: 'string', description: 'image 段落的 https 图片地址。' },
+                }, required: ['type'], additionalProperties: false },
+              },
               url: { type: 'string', description: '公告的网址。' },
               cover: { type: 'string', description: '公告配图的地址（https，可选）。' },
               lasting: { type: 'boolean', description: '长期有效的公告，一直留在最前面；false 收回。' },
@@ -331,6 +340,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
             published_at: z.string().nullish(),
             version: z.string().max(40).nullish(),
             summary: z.string().max(600).nullish(),
+            article: NoticeArticle.nullish(),
             url: z.string().nullish(),
             cover: z.string().nullish(),
             lasting: z.boolean().nullish(),
@@ -346,6 +356,7 @@ export function gameTools(deps: GameToolDeps): ToolDefinition[] {
             ...(at == null ? {} : { publishedAt: at }),
             ...(n.version == null ? {} : { version: n.version }),
             ...(n.summary == null ? {} : { summary: n.summary }),
+            ...(n.article?.length ? { article: n.article } : {}),
             ...(url === undefined ? {} : { url }),
             ...(cover === undefined ? {} : { cover }),
             ...(n.lasting == null ? {} : { lasting: n.lasting }),

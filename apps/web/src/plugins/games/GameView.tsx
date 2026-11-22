@@ -7,6 +7,7 @@ import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { pickPath } from '../../pickPath.ts'
 import { errorText } from '../scripts/data.ts'
+import { NoticeDialog } from './NoticeDialog.tsx'
 import { IMAGE_TYPES, readImage } from './ActivityEditor.tsx'
 import { useFirstImage, useRemoteImage } from './images.ts'
 import { ProgressPill, progressOf } from './Overview.tsx'
@@ -83,6 +84,8 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
 }) {
   const [showFinished, setShowFinished] = useState(false)
   const [showAllNotices, setShowAllNotices] = useState(false)
+  const [noticeId, setNoticeId] = useState<string | null>(null)
+  const selectedNotice = notices.find(n => n.id === noticeId)
   const live = activities.filter(a => Math.max(a.endsAt ?? Infinity, a.shopEndsAt ?? 0) > now)
   const byEnd = (a: Activity, b: Activity) => (a.endsAt ?? Infinity) - (b.endsAt ?? Infinity)
   const running = live.filter(a => (a.startsAt ?? 0) <= now).sort(byEnd)
@@ -125,8 +128,9 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
       </div>
       {notices.length === 0 && <p className="muted small schedule-empty">还没有公告。点右上角让 agent 上网查；在 Steam 上的游戏，加上 Steam 来源后每天自动读它的官方公告。</p>}
       <ul className="notice-list">
-        {(showAllNotices ? notices : notices.slice(0, NOTICES_SHOWN)).map(n => <NoticeRow key={n.id} client={client} notice={n} now={now} />)}
+        {(showAllNotices ? notices : notices.slice(0, NOTICES_SHOWN)).map(n => <NoticeRow key={n.id} client={client} notice={n} now={now} onOpen={() => setNoticeId(n.id)} />)}
       </ul>
+      {selectedNotice && <NoticeDialog key={selectedNotice.id} client={client} notice={selectedNotice} kind={NOTICE_KIND[selectedNotice.kind]} color={color} onClose={() => setNoticeId(null)} />}
       {notices.length > NOTICES_SHOWN && (
         <button className="link-button small notice-more" onClick={() => setShowAllNotices(s => !s)}>{showAllNotices ? '收起' : `展开全部 ${notices.length} 条`}</button>
       )}
@@ -594,29 +598,28 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
   )
 }
 
-/** An announcement: its kind, the version, when it came out, its title (a link to it), what it says, and where it came from. */
-function NoticeRow({ client, notice: n, now }: { client: AdgClient; notice: GameNotice; now: number }) {
+/** Open the article from anywhere in its summary row. */
+function NoticeRow({ client, notice: n, now, onOpen }: { client: AdgClient; notice: GameNotice; now: number; onOpen: () => void }) {
   const art = useRemoteImage(client, n.cover)
-  const url = n.url !== undefined && /^https?:\/\//.test(n.url) ? n.url : undefined
   const fresh = n.publishedAt !== undefined && now - n.publishedAt >= 0 && now - n.publishedAt < 3 * DAY
   return (
     <li className={`notice-row ${n.lasting === true ? 'lasting' : ''}`}>
-      {art !== undefined && <img className="notice-art" src={art} alt="" loading="lazy" />}
-      <div className="notice-body">
-        <div className="notice-meta">
-          <span className={`notice-kind ${n.kind}`}>{NOTICE_KIND[n.kind]}</span>
-          {n.lasting === true && <span className="notice-kind lasting" title="长期有效的公告，一直排在前面">长期</span>}
-          {n.version !== undefined && <span className="notice-version">{n.version}</span>}
-          {fresh && <span className="badge ok">新</span>}
-          <span className="spacer" />
-          {n.publishedAt !== undefined && <span className="muted small" title={new Date(n.publishedAt).toLocaleString('zh-CN', { hour12: false })}>{new Date(n.publishedAt).toLocaleDateString('zh-CN')}</span>}
-        </div>
-        {url !== undefined
-          ? <a className="notice-title" href={url} target="_blank" rel="noreferrer" title="在浏览器里打开">{n.title}</a>
-          : <span className="notice-title">{n.title}</span>}
-        {n.summary !== undefined && <p className="notice-summary">{n.summary}</p>}
-        <span className="muted small notice-source">{n.source.name}</span>
-      </div>
+      <button className="notice-open" aria-label={n.title} aria-haspopup="dialog" onClick={onOpen}>
+        {art !== undefined && <img className="notice-art" src={art} alt="" loading="lazy" />}
+        <span className="notice-body">
+          <span className="notice-meta">
+            <span className={`notice-kind ${n.kind}`}>{NOTICE_KIND[n.kind]}</span>
+            {n.lasting === true && <span className="notice-kind lasting" title="长期有效的公告，一直排在前面">长期</span>}
+            {n.version !== undefined && <span className="notice-version">{n.version}</span>}
+            {fresh && <span className="badge ok">新</span>}
+            <span className="spacer" />
+            {n.publishedAt !== undefined && <span className="muted small" title={new Date(n.publishedAt).toLocaleString('zh-CN', { hour12: false })}>{new Date(n.publishedAt).toLocaleDateString('zh-CN')}</span>}
+          </span>
+          <span className="notice-title">{n.title}</span>
+          {n.summary !== undefined && <span className="notice-summary">{n.summary}</span>}
+          <span className="muted small notice-source">{n.source.name}</span>
+        </span>
+      </button>
     </li>
   )
 }

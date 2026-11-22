@@ -38,6 +38,15 @@ export const GameNotice = z.object({
 })
 export type GameNotice = z.infer<typeof GameNotice>
 
+/** Article text and images in reading order. Older notices may only have a summary. */
+export const NoticeArticle = z.array(z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('image'), url: z.url({ protocol: /^https$/ }) }),
+]))
+export type NoticeArticle = z.infer<typeof NoticeArticle>
+export const GameNoticeDetail = GameNotice.extend({ article: NoticeArticle.optional() })
+export type GameNoticeDetail = z.infer<typeof GameNoticeDetail>
+
 export const Activity = z.object({
   /** `<game>/<key>`; the key is the normalised name, so a site and the screen meet on it. */
   id: z.string(),
@@ -237,6 +246,11 @@ export const GamesRequests = {
     capability: GAMES_CAPABILITY,
     params: z.object({}),
     result: z.object({ games: z.array(GameInfo), activities: z.array(Activity), notices: z.array(GameNotice).default([]), settings: GamesSettings, report: ReportInfo }),
+  },
+  'games/notice/detail': {
+    capability: GAMES_CAPABILITY,
+    params: z.object({ game: z.string(), noticeId: z.string() }),
+    result: GameNoticeDetail,
   },
   /** Read the data sites now (one game, or all). */
   'games/refresh': {

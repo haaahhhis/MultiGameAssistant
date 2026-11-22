@@ -69,6 +69,6 @@ description: 从网上查游戏资讯（版本、活动、卡池、维护公告�
 ## 记下来
 
 - 查到的活动用 `game_record`（`source: site`，带上 `url`，有配图写进 `cover`）写进日历，以后看板、日报都能用，不用再查一遍。
-- 版本更新、补丁说明、长期有效的公告这些没有起止时间的，用 `game_notice` 记到游戏的「公告」里（kind=update / notice / news，长期的 lasting=true；`summary` 写一两句中文要点，配图写进 `cover`）。单机游戏主要记这个。
+- 版本更新、补丁说明、长期有效的公告这些没有起止时间的，用 `game_notice` 记到游戏的「公告」里（kind=update / notice / news，长期的 lasting=true；`summary` 写一两句中文要点。读到全文时，将原文段落和本文图片按阅读顺序写进 `article`，封面另存到 `cover`）。单机游戏主要记这个。
 - 回答用户时把要点讲全，附上网址；用户要看图就给图片地址。
 - 某个游戏有好用的固定接口，但游戏包里还没有：告诉用户可以在游戏包的 `game.yaml` 里加一个来源（`sra: { game: … }`、`smw: …` 或 `steam: { appid: … }`），以后插件每天自己读，不花模型。

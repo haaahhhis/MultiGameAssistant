@@ -21,6 +21,7 @@ import { GAME_GUIDE_FILE, GAME_MANIFEST_FILE, GameManifest, parseGameManifest } 
 import { GAMES_CAPABILITY, OWN_IMAGE, SHOT_IMAGE, type Activity, type GameInfo, type GameNotice, type RequestParams, taskMessage } from '@adg/protocol'
 import { z } from 'zod'
 import { Calendar, type OwnPatch, type ReadEvent, type ReadNotice } from './calendar.ts'
+import { readNoticeArticle } from './read-notice.ts'
 import { ExeIcons } from '@adg/protocol/node'
 import { DailyReport, localDay, realClock, type Clock } from './daily.ts'
 import { buildReport, recentDigest } from './report.ts'
@@ -224,6 +225,15 @@ export class AdgGameIntel extends Service {
             // The events of the games on the page only (one taken off or deleted shows none).
             const shown = new Set(this.games.map(g => g.manifest.id))
             return { games: this.infos(), activities: calendar.list().filter(a => shown.has(a.game)), notices: calendar.notices().filter(n => shown.has(n.game)), settings: calendar.settings, report: { ...calendar.report, ...(this.daily.next() === undefined ? {} : { next: this.daily.next() }) } }
+          },
+          'games/notice/detail': async params => {
+            await this.ready
+            const { game, noticeId } = params as RequestParams<'games/notice/detail'>
+            const { manifest } = this.game(game)
+            const notice = calendar.noticeDetail(game, noticeId)
+            if (notice.article?.length) return notice
+            const article = await readNoticeArticle(notice, manifest, this.fetch)
+            return calendar.saveArticle(game, noticeId, article)
           },
           'games/refresh': async params => {
             await this.ready
