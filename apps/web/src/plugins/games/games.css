@@ -122,9 +122,11 @@
 .notice-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .notice-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 20px; }
 .notice-meta .spacer { flex: 1; }
-.notice-kind { flex: none; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; color: var(--muted); background: var(--sunken); border: 1px solid var(--border); }
-.notice-kind.update { color: var(--game, var(--accent)); border-color: color-mix(in srgb, var(--game, var(--accent)) 40%, var(--border)); background: color-mix(in srgb, var(--game, var(--accent)) 10%, transparent); }
-.notice-kind.lasting { color: var(--text-2); border-color: var(--border-strong); }
+.badge[data-notice-kind="update"] { color: var(--accent); background: var(--accent-soft); }
+.notice-dialog .dialog-meta { flex-wrap: wrap; gap: 4px 8px; }
+.notice-abstract { margin-bottom: 18px; padding: 10px 14px; border-inline-start: 3px solid var(--accent-line); border-radius: var(--r-sm); background: var(--sunken); }
+.notice-abstract h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.notice-article .notice-abstract p { margin: 0; color: var(--text-2); }
 .notice-version { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-2); }
 .notice-title { font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .notice-open:hover .notice-title, .notice-open:focus-visible .notice-title { color: var(--accent); text-decoration: underline; }

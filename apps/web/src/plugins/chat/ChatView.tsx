@@ -7,7 +7,7 @@ import { BY_YOU, type ChatNotice, isQuiet, parseRelay, parseTask, parseThreadNot
 import { MAIN, MAIN_AGENT, agentIdOf, useHandOffs, useHome, useRoles } from '../../agents.ts'
 import { ConversationAgent, DelegationCard, DELEGATE_TOOL, HandOffStrip, HandOffsOf, RelayMessage, TaskMessage, ThreadNoteLine } from './Delegation.tsx'
 import { Markdown } from '../../components/Markdown.tsx'
-import { CopyButton } from '../../components/CopyButton.tsx'
+import { MessageActions, QuotePreview, readQuote, ReplyDraft } from '../../components/MessageReply.tsx'
 import { needsTime, TimeDivider } from '../../components/TimeDivider.tsx'
 import { useStore } from '../../hooks.ts'
 import { Icon, AdgMark } from '../../components/Icons.tsx'
@@ -72,6 +72,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   // A sub-agent's conversation, beside its parent's, is named for it and shown whole.
   const subAgentOf = useContext(SubAgentOf)
   const paneName = useContext(ConversationAgent)
+  const replyDraft = useContext(ReplyDraft)
   const agentName = subAgentOf !== null ? paneName : roles.find(r => r.id === agentId)?.name ?? MAIN.name
   // By the session's own role, not the roles list (it comes later): the level is right in the first frame.
   const [detail, setDetail] = useChatDetail(item?.role ?? MAIN_AGENT)
@@ -138,6 +139,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
   }, [firstSeq])
 
   return (
+    <ReplyDraft.Provider value={readOnly ? null : replyDraft}>
     <ImageClient.Provider value={client}>
     <HandOffsOf.Provider value={handOffs}>
     <ConversationAgent.Provider value={agentName}>
@@ -193,6 +195,7 @@ export function ChatView({ client, session, state, readOnly }: SessionViewProps)
     </ConversationAgent.Provider>
     </HandOffsOf.Provider>
     </ImageClient.Provider>
+    </ReplyDraft.Provider>
   )
 }
 
@@ -367,8 +370,10 @@ const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }:
         return (
           <div className="msg user delegated">
             <div className="msg-from">{subAgentOf}交给的事</div>
-            <div className="bubble"><Markdown text={taskWords(item.text)} /></div>
-            <div className="msg-actions"><CopyButton text={taskWords(item.text)} /></div>
+            <div className="message-line">
+              <div className="bubble"><Markdown text={taskWords(item.text)} /></div>
+              <MessageActions author="助手" id={item.id} text={taskWords(item.text)} canReply={false} />
+            </div>
           </div>
         )
       }
@@ -380,18 +385,23 @@ const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }:
       const task = item.pending === undefined ? parseTask(item.text) : undefined
       if (task !== undefined && client !== null) return <TaskMessage client={client} note={task} handOffs={handOffs} />
       const said = personText(item.text)
+      const { body, quote } = readQuote(said.text)
       return (
         <div className={`msg user ${item.pending === undefined ? '' : 'pending'}`}>
           {said.channel !== undefined && <div className="msg-from">来自{said.channel}</div>}
-          <div className="bubble">
-            <UserText text={said.text} />
-            {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
-            {(item.images > item.imageRefs.length || item.files > 0) && (
-              <div className="attachments">
-                {item.images > item.imageRefs.length && <span><Icon name="image" />{item.images - item.imageRefs.length} 张图片</span>}
-                {item.files > 0 && <span><Icon name="paperclip" />{item.files} 个文件</span>}
-              </div>
-            )}
+          <div className="message-line">
+            <div className="bubble">
+              {quote && <QuotePreview quote={quote} />}
+              <div data-reply-text><UserText text={body} /></div>
+              {item.imageRefs.length > 0 && <div className="chat-images">{item.imageRefs.map(image => <StoredImage key={image.attachmentId} image={image} />)}</div>}
+              {(item.images > item.imageRefs.length || item.files > 0) && (
+                <div className="attachments">
+                  {item.images > item.imageRefs.length && <span><Icon name="image" />{item.images - item.imageRefs.length} 张图片</span>}
+                  {item.files > 0 && <span><Icon name="paperclip" />{item.files} 个文件</span>}
+                </div>
+              )}
+            </div>
+            {body.trim() && <MessageActions author="用户" id={item.id} text={body} canReply={item.pending === undefined} />}
           </div>
           {item.pending?.failed !== undefined && (
             <div className="send-failed">
@@ -399,7 +409,6 @@ const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }:
               <button className="link-button" onClick={() => onDismiss(item.pending!.requestId)}>移除</button>
             </div>
           )}
-          {said.text.trim() !== '' && <div className="msg-actions"><CopyButton text={said.text} /></div>}
         </div>
       )
     }
@@ -414,10 +423,12 @@ const ChatRow = memo(function ChatRow({ item, onDismiss, showReasoning = true }:
               <Markdown text={item.reasoning} />
             </details>
           )}
-          {item.text !== '' && <Markdown text={item.text} />}
+          {item.text !== '' && <div className="message-line">
+            <div data-reply-text><Markdown text={item.text} /></div>
+            {!item.live && item.text.trim() && <MessageActions author="助手" id={item.id} text={item.text} />}
+          </div>}
           {item.live && <span className="cursor" />}
           {item.interrupted && <div className="muted small">（已中断）</div>}
-          {!item.live && item.text.trim() !== '' && <div className="msg-actions"><CopyButton text={item.text} /></div>}
         </div>
       )
     case 'tool':

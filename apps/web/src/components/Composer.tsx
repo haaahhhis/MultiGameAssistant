@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useContext, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { localCommand, MAX_IMAGE_BASE64, type PromptImage, type QueuedPrompt } from '@adg/protocol'
 import type { SessionHandle, AdgClient } from '@adg/client-core'
 import { readDraft, readDraftImages, saveDraft, saveDraftImages } from '../drafts.ts'
 import { usePermissionMode, useStore } from '../hooks.ts'
+import { QuotePreview, readQuote, ReplyDraft, withQuote } from './MessageReply.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
 import { confirm } from './Dialog.tsx'
 import { Icon, StopGlyph } from './Icons.tsx'
@@ -25,7 +26,9 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   // A message the agent already took is in the chat (ChatView), not waiting here.
   const queue = waiting.filter(item => item.placement !== 'taken')
   // What was typed here before switching away comes back (drafts.ts).
-  const [text, setText] = useState(() => readDraft(session.id))
+  const reply = useContext(ReplyDraft)
+  const quote = reply?.quote ?? null
+  const [text, setText] = useState(() => readQuote(readDraft(session.id)).body)
   // By default what is sent goes into the work under way: the person may have said the wrong thing, or changed their mind.
   const [steer, setSteer] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +38,8 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   const picker = useRef<HTMLInputElement>(null)
   const handedOff = useRef(false)
   const [images, setImages] = useState<(PromptImage & { url: string })[]>(() => readDraftImages(session.id))
-  useEffect(() => saveDraft(session.id, text), [session.id, text])
+  useEffect(() => saveDraft(session.id, withQuote(text, quote)), [session.id, text, quote])
+  useEffect(() => { if (quote) area.current?.focus() }, [quote])
   useEffect(() => saveDraftImages(session.id, images), [session.id, images])
   const permission = usePermissionMode(client)
   const [dragging, setDragging] = useState(false)
@@ -95,20 +99,22 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
     submit: typed => {
       if (disabled || runLocal(typed)) return
       setError(null)
-      session.prompt(slash.expand(typed), running && steer ? 'steer' : 'queue').catch(e => setError(e instanceof Error ? e.message : String(e)))
+      reply?.select(null)
+      session.prompt(withQuote(slash.expand(typed), quote), running && steer ? 'steer' : 'queue').catch(e => setError(e instanceof Error ? e.message : String(e)))
     },
   })
 
   const send = () => {
     if (!disabled && images.length === 0 && runLocal(text)) return
     const value = slash.expand(text)
-    if ((value === '' && images.length === 0) || disabled) return
+    if ((!value.trim() && images.length === 0) || disabled) return
     const sending = images.map(({ url: _url, ...image }) => image)
     setText('')
     setImages([])
     setError(null)
     // The echo shows immediately; a failure is marked on it and reported here.
-    session.prompt(value, running && steer ? 'steer' : 'queue', sending).catch(e => setError(e instanceof Error ? e.message : String(e)))
+    reply?.select(null)
+    session.prompt(withQuote(value, quote), running && steer ? 'steer' : 'queue', sending).catch(e => setError(e instanceof Error ? e.message : String(e)))
     area.current?.focus()
   }
 
@@ -123,7 +129,11 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
   // A waiting message taken back comes back into the box, unless something new is being typed.
   const withdraw = (item: QueuedPrompt) => {
     session.updateQueue(item.id, 'remove').then(() => {
-      if (text.trim() === '' && item.text !== '') setText(item.text)
+      if (text.trim() === '' && !quote && item.text !== '') {
+        const taken = readQuote(item.text)
+        setText(taken.body)
+        reply?.select(taken.quote)
+      }
     }, e => setError(e instanceof Error ? e.message : String(e)))
   }
   const insert = (item: QueuedPrompt) => {
@@ -138,7 +148,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
           {queue.map(item => (
             <div key={item.id} className="queue-item">
               <span className={`queue-tag ${item.placement}`}>{item.placement === 'next-step' ? '插入中' : '排队中'}</span>
-              <span className="queue-text" title={item.text}>{item.text === '' ? '（图片）' : item.text}{item.images !== undefined && <span className="muted"> · {item.images} 张图片</span>}</span>
+              <span className="queue-text" title={item.text}>{readQuote(item.text).body || '（图片）'}{item.images !== undefined && <span className="muted"> · {item.images} 张图片</span>}</span>
               <span className="queue-when muted">{item.placement === 'next-step' ? '这一步做完就交给 agent' : '这一轮结束后发送'}</span>
               {item.placement === 'next-turn' && running && <button type="button" className="small-button" title="不等这一轮结束，现在就交给 agent" onClick={() => insert(item)}>现在插入</button>}
               <button type="button" className="small-button" title="撤回这条消息" onClick={() => withdraw(item)}>撤回</button>
@@ -159,6 +169,7 @@ export function Composer({ client, session, running, disabled, initialPrompt, on
       <div className={`composer-box ${dragging ? 'dragging' : ''}`}
         onDragOver={e => { if ([...e.dataTransfer.items].some(i => i.kind === 'file')) { e.preventDefault(); setDragging(true) } }}
         onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+        {quote && <QuotePreview quote={quote} onRemove={() => { reply?.select(null); area.current?.focus() }} />}
         {images.length > 0 && (
           <div className="composer-images">
             {images.map((image, index) => (

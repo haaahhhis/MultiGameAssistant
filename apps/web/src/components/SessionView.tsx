@@ -6,6 +6,7 @@ import { useSessionHandle, useSessionViews, useStore } from '../hooks.ts'
 import { viewsFor } from '../plugins.ts'
 import { desktop } from '../desktop.ts'
 import { BrowserPanel } from './BrowserPanel.tsx'
+import { ReplyProvider } from './MessageReply.tsx'
 import { Composer } from './Composer.tsx'
 import { Icon } from './Icons.tsx'
 import { SideBar } from './sessionTools.ts'
@@ -26,7 +27,7 @@ export function SessionView({ client, sessionId, reminder, initialPrompt, onInit
 }) {
   const session = useSessionHandle(client, sessionId)
   if (session === null) return <div className="main empty">正在打开会话…</div>
-  return <OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} />
+  return <ReplyProvider key={session.id} sessionId={session.id}><OpenSession client={client} session={session} reminder={reminder} initialPrompt={initialPrompt} onInitialSent={onInitialSent} onAgent={onAgent} /></ReplyProvider>
 }
 
 /**

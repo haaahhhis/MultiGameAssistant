@@ -7,7 +7,7 @@ import { desktop } from '../../desktop.ts'
 import { useStore } from '../../hooks.ts'
 import { pickPath } from '../../pickPath.ts'
 import { errorText } from '../scripts/data.ts'
-import { NoticeDialog } from './NoticeDialog.tsx'
+import { NoticeDialog, NoticeLabels } from './NoticeDialog.tsx'
 import { IMAGE_TYPES, readImage } from './ActivityEditor.tsx'
 import { useFirstImage, useRemoteImage } from './images.ts'
 import { ProgressPill, progressOf } from './Overview.tsx'
@@ -18,7 +18,6 @@ const MINUTE = 60_000
 type Pool = NonNullable<GameInfo['pools']>[number]
 /** Announcements shown before 「展开全部」. */
 const NOTICES_SHOWN = 5
-const NOTICE_KIND: Record<GameNotice['kind'], string> = { update: '版本更新', notice: '公告', news: '资讯' }
 
 /** "11 天 2 时", "5 时 20 分". */
 export function countdown(end: number, now: number): string {
@@ -130,7 +129,7 @@ export function GameView({ client, game, activities, notices, color, now, soonDa
       <ul className="notice-list">
         {(showAllNotices ? notices : notices.slice(0, NOTICES_SHOWN)).map(n => <NoticeRow key={n.id} client={client} notice={n} now={now} onOpen={() => setNoticeId(n.id)} />)}
       </ul>
-      {selectedNotice && <NoticeDialog key={selectedNotice.id} client={client} notice={selectedNotice} kind={NOTICE_KIND[selectedNotice.kind]} color={color} onClose={() => setNoticeId(null)} />}
+      {selectedNotice && <NoticeDialog key={selectedNotice.id} client={client} notice={selectedNotice} now={now} color={color} onClose={() => setNoticeId(null)} />}
       {notices.length > NOTICES_SHOWN && (
         <button className="link-button small notice-more" onClick={() => setShowAllNotices(s => !s)}>{showAllNotices ? '收起' : `展开全部 ${notices.length} 条`}</button>
       )}
@@ -601,17 +600,13 @@ function ScheduleCard({ client, activity: a, game, now, soonDays, onClick, expan
 /** Open the article from anywhere in its summary row. */
 function NoticeRow({ client, notice: n, now, onOpen }: { client: AdgClient; notice: GameNotice; now: number; onOpen: () => void }) {
   const art = useRemoteImage(client, n.cover)
-  const fresh = n.publishedAt !== undefined && now - n.publishedAt >= 0 && now - n.publishedAt < 3 * DAY
   return (
     <li className={`notice-row ${n.lasting === true ? 'lasting' : ''}`}>
       <button className="notice-open" aria-label={n.title} aria-haspopup="dialog" onClick={onOpen}>
         {art !== undefined && <img className="notice-art" src={art} alt="" loading="lazy" />}
         <span className="notice-body">
           <span className="notice-meta">
-            <span className={`notice-kind ${n.kind}`}>{NOTICE_KIND[n.kind]}</span>
-            {n.lasting === true && <span className="notice-kind lasting" title="长期有效的公告，一直排在前面">长期</span>}
-            {n.version !== undefined && <span className="notice-version">{n.version}</span>}
-            {fresh && <span className="badge ok">新</span>}
+            <NoticeLabels notice={n} now={now} />
             <span className="spacer" />
             {n.publishedAt !== undefined && <span className="muted small" title={new Date(n.publishedAt).toLocaleString('zh-CN', { hour12: false })}>{new Date(n.publishedAt).toLocaleDateString('zh-CN')}</span>}
           </span>
