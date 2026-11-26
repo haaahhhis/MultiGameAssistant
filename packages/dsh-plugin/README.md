@@ -9,3 +9,5 @@ MultiGameAssistant（多游戏助手）的 dsh 插件：这里是它发布时的
 - npm 连不上时：`https://github.com/haaahhhis/MultiGameAssistant/releases/latest/download/dsh-multigameassistant.tgz`。
 
 这两个文件由 `pnpm package:plugin --sync` 生成（补丁来自 `packages/bundle/cordis.patch.yml`），不要手改；打包时它们和要发布的不一致会报错。
+
+`screenshots.json` 和 `screenshots/` 是插件市场（awesome-dsh-plugin、dsh-market）详情页展示的截图，路径相对于这个文件夹；换截图直接改这里，不用去列表仓库提 PR。它们不进 npm 包。
