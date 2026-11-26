@@ -123,6 +123,14 @@ export function buildChat(
   /** callId → approval state ('asked' or the decided outcome). */
   const approvals = new Map<string, string>()
   const approvalCalls = new Map<string, string>()
+  /**
+   * One compaction both replaces the history with a summary message and ends
+   * with compaction/end: the summary card says it, so a successful end adds no
+   * second line. `summarized` is whether this compaction's summary is shown;
+   * `ended` is its success line, dropped if the summary comes after it.
+   */
+  let summarized = false
+  let ended: Extract<ChatItem, { kind: 'notice' }> | undefined
 
   for (const event of events) {
     switch (event.type) {
@@ -160,6 +168,9 @@ export function buildChat(
         } else if (reminderPrompts(text) !== undefined) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: '定时提醒', summary: reminderLine(reminderPrompts(text)!), text, startsTurn: true })
         } else if (event.replacesHistory === true) {
+          if (ended !== undefined) items.splice(items.indexOf(ended), 1)
+          ended = undefined
+          summarized = true
           items.push({ kind: 'context', id: `c:${event.seq}`, title: '较早的对话已压缩成摘要（agent 只记得摘要里的内容）', summary: '', text })
         } else if (event.origin.summary !== undefined) {
           items.push({ kind: 'context', id: `c:${event.seq}`, title: event.origin.kind, summary: event.origin.summary, text })
@@ -233,12 +244,20 @@ export function buildChat(
           items.push({ kind: 'notice', id: `e:${event.seq}`, tone: 'info', text: '回复太长，达到了输出上限' })
         }
         break
-      case 'compaction/end':
-        items.push({
-          kind: 'notice', id: `k:${event.seq}`, tone: event.error === undefined ? 'info' : 'error',
-          text: event.error === undefined ? '对话太长，较早的内容已压缩成摘要' : `压缩对话历史失败：${event.error}`,
-        })
+      case 'compaction/start':
+        summarized = false
+        ended = undefined
         break
+      case 'compaction/end': {
+        if (event.error !== undefined) {
+          items.push({ kind: 'notice', id: `k:${event.seq}`, tone: 'error', text: `压缩对话历史失败：${event.error}` })
+        } else if (!summarized) {
+          ended = { kind: 'notice', id: `k:${event.seq}`, tone: 'info', text: '对话太长，较早的内容已压缩成摘要' }
+          items.push(ended)
+        }
+        summarized = false
+        break
+      }
       default:
         break
     }

@@ -14,17 +14,18 @@ import { UpdateCard } from './Updates.tsx'
  * every page; another copy of the app open at the same time; installs and
  * updates of scripts that went through.
  */
-export function ApprovalDock({ client, sessionId, onSelect }: {
+export function ApprovalDock({ client, isHere, onSelect }: {
   client: AdgClient
-  sessionId: string | null
+  /** Whether a session's requests belong to what is on screen (the agent's chat it opens in). */
+  isHere: (sessionId: string) => boolean
   onSelect: (sessionId: string) => void
 }) {
   const approvals = useStore(client.approvals)
   const questions = useStore(client.questions)
   const pending = usePowerStatus(client)?.pending
-  const here = approvals.filter(a => a.sessionId === sessionId)
-  const asked = questions.filter(q => q.sessionId === sessionId)
-  const elsewhere = [...approvals, ...questions].filter(a => a.sessionId !== sessionId)
+  const here = approvals.filter(a => isHere(a.sessionId))
+  const asked = questions.filter(q => isHere(q.sessionId))
+  const elsewhere = [...approvals, ...questions].filter(a => !isHere(a.sessionId))
   const waiting = elsewhere.some(e => 'approvalId' in e) ? (elsewhere.some(e => 'questionId' in e) ? '审批或回答' : '审批') : '回答'
   return (
     <div className="approval-dock">

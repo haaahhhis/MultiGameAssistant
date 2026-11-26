@@ -67,14 +67,21 @@ export function App({ client }: { client: AdgClient }) {
     return () => clearTimeout(timer)
   }, [route, sessions])
 
+  /** The agent whose chat a session opens in: its root's (a sub-agent's under its parent's). */
+  const agentOfSession = (id: string): string | undefined => {
+    const item = sessions.items.find(i => i.id === id)
+    if (item === undefined) return undefined
+    const root = sessionRoot(item, new Map(sessions.items.map(s => [s.id, s])))
+    return root.home ?? root.role ?? MAIN_AGENT
+  }
+
   // Resolve saved session links and approval links into the owning agent's chat.
   useEffect(() => {
     if (route.kind !== 'session') return
     const item = sessions.items.find(i => i.id === route.id)
     if (!item) return
-    const root = sessionRoot(item, new Map(sessions.items.map(s => [s.id, s])))
     replacing.current = true
-    setRoute({ kind: 'agent', id: root.home ?? root.role ?? MAIN_AGENT, ...(item.origin === 'subagent' ? { child: item.id } : {}) })
+    setRoute({ kind: 'agent', id: agentOfSession(item.id)!, ...(item.origin === 'subagent' ? { child: item.id } : {}) })
   }, [route, sessions])
 
   // Just opened: the games page is the main one; chat when this connection has no games.
@@ -87,7 +94,6 @@ export function App({ client }: { client: AdgClient }) {
   const openSession = (id: string) => setRoute({ kind: 'session', id })
   const openSettings = (section?: string) => setRoute({ kind: 'settings', ...(section === undefined ? {} : { section }) })
   const openPage = (id: string) => setRoute({ kind: 'page', id })
-  const selected = view.kind === 'session' ? view.id : null
   const shown: Route = view.kind === 'start' ? { kind: 'page', id: START_PAGE } : view
   const page = shown.kind === 'page' ? pages.find(p => p.id === shown.id) : undefined
   // A page an agent owns is one of its tabs; under 助手 while that agent is gone.
@@ -136,7 +142,9 @@ export function App({ client }: { client: AdgClient }) {
           {exchange !== null && <HandOffPage key={exchange.id} client={client} id={exchange.id} onClose={() => setRoute(view)} />}
         </div>
       )}
-      <ApprovalDock client={client} sessionId={selected} onSelect={openSession} />
+      {/* A session route turns into its agent's chat at once, so what is "here" is the agent on screen:
+          its approvals and questions show in full, its sub-agents' too. */}
+      <ApprovalDock client={client} isHere={id => tabAgent !== undefined && agentOfSession(id) === tabAgent} onSelect={openSession} />
       <ScheduleNotices client={client} onOpen={id => setRoute({ kind: 'schedule', ...(id === undefined ? {} : { focus: id }) })} />
       <UiSwitch />
     </div>
